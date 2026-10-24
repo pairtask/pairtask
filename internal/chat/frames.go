@@ -65,6 +65,7 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		m.stageChanged(ev)
 	case protocol.EventPresenceChanged:
 		m.agents.apply(ev)
+		m.statuses.presence(ev)
 	case protocol.EventSendRefused:
 		return m.sendRefused(ev)
 	case protocol.EventStatusChanged:
@@ -179,6 +180,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 	m.revision, m.baseline = snap.Watermark.Revision, true
 	m.agents = agentView{list: snap.Agents, total: snap.AgentsTotal, partial: snap.AgentsTruncated}
 	m.statuses.set(snap)
+	m.statuses.inFlight, m.statuses.dirty = false, false // a new baseline supersedes any refresh
 	m.inbox.pending, m.inbox.headSeq = snap.InboxPending, snap.InboxHeadSeq
 	m.timeline.resetStages()
 	for _, s := range snap.RecentSent {
@@ -189,7 +191,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 			e.stagesTruncated = s.ReceiptsTruncated
 		}
 	}
-	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0))
+	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker())
 }
 
 func validSnapshot(resp protocol.Message) bool {

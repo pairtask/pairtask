@@ -28,6 +28,38 @@ type statusView struct {
 	truncated bool
 	inFlight  bool // a status refresh is pending
 	dirty     bool // another status_changed arrived meanwhile
+	ticking   bool // an age refresh is scheduled
+}
+
+// statusTick re-renders the ages; no network traffic.
+type statusTick struct{}
+
+// statusTickEvery is how often ages are re-rendered while statuses exist.
+const statusTickEvery = 30 * time.Second
+
+// ticker schedules the next age refresh while there is a status to age.
+func (m *Model) statusTicker() tea.Cmd {
+	if m.statuses.ticking || len(m.statuses.byAgent) == 0 {
+		return nil
+	}
+	m.statuses.ticking = true
+	return tea.Tick(statusTickEvery, func(time.Time) tea.Msg { return statusTick{} })
+}
+
+func (m *Model) onStatusTick() tea.Cmd {
+	m.statuses.ticking = false
+	return m.statusTicker()
+}
+
+// presence keeps a record's connected flag in step with presence events: a
+// record is current only while its declaring session is the agent's session.
+func (s *statusView) presence(ev *protocol.SessionEvent) {
+	st, ok := s.byAgent[ev.AgentID]
+	if !ok {
+		return
+	}
+	st.Connected = ev.State == "connected" && ev.SessionID == st.SessionID
+	s.byAgent[ev.AgentID] = st
 }
 
 func (s *statusView) set(snap *protocol.OperatorSnapshot) {
@@ -65,9 +97,9 @@ func (m *Model) statusRefreshed(_ pendingRequest, resp protocol.Message) tea.Cmd
 	m.statuses.set(resp.Snapshot)
 	if m.statuses.dirty {
 		m.statuses.dirty = false
-		return m.refreshStatuses()
+		return tea.Batch(m.refreshStatuses(), m.statusTicker())
 	}
-	return nil
+	return m.statusTicker()
 }
 
 // selectedStatus is the status of the agent whose conversation is open.

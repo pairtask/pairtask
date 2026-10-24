@@ -280,6 +280,8 @@ func (m *Model) connectionUpdate(msg tea.Msg) (tea.Cmd, bool) {
 		return m.retry(msg), true
 	case receiptRetryMsg:
 		return m.retryReceipts(msg), true
+	case statusTick:
+		return m.onStatusTick(), true
 	}
 	return nil, false
 }
