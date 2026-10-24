@@ -78,7 +78,7 @@ func NewAutoChannelMCP(l *Listener) *mcp.Server {
 func newHostMCP(l *Listener, claudeChannel, autoListen bool) *mcp.Server {
 	s := newMCP(l, hostMCPOptions(l, claudeChannel, autoListen))
 	if claudeChannel {
-		s.AddReceivingMiddleware(requireSessionHandshake)
+		s.AddReceivingMiddleware(requireSessionHandshake, l.observeToolCalls)
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: "listen", Description: "Activate host submission and register this logical inbox. Requires an explicitly enabled host integration; returned status does not prove the host consumes notifications."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {

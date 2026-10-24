@@ -213,3 +213,20 @@ func (l *Listener) ReportActivity(ctx context.Context, source string) error {
 	}
 	return client.ReportActivity(ctx, source)
 }
+
+// observeToolCalls reports "claude-adapter" activity when the model calls one
+// of this adapter's tools: pairtask tool activity, not general liveness.
+// Listener deliveries, receipts and initialization never count. One report is
+// in flight at most, off the request path, never cancelled midway.
+func (l *Listener) observeToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if method == "tools/call" && l.reporting.CompareAndSwap(false, true) {
+			go func() {
+				defer l.reporting.Store(false)
+				_ = l.ReportActivity(context.Background(), "claude-adapter")
+			}()
+		}
+		return result, err
+	}
+}
