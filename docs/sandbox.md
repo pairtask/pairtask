@@ -130,6 +130,9 @@ connection has separate, temporary cookies; `localhost` means the workspace.
 For CodeScene, create a [personal access token](https://codescene.io/users/me/pat),
 then run `pairtask-codescene-login` inside workspace before starting agents. The
 hidden prompt saves it privately in persistent agent home. No host login is copied.
+Use the token rather than `cs-mcp auth` there: its browser OAuth flow needs a
+callback the headless workspace is not configured to receive
+([troubleshooting](troubleshooting.md)).
 Analysis requires a valid CodeScene account/license; installation does not provide one.
 
 These MCPs run as `agent` inside workspace, outside the agents' shell-command

@@ -53,15 +53,15 @@ pairtask shell
 # command codex login --device-auth
 # command claude auth login
 # gh auth login --web --git-protocol https  # optional GitHub CLI login
-# pairtask-codescene-login                  # optional CodeScene token; hidden prompt
+# pairtask-codescene-login                  # optional CodeScene PAT, hidden prompt; use a PAT in the headless sandbox, not `cs-mcp auth`
 
 # First use only: clone if you have not already done so
-# git clone https://github.com/pairtask/pairtask.git /workspace/collab-ai
-tmux new -A -s collab
+# git clone https://github.com/pairtask/pairtask.git /workspace/pairtask
+tmux new -A -s pairtask
 
 # In each tmux window: enter the project, then choose one agent or dashboard
 # Ctrl+B then C opens another window
-cd /workspace/collab-ai
+cd /workspace/pairtask
 codex                         # new managed Codex conversation (codex-1)
 # pairtask start codex --id codex-2        # another Codex session with its own ID
 # pairtask start claude --id claude-2       # likewise for Claude (--model, --effort, -- native args)
