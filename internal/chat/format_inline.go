@@ -47,14 +47,19 @@ var markers = []marker{
 	{"_", "_", spanItalic, true},
 }
 
+// inlineLimit bounds the inline parser: a longer line is shown as typed, so
+// a line full of unclosed markers cannot cost quadratic scans.
+const inlineLimit = 4096
+
 // inlineSpans parses one source line. A marker that has no balancing close
 // on the same line stays literal.
 func inlineSpans(src string) inline {
 	var in inline
 	var plain strings.Builder
+	parse := len(src) <= inlineLimit
 	i := 0
 	for i < len(src) {
-		if m, end := openingMarker(src, i); m != nil {
+		if m, end := openingMarker(src, i); parse && m != nil {
 			start := plain.Len()
 			appendSafe(&in, &plain, src[i+len(m.open):end], i+len(m.open))
 			in.spans = append(in.spans, span{start: start, end: plain.Len(), kind: m.kind})

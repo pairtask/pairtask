@@ -19,7 +19,7 @@ var (
 	boldStyle      = lipgloss.NewStyle().Bold(true)
 	italicStyle    = lipgloss.NewStyle().Italic(true)
 	underlineStyle = lipgloss.NewStyle().Underline(true)
-	codeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	codeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("73")) // teal
 	fenceStyle     = lipgloss.NewStyle().Faint(true)
 
 	headingMark = regexp.MustCompile(`^#{1,6}\s+`)
