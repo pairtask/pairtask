@@ -3,6 +3,7 @@ package chat
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 )
@@ -151,16 +152,18 @@ func (m *marker) endsAt(c cursor) bool {
 }
 
 func (c cursor) boundaryBefore() bool {
-	return c.at == 0 || !isWord(lastRune(c.src[:c.at]))
+	r, _ := utf8.DecodeLastRuneInString(c.src[:c.at])
+	return c.at == 0 || !isWord(r)
 }
 
 func (c cursor) boundaryAfter() bool {
-	return c.at >= len(c.src) || !isWord(firstRune(c.src[c.at:]))
+	r, _ := utf8.DecodeRuneInString(c.src[c.at:])
+	return c.at >= len(c.src) || !isWord(r)
 }
 
 func (c cursor) runeLen() int {
-	_, size := firstRuneSize(c.src[c.at:])
-	return size
+	_, size := utf8.DecodeRuneInString(c.src[c.at:])
+	return max(1, size)
 }
 
 func isWord(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
@@ -222,24 +225,4 @@ func spanStyle(kind spanKind, base lipgloss.Style) lipgloss.Style {
 		return base.Italic(true)
 	}
 	return base.Underline(true)
-}
-
-func firstRuneSize(s string) (rune, int) {
-	for _, r := range s {
-		return r, len(string(r))
-	}
-	return 0, 1
-}
-
-func firstRune(s string) rune {
-	r, _ := firstRuneSize(s)
-	return r
-}
-
-func lastRune(s string) rune {
-	var last rune
-	for _, r := range s {
-		last = r
-	}
-	return last
 }

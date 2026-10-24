@@ -39,13 +39,24 @@ func (f *formatter) table(lines []string, i int) int {
 		f.stacked(rows) // even one-cell columns don't fit
 		return last
 	}
-	widths := columnWidths(rows, avail)
-	f.b.src = f.tableRow(rows[0], widths, boldStyle)
-	f.rule(widths)
+	grid := tableLayout{widths: columnWidths(rows, avail)}
+	f.b.src = f.tableRow(rows[0], grid.with(boldStyle))
+	f.rule(grid.widths)
 	for _, row := range rows[1:] {
-		f.b.src = f.tableRow(row, widths, lipgloss.NewStyle())
+		f.b.src = f.tableRow(row, grid)
 	}
 	return last
+}
+
+// tableLayout is the column widths a table is laid out at and the style its
+// cells start from.
+type tableLayout struct {
+	widths []int
+	base   lipgloss.Style
+}
+
+func (l tableLayout) with(base lipgloss.Style) tableLayout {
+	return tableLayout{widths: l.widths, base: base}
 }
 
 func columnCount(rows [][]cell) int {
@@ -69,35 +80,42 @@ func (f *formatter) stacked(rows [][]cell) {
 			if k < len(header) {
 				name = header[k].plain + ": "
 			}
-			f.stackedCell(name, c, avail)
+			f.stackedCell(stackedField{name: name, cell: c, avail: avail})
 		}
 		f.b.src++
 	}
 }
 
-// stackedCell renders "name: value" from the cell's own spans, the value
-// wrapped under the name with a two-cell indent; when the name leaves too
-// little room, the value starts on its own line. col is the source offset.
-func (f *formatter) stackedCell(name string, c cell, avail int) {
-	first, width := boldStyle.Render(name), avail-ansi.StringWidth(name)
+// stackedField is one "name: value" of a stacked row and the width it has.
+type stackedField struct {
+	name  string
+	cell  cell
+	avail int
+}
+
+// stackedCell renders the field from the cell's own spans, the value wrapped
+// under the name with a two-cell indent; when the name leaves too little
+// room, the value starts on its own line. col is the source offset.
+func (f *formatter) stackedCell(field stackedField) {
+	first, width := boldStyle.Render(field.name), field.avail-ansi.StringWidth(field.name)
 	if width < 8 {
-		f.stackedName(name, c.start, avail)
-		first, width = "  ", avail
+		f.stackedName(field)
+		first, width = "  ", field.avail
 	}
-	parts, offsets := wrapCell(c.inline, max(1, width), lipgloss.NewStyle())
+	parts, offsets := wrapCell(field.cell.inline, max(1, width), lipgloss.NewStyle())
 	for i, part := range parts {
 		prefix := "  "
 		if i == 0 {
 			prefix = first
 		}
-		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: c.start + c.origin(offsets[i]), text: string(body) + prefix + strings.TrimRight(part, " ")})
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: field.cell.start + field.cell.origin(offsets[i]), text: string(body) + prefix + strings.TrimRight(part, " ")})
 	}
 }
 
 // stackedName is a header name on rows of its own, wrapped.
-func (f *formatter) stackedName(name string, col, avail int) {
-	for _, part := range wrap(name, avail) {
-		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: col, text: string(body) + boldStyle.Render(strings.TrimRight(part, " "))})
+func (f *formatter) stackedName(field stackedField) {
+	for _, part := range wrap(field.name, field.avail) {
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: field.cell.start, text: string(body) + boldStyle.Render(strings.TrimRight(part, " "))})
 	}
 }
 
@@ -167,60 +185,71 @@ func total(widths []int) int {
 	return sum
 }
 
+// wrappedRow is one source row wrapped into its columns: the visual lines
+// per column and each line's plain offset within its cell.
+type wrappedRow struct {
+	row     []cell
+	lines   [][]string
+	offsets [][]int
+}
+
 // tableRow renders one source row as as many visual rows as its tallest
 // wrapped cell needs; all of them carry the row's src, and col is the source
 // offset of the leftmost cell that still has text on that visual row, so a
 // resize anchor finds the same text again. Returns the next src.
-func (f *formatter) tableRow(row []cell, widths []int, base lipgloss.Style) int {
-	wrapped, offsets := wrapRow(row, widths, base)
-	for line := 0; line < rowHeight(wrapped); line++ {
-		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: rowOffset(row, offsets, line), text: string(body) + joinCells(wrapped, widths, line)})
+func (f *formatter) tableRow(row []cell, grid tableLayout) int {
+	w := grid.wrapRow(row)
+	for line := 0; line < w.height(); line++ {
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: w.offset(line), text: string(body) + grid.join(w, line)})
 	}
 	return f.b.src + 1
 }
 
 // wrapRow wraps every cell to its column; a missing cell is one empty line.
-func wrapRow(row []cell, widths []int, base lipgloss.Style) ([][]string, [][]int) {
-	wrapped := make([][]string, len(widths))
-	offsets := make([][]int, len(widths))
-	for k := range widths {
-		wrapped[k] = []string{""}
+func (l tableLayout) wrapRow(row []cell) wrappedRow {
+	w := wrappedRow{row: row, lines: make([][]string, len(l.widths)), offsets: make([][]int, len(l.widths))}
+	for k := range l.widths {
+		w.lines[k] = []string{""}
 		if k < len(row) {
-			wrapped[k], offsets[k] = wrapCell(row[k].inline, widths[k], base)
+			w.lines[k], w.offsets[k] = wrapCell(row[k].inline, l.widths[k], l.base)
 		}
 	}
-	return wrapped, offsets
+	return w
 }
 
-func rowHeight(wrapped [][]string) int {
+func (w wrappedRow) height() int {
 	height := 1
-	for _, lines := range wrapped {
+	for _, lines := range w.lines {
 		height = max(height, len(lines))
 	}
 	return height
 }
 
-func joinCells(wrapped [][]string, widths []int, line int) string {
-	out := make([]string, len(widths))
-	for k := range widths {
-		out[k] = cellLine(wrapped[k], line, widths[k])
-	}
-	return strings.Join(out, ruleStyle.Render(" │ "))
-}
-
-// rowOffset is the source offset of the leftmost cell with text on a visual
+// offset is the source offset of the leftmost cell with text on a visual
 // row; past every cell's text it keeps counting so the order stays increasing.
-func rowOffset(row []cell, offsets [][]int, line int) int {
-	for k, c := range row {
-		if k < len(offsets) && line < len(offsets[k]) {
-			return c.start + c.origin(offsets[k][line])
+func (w wrappedRow) offset(line int) int {
+	for k, c := range w.row {
+		if line < len(w.offsets[k]) {
+			return c.start + c.origin(w.offsets[k][line])
 		}
 	}
-	if len(row) == 0 {
+	if len(w.row) == 0 {
 		return line
 	}
-	last := row[len(row)-1]
+	last := w.row[len(w.row)-1]
 	return last.start + len(last.plain) + line
+}
+
+// join is one visual row: every column's line at that index, padded.
+func (l tableLayout) join(w wrappedRow, line int) string {
+	out := make([]string, len(l.widths))
+	for k, width := range l.widths {
+		out[k] = strings.Repeat(" ", width)
+		if line < len(w.lines[k]) {
+			out[k] = w.lines[k][line]
+		}
+	}
+	return strings.Join(out, ruleStyle.Render(" │ "))
 }
 
 // wrapCell wraps a cell's plain text to the column width and styles each
@@ -239,13 +268,6 @@ func wrapCell(c inline, width int, base lipgloss.Style) ([]string, []int) {
 		pos += len(part)
 	}
 	return out, offsets
-}
-
-func cellLine(lines []string, i, width int) string {
-	if i < len(lines) {
-		return lines[i]
-	}
-	return strings.Repeat(" ", width)
 }
 
 // rule draws the separator row under the header.
