@@ -1399,11 +1399,22 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   and this is a fixed subset, not Markdown: links, images, block quotes and
   emphasis rules beyond the above stay literal; an indented list line keeps
   its indent but there is no nested-list semantics.
+- **Agent status** (#133): in an agent's conversation, a row under the bar
+  shows what that agent declared with its `status` tool: state, task, step,
+  what it waits on, how long ago it declared it, and when its harness was
+  last seen working (`launcher` for Codex, `pairtask tool activity` for
+  Claude) or `activity unavailable`; a declaration from an earlier session
+  says so. `/agents` lists the same for every agent with a status. Statuses
+  arrive as `status_changed` events and refresh with a snapshot at the
+  chat's own watermark (a snapshot past it is installed as a full baseline);
+  ages re-render locally every 30 s. A status is never a transcript entry,
+  never unread and never acknowledged, and an old one is shown with its age,
+  never as "blocked".
 - **Degradation order** on small terminals, what gets a row first: the
   audience divider, one input row and the footer; up to three transcript rows
   (the newest message's header, first text line and mark), which outrank
   every decoration; the title band; the conversation bar; the rule
-  under the bar; the box's bottom edge; extra input rows (leaving two
+  under the bar; an agent's status row; the box's bottom edge; extra input rows (leaving two
   transcript rows); the picker (up to six, leaving one); the transcript takes
   the rest. At the 20×4 minimum the frame is one transcript row, the plain
   divider, one input row and the footer. No frame is ever taller than the

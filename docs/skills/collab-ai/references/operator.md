@@ -37,12 +37,26 @@ or publication runs once however many copies arrive.
 
 ## Status cadence
 
-Report unprompted at milestones, blockers, failures, completion, and at real
-progress during long work. Say what the operator must decide or provide, and
-what you wait for. Agree with your peer who reports a shared step so the
-operator gets each one once. Messages to your peer are not status to the
-operator. Wait for the operator's go before a step they said they want to
-decide.
+Declare your status with the `status` tool, `status(state, task, step,
+waiting_on, ref)`, at four moments: when a task starts, when the step
+changes, when you block or start waiting (`waiting_on`: operator, peer, ci,
+tools), and when it is done. `state` is `active`, `waiting`, `blocked`,
+`idle` or `done`; each text field is at most 120 bytes. One call per moment,
+never a heartbeat or a loop: the operator sees the latest status in your
+conversation and in `/agents` with its age, and the chat shows separately
+when your harness was last seen working (from the Codex launcher, or from
+your pairtask tool calls under Claude); where nothing observes it, it says
+unavailable. A status is not a message, not an acknowledgment and never an
+authorization. `read_status` reads a status (yours by default) when you need
+it, not on a schedule.
+
+Send a durable message to the operator only when they must decide or provide
+something, for a failure that needs action, and for the outcome. Agree with
+your peer who reports a shared step so the operator gets each one once.
+Messages to your peer are not status to the operator. Wait for the
+operator's go before a step they said they want to decide. Against a broker
+older than protocol 6 the `status` tool reports itself unsupported; then
+send a short status message at the meaningful milestones instead.
 
 ## Delivery
 
@@ -50,7 +64,8 @@ decide.
   `1. ` items, a pipe table for columns, `**bold**` for the decision needed;
   the chat renders that subset and shows anything else as typed. One
   question per message.
-- Replies and status go durable to the logical ID `operator`. The chat's
+- Replies and messages go durable to the logical ID `operator`; status goes
+  through the `status` tool. The chat's
   conversations, tabs, and groups are the operator's view, never a destination.
 - `wait_reply` with your request's `message_id` and `from="operator"` for a
   specific answer. `listener_status` and `receive` when a notification may have
@@ -105,7 +120,8 @@ checks control, not the shape below.
 ```
 acknowledge(message_id="7f3c…")                       # received, not agreed
 send(to="operator", in_reply_to="7f3c…", text="Rebased onto main at 9a1b2c3; CI running; merge needs green plus Codex's MERGE for that SHA.")
-send(to="operator", text="Status: slice C tests green locally; CodeScene rerun pending; nothing needed from you yet.")
+status(state="active", task="#133 status contract", step="slice C chat", ref="PR 137")
+status(state="waiting", task="#133 status contract", step="CI on 9a1b2c3", waiting_on="ci")
 ```
 
 - `READY <sha>` or `MERGE <sha>` from a reviewer is evidence about that
@@ -127,4 +143,7 @@ Their message to you shows its delivery stage per recipient, `accepted`,
 frame you leave unacknowledged stays visibly short of it. The audience
 divider above their input names who their draft reaches (one agent, a group,
 or everyone), and unread counts per conversation show what they have not
-read. A long silence during work is visible as such.
+read. Your declared status shows as a row in your conversation and in
+`/agents`, with how long ago you declared it and when your harness was last
+seen working; a status from an earlier session is marked as such. An old
+status is shown with its age, never turned into "blocked".
