@@ -59,7 +59,12 @@ func inlineSpans(src string) inline {
 	parse := len(src) <= inlineLimit
 	i := 0
 	for i < len(src) {
-		if m, end := openingMarker(src, i); parse && m != nil {
+		var m *marker
+		var end int
+		if parse {
+			m, end = openingMarker(src, i)
+		}
+		if m != nil {
 			start := plain.Len()
 			appendSafe(&in, &plain, src[i+len(m.open):end], i+len(m.open))
 			in.spans = append(in.spans, span{start: start, end: plain.Len(), kind: m.kind})

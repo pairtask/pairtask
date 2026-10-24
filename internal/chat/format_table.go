@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// A pipe table is a row, a separator row (---|:--:|---) and more rows; a line
+// A pipe table is a row, a separator row (---|:---:|---) and more rows; a line
 // with pipes but no separator under it is ordinary text. Columns are padded
 // to the widest plain cell; when the table is wider than the transcript the
 // widest columns shrink and their cells wrap over several visual rows, so no
@@ -35,7 +35,7 @@ func (f *formatter) table(lines []string, i int) int {
 		rows = append(rows, cells(lines[j]))
 	}
 	avail := max(1, f.width-len(body))
-	if columns := len(rows[0]); total(make([]int, columns))+columns > avail {
+	if columns := columnCount(rows); total(make([]int, columns))+columns > avail {
 		f.stacked(rows) // even one-cell columns don't fit
 		return last
 	}
@@ -48,26 +48,50 @@ func (f *formatter) table(lines []string, i int) int {
 	return last
 }
 
+func columnCount(rows [][]cell) int {
+	n := 0
+	for _, row := range rows {
+		n = max(n, len(row))
+	}
+	return n
+}
+
 // stacked is the narrow fallback when even one-cell columns don't fit: each
 // data row becomes "header: value" lines, nothing is dropped.
 func (f *formatter) stacked(rows [][]cell) {
 	header := rows[0]
 	f.b.skip() // the header row itself
 	f.b.skip() // the separator row
+	avail := max(1, f.width-len(body)-2)
 	for _, row := range rows[1:] {
-		start := len(f.b.lines)
 		for k, c := range row {
 			name := ""
 			if k < len(header) {
 				name = header[k].plain + ": "
 			}
-			f.styledLine(name+c.plain, lead{first: "", rest: "  "}, lipgloss.NewStyle())
-			f.b.src-- // every line of the row shares its src
-		}
-		for i := start; i < len(f.b.lines); i++ {
-			f.b.lines[i].col = i - start // increasing within the row, like tableRow
+			f.stackedCell(name, c, avail)
 		}
 		f.b.src++
+	}
+}
+
+// stackedCell renders "name: value" from the cell's own spans, the value
+// wrapped under the name with a two-cell indent; when the name leaves too
+// little room, the value starts on its own line. col is the source offset.
+func (f *formatter) stackedCell(name string, c cell, avail int) {
+	first := boldStyle.Render(name)
+	width := avail - ansi.StringWidth(name)
+	if width < 8 {
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: c.start, text: string(body) + strings.TrimRight(first, " ")})
+		first, width = "  ", avail
+	}
+	parts, offsets := wrapCell(c.inline, max(1, width), lipgloss.NewStyle())
+	for i, part := range parts {
+		prefix := "  "
+		if i == 0 {
+			prefix = first
+		}
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: c.start + c.origin(offsets[i]), text: string(body) + prefix + strings.TrimRight(part, " ")})
 	}
 }
 
@@ -129,20 +153,16 @@ func total(widths []int) int {
 
 // tableRow renders one source row as as many visual rows as its tallest
 // wrapped cell needs; all of them carry the row's src, and col is the source
-// offset of the first column's text on that visual row, so a resize anchor
-// finds the same text again. Returns the next src.
+// offset of the leftmost cell that still has text on that visual row, so a
+// resize anchor finds the same text again. Returns the next src.
 func (f *formatter) tableRow(row []cell, widths []int, base lipgloss.Style) int {
 	wrapped := make([][]string, len(widths))
-	var offsets []int
+	offsets := make([][]int, len(widths))
 	height := 1
 	for k := range widths {
 		wrapped[k] = []string{""}
 		if k < len(row) {
-			var at []int
-			wrapped[k], at = wrapCell(row[k].inline, widths[k], base)
-			if k == 0 {
-				offsets = at
-			}
+			wrapped[k], offsets[k] = wrapCell(row[k].inline, widths[k], base)
 		}
 		height = max(height, len(wrapped[k]))
 	}
@@ -156,16 +176,19 @@ func (f *formatter) tableRow(row []cell, widths []int, base lipgloss.Style) int 
 	return f.b.src + 1
 }
 
-// rowOffset is the source offset of the first column's text on a visual row;
-// rows past that column's text keep counting so the order stays increasing.
-func rowOffset(row []cell, offsets []int, line int) int {
+// rowOffset is the source offset of the leftmost cell with text on a visual
+// row; past every cell's text it keeps counting so the order stays increasing.
+func rowOffset(row []cell, offsets [][]int, line int) int {
+	for k, c := range row {
+		if k < len(offsets) && line < len(offsets[k]) {
+			return c.start + c.origin(offsets[k][line])
+		}
+	}
 	if len(row) == 0 {
 		return line
 	}
-	if line < len(offsets) {
-		return row[0].start + row[0].origin(offsets[line])
-	}
-	return row[0].start + len(row[0].plain) + line
+	last := row[len(row)-1]
+	return last.start + len(last.plain) + line
 }
 
 // wrapCell wraps a cell's plain text to the column width and styles each

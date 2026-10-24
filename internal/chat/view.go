@@ -11,10 +11,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Palette: 256-colour values chosen to read on dark and light terminals,
-// quiet rather than saturated. Bands set both foreground and background so
-// the terminal theme cannot make them unreadable; a selection is a dark blue
-// band with light text, never reverse video over faint text.
+// Palette: a quieter 256-colour text palette, and bands (header, footer,
+// selection) that set both foreground and background so their contrast does
+// not depend on the terminal theme; a selection is a dark blue band with
+// light text, never reverse video over faint text.
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true)
 	mutedStyle = lipgloss.NewStyle().Faint(true)
