@@ -39,6 +39,9 @@ ACTIONS = {
     "mounts": ("sandbox-host.py", {"plan": "mounts-plan", "apply": "mounts-apply"}, "host directories in the workspace: plan | apply --mounts-file FILE"),
     "share": ("sandbox-share.py", {"plan": "plan", "setup": "setup", "run": "run"}, "macOS writable sharing: plan | setup | run --mounts-file FILE"),
 }
+# Short names for commands, resolved before anything else.
+ALIASES = {"sh": "shell"}
+
 COMPOSITE = {
     "install": "first install: start the VM on macOS, roll the release out, show status",
     "start": "start the containers (and the VM on macOS)",
@@ -93,7 +96,7 @@ def plan(argv, system=None, instances=None):
     project) lists the containers when a step needs to know whether
     `secured` exists; None defers that to run time."""
     system = system or platform.system()
-    name, rest = argv[0], list(argv[1:])
+    name, rest = ALIASES.get(argv[0], argv[0]), list(argv[1:])
     if name in SCRIPTED:
         file, leading, _ = SCRIPTED[name]
         return [script(file, *leading, *rest)]
@@ -208,6 +211,10 @@ def usage():
     lines = ["usage: pairtask <command> [flags]", "", "Commands (flags after the command pass to the script it runs):"]
     for name, help_text in list(COMPOSITE.items()) + [(n, v[2]) for n, v in SCRIPTED.items()] + [(n, v[2]) for n, v in ACTIONS.items()]:
         lines.append("  %-10s %s" % (name, help_text))
+    for alias, target in ALIASES.items():
+        lines.append("  %-10s alias of %s" % (alias, target))
+    lines.append("")
+    lines.append("pk is a short alias of pairtask, installed when no other pk exists (skipped if one conflicts).")
     lines += ["", "Reference: docs/host-commands.md. `pairtask --dry-run <command>` prints the steps without running them."]
     return "\n".join(lines)
 
@@ -218,7 +225,7 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(usage())
         return 0
-    if argv[0] not in set(COMPOSITE) | set(SCRIPTED) | set(ACTIONS):
+    if argv[0] not in set(COMPOSITE) | set(SCRIPTED) | set(ACTIONS) | set(ALIASES):
         print(usage(), file=sys.stderr)
         return 2
     steps = plan(argv)

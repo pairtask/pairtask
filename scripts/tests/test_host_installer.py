@@ -117,6 +117,79 @@ sys.stdout.write(open(unquote(urlparse(url).path)).read())
         return subprocess.check_output([self.git, "-C", str(self.install_home / "host"),
                                         "rev-parse", "HEAD"], text=True).strip()
 
+    def test_pk_shim_passes_literal_arguments_and_survives_upgrade(self):
+        self.install_home = self.home / 'tools $literal "quoted"'
+        self.env["PAIRTASK_HOME"] = str(self.install_home)
+        self.assert_success(self.install("--version", TAG_ONE, "--no-provision"))
+        alias = self.install_home / "bin/pk"
+        self.assertTrue(alias.is_file(), "host pk shim missing")
+        arguments = ["sh", "--", "printf", "%s", "a b;$(literal)", "--dry-run"]
+        result = subprocess.run([str(alias), *arguments], env=self.env,
+                                capture_output=True, text=True, timeout=10)
+        self.assert_success(result)
+        self.assertEqual(self.records(self.provisions), [arguments])
+        self.env["PATH"] = str(alias.parent) + os.pathsep + self.env["PATH"]
+        self.assert_success(self.install("--version", TAG_TWO, "--no-provision"))
+        result = subprocess.run(["pk", "--help"], env=self.env,
+                                capture_output=True, text=True, timeout=10)
+        self.assert_success(result)
+        self.assertEqual(self.records(self.provisions)[-1], ["--help"])
+
+    def test_foreign_pk_on_path_is_preserved_and_not_shadowed(self):
+        self.tool("pk", "print('foreign command')")
+        existing = (self.bin / "pk").read_bytes()
+        result = self.install("--version", TAG_ONE, "--no-provision")
+        self.assert_success(result)
+        self.assertEqual((self.bin / "pk").read_bytes(), existing)
+        self.assertFalse((self.install_home / "bin/pk").exists())
+        self.assertRegex(result.stdout + result.stderr, r"pk.*skip")
+        self.assertTrue((self.install_home / "bin/pairtask").is_file())
+
+    def test_unowned_pk_destination_is_preserved_even_outside_path(self):
+        destination = self.install_home / "bin/pk"
+        destination.parent.mkdir(parents=True)
+        destination.write_text("#!/bin/sh\nprintf 'user command'\n")
+        destination.chmod(0o755)
+        existing = destination.read_bytes()
+        result = self.install("--version", TAG_ONE, "--no-provision")
+        self.assert_success(result)
+        self.assertEqual(destination.read_bytes(), existing)
+        self.assertRegex(result.stdout + result.stderr, r"pk.*skip")
+
+    def test_pk_destination_symlink_target_is_never_overwritten(self):
+        target = self.home / "user-owned-command"
+        target.write_text("user content\n")
+        destination = self.install_home / "bin/pk"
+        destination.parent.mkdir(parents=True)
+        destination.symlink_to(target)
+        result = self.install("--version", TAG_ONE, "--no-provision")
+        self.assert_success(result)
+        self.assertTrue(destination.is_symlink())
+        self.assertEqual(target.read_text(), "user content\n")
+
+    def test_pk_directory_destination_is_skipped_without_reading(self):
+        destination = self.install_home / "bin/pk"
+        destination.mkdir(parents=True)
+        sentinel = destination / "user-file"
+        sentinel.write_text("preserved\n")
+        result = self.install("--version", TAG_ONE, "--no-provision")
+        self.assert_success(result)
+        self.assertEqual(sentinel.read_text(), "preserved\n")
+        self.assertRegex(result.stdout + result.stderr, r"pk.*skip")
+        self.assertNotIn("Is a directory", result.stderr)
+
+    def test_pk_dry_run_describes_alias_without_writing(self):
+        result = self.install(PAIRTASK_INSTALL_DRY_RUN="1")
+        self.assert_success(result)
+        self.assertIn("plan: write " + str(self.install_home / "bin/pk"), result.stdout)
+        self.assertFalse(self.install_home.exists())
+        self.tool("pk", "print('foreign command')")
+        result = self.install(PAIRTASK_INSTALL_DRY_RUN="1")
+        self.assert_success(result)
+        self.assertRegex(result.stdout + result.stderr, r"pk.*skip")
+        self.assertNotIn("plan: write " + str(self.install_home / "bin/pk"), result.stdout)
+        self.assertFalse(self.install_home.exists())
+
     def test_posix_syntax_and_argument_errors(self):
         syntax = subprocess.run(["/bin/sh", "-n", str(INSTALLER)], capture_output=True, text=True)
         self.assert_success(syntax)

@@ -60,6 +60,31 @@ def routed_actions():
 
 
 class HostRoutingTests(unittest.TestCase):
+    def test_short_shell_alias_preserves_arguments_and_dry_run_boundary(self):
+        flags = ["--remote", "local", "--", "printf", "%s", "a b;$(literal)", "--dry-run"]
+        for system in ("Linux", "Darwin"):
+            with self.subTest(system=system):
+                self.assertEqual(cli.plan(["sh", *flags], system=system),
+                                 cli.plan(["shell", *flags], system=system))
+        with mock.patch.object(cli, "run", return_value=0) as run:
+            self.assertEqual(cli.main(["sh", "printf", "--dry-run", "a b"]), 0)
+        self.assertEqual(run.call_args.args[0].argv,
+                         ["sandbox-session.py", "shell", "printf", "--dry-run", "a b"])
+        with mock.patch.object(cli, "run") as run, contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["--dry-run", "sh", "printf", "a b"]), 0)
+        run.assert_not_called()
+        self.assertIn("shell", output.getvalue())
+
+    def test_shell_alias_is_discoverable_in_help(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["--help"]), 0)
+        self.assertRegex(output.getvalue(), r"(?m)^\s+sh\s+.*shell")
+
+    def test_help_mentions_optional_pk_command_alias(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["--help"]), 0)
+        self.assertRegex(output.getvalue(), r"\bpk\b")
+
     def test_executable_entrypoint_help_dry_run_and_unknown_command(self):
         cases = [( ["--help"], 0, "usage: pairtask"),
                  (["--dry-run", "start"], 0, "start"),

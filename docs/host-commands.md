@@ -3,7 +3,8 @@
 Everything you run on your own machine for the sandbox, by task. One command
 does it all: `pairtask`, put on your PATH by the one-line installer below, or
 `python3 scripts/pairtask.py` from a provisioning checkout (`pairtask` below
-stands for either). Each `pairtask`
+stands for either). The installer also writes `pk` as a short alias when no
+other `pk` exists; it never replaces one it did not write. Each `pairtask`
 subcommand runs one of the scripts in `scripts/` with the matching action, or
 an Incus command, and passes your flags through unchanged, so the legacy
 `python3 scripts/sandbox-*.py` forms keep working for one release. `pairtask
@@ -44,7 +45,7 @@ quota-capable pool and a managed bridge. Details: [sandbox setup](sandbox.md).
 
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
-| `pairtask shell` | host → workspace | SSH into the workspace as `agent` and restore your terminal afterwards; extra arguments run as a remote command, with a terminal when `--tty` is given. Raw: `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace` (or the checkout's `infra/incus/ssh/config`). | no |
+| `pairtask shell` (short: `pairtask sh`, or `pk sh`) | host → workspace | SSH into the workspace as `agent` and restore your terminal afterwards; extra arguments run as a remote command, with a terminal when `--tty` is given. Raw: `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace` (or the checkout's `infra/incus/ssh/config`). | no |
 | `pairtask chat` | host → secured | The operator chat (`incus exec -t … pairtask operator chat`), terminal restored afterwards. [Chat guide](operator-chat.md). | no |
 | `incus --project pairtask exec colima-pairtask:secured -- pairtask operator send --to codex-1 "text"` | secured | One-shot operator message, receive or ack without the chat; refused while a chat is open. [Secured runtime](secured-runtime.md#operator-messages). | no |
 | `reset` | host | Repairs a terminal left in mouse-reporting mode by a dropped session. | no |
