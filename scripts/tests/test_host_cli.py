@@ -22,6 +22,43 @@ cli = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cli)
 
 
+def parser_call(node):
+    """Return the parser method and its literal first argument, if present."""
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return None, None
+    if not node.args or not isinstance(node.args[0], ast.Constant):
+        return None, None
+    return node.func.attr, node.args[0].value
+
+
+def argument_choices(node):
+    for keyword in node.keywords:
+        if keyword.arg == "choices":
+            return set(ast.literal_eval(keyword.value))
+    return set()
+
+
+def declared_actions(path):
+    actions = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        method, argument = parser_call(node)
+        if method == "add_parser":
+            actions.add(argument)
+        if (method, argument) == ("add_argument", "action"):
+            actions.update(argument_choices(node))
+    return actions
+
+
+def routed_actions():
+    routed = {}
+    for script, leading, _description in cli.SCRIPTED.values():
+        if leading:
+            routed.setdefault(script, set()).add(leading[0])
+    for script, actions, _description in cli.ACTIONS.values():
+        routed.setdefault(script, set()).update(actions.values())
+    return routed
+
+
 class HostRoutingTests(unittest.TestCase):
     def test_executable_entrypoint_help_dry_run_and_unknown_command(self):
         cases = [( ["--help"], 0, "usage: pairtask"),
@@ -205,26 +242,9 @@ class HostRoutingTests(unittest.TestCase):
 
 class LegacyCompatibilityTests(unittest.TestCase):
     def test_every_legacy_parser_action_has_a_dispatch_route(self):
-        routed = {}
-        for script, leading, _description in cli.SCRIPTED.values():
-            if leading:
-                routed.setdefault(script, set()).add(leading[0])
-        for script, actions, _description in cli.ACTIONS.values():
-            routed.setdefault(script, set()).update(actions.values())
+        routed = routed_actions()
         for name in ("sandbox-provision.py", "sandbox-host.py", "sandbox-share.py", "sandbox-session.py"):
-            tree = ast.parse((SCRIPTS / name).read_text())
-            actions = set()
-            for node in ast.walk(tree):
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                        and node.func.attr == "add_parser" and node.args
-                        and isinstance(node.args[0], ast.Constant)):
-                    actions.add(node.args[0].value)
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                        and node.func.attr == "add_argument" and node.args
-                        and isinstance(node.args[0], ast.Constant) and node.args[0].value == "action"):
-                    for keyword in node.keywords:
-                        if keyword.arg == "choices":
-                            actions.update(ast.literal_eval(keyword.value))
+            actions = declared_actions(SCRIPTS / name)
             with self.subTest(script=name):
                 self.assertTrue(actions, "expected the legacy parser's declared actions")
                 self.assertLessEqual(actions, routed.get(name, set()))
