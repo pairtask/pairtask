@@ -14,18 +14,8 @@ import (
 func formattingTableColumns(t *testing.T, h *chatHarness) []string {
 	t.Helper()
 	var columns [2]strings.Builder
-	data := false
-	for _, row := range strings.Split(ansi.Strip(h.m.View().Content), "\n") {
-		if strings.Contains(row, "─") && strings.Contains(row, "┼") {
-			data = true
-			continue
-		}
-		if !data {
-			continue
-		}
-		if strings.Contains(row, "needs ack") {
-			break
-		}
+	rows := formattingRowsBetween(t, h, "┼", "needs ack")
+	for _, row := range rows[1 : len(rows)-1] {
 		cells := strings.Split(row, "│")
 		if len(cells) != 2 {
 			continue
@@ -34,10 +24,19 @@ func formattingTableColumns(t *testing.T, h *chatHarness) []string {
 			columns[i].WriteString(strings.Join(strings.Fields(cell), ""))
 		}
 	}
-	if !data {
-		t.Fatal("table has no rendered header separator")
-	}
 	return []string{columns[0].String(), columns[1].String()}
+}
+
+func formattingNumberedWords(prefix string, count int) string {
+	var text strings.Builder
+	for i := range count {
+		fmt.Fprintf(&text, "%s%03d ", prefix, i)
+	}
+	return text.String()
+}
+
+func formattingTwoColumnTable(left, right string) string {
+	return "| Left | Right |\n| --- | --- |\n| " + left + " | " + right + " |"
 }
 
 func TestChatFormattingTableWrapsEveryCellAtNarrowWidths(t *testing.T) {
@@ -99,12 +98,8 @@ func TestChatFormattingEmojiSequencesStayIntact(t *testing.T) {
 }
 
 func TestChatFormattingTallTableRowsRemainReachableByScrolling(t *testing.T) {
-	var left, right strings.Builder
-	for i := range 60 {
-		fmt.Fprintf(&left, "L%02d ", i)
-		fmt.Fprintf(&right, "R%02d ", i)
-	}
-	h := formattingHarness(t, "| Left | Right |\n| --- | --- |\n| "+left.String()+" | "+right.String()+" |", 32, 12)
+	text := formattingTwoColumnTable(formattingNumberedWords("L", 60), formattingNumberedWords("R", 60))
+	h := formattingHarness(t, text, 32, 12)
 	var seen strings.Builder
 	for range 35 {
 		seen.WriteString(ansi.Strip(h.m.View().Content))
@@ -114,44 +109,32 @@ func TestChatFormattingTallTableRowsRemainReachableByScrolling(t *testing.T) {
 	}
 	for i := range 60 {
 		for _, side := range []string{"L", "R"} {
-			word := fmt.Sprintf("%s%02d", side, i)
+			word := fmt.Sprintf("%s%03d", side, i)
 			chatEqual(t, "scroll reaches "+word, strings.Contains(seen.String(), word), true)
 		}
 	}
 }
 
 func TestChatFormattingTableResizeKeepsTheReadingPosition(t *testing.T) {
-	var left, right strings.Builder
-	for i := range 200 {
-		fmt.Fprintf(&left, "L%03d ", i)
-		fmt.Fprintf(&right, "R%03d ", i)
+	for _, tc := range []struct{ name, left, pattern string }{
+		{"both columns long", formattingNumberedWords("L", 200), `L\d+`},
+		{"later column long", "short", `R\d+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := formattingTwoColumnTable(tc.left, formattingNumberedWords("R", 200))
+			h := formattingHarness(t, text, 80, 12)
+			h.input(chatKey(tea.KeyPgUp, 0))
+			anchor := regexp.MustCompile(tc.pattern).FindString(ansi.Strip(h.m.View().Content))
+			if anchor == "" {
+				t.Fatal("fixture has no table reading anchor")
+			}
+			for _, width := range []int{32, 80} {
+				h.input(tea.WindowSizeMsg{Width: width, Height: 12})
+				chatEqual(t, "table resize preserves reading text", strings.Contains(ansi.Strip(h.m.View().Content), anchor), true)
+				v2FrameFits(t, h, width, 12)
+			}
+		})
 	}
-	h := formattingHarness(t, "| Left | Right |\n| --- | --- |\n| "+left.String()+" | "+right.String()+" |", 80, 12)
-	h.input(chatKey(tea.KeyPgUp, 0))
-	anchor := regexp.MustCompile(`L\d+`).FindString(ansi.Strip(h.m.View().Content))
-	if anchor == "" {
-		t.Fatal("fixture has no table reading anchor")
-	}
-	for _, width := range []int{32, 80} {
-		h.input(tea.WindowSizeMsg{Width: width, Height: 12})
-		chatEqual(t, "table resize preserves reading text", strings.Contains(ansi.Strip(h.m.View().Content), anchor), true)
-		v2FrameFits(t, h, width, 12)
-	}
-}
-
-func TestChatFormattingTableResizeTracksLongLaterColumn(t *testing.T) {
-	var right strings.Builder
-	for i := range 200 {
-		fmt.Fprintf(&right, "R%03d ", i)
-	}
-	h := formattingHarness(t, "| Left | Right |\n| --- | --- |\n| short | "+right.String()+" |", 80, 12)
-	h.input(chatKey(tea.KeyPgUp, 0))
-	anchor := regexp.MustCompile(`R\d+`).FindString(ansi.Strip(h.m.View().Content))
-	if anchor == "" {
-		t.Fatal("fixture has no later-column anchor")
-	}
-	h.input(tea.WindowSizeMsg{Width: 32, Height: 12})
-	chatEqual(t, "resize preserves later-column text", strings.Contains(ansi.Strip(h.m.View().Content), anchor), true)
 }
 
 func TestChatFormattingStackedTableDoesNotReinterpretCode(t *testing.T) {
