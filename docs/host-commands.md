@@ -1,8 +1,9 @@
 # Host commands
 
 Everything you run on your own machine for the sandbox, by task. One command
-does it all: `pairtask`, at `scripts/pairtask.py` in your provisioning
-checkout (the one-line installer puts it on your PATH). Each `pairtask`
+does it all: `pairtask`, which today is `python3 scripts/pairtask.py` run from
+your provisioning checkout (`pairtask` below stands for that; a one-line
+installer that puts it on your PATH is the next step of #80). Each `pairtask`
 subcommand runs one of the scripts in `scripts/` with the matching action, or
 an Incus command, and passes your flags through unchanged, so the legacy
 `python3 scripts/sandbox-*.py` forms keep working for one release. `pairtask

@@ -215,3 +215,10 @@ def own_dry_run(argv):
     if argv and argv[0] == "--dry-run":
         return argv[1:], True
     return argv, False
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
