@@ -58,18 +58,17 @@ python_ok || missing="$missing python"
 have git || missing="$missing git"
 have incus || missing="$missing incus"
 [ "$OS" != Darwin ] || have colima || missing="$missing colima"
-if [ -n "$missing" ]; then
+if [ -n "$missing" ] && [ -n "$DRY" ]; then
+  plan "prerequisites missing:$missing (the real run stops here with exit 1 until they are installed)"
+elif [ -n "$missing" ]; then
   if [ "$OS" = Darwin ]; then
     have brew || die 1 "missing:$missing; install Homebrew, then: brew install colima incus python git"
     say "missing:$missing. Homebrew can install them: brew install colima incus python git"
-    if [ -n "$DRY" ]; then plan "brew install colima incus python git"
-    else
-      if [ "$YES" -ne 1 ]; then
-        printf 'Run it now? [y/N] '; read -r answer </dev/tty || answer=n
-        case "$answer" in y|Y|yes|YES) ;; *) die 1 "install them, then run this installer again" ;; esac
-      fi
-      brew install colima incus python git
+    if [ "$YES" -ne 1 ]; then
+      printf 'Run it now? [y/N] '; read -r answer </dev/tty || answer=n
+      case "$answer" in y|Y|yes|YES) ;; *) die 1 "install them, then run this installer again" ;; esac
     fi
+    brew install colima incus python git
   else
     die 1 "missing:$missing. Install Incus (https://linuxcontainers.org/incus/docs/main/installing/), Python 3.9+, Git and OpenSSH, then run this installer again"
   fi
