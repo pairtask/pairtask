@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 from sandbox_layout import discover
+from sandbox_remote import default_remote
 
 
 DEFAULT_STATE = Path(__file__).resolve().parents[1] / "infra/incus/ssh"
@@ -139,7 +140,7 @@ def setup(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--remote", required=True, type=identifier)
+    parser.add_argument("--remote", default=default_remote(), type=identifier, help="Incus remote; defaults to colima-pairtask on macOS, local on Linux")
     parser.add_argument("--project", default="pairtask", type=identifier)
     parser.add_argument("--instance", default="workspace", type=identifier)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE)

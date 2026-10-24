@@ -29,22 +29,23 @@ curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh |
 # Pin a version: sh -s -- --version workspace-vX.Y.Z, or --release workspace-vX.Y.Z
 ```
 
-Run host commands from your provisioning checkout. On Linux, skip Colima commands
-and use `local:` / `--remote local`. For host mounts, see the
+`pairtask` is the installed host command; from a checkout instead, write
+`python3 scripts/pairtask.py` for it. On Linux the remote is `local`
+(`--remote local`) and there is no Colima. For host mounts, see the
 [`mounts.json` example](docs/sandbox-mounts.md#choose-directories).
 
 ```sh
-# HOST: run from your provisioning checkout
+# HOST
 # Start the Mac VM and the containers; expect workspace (and secured, if enabled) RUNNING
-python3 scripts/pairtask.py start
-python3 scripts/pairtask.py status
+pairtask start
+pairtask status
 
 # Optional: preview host mounts; uncomment with your file (does not apply)
-# python3 scripts/pairtask.py mounts plan --mounts-file /path/to/mounts.json
+# pairtask mounts plan --mounts-file /path/to/mounts.json
 
 # Check the broker, then enter dev (SSH was configured by the install)
-ssh -F infra/incus/ssh/config workspace pairtask status
-python3 scripts/pairtask.py shell
+pairtask shell pairtask status
+pairtask shell
 
 # CONTAINER: all commands below until exit run inside your SSH session
 # First use only: uncomment to sign in before starting agents
@@ -75,7 +76,7 @@ codex                         # new managed Codex conversation
 exit
 
 # HOST AGAIN: optional shutdown; stops agents, keeps persistent files
-# python3 scripts/pairtask.py stop        # add --vm to stop the Mac VM too
+# pairtask stop        # add --vm to stop the Mac VM too
 ```
 
 Expect `Broker: ready`. Run one Codex and one Claude session; additional sessions
@@ -96,7 +97,7 @@ Run on your host:
 
 ```sh
 # Agent connections and pending messages (terminal UI)
-ssh -t -F infra/incus/ssh/config workspace pairtask dashboard
+pairtask shell pairtask dashboard
 
 # Containers, resources and logs (browser UI)
 incus webui colima-pairtask:  # Linux: incus webui local:

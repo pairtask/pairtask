@@ -19,7 +19,8 @@ def identifier(value):
 
 
 def shell_command(args):
-    return ["ssh", "-F", str(args.ssh_config), "workspace"] + args.command
+    tty = ["-t"] if args.command and sys.stdin.isatty() else [] # a remote TUI such as the dashboard needs one
+    return ["ssh"] + tty + ["-F", str(args.ssh_config), "workspace"] + args.command
 
 
 def chat_command(args):
