@@ -28,11 +28,22 @@ Do not reinitialize an existing server. Mac requires Colima 0.10.3+.
 
 ## 2. Install or upgrade
 
-Run from this repository on your host. Exit agents before upgrading:
+Exit agents before upgrading. The one-line installer does everything below
+and puts the `pairtask` command on your PATH (run it again to upgrade):
 
 ```sh
-python3 scripts/sandbox-provision.py rollout
+curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
 ```
+
+From a checkout of this repository on your host instead:
+
+```sh
+python3 scripts/pairtask.py install        # later: python3 scripts/pairtask.py upgrade
+python3 scripts/sandbox-provision.py rollout   # legacy form of upgrade: the rollout alone
+```
+
+`install` also starts the macOS VM first and lists the containers at the end;
+`upgrade` and the legacy rollout are the same download-and-replace step.
 
 Downloads the latest tested release for your server, verifies it, stops existing
 containers, then provisions and configures SSH. No GitHub CLI, browser download,

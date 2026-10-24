@@ -56,6 +56,29 @@ Keep handoffs in an allowed project directory. Persistence does not grant native
 tools access outside their working-directory allowlist; if access is denied,
 request an allowed copy or explicit directory access instead of bypassing the denial.
 
+## Host commands to hand the operator
+
+Agents never run host commands; the host is the operator's machine. When a
+situation needs one, name it exactly, say that it runs on the host, and say
+whether it ends running sessions. `pairtask` is the host command installed by
+the one-line installer (or `python3 scripts/pairtask.py` from the operator's
+checkout); the full list is the repository's `docs/host-commands.md`.
+
+| Situation | Tell the operator to run (host) | Ends sessions |
+| --- | --- | --- |
+| A project directory is missing or read-only in the workspace | `pairtask mounts plan --mounts-file FILE`, then `pairtask mounts apply --mounts-file FILE`, `pairtask plan`, `pairtask apply`; on macOS `pairtask stop --vm` before and `pairtask start` after the mounts apply | yes, at apply |
+| A newer release or a reprovision is needed | `pairtask upgrade` (pin with `--release workspace-vX.Y.Z`); back up first | yes |
+| Containers are stopped after a reboot | `pairtask start`, then `pairtask status` | no |
+| The operator should read or answer messages | `pairtask chat` (one-shot forms are in the host command reference) | no |
+| The broker or SSH path looks broken from the host | `pairtask status`; `pairtask ssh` recreates the key-only SSH path (remote defaults to the OS); `pairtask recover` for provisioning state | no |
+| Agent tools (CodeScene MCP, Playwright, Docker) failed to install | `pairtask tools` | no |
+| A macOS writable share stopped working | `pairtask share run --mounts-file FILE` (after `share plan` and `share setup` once) | no |
+| The operator's terminal types mouse codes after a dropped session | `reset` in that terminal; use `pairtask shell` / `pairtask chat`, which restore the terminal | no |
+| Everything should stop for the day | `pairtask stop` (`--vm` also stops the macOS VM) | yes |
+
+Say when a command ends sessions so the operator can tell you to check in your
+work first; after it, reconcile your handoff checkpoint as after any restart.
+
 ## Select a writable working copy
 
 Mount fields are `project_name`, `host_path`, `container_mount_path`, and

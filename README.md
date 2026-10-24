@@ -18,36 +18,34 @@ Provisioning runs OpenTofu in a disposable container; no host Terraform/OpenTofu
 install is needed. Dev has network access; optional
 control stays offline. Host credentials and conversations are not imported.
 
-**Host prerequisites:** Python, Git, OpenSSH and Incus; macOS also needs Colima.
-[Install commands](docs/sandbox.md#1-install-the-host-tools). No `gh` or browser download needed.
+**Host prerequisites:** Python, Git, OpenSSH and Incus; macOS also needs Colima
+(`brew install colima incus python git`). No `gh` or browser download needed.
+Every host command, by task: [host commands](docs/host-commands.md).
 
 ```sh
-# First install or upgrade (Incus must be running; upgrades end active sessions)
-python3 scripts/sandbox-provision.py rollout
-# Pin a version: add --release workspace-vX.Y.Z
+# Install, and later upgrade (Incus must be running; upgrades end active sessions)
+curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
+# From a checkout instead: python3 scripts/pairtask.py install   (later: upgrade)
+# Pin a version: sh -s -- --version workspace-vX.Y.Z, or --release workspace-vX.Y.Z
 ```
 
-Run host commands from your provisioning checkout. On Linux, skip Colima commands
-and use `local:` / `--remote local`. For host mounts, see the
+`pairtask` is the installed host command; from a checkout instead, write
+`python3 scripts/pairtask.py` for it. On Linux the remote is `local`
+(`--remote local`) and there is no Colima. For host mounts, see the
 [`mounts.json` example](docs/sandbox-mounts.md#choose-directories).
 
 ```sh
-# HOST: run from your provisioning checkout
-# Start the Mac VM, then the containers
-python3 scripts/sandbox-host.py apply
-incus --project pairtask start colima-pairtask:secured   # if secured_runtime = true
-incus --project pairtask start colima-pairtask:workspace
-
-# Check: expect workspace (and secured, if enabled) to show RUNNING
-incus --project pairtask list colima-pairtask:
+# HOST
+# Start the Mac VM and the containers; expect workspace (and secured, if enabled) RUNNING
+pairtask start
+pairtask status
 
 # Optional: preview host mounts; uncomment with your file (does not apply)
-# python3 scripts/sandbox-host.py mounts-plan --mounts-file /path/to/mounts.json
+# pairtask mounts plan --mounts-file /path/to/mounts.json
 
-# Configure SSH once, check the broker, then enter dev
-python3 scripts/sandbox-ssh.py --remote colima-pairtask
-ssh -F infra/incus/ssh/config workspace pairtask status
-ssh -F infra/incus/ssh/config workspace
+# Check the broker, then enter dev (SSH was configured by the install)
+pairtask shell pairtask status
+pairtask shell
 
 # CONTAINER: all commands below until exit run inside your SSH session
 # First use only: uncomment to sign in before starting agents
@@ -78,9 +76,7 @@ codex                         # new managed Codex conversation
 exit
 
 # HOST AGAIN: optional shutdown; stops agents, keeps persistent files
-# incus --project pairtask stop colima-pairtask:workspace
-# incus --project pairtask stop colima-pairtask:secured   # if secured_runtime = true
-# colima stop pairtask
+# pairtask stop        # add --vm to stop the Mac VM too
 ```
 
 Expect `Broker: ready`. Run one Codex and one Claude session; additional sessions
@@ -101,7 +97,7 @@ Run on your host:
 
 ```sh
 # Agent connections and pending messages (terminal UI)
-ssh -t -F infra/incus/ssh/config workspace pairtask dashboard
+pairtask shell --tty pairtask dashboard
 
 # Containers, resources and logs (browser UI)
 incus webui colima-pairtask:  # Linux: incus webui local:

@@ -55,7 +55,7 @@ output "operator_paths" {
 
 
 def invoke(directory, args, action, extra=()):
-    command = [sys.executable, str(ROOT / "scripts/sandbox-provision.py"), action,
+    command = [sys.executable, str(ROOT / "scripts/pairtask.py"), action,
                "--remote", args.remote, "--state-dir", str(directory / "state"), "--project", args.project,
                "--repo", args.repo]
     env = dict(os.environ, PAIRTASK_OPERATOR_HOME=str(directory / "registry"))
