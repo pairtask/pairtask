@@ -269,7 +269,9 @@ func TestStartExecReceivesPrivateConfigAndUnchangedEnvironment(t *testing.T) {
 		calls++
 		assertStartEqual(t, "executable", path, layout.ClaudeBinary)
 		assertStartEqual(t, "argv[0]", argv[0], path)
-		assertStartEqual(t, "launch environment", env, wantEnv)
+		if !reflect.DeepEqual(env, wantEnv) {
+			t.Fatal("launch environment changed") // Environment values may contain credentials.
+		}
 		config := layout.configPath("reviewer-2")
 		assertStartMode(t, config, 0600)
 		assertStartMode(t, layout.ConfigDir, 0700)
