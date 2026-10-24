@@ -76,18 +76,24 @@ func assertStartMode(t *testing.T, path string, mode os.FileMode) {
 	}
 }
 
+func assertStartEqual(t *testing.T, label string, got, want any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s: got %#v, want %#v", label, got, want)
+	}
+}
+
 func TestStartDefaultsAndNativeArgumentBoundary(t *testing.T) {
 	for _, agent := range []string{"codex", "claude"} {
 		t.Run(agent, func(t *testing.T) {
 			opts := parseStartForTest(t, agent)
-			if opts.Agent != agent || opts.ID != agent+"-1" {
-				t.Fatalf("defaults: %+v", opts)
-			}
+			assertStartEqual(t, "default agent", opts.Agent, agent)
+			assertStartEqual(t, "default ID", opts.ID, agent+"-1")
 			native := []string{"resume", "session with spaces", "--model", "native-model", "--dry-run"}
 			opts = parseStartForTest(t, append([]string{agent, "--id", "reviewer / 2", "--"}, native...)...)
-			if opts.ID != "reviewer / 2" || opts.DryRun || !reflect.DeepEqual(opts.Native, native) {
-				t.Fatalf("native arguments consumed or changed: %+v", opts)
-			}
+			assertStartEqual(t, "custom ID", opts.ID, "reviewer / 2")
+			assertStartEqual(t, "native dry-run flag belongs to agent", opts.DryRun, false)
+			assertStartEqual(t, "native arguments", opts.Native, native)
 		})
 	}
 }
@@ -174,7 +180,7 @@ func TestStartClaudeConfigSupportsEqualsFlagsAndMissingSocket(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.original, func(t *testing.T) {
 			base := []byte(`{"mcpServers":{"pairtask":{"args":` + tc.original + `}}}`)
-			got, err := claudeConfig(base, "new", tc.socket)
+			got, err := claudeConfig(base, serverIdentity{ID: "new", Socket: tc.socket})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,7 +207,7 @@ func TestStartClaudeRejectsMalformedOrAmbiguousConfig(t *testing.T) {
 		`{"mcpServers":{"pairtask":{"args":["--agent-id","one","--socket","a","--socket=b"]}}}`}
 	for _, raw := range cases {
 		t.Run(raw, func(t *testing.T) {
-			if _, err := claudeConfig([]byte(raw), "reviewer", "/new"); err == nil {
+			if _, err := claudeConfig([]byte(raw), serverIdentity{ID: "reviewer", Socket: "/new"}); err == nil {
 				t.Fatalf("accepted malformed config: %s", raw)
 			}
 		})
@@ -231,20 +237,19 @@ func TestStartDryRunAndInvalidInputWriteNothing(t *testing.T) {
 	var out, stderr bytes.Buffer
 	executed := false
 	exec := func(string, []string, []string) error { executed = true; return nil }
-	code := runStart([]string{"claude", "--id", "reviewer", "--dry-run"}, &out, &stderr, layout, exec)
-	if code != 0 || executed {
-		t.Fatalf("dry run: code=%d executed=%v stderr=%s", code, executed, &stderr)
-	}
+	runtime := startRuntime{Stdout: &out, Stderr: &stderr, Layout: layout, Exec: exec}
+	code := runStart([]string{"claude", "--id", "reviewer", "--dry-run"}, runtime)
+	assertStartEqual(t, "dry-run status: "+stderr.String(), code, 0)
+	assertStartEqual(t, "dry run executed a process", executed, false)
 	if strings.Contains(out.String(), "test-secret") {
 		t.Fatal("dry run disclosed other server's secret")
 	}
 	if _, err := os.Stat(layout.ConfigDir); !os.IsNotExist(err) {
 		t.Fatalf("dry run wrote config directory: %v", err)
 	}
-	code = runStart([]string{"claude", "--id", "operator"}, &out, &stderr, layout, exec)
-	if code != 2 || executed {
-		t.Fatalf("invalid ID: code=%d executed=%v", code, executed)
-	}
+	code = runStart([]string{"claude", "--id", "operator"}, runtime)
+	assertStartEqual(t, "invalid ID status", code, 2)
+	assertStartEqual(t, "invalid ID executed a process", executed, false)
 	if _, err := os.Stat(layout.ConfigDir); !os.IsNotExist(err) {
 		t.Fatalf("invalid ID wrote config directory: %v", err)
 	}
@@ -261,20 +266,20 @@ func TestStartExecReceivesPrivateConfigAndUnchangedEnvironment(t *testing.T) {
 	calls := 0
 	exec := func(path string, argv, env []string) error {
 		calls++
-		if path != layout.ClaudeBinary || argv[0] != path {
-			t.Fatalf("wrong executable: %s %q", path, argv)
-		}
-		if !reflect.DeepEqual(env, wantEnv) {
-			t.Fatal("launch environment changed")
-		}
+		assertStartEqual(t, "executable", path, layout.ClaudeBinary)
+		assertStartEqual(t, "argv[0]", argv[0], path)
+		assertStartEqual(t, "launch environment", env, wantEnv)
 		config := configPath(layout.ConfigDir, "reviewer-2")
 		assertStartMode(t, config, 0600)
 		assertStartMode(t, layout.ConfigDir, 0700)
 		return errors.New("test exec failure")
 	}
-	code := runStart([]string{"claude", "--id", "reviewer-2"}, &out, &stderr, layout, exec)
-	if code != 1 || calls != 1 || !strings.Contains(stderr.String(), "test exec failure") {
-		t.Fatalf("exec failure: code=%d calls=%d stderr=%s", code, calls, &stderr)
+	code := runStart([]string{"claude", "--id", "reviewer-2"},
+		startRuntime{Stdout: &out, Stderr: &stderr, Layout: layout, Exec: exec})
+	assertStartEqual(t, "exec failure status", code, 1)
+	assertStartEqual(t, "exec calls", calls, 1)
+	if !strings.Contains(stderr.String(), "test exec failure") {
+		t.Fatalf("missing exec failure diagnostic: %s", &stderr)
 	}
 	unchanged, err := os.ReadFile(layout.BaseConfig)
 	if err != nil || string(unchanged) != startConfigFixture {
@@ -390,6 +395,6 @@ func TestStartExecChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := runStart([]string{os.Getenv("PAIRTASK_TEST_EXEC_AGENT"), "--id", "exec-proof"},
-		os.Stdout, os.Stderr, layout, syscall.Exec)
+		startRuntime{Stdout: os.Stdout, Stderr: os.Stderr, Layout: layout, Exec: syscall.Exec})
 	t.Fatalf("exec returned instead of replacing this process: %d", code)
 }
