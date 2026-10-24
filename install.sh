@@ -116,12 +116,29 @@ else
   fi
 fi
 
-# 5. The launcher and PATH.
+# 5. The launchers and PATH. `pk` is a short alias of `pairtask`, written
+#    only where it shadows nothing: never over a file we did not write, never
+#    through a symlink, never when another `pk` is already on PATH.
 shim="$BIN/pairtask"
+launcher=$(printf '#!/bin/sh\nexec python3 %s/scripts/pairtask.py "$@"' "$(squote "$HOST")")
 if [ -n "$DRY" ]; then plan "write $shim"
 else
-  printf '#!/bin/sh\nexec python3 %s/scripts/pairtask.py "$@"\n' "$(squote "$HOST")" > "$shim"
+  printf '%s\n' "$launcher" > "$shim"
   chmod 755 "$shim"
+fi
+alias="$BIN/pk"
+skip=""
+if [ -L "$alias" ]; then skip="$alias is a symlink"
+elif [ -e "$alias" ]; then [ "$(cat "$alias")" = "$launcher" ] || skip="$alias exists and is not ours"
+else
+  other=$(command -v pk 2>/dev/null || true)
+  [ -z "$other" ] || skip="another pk is on PATH at $other"
+fi
+if [ -n "$skip" ]; then say "pk alias skipped: $skip; use pairtask"
+elif [ -n "$DRY" ]; then plan "write $alias"
+else
+  printf '%s\n' "$launcher" > "$alias"
+  chmod 755 "$alias"
 fi
 if [ "$MODIFY_PATH" -eq 1 ]; then
   case "${SHELL:-}" in
