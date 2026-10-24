@@ -129,7 +129,8 @@ fi
 alias="$BIN/pk"
 skip=""
 if [ -L "$alias" ]; then skip="$alias is a symlink"
-elif [ -e "$alias" ]; then [ "$(cat "$alias")" = "$launcher" ] || skip="$alias exists and is not ours"
+elif [ -e "$alias" ] && [ ! -f "$alias" ]; then skip="$alias exists and is not a regular file"
+elif [ -f "$alias" ]; then [ "$(cat "$alias")" = "$launcher" ] || skip="$alias exists and is not ours"
 else
   other=$(command -v pk 2>/dev/null || true)
   [ -z "$other" ] || skip="another pk is on PATH at $other"

@@ -213,6 +213,8 @@ def usage():
         lines.append("  %-10s %s" % (name, help_text))
     for alias, target in ALIASES.items():
         lines.append("  %-10s alias of %s" % (alias, target))
+    lines.append("")
+    lines.append("pk is a short alias of pairtask, installed when no other pk exists (skipped if one conflicts).")
     lines += ["", "Reference: docs/host-commands.md. `pairtask --dry-run <command>` prints the steps without running them."]
     return "\n".join(lines)
 
