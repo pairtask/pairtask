@@ -91,10 +91,22 @@ message; it is not approval.
 ### Interactive chat
 
 ```sh
+python3 scripts/sandbox-session.py chat      # wraps the command below and restores your terminal after
 incus --project pairtask exec -t colima-pairtask:secured -- pairtask operator chat
 ```
 
-The chat needs an interactive terminal (`-t`). It runs full screen: the
+The chat needs an interactive terminal (`-t`). Prefer the wrapper: a session
+that drops (a reprovision, a lost connection) cannot turn the terminal's
+mouse reporting off again, and every mouse move then types `35;26;31M`-like
+text into your shell. The wrapper saves your terminal state before the
+session and restores it afterwards, on any exit status and when interrupted,
+and emits nothing when its output is not a terminal (#122). If a terminal is
+already in that state, run `reset`, or:
+
+```sh
+printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l'
+```
+The chat runs full screen: the
 conversation fills the window, newest at the bottom, and you type at the
 bottom. A hint line above the input always shows who your message will reach.
 

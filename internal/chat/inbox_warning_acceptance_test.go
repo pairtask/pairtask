@@ -1,7 +1,6 @@
 package chat_test
 
 import (
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -25,7 +24,7 @@ func TestChatInboxWarningLoadsUsageForPendingWorkAtStartup(t *testing.T) {
 	usage.HeadSeq = 12
 	h.reply(status, protocol.Message{Type: protocol.TypeOperatorInboxStatus, Inbox: &usage})
 	h.await(func() bool { return h.m.State().InFlight == 0 })
-	row := strings.Split(h.m.View().Content, "\n")[0]
+	row := footerRow(h)
 	v3Contains(t, ansi.Strip(row), "12 need ack · /ack all")
 	v3Contains(t, ansi.Strip(row), "12/16")
 	v3ColorEqual(t, "near-bound count uses warning colour", v3StyleAt(t, row, "12/16").Fg, ansi.Yellow)

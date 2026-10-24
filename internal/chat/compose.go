@@ -22,6 +22,7 @@ const composerMaxContentLines = 1 << 20
 // the command line and the open picker.
 type composer struct {
 	editor textarea.Model
+	width  int          // the outer width the editor was last sized to
 	pasted bool         // the draft began with pasted text: literal, never parsed
 	to     []string     // /to audience
 	reply  *replyTarget // frozen reply target
@@ -64,6 +65,16 @@ func newComposer() composer {
 	editor.MaxContentHeight = composerMaxContentLines
 	editor.Focus()
 	return composer{editor: editor}
+}
+
+// setWidth sizes the editor to an outer width, once per change: the editor
+// reports its inner width, so the outer one is remembered here.
+func (c *composer) setWidth(outer int) {
+	if c.width == outer {
+		return
+	}
+	c.width = outer
+	c.editor.SetWidth(outer)
 }
 
 // draftEmpty reports an empty draft (whitespace included).
@@ -286,6 +297,7 @@ func (m *Model) pickLiteral(id string) {
 func (m *Model) openCommandLine() {
 	input := textinput.New()
 	input.Prompt = "/"
+	input.SetWidth(m.compose.width - 2)
 	input.Focus()
 	m.compose.cmd = &commandLine{input: input}
 	m.compose.picker = nil
@@ -318,6 +330,9 @@ func (m *Model) commandControl(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "esc":
 		m.closeCommandLine()
 	case "enter":
+		if m.compose.picker != nil {
+			return m.runPicked(), true
+		}
 		return m.runCommandLine(), true
 	case "tab":
 		m.completeCommand()
@@ -366,6 +381,21 @@ func (m *Model) completeCommand() {
 	c.cmd.input.SetValue(c.picker.items[c.picker.selected] + " ")
 	c.cmd.input.CursorEnd()
 	c.picker = nil
+}
+
+// runPicked completes the highlighted command and runs it when it runs
+// without an argument; a command that needs one stays on the line, completed,
+// waiting for it.
+func (m *Model) runPicked() tea.Cmd {
+	if m.compose.cmd.pasted {
+		return m.runCommandLine() // refused: pasted text never runs
+	}
+	m.completeCommand()
+	name := strings.TrimSpace(m.compose.cmd.input.Value())
+	if byName(name).check("") != nil {
+		return nil
+	}
+	return m.runCommand(argument(name), "")
 }
 
 // key routes a key press: global keys, then the help panel, then the
@@ -455,8 +485,8 @@ func (m *Model) manualRetry() tea.Cmd {
 
 func (m *Model) resize(size tea.WindowSizeMsg) {
 	m.width, m.height = size.Width, size.Height
-	m.compose.editor.SetWidth(max(10, size.Width))
+	m.compose.setWidth(m.editorWidth(m.width >= boxMinWidth))
 	for _, v := range m.conv.saved {
-		v.compose.editor.SetWidth(max(10, size.Width))
+		v.compose.setWidth(m.editorWidth(m.width >= boxMinWidth))
 	}
 }

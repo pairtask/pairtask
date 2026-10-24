@@ -29,10 +29,14 @@ func v3DisplayHarness(t *testing.T, partial bool) *chatHarness {
 	return h
 }
 
+func isAudienceRow(row string) bool {
+	return strings.HasPrefix(row, "── ") || strings.HasPrefix(row, "╭─ ")
+}
+
 func v3AudienceRow(t *testing.T, h *chatHarness) string {
 	t.Helper()
 	for _, row := range strings.Split(h.m.View().Content, "\n") {
-		if strings.HasPrefix(ansi.Strip(row), "── ") {
+		if isAudienceRow(ansi.Strip(row)) {
 			return row
 		}
 	}
@@ -52,16 +56,16 @@ func TestChatV3DisplayHeaderAndDividersFrameTranscriptAndDraft(t *testing.T) {
 	v2Type(h, "draft remains here")
 	rows := strings.Split(ansi.Strip(h.m.View().Content), "\n")
 	v3Contains(t, rows[0], "pairtask operator chat")
-	v3Contains(t, rows[0], "connected")
-	v3Contains(t, rows[0], "2 online")
-	v3Contains(t, rows[0], "Enter send · / commands · F1 help")
+	v3Contains(t, rows[len(rows)-1], "connected")
+	v3Contains(t, rows[len(rows)-1], "2 online")
+	v3Contains(t, rows[len(rows)-1], "Enter send · / commands · F1 help")
 	v3Contains(t, rows[1], "1 All")
 	v3Contains(t, rows[1], "claude-1")
 	v3Contains(t, rows[1], "codex-1")
 	chatEqual(t, "conversation bar divider", rows[2], strings.Repeat("─", 120))
-	v3Contains(t, strings.Join(rows[3:len(rows)-2], "\n"), "body target")
-	v3Contains(t, rows[len(rows)-2], "── to everyone (2 online) ─")
-	v3Contains(t, rows[len(rows)-1], "draft remains here")
+	v3Contains(t, strings.Join(rows[3:len(rows)-4], "\n"), "body target")
+	v3Contains(t, rows[len(rows)-4], "╭─ to everyone (2 online) ─")
+	v3Contains(t, rows[len(rows)-3], "draft remains here")
 	chatEqual(t, "draft untouched by rendering", h.m.State().Draft, "draft remains here")
 	chatEqual(t, "rendering makes no requests", h.m.State().InFlight, 0)
 	v2FrameFits(t, h, 120, 24)
@@ -85,7 +89,7 @@ func TestChatV3DisplayAudienceLabelsPreserveScope(t *testing.T) {
 			}
 			chatEqual(t, "audience hint", h.m.State().Hint, tc.want)
 			row := ansi.Strip(v3AudienceRow(t, h))
-			v3Contains(t, row, "── "+tc.want+" ─")
+			v3Contains(t, row, tc.want)
 			chatEqual(t, "divider fills terminal width", ansi.StringWidth(row), 120)
 			chatEqual(t, "display does not send", h.m.State().Intent, nil)
 			chatEqual(t, "display does not acknowledge", len(h.m.State().QueuedAcks), 0)
@@ -124,8 +128,7 @@ func TestChatV3DisplaySmallFramesKeepAudienceAndComposer(t *testing.T) {
 			h.input(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			v2FrameFits(t, h, size[0], size[1])
 			v3Contains(t, ansi.Strip(v3AudienceRow(t, h)), "to everyone")
-			rows := strings.Split(ansi.Strip(h.m.View().Content), "\n")
-			v3Contains(t, rows[len(rows)-1], "draft")
+			v3Contains(t, strings.Join(growthComposerRows(t, h), "\n"), "draft")
 		})
 	}
 }

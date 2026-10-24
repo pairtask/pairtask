@@ -68,19 +68,19 @@ func TestChatMouseWheelOverOverflowingComposerDoesNotMoveTranscript(t *testing.T
 	h.input(tea.PasteMsg{Content: draft})
 	before := strings.Join(growthComposerRows(t, h), "\n")
 	v3Contains(t, before, "row09")
-	h.input(tea.MouseWheelMsg{X: 10, Y: 22, Button: tea.MouseWheelUp})
+	h.input(tea.MouseWheelMsg{X: 10, Y: mouseComposerY(h), Button: tea.MouseWheelUp})
 	after := strings.Join(growthComposerRows(t, h), "\n")
 	if after == before {
 		t.Fatal("wheel did not scroll overflowing composer")
 	}
 	for range 3 {
-		h.input(tea.MouseWheelMsg{X: 10, Y: 22, Button: tea.MouseWheelUp})
+		h.input(tea.MouseWheelMsg{X: 10, Y: mouseComposerY(h), Button: tea.MouseWheelUp})
 	}
 	v3Contains(t, strings.Join(growthComposerRows(t, h), "\n"), "row01")
 	chatEqual(t, "composer wheel leaves transcript following", h.m.State().ScrollOffset, 0)
 	chatEqual(t, "composer scroll leaves text intact", h.m.State().Draft, draft)
 	for range 4 {
-		h.input(tea.MouseWheelMsg{X: 10, Y: 22, Button: tea.MouseWheelDown})
+		h.input(tea.MouseWheelMsg{X: 10, Y: mouseComposerY(h), Button: tea.MouseWheelDown})
 	}
 	v3Contains(t, strings.Join(growthComposerRows(t, h), "\n"), "row09")
 }
@@ -145,13 +145,13 @@ func TestChatMouseWheelOverSoftWrappedComposerDoesNotMoveTranscript(t *testing.T
 	h.input(tea.PasteMsg{Content: draft})
 	before := strings.Join(growthComposerRows(t, h), "\n")
 	v3Contains(t, before, "END")
-	h.input(tea.MouseWheelMsg{X: 10, Y: 22, Button: tea.MouseWheelUp})
+	h.input(tea.MouseWheelMsg{X: 10, Y: mouseComposerY(h), Button: tea.MouseWheelUp})
 	chatEqual(t, "soft-wrapped composer owns the wheel", h.m.State().ScrollOffset, 0)
 	if after := strings.Join(growthComposerRows(t, h), "\n"); after == before {
 		t.Fatal("wheel did not scroll soft-wrapped composer")
 	}
 	for range 10 {
-		h.input(tea.MouseWheelMsg{X: 10, Y: 22, Button: tea.MouseWheelUp})
+		h.input(tea.MouseWheelMsg{X: 10, Y: mouseComposerY(h), Button: tea.MouseWheelUp})
 	}
 	v3Contains(t, strings.Join(growthComposerRows(t, h), "\n"), "START")
 	chatEqual(t, "soft-wrapped scroll preserves text", h.m.State().Draft, draft)
@@ -160,21 +160,32 @@ func TestChatMouseWheelOverSoftWrappedComposerDoesNotMoveTranscript(t *testing.T
 
 func TestChatMouseWheelOwnsComposerAtExactWrapBoundary(t *testing.T) {
 	h := mouseHarness(t)
-	// At 80 columns, the prompt leaves 78 cells. The editor needs a cursor
+	// At 80 columns, the prompt leaves 74 cells. The editor needs a cursor
 	// row after six exactly full rows even though plain word wrapping does not.
-	draft := "START" + strings.Repeat("x", 460) + "END"
+	draft := "START" + strings.Repeat("x", 436) + "END"
 	h.input(tea.PasteMsg{Content: draft})
 	before := strings.Join(growthComposerRows(t, h), "\n")
 	if strings.Contains(before, "START") {
 		t.Fatal("fixture must overflow the composer's six visible rows")
 	}
-	h.input(tea.MouseWheelMsg{X: 10, Y: 22, Button: tea.MouseWheelUp})
+	h.input(tea.MouseWheelMsg{X: 10, Y: mouseComposerY(h), Button: tea.MouseWheelUp})
 	chatEqual(t, "exact-wrap overflow owns wheel", h.m.State().ScrollOffset, 0)
 	v3Contains(t, strings.Join(growthComposerRows(t, h), "\n"), "START")
-	h.input(tea.MouseWheelMsg{X: 10, Y: 22, Button: tea.MouseWheelDown})
+	h.input(tea.MouseWheelMsg{X: 10, Y: mouseComposerY(h), Button: tea.MouseWheelDown})
 	chatEqual(t, "exact-wrap overflow still owns wheel from top", h.m.State().ScrollOffset, 0)
 	if strings.Contains(strings.Join(growthComposerRows(t, h), "\n"), "START") {
 		t.Fatal("wheel down did not return to the bottom of the composer")
 	}
 	chatEqual(t, "boundary scroll preserves draft", h.m.State().Draft, draft)
+}
+
+func mouseComposerY(h *chatHarness) int {
+	h.t.Helper()
+	rows := strings.Split(ansi.Strip(h.m.View().Content), "\n")
+	for i, row := range rows {
+		if strings.HasPrefix(row, "╰") {
+			return i - 1
+		}
+	}
+	return len(rows) - 2
 }

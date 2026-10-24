@@ -256,7 +256,7 @@ func (v *view) protected() bool {
 // freshComposer is a new draft sized to the window, with the view's placeholder.
 func (m *Model) freshComposer() composer {
 	c := newComposer()
-	c.editor.SetWidth(max(10, m.width))
+	c.setWidth(m.editorWidth(m.width >= boxMinWidth))
 	c.editor.Placeholder = m.placeholder()
 	return c
 }

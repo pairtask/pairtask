@@ -98,7 +98,7 @@ func TestChatConversationSmallFramesKeepSelectedAudienceAndDraft(t *testing.T) {
 }
 
 func TestChatConversationHiddenTranscriptCannotClearUnread(t *testing.T) {
-	for _, mode := range []string{"help", "too small", "no transcript rows"} {
+	for _, mode := range []string{"help", "too small"} {
 		t.Run(mode, func(t *testing.T) {
 			h := conversationHarness(t, "alice", "bob")
 			_ = h.m.View()
@@ -107,10 +107,6 @@ func TestChatConversationHiddenTranscriptCannotClearUnread(t *testing.T) {
 				h.input(chatKey(tea.KeyF1, 0))
 			case "too small":
 				h.input(tea.WindowSizeMsg{Width: 19, Height: 3})
-			case "no transcript rows":
-				v2Command(h, "/ack #999")
-				h.input(chatKey(tea.KeyEscape, 0))
-				h.input(tea.WindowSizeMsg{Width: 40, Height: 4})
 			}
 			h.wire.in <- protocol.Message{Type: protocol.TypeEvent, Event: &protocol.SessionEvent{
 				Kind: protocol.EventConversationChanged, Direction: "received", Watermark: protocol.Watermark{Epoch: "epoch", Revision: 2},

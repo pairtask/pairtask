@@ -39,21 +39,28 @@ func (m *Model) wheel(msg tea.MouseWheelMsg) tea.Cmd {
 // overComposer reports a pointer on the composer rows while the draft has
 // more visual rows than the composer shows.
 func (m *Model) overComposer(y int, l frameLayout) bool {
-	if m.compose.cmd != nil || y < m.height-l.composer {
+	if m.compose.cmd != nil {
 		return false
 	}
-	return m.composerOverflows(l.composer)
+	bottom := m.height - 1 - l.picker // the footer and the picker sit below
+	if l.boxed {
+		bottom--
+	}
+	if y < bottom-l.composer || y >= bottom {
+		return false
+	}
+	return m.composerOverflows(l)
 }
 
 // composerOverflows measures the draft in an unbounded copy of the editor:
 // its own wrapping decides, soft wraps and the cursor row after an exactly
 // full row included.
-func (m *Model) composerOverflows(shown int) bool {
+func (m *Model) composerOverflows(l frameLayout) bool {
 	probe := newComposer().editor
 	probe.MaxHeight, probe.MaxContentHeight = 0, 0
-	probe.SetWidth(max(10, m.width))
+	probe.SetWidth(m.editorWidth(l.boxed))
 	probe.SetValue(m.compose.editor.Value())
-	return probe.Height() > shown
+	return probe.Height() > l.composer
 }
 
 // scrollComposer moves the cursor through the draft with the editor's own

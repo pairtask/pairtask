@@ -49,12 +49,16 @@ Use `--storage-pool` / `--network` for a non-default Incus pool/bridge.
 On the host:
 
 ```sh
+python3 scripts/sandbox-session.py shell     # wraps the command below and restores your terminal after
 ssh -F infra/incus/ssh/config workspace
 ```
 
 You enter as `agent`, without sudo, in `/workspace`. The helper creates a dedicated
 host login key and copies **only its public key**. It never forwards your SSH agent.
 SSH uses `incus exec`, works offline and opens no network SSH listener.
+A session that drops while a full-screen program (an agent harness, the chat)
+runs can leave your terminal in mouse-reporting mode; the wrapper restores it,
+and `reset` fixes a terminal that is already in that state (#122).
 
 [Sign in below](#sign-in-and-network-access), then use the
 [README commands](../README.md#set-up-a-sandbox) to clone, start/resume and reconnect.

@@ -14,12 +14,23 @@ func growthComposerRows(t *testing.T, h *chatHarness) []string {
 	t.Helper()
 	rows := strings.Split(ansi.Strip(h.m.View().Content), "\n")
 	for i, row := range rows {
-		if strings.Contains(row, "── to everyone") {
-			return rows[i+1:]
+		if isAudienceRow(row) {
+			return composerBody(rows, i+1)
 		}
 	}
 	t.Fatalf("composer audience line missing: %q", rows)
 	return nil
+}
+
+func composerBody(rows []string, start int) []string {
+	end := len(rows) - 1 // Footer stays below the input and picker.
+	for i := start; i < end; i++ {
+		if strings.HasPrefix(rows[i], "╰") {
+			end = i
+			break
+		}
+	}
+	return rows[start:end]
 }
 
 func growthVisibleMarkers(t *testing.T, rows []string, markers ...string) {

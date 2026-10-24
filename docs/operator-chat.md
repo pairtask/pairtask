@@ -1085,7 +1085,13 @@ re-reads the composer, the picker or presence.
 
 **Grammar.** Commands are entered on a command line that never touches the
 draft: typing `/` into an empty draft, or Ctrl+K at any time, opens it. The
-command picker filters as you type. Tab completes and never runs. Enter runs
+command picker filters as you type. Tab completes and never runs. Enter with
+the picker open completes the highlighted command and runs it when it runs
+without an argument (`/agents`, `/history`, `/clear`, `/help`, `/quit`, and
+`/ack`, `/reply`, `/find`, `/to`, whose argument is optional); a command that
+needs one (`/chat`, `/stages`, `/copy`) stays on the line, completed,
+waiting for it (#121; before,
+Enter ran the typed fragment). With the picker closed Enter runs
 an exact command or alias, or a unique prefix; an ambiguous prefix stays and
 lists the candidates. Esc closes the command line and restores the draft
 unchanged. Typing `/` as the first character of the command line leaves
@@ -1317,34 +1323,57 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
 ### Screen
 
 ```
- pairtask operator chat   connected · 2 online · F1 help
+ pairtask operator chat
  1 All   2 claude-1 •3   3 codex-1
  ───────────────────────────────────────────────────────────────
  12:41  codex-1 → you                                     #127
         Review is done; MERGE for 6cdc7c5.
         ● acknowledged
- ── to codex-1 ──────────────────────────────────────────────────
- › draft
+ ╭─ to codex-1 ─────────────────────────────────────────────────╮
+ │ › draft                                                      │
+ ╰──────────────────────────────────────────────────────────────╯
+ connected · 2 online · unread 0 · inbox 3   Enter send · / commands · F1 help
 ```
 
-- **Header**: a colour band (one background colour, white text, bold title
-  "pairtask operator chat"). Width tiers as in v2.
+- **Title band**: a colour band (one background colour, white text, bold
+  title "pairtask operator chat"; "operator chat" under 52 columns) with the
+  title alone. The connection facts moved to the footer (#121).
 - **Conversation bar**, one row: `1 All`, then `2 claude-1`, with `•N` unread
   in the warning colour. The selected one is rendered reversed in its agent
   colour (All in the title colour). The selected tab is always visible; the
   bar scrolls horizontally with `…`.
 - **Divider under the bar.** One line.
-- **Audience divider** replaces the v2 hint line, same row budget and the
-  same content rules (audience, reply target, blocking reason, "pasted text,
-  mentions ignored"): `── to codex-1 ──…` in codex-1's colour, `── to everyone
-  (2 online) ──…` in the warning colour (bold yellow line), `── reply to #127
-  → codex-1 ──…`, `── ✗ reason ──…` in the error colour. The v2 key reminder
-  ("Enter send · / commands · F1 help") moves to the header's right end when
-  it fits.
-- **Degradation order** on small terminals: audience divider and one composer
-  row, header, conversation bar, status, the rule under the bar, transcript,
-  extra composer rows, picker; the bar and the rule never take the last
-  transcript row. The minimum stays 4 rows by 20 columns.
+- **Input box.** The audience divider is the box's top edge and replaces the
+  v2 hint line with the same content rules (audience, reply target, blocking
+  reason, "pasted text, mentions ignored"): `╭─ to codex-1 ─…╮` in codex-1's
+  colour, `╭─ to everyone (2 online) ─…╮` in the warning colour (bold
+  yellow), `╭─ reply to #127 → codex-1 ─…╮`, `╭─ ✗ reason ─…╮` in the error
+  colour; a label longer than the width is cut with `…` so the corner stays.
+  The input rows sit inside with one cell of padding (`│ › draft │`), the box
+  grows with the draft up to six rows and scrolls inside after that, and a
+  bottom edge closes it. The command line is boxed the same way. Under 24
+  columns, or when no row is left for the bottom edge, the box is dropped:
+  the divider is the plain `── to codex-1 ──…` rule and the rows are full
+  width.
+- **Footer**, always the last row, a colour band like the title: what the
+  eye needs while typing, in priority order while it fits, joined by ` · `:
+  the transient status (a command's result or a refusal, bold, cut with `…`
+  when alone it is too long), the "N need ack · /ack all" reminder with the
+  near-bound warning in the warning colour, the connection facts
+  ("connected · 2 online · unread 0 · inbox 3"; shorter under 76 and 52
+  columns), then the key reminder ("Enter send · / commands · F1 help")
+  right-aligned when two cells remain and no status is set: a status replaces
+  the hints while it shows. A short status and the ack reminder are both
+  visible at 80 columns; a status too long for the row takes priority.
+- **Degradation order** on small terminals, what gets a row first: the
+  audience divider, one input row and the footer; up to three transcript rows
+  (the newest message's header, first text line and mark), which outrank
+  every decoration; the title band; the conversation bar; the rule
+  under the bar; the box's bottom edge; extra input rows (leaving two
+  transcript rows); the picker (up to six, leaving one); the transcript takes
+  the rest. At the 20×4 minimum the frame is one transcript row, the plain
+  divider, one input row and the footer. No frame is ever taller than the
+  window.
 
 ### Input sends to the selected conversation
 
