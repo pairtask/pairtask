@@ -1,0 +1,309 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/pairtask/pairtask/internal/protocol"
+)
+
+// startOptions is what `pairtask start` was asked for.
+type startOptions struct {
+	Agent, ID, Model, Effort, Socket string
+	DryRun                           bool
+	Native                           []string // everything after --, for the agent itself
+}
+
+// startLayout is where the launchers and configs live; tests point it elsewhere.
+type startLayout struct {
+	CodexLauncher, CodexBinary, ClaudeBinary, BaseConfig, ConfigDir string
+}
+
+func defaultStartLayout() startLayout {
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		dir = filepath.Join(os.Getenv("HOME"), ".config")
+	}
+	return startLayout{
+		CodexLauncher: "/usr/local/lib/pairtask/pairtask-codex",
+		CodexBinary:   "/usr/local/bin/codex",
+		ClaudeBinary:  "/usr/local/bin/claude",
+		BaseConfig:    "/etc/pairtask/claude-mcp.json",
+		ConfigDir:     filepath.Join(dir, "pairtask"),
+	}
+}
+
+// startPlan is what a start would run: the launcher argv and, for Claude,
+// the MCP config it needs written first.
+type startPlan struct {
+	Argv       []string
+	ConfigPath string
+	Config     []byte
+}
+
+const startUsage = "usage: pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--dry-run] [-- agent arguments]"
+
+var startToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+const brokerSocketDefault = "/tmp/collab-ai.sock"
+
+// parseStart reads the arguments after "start".
+func parseStart(args []string) (startOptions, error) {
+	var opts startOptions
+	flags := flag.NewFlagSet("start", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&opts.ID, "id", "", "logical agent ID (default claude-1 or codex-1)")
+	flags.StringVar(&opts.Model, "model", "", "model name for the agent")
+	flags.StringVar(&opts.Effort, "effort", "", "reasoning effort for the agent")
+	flags.StringVar(&opts.Socket, "socket", "", "broker Unix socket path")
+	flags.BoolVar(&opts.DryRun, "dry-run", false, "print the command and the config path; run nothing")
+	if len(args) == 0 {
+		return opts, errors.New(startUsage)
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		return opts, flag.ErrHelp
+	}
+	opts.Agent = args[0]
+	rest := args[1:]
+	if i := indexOf(rest, "--"); i >= 0 {
+		opts.Native, rest = rest[i+1:], rest[:i]
+	}
+	if err := flags.Parse(rest); err != nil {
+		return opts, err
+	}
+	if flags.NArg() > 0 {
+		return opts, fmt.Errorf("unexpected argument %q; agent arguments go after --", flags.Arg(0))
+	}
+	given := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if given["id"] && opts.ID == "" {
+		return opts, errors.New("--id cannot be empty")
+	}
+	return opts, opts.validate()
+}
+
+func (o *startOptions) validate() error {
+	switch o.Agent {
+	case "claude", "codex":
+	default:
+		return fmt.Errorf("unknown agent %q: use claude or codex", o.Agent)
+	}
+	if o.ID == "" {
+		o.ID = o.Agent + "-1"
+	}
+	if err := protocol.ValidateAgentID(o.ID); err != nil {
+		return err
+	}
+	// The model is an argv value, kept literally (aliases such as opus[1m]);
+	// the effort is interpolated into Codex's TOML, so it is a plain token.
+	if strings.ContainsRune(o.ID, 0) || strings.ContainsRune(o.Model, 0) || strings.ContainsRune(o.Socket, 0) {
+		return errors.New("arguments cannot contain NUL")
+	}
+	if o.Effort != "" && !startToken.MatchString(o.Effort) {
+		return fmt.Errorf("--effort %q: letters, digits, '.', '_' and '-' only", o.Effort)
+	}
+	return nil
+}
+
+func indexOf(list []string, want string) int {
+	for i, s := range list {
+		if s == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// buildStart turns the options into the launcher command. base is the
+// installed Claude MCP config (unused for Codex).
+func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, error) {
+	if opts.Agent == "codex" {
+		return codexPlan(opts, layout), nil
+	}
+	config, err := claudeConfig(base, opts.ID, opts.Socket)
+	if err != nil {
+		return startPlan{}, err
+	}
+	path := configPath(layout.ConfigDir, opts.ID)
+	argv := []string{layout.ClaudeBinary, "--strict-mcp-config", "--mcp-config", path, "--dangerously-load-development-channels", "server:pairtask"}
+	if opts.Model != "" {
+		argv = append(argv, "--model", opts.Model)
+	}
+	if opts.Effort != "" {
+		argv = append(argv, "--effort", opts.Effort)
+	}
+	return startPlan{Argv: append(argv, opts.Native...), ConfigPath: path, Config: config}, nil
+}
+
+func codexPlan(opts startOptions, layout startLayout) startPlan {
+	socket := opts.Socket
+	if socket == "" {
+		socket = brokerSocketDefault
+	}
+	argv := []string{layout.CodexLauncher, "--codex", layout.CodexBinary, "--agent-id", opts.ID, "--socket", socket, "--terminal", "--"}
+	if opts.Model != "" {
+		argv = append(argv, "--model", opts.Model)
+	}
+	if opts.Effort != "" {
+		argv = append(argv, "-c", fmt.Sprintf("model_reasoning_effort=%q", opts.Effort)) // a TOML basic string; the token is validated
+	}
+	return startPlan{Argv: append(argv, opts.Native...)}
+}
+
+// claudeConfig is the installed config with only the pairtask server's
+// --agent-id (and --socket, when given) changed; every other field and
+// server is kept as it was.
+func claudeConfig(base []byte, id, socket string) ([]byte, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(base, &doc); err != nil {
+		return nil, fmt.Errorf("claude MCP config: %w", err)
+	}
+	servers, _ := doc["mcpServers"].(map[string]any)
+	server, _ := servers["pairtask"].(map[string]any)
+	raw, _ := server["args"].([]any)
+	if server == nil || raw == nil {
+		return nil, errors.New("claude MCP config: mcpServers.pairtask.args missing")
+	}
+	args := make([]string, 0, len(raw))
+	for _, a := range raw {
+		s, ok := a.(string)
+		if !ok {
+			return nil, errors.New("claude MCP config: mcpServers.pairtask.args must be strings")
+		}
+		args = append(args, s)
+	}
+	args, err := setFlag(args, "--agent-id", id, false)
+	if err != nil {
+		return nil, err
+	}
+	if socket != "" {
+		if args, err = setFlag(args, "--socket", socket, true); err != nil {
+			return nil, err
+		}
+	}
+	out := make([]any, len(args))
+	for i, a := range args {
+		out[i] = a
+	}
+	server["args"] = out
+	return json.MarshalIndent(doc, "", "  ")
+}
+
+// setFlag replaces the value of flag in args, whether written "--flag X" or
+// "--flag=X"; exactly one occurrence is expected, or none when appendMissing.
+func setFlag(args []string, name, value string, appendMissing bool) ([]string, error) {
+	found := 0
+	out := make([]string, 0, len(args)+2)
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == name && i+1 < len(args):
+			out = append(out, name, value)
+			i++
+			found++
+		case strings.HasPrefix(args[i], name+"="):
+			out = append(out, name+"="+value)
+			found++
+		default:
+			out = append(out, args[i])
+		}
+	}
+	switch {
+	case found == 1:
+		return out, nil
+	case found == 0 && appendMissing:
+		return append(out, name, value), nil
+	case found == 0:
+		return nil, fmt.Errorf("claude MCP config: %s not found in mcpServers.pairtask.args", name)
+	}
+	return nil, fmt.Errorf("claude MCP config: %s appears %d times in mcpServers.pairtask.args", name, found)
+}
+
+// configPath names the per-ID config without putting the ID in the path.
+func configPath(dir, id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return filepath.Join(dir, "claude-mcp-"+hex.EncodeToString(sum[:])[:16]+".json")
+}
+
+// writePrivate writes data to path for this user only, replacing the old file
+// atomically so a failed write leaves the previous config in place.
+func writePrivate(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".claude-mcp-*.json")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	err = tmp.Chmod(0o600)
+	if err == nil {
+		_, err = tmp.Write(data)
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(name, path)
+	}
+	if err != nil {
+		os.Remove(name) // the previous config, if any, is still in place
+	}
+	return err
+}
+
+// runStart is `pairtask start`: write the config if any, then replace this
+// process with the launcher so it owns the terminal and the exit status.
+func runStart(args []string, stdout, stderr io.Writer, layout startLayout, execve func(argv0 string, argv, env []string) error) int {
+	opts, err := parseStart(args)
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprintln(stdout, startUsage)
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(stderr, startUsage)
+		return 2
+	}
+	var base []byte
+	if opts.Agent == "claude" {
+		if base, err = os.ReadFile(layout.BaseConfig); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	plan, err := buildStart(opts, layout, base)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if opts.DryRun {
+		for _, a := range plan.Argv {
+			fmt.Fprintln(stdout, a)
+		}
+		if plan.ConfigPath != "" {
+			fmt.Fprintln(stdout, "config: "+plan.ConfigPath)
+		}
+		return 0
+	}
+	if plan.Config != nil {
+		if err := writePrivate(plan.ConfigPath, plan.Config); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	if err := execve(plan.Argv[0], plan.Argv, os.Environ()); err != nil {
+		fmt.Fprintln(stderr, "exec "+plan.Argv[0]+": "+err.Error())
+		return 1
+	}
+	return 0
+}

@@ -39,6 +39,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDashboard(ctx, args[1:], stdout, stderr)
 	case "operator":
 		return runOperator(ctx, args[1:], stdout, stderr)
+	case "start":
+		return runStart(args[1:], stdout, stderr, defaultStartLayout(), syscall.Exec)
 	}
 	return runStatus(ctx, args, stdout, stderr)
 }
@@ -77,7 +79,7 @@ type options struct {
 func parseOptions(args []string, stderr io.Writer) (options, int) {
 	var cfg options
 	if len(args) == 0 || args[0] != "status" {
-		fmt.Fprintln(stderr, "usage: pairtask status [--socket PATH] [--json] [--timeout 3s]\n       pairtask dashboard [--socket PATH] [--interval 2s] [--timeout 3s]\n       pairtask budget create NAME --tokens N [--json]\n       pairtask budget status NAME [--socket PATH] [--json]\n       pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all) [--message-id ID] [--in-reply-to ID] [--json] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID")
+		fmt.Fprintln(stderr, "usage: pairtask status [--socket PATH] [--json] [--timeout 3s]\n       pairtask dashboard [--socket PATH] [--interval 2s] [--timeout 3s]\n       pairtask budget create NAME --tokens N [--json]\n       pairtask budget status NAME [--socket PATH] [--json]\n       pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all) [--message-id ID] [--in-reply-to ID] [--json] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--dry-run] [-- agent arguments]")
 		return cfg, 2
 	}
 	socketDefault, ok := defaultSocket(stderr)
