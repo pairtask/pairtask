@@ -40,8 +40,11 @@ case "$REPO" in
   */*) printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die 2 "bad PAIRTASK_REPO: $REPO" ;;
   *) die 2 "bad PAIRTASK_REPO: $REPO (owner/name)" ;;
 esac
+# A rollout release is a published workspace-vX.Y.Z tag (same rule as
+# scripts/sandbox_releases.py); branches and other refs are not installable.
+release_tag() { printf '%s' "$1" | grep -Eq '^workspace-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$'; }
 if [ -n "$VERSION" ]; then
-  printf '%s' "$VERSION" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_.-]*$' || die 2 "bad --version: $VERSION (a release tag such as workspace-v1.2.3)"
+  release_tag "$VERSION" || die 2 "bad --version: $VERSION (a published workspace-vX.Y.Z release tag)"
 fi
 
 # 1. Platform: macOS or Linux, never as root.
@@ -84,7 +87,7 @@ if [ -z "$VERSION" ]; then
     body=$(curl -fsSL "$RELEASE_URL" 2>/dev/null) || body=$(cat "${RELEASE_URL#file://}" 2>/dev/null) || die 3 "cannot read $RELEASE_URL"
     VERSION=$(printf '%s' "$body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
     [ -n "$VERSION" ] || die 3 "no tag_name in $RELEASE_URL"
-    printf '%s' "$VERSION" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_.-]*$' || die 3 "unexpected tag_name in $RELEASE_URL: $VERSION"
+    release_tag "$VERSION" || die 3 "unexpected tag_name in $RELEASE_URL: $VERSION (expected workspace-vX.Y.Z)"
   fi
 fi
 plan "release $VERSION from $GIT_URL"
