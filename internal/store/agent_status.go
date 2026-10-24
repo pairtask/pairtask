@@ -73,32 +73,52 @@ func (s *Store) AgentStatusPage(ctx context.Context, current []Current, limit in
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_status`).Scan(&page.Total); err != nil {
 		return page, fmt.Errorf("count agent statuses: %w", err)
 	}
-	seen := map[string]bool{}
-	for _, c := range current {
-		if len(page.Records) == limit {
-			return page, nil
-		}
-		st, err := s.AgentStatus(ctx, c.AgentID)
-		if err != nil {
-			return page, err
-		}
-		if st != nil && st.SessionID == c.SessionID {
-			page.Records, seen[c.AgentID] = append(page.Records, *st), true
-		}
-	}
-	rest, err := s.statusesByID(ctx, limit+len(seen))
+	records, err := s.currentRecords(ctx, current, limit)
 	if err != nil {
 		return page, err
 	}
-	for _, st := range rest {
-		if len(page.Records) == limit {
+	rest, err := s.statusesByID(ctx, limit+len(records))
+	if err != nil {
+		return page, err
+	}
+	page.Records = fillRecords(records, rest, limit)
+	return page, nil
+}
+
+// currentRecords are the records each current session declared, at most limit.
+func (s *Store) currentRecords(ctx context.Context, current []Current, limit int) ([]protocol.AgentStatus, error) {
+	var out []protocol.AgentStatus
+	for _, c := range current {
+		if len(out) == limit {
+			break
+		}
+		st, err := s.AgentStatus(ctx, c.AgentID)
+		if err != nil {
+			return nil, err
+		}
+		if st != nil && st.SessionID == c.SessionID {
+			out = append(out, *st)
+		}
+	}
+	return out, nil
+}
+
+// fillRecords appends the others to first, skipping agents already present,
+// up to limit.
+func fillRecords(first, others []protocol.AgentStatus, limit int) []protocol.AgentStatus {
+	seen := make(map[string]bool, len(first))
+	for _, st := range first {
+		seen[st.AgentID] = true
+	}
+	for _, st := range others {
+		if len(first) == limit {
 			break
 		}
 		if !seen[st.AgentID] {
-			page.Records = append(page.Records, st)
+			first = append(first, st)
 		}
 	}
-	return page, nil
+	return first
 }
 
 func (s *Store) statusesByID(ctx context.Context, limit int) ([]protocol.AgentStatus, error) {

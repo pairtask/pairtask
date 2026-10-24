@@ -190,19 +190,7 @@ func (p *Proxy) FromHost(ctx context.Context, frame Frame) error {
 // thread only: a turn or item event whose threadId is the owned thread. It
 // is best effort and never blocks or fails the host stream.
 func (p *Proxy) observeActivity(frame Frame) {
-	if p.Listener == nil || !(strings.HasPrefix(frame.Method, "turn/") || strings.HasPrefix(frame.Method, "item/")) {
-		return
-	}
-	var params struct {
-		ThreadID string `json:"threadId"`
-	}
-	if json.Unmarshal(frame.Params, &params) != nil || params.ThreadID == "" {
-		return
-	}
-	p.mu.Lock()
-	owned := p.threadID
-	p.mu.Unlock()
-	if owned == "" || params.ThreadID != owned {
+	if p.Listener == nil || !p.ownedEvent(frame) {
 		return
 	}
 	// One report in flight at most, off the host path. No cancellation: a
@@ -316,4 +304,20 @@ func (p *Proxy) respondTool(ctx context.Context, frame Frame) error {
 		return err
 	}
 	return p.Upstream.Write(ctx, Frame{ID: frame.ID, Result: data})
+}
+
+// ownedEvent reports a turn or item event of this proxy's own thread.
+func (p *Proxy) ownedEvent(frame Frame) bool {
+	if !strings.HasPrefix(frame.Method, "turn/") && !strings.HasPrefix(frame.Method, "item/") {
+		return false
+	}
+	var params struct {
+		ThreadID string `json:"threadId"`
+	}
+	if json.Unmarshal(frame.Params, &params) != nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return params.ThreadID != "" && params.ThreadID == p.threadID
 }

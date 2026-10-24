@@ -71,7 +71,7 @@ func (s *statusState) take(agent string, now time.Time) bool {
 // handleStatus serves the three status frames for a registered agent.
 func (h *Hub) handleStatus(ctx context.Context, clients map[string]*Client, in Inbound) {
 	h.statuses.init()
-	if in.Msg.Type != protocol.TypeAgentActivity && (in.Msg.RequestID == "" || len(in.Msg.RequestID) > 128) {
+	if !validRequest(in.Msg) {
 		h.enqueue(clients, in.From, statusError(in.Msg.RequestID, protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes"))
 		return
 	}
@@ -83,6 +83,15 @@ func (h *Hub) handleStatus(ctx context.Context, clients map[string]*Client, in I
 	case protocol.TypeAgentActivity:
 		h.noteActivity(in)
 	}
+}
+
+// validRequest reports a status request with a usable request_id; activity
+// reports carry none.
+func validRequest(msg protocol.Message) bool {
+	if msg.Type == protocol.TypeAgentActivity {
+		return true
+	}
+	return msg.RequestID != "" && len(msg.RequestID) <= 128
 }
 
 func statusError(request, code, detail string) protocol.Message {

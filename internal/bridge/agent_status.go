@@ -81,21 +81,34 @@ func (c *Client) statusRequest(ctx context.Context, msg protocol.Message) (*prot
 	if err := c.writeFrame(ctx, msg); err != nil {
 		return nil, err
 	}
+	out, err := c.awaitStatus(ctx, reply)
+	if err != nil {
+		return nil, err
+	}
+	return statusAnswer(out)
+}
+
+// awaitStatus waits once for the answer; a timeout is not retried.
+func (c *Client) awaitStatus(ctx context.Context, reply chan protocol.Message) (protocol.Message, error) {
 	timer := time.NewTimer(statusWait)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return protocol.Message{}, ctx.Err()
 	case <-c.done:
-		return nil, c.connectionError()
+		return protocol.Message{}, c.connectionError()
 	case <-timer.C:
-		return nil, errors.New("status request timed out; not retried")
+		return protocol.Message{}, errors.New("status request timed out; not retried")
 	case out := <-reply:
-		if out.Type == protocol.TypeError {
-			return nil, fmt.Errorf("%s: %s", out.Code, out.Detail)
-		}
-		return out.AgentStatus, nil
+		return out, nil
 	}
+}
+
+func statusAnswer(out protocol.Message) (*protocol.AgentStatus, error) {
+	if out.Type == protocol.TypeError {
+		return nil, fmt.Errorf("%s: %s", out.Code, out.Detail)
+	}
+	return out.AgentStatus, nil
 }
 
 // maxPendingStatus bounds concurrent status requests per connection.
@@ -126,7 +139,7 @@ func (c *Client) forget(id string) {
 // answer; such frames never enter the inbox, even when nobody waits anymore
 // (a cancelled or timed-out request).
 func (c *Client) routeResponse(msg protocol.Message) bool {
-	if msg.Type != protocol.TypeAgentStatusResult && !(msg.Type == protocol.TypeError && msg.RequestID != "") {
+	if !isStatusAnswer(msg) {
 		return false
 	}
 	c.mu.Lock()
@@ -229,4 +242,12 @@ func (l *Listener) observeToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
 		}
 		return result, err
 	}
+}
+
+// isStatusAnswer reports a status result or an error correlated by request_id.
+func isStatusAnswer(msg protocol.Message) bool {
+	if msg.Type == protocol.TypeAgentStatusResult {
+		return true
+	}
+	return msg.Type == protocol.TypeError && msg.RequestID != ""
 }
