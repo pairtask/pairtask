@@ -22,7 +22,7 @@ func statusMCPRecord(t *testing.T, result *mcp.CallToolResult) *statusRecordView
 	return out.Status
 }
 
-func TestAgentStatusMCPAcceptanceConfirmedWriteReadAndValidation(t *testing.T) {
+func TestAgentStatusMCPAcceptanceDiscoveryIsPassive(t *testing.T) {
 	path, _ := startBroker(t)
 	client := lazyAgent(t, path, "worker")
 	session := connectMCP(t, client)
@@ -36,14 +36,21 @@ func TestAgentStatusMCPAcceptanceConfirmedWriteReadAndValidation(t *testing.T) {
 		t.Fatal("status tools absent from discovery")
 	}
 	assertEqual(t, "discovery did not connect", *brokerStatus(t, path).ConnectedSessions, 0)
+}
+
+func TestAgentStatusMCPAcceptanceConfirmedWriteReadAndValidation(t *testing.T) {
+	path, _ := startBroker(t)
+	client := lazyAgent(t, path, "worker")
+	session := connectMCP(t, client)
 	first := statusMCPRecord(t, call(t, session, "status", map[string]any{"state": "active", "task": "#133", "step": "tests"}))
-	if first == nil || first.AgentID != "worker" || first.Task != "#133" || !first.Connected {
-		t.Fatalf("status not broker-confirmed: %+v", first)
-	}
+	requireExistingStatus(t, first)
+	assertEqual(t, "confirmed agent", first.AgentID, "worker")
+	assertEqual(t, "confirmed task", first.Task, "#133")
+	assertEqual(t, "confirmed connection", first.Connected, true)
 	read := statusMCPRecord(t, call(t, session, "read_status", map[string]any{}))
-	if read == nil || read.SessionID != first.SessionID || !read.DeclaredAt.Equal(first.DeclaredAt) {
-		t.Fatalf("self read differs from confirmed write: %+v", read)
-	}
+	requireExistingStatus(t, read)
+	assertEqual(t, "self session", read.SessionID, first.SessionID)
+	assertEqual(t, "self declaration time", read.DeclaredAt.Equal(first.DeclaredAt), true)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	bad, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "status", Arguments: map[string]any{"state": "approved"}})
@@ -52,9 +59,9 @@ func TestAgentStatusMCPAcceptanceConfirmedWriteReadAndValidation(t *testing.T) {
 		t.Fatal("invalid status tool call reported success")
 	}
 	after := statusMCPRecord(t, call(t, session, "read_status", map[string]any{}))
-	if after == nil || after.State != "active" || !after.DeclaredAt.Equal(first.DeclaredAt) {
-		t.Fatalf("failed tool call changed status: %+v", after)
-	}
+	requireExistingStatus(t, after)
+	assertEqual(t, "state after invalid tool call", after.State, "active")
+	assertEqual(t, "time after invalid tool call", after.DeclaredAt.Equal(first.DeclaredAt), true)
 	if unknown := statusMCPRecord(t, call(t, session, "read_status", map[string]any{"agent_id": "unknown"})); unknown != nil {
 		t.Fatalf("unknown status fabricated: %+v", unknown)
 	}
@@ -76,9 +83,8 @@ func TestAgentStatusMCPAcceptanceActiveListenerKeepsOwnerAndPendingMessage(t *te
 	sendTracked(t, peer, SendRequest{To: "worker", Text: "review", MessageID: "status-pending"})
 	assertEqual(t, "pending message delivered", awaitPublished(t, publisher).MessageID, "status-pending")
 	first := statusMCPRecord(t, call(t, session, "status", map[string]any{"state": "waiting", "task": "#133", "waiting_on": "peer"}))
-	if first == nil || first.SessionID != owner {
-		t.Fatalf("status opened another owner: %+v", first)
-	}
+	requireExistingStatus(t, first)
+	assertEqual(t, "existing owner", first.SessionID, owner)
 	call(t, session, "read_status", map[string]any{})
 	assertEqual(t, "listener owner unchanged", listener.Status().SessionID, owner)
 	assertEqual(t, "status did not acknowledge pending work", brokerStatus(t, path).DurablePending.Total, 1)
@@ -146,24 +152,34 @@ func TestAgentStatusClaudeActivityComesFromToolCallsNotIncomingMessages(t *testi
 		t.Fatalf("incoming notification fabricated harness activity: %s", before.Activity)
 	}
 	call(t, session, "read_status", map[string]any{})
+	got := awaitStatusActivity(t, observer, "worker", "claude-adapter")
+	assertEqual(t, "milestone time after tool activity", got.DeclaredAt.Equal(before.DeclaredAt), true)
+}
+
+func awaitStatusActivity(t *testing.T, observer *wireAgent, agent, source string) *statusRecordView {
+	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
-		got := statusGet(t, observer, "worker")
-		var activity struct {
-			Source string `json:"source"`
-		}
-		if got != nil && len(got.Activity) > 0 {
-			requireNoError(t, json.Unmarshal(got.Activity, &activity))
-			if activity.Source == "claude-adapter" {
-				if !got.DeclaredAt.Equal(before.DeclaredAt) {
-					t.Fatal("tool activity refreshed declared milestone")
-				}
-				return
-			}
+		got := statusGet(t, observer, agent)
+		requireExistingStatus(t, got)
+		if statusActivitySource(t, got) == source {
+			return got
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("tool invocation did not produce attributed adapter activity: %+v", got)
+			t.Fatalf("tool invocation did not produce %s activity: %+v", source, got)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func statusActivitySource(t *testing.T, status *statusRecordView) string {
+	t.Helper()
+	if len(status.Activity) == 0 {
+		return ""
+	}
+	var activity struct {
+		Source string `json:"source"`
+	}
+	requireNoError(t, json.Unmarshal(status.Activity, &activity))
+	return activity.Source
 }

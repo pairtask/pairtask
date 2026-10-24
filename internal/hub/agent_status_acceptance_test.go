@@ -9,33 +9,29 @@ func TestAgentStatusLimiterAllowsMilestoneBurstAndRefillsPerAgent(t *testing.T) 
 	var statuses statusState
 	statuses.init()
 	now := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
-	for i := 0; i < 10; i++ {
-		if !statuses.take("builder", now) {
-			t.Fatalf("milestone %d refused within ten-update burst", i+1)
-		}
+	// Ordered phases exercise one shared bucket across the full timeline.
+	phases := []struct {
+		name, agent string
+		after       time.Duration
+		count       int
+		allowed     bool
+	}{
+		{"initial burst", "builder", 0, 10, true},
+		{"exhausted", "builder", 0, 1, false},
+		{"independent agent", "reviewer", 0, 1, true},
+		{"before refill", "builder", time.Second, 1, false},
+		{"refilled token", "builder", 2 * time.Second, 1, true},
+		{"single refill only", "builder", 2 * time.Second, 1, false},
+		{"restored burst", "builder", time.Hour, 10, true},
+		{"bounded idle credit", "builder", time.Hour, 1, false},
 	}
-	if statuses.take("builder", now) {
-		t.Fatal("exhausted burst accepted another update")
-	}
-	if !statuses.take("reviewer", now) {
-		t.Fatal("one agent exhausted another agent's allowance")
-	}
-	if statuses.take("builder", now.Add(time.Second)) {
-		t.Fatal("one token refilled before two seconds")
-	}
-	if !statuses.take("builder", now.Add(2*time.Second)) {
-		t.Fatal("next milestone refused after refill")
-	}
-	if statuses.take("builder", now.Add(2*time.Second)) {
-		t.Fatal("single refill admitted two updates")
-	}
-	// A long pause restores a bounded burst, not accumulated unbounded credit.
-	for i := 0; i < 10; i++ {
-		if !statuses.take("builder", now.Add(time.Hour)) {
-			t.Fatal("idle agent's burst was not restored")
-		}
-	}
-	if statuses.take("builder", now.Add(time.Hour)) {
-		t.Fatal("idle credit exceeded the burst bound")
+	for _, phase := range phases {
+		t.Run(phase.name, func(t *testing.T) {
+			for i := 0; i < phase.count; i++ {
+				if got := statuses.take(phase.agent, now.Add(phase.after)); got != phase.allowed {
+					t.Fatalf("update %d allowed=%t, want %t", i+1, got, phase.allowed)
+				}
+			}
+		})
 	}
 }

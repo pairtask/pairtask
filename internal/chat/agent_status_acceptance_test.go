@@ -82,7 +82,8 @@ func TestAgentStatusChatAcceptanceEventRefreshPreservesComposer(t *testing.T) {
 	chatEqual(t, "no status transcript entry", len(after.Entries), len(before.Entries))
 	chatEqual(t, "no status acknowledgment", len(after.QueuedAcks), 0)
 	for _, request := range h.requests {
-		if request.Type == protocol.TypeOperatorReceive || request.Type == protocol.TypeOperatorHistory || request.Type == protocol.TypeOperatorAck {
+		switch request.Type {
+		case protocol.TypeOperatorReceive, protocol.TypeOperatorHistory, protocol.TypeOperatorAck:
 			t.Fatalf("status-only event caused messaging operation: %+v", request)
 		}
 	}

@@ -37,28 +37,36 @@ func TestAgentActivityLauncherAttributesOnlyOwnedThreadEvents(t *testing.T) {
 			if frameAt(t, down).Method != "turn/started" {
 				t.Fatal("activity observation consumed the host event")
 			}
-			deadline := time.Second
-			if !tc.want {
-				deadline = 50 * time.Millisecond
-			}
-			check(t, conn.SetReadDeadline(time.Now().Add(deadline)))
-			var pulse protocol.Message
-			err := protocol.ReadFrame(bufio.NewReader(conn), &pulse)
-			if !tc.want {
-				var timeout net.Error
-				if !errors.As(err, &timeout) || !timeout.Timeout() {
-					t.Fatalf("unattributed event produced broker traffic: %+v, %v", pulse, err)
-				}
-				return
-			}
-			check(t, err)
-			if pulse.Type != "agent_activity" || pulse.Source != "codex-launcher" {
-				t.Fatalf("missing attributed launcher pulse: %+v", pulse)
-			}
+			requireLauncherActivity(t, conn, tc.want)
 			if p.Listener.Status().SessionID != "broker-session" {
 				t.Fatal("activity changed broker owner")
 			}
 		})
+	}
+}
+
+func requireLauncherActivity(t *testing.T, conn net.Conn, want bool) {
+	t.Helper()
+	deadline := time.Second
+	if !want {
+		deadline = 50 * time.Millisecond
+	}
+	check(t, conn.SetReadDeadline(time.Now().Add(deadline)))
+	var pulse protocol.Message
+	err := protocol.ReadFrame(bufio.NewReader(conn), &pulse)
+	if !want {
+		var timeout net.Error
+		if !errors.As(err, &timeout) {
+			t.Fatalf("unattributed event produced broker traffic: %+v, %v", pulse, err)
+		}
+		if !timeout.Timeout() {
+			t.Fatalf("expected read timeout, got %v", err)
+		}
+		return
+	}
+	check(t, err)
+	if pulse.Type != "agent_activity" || pulse.Source != "codex-launcher" {
+		t.Fatalf("missing attributed launcher pulse: %+v", pulse)
 	}
 }
 

@@ -88,19 +88,17 @@ func TestAgentStatusAcceptanceMilestonesAndPeerRead(t *testing.T) {
 	for _, state := range []string{"active", "waiting", "blocked", "idle", "done"} {
 		fields := map[string]any{"state": state, "task": "#133", "step": "review", "waiting_on": "peer", "ref": "PR 135"}
 		got := requireStatusRecord(t, statusSet(t, w, state, fields))
-		if got.AgentID != "worker" || got.SessionID != w.welcome.SessionID || !got.Connected {
-			t.Fatalf("wrong status ownership: %+v", got)
-		}
-		if got.State != state || got.Task != "#133" || got.Step != "review" || got.WaitingOn != "peer" || got.Ref != "PR 135" {
-			t.Fatalf("milestone fields lost: %+v", got)
-		}
-		if got.DeclaredAt.Before(before) || got.DeclaredAt.After(time.Now().Add(time.Second)) {
-			t.Fatalf("declaration is not broker-timestamped: %+v", got)
-		}
+		requireStatusOwner(t, got, "worker", w.welcome.SessionID)
+		assertEqual(t, "state", got.State, state)
+		assertEqual(t, "task", got.Task, "#133")
+		assertEqual(t, "step", got.Step, "review")
+		assertEqual(t, "waiting on", got.WaitingOn, "peer")
+		assertEqual(t, "ref", got.Ref, "PR 135")
+		requireBrokerTime(t, got.DeclaredAt, before)
 		read := statusGet(t, peer, "worker")
-		if read == nil || read.State != state || !read.DeclaredAt.Equal(got.DeclaredAt) {
-			t.Fatalf("read did not return confirmed milestone: %+v", read)
-		}
+		requireExistingStatus(t, read)
+		assertEqual(t, "peer state", read.State, state)
+		assertEqual(t, "peer declaration time", read.DeclaredAt.Equal(got.DeclaredAt), true)
 	}
 	if got := statusGet(t, peer, "never-seen"); got != nil {
 		t.Fatalf("unknown peer status was inferred: %+v", got)
@@ -125,13 +123,12 @@ func TestAgentStatusAcceptanceInvalidUpdatePreservesConfirmedRecord(t *testing.T
 			w := statusWire(t, socket, "worker")
 			good := requireStatusRecord(t, statusSet(t, w, "good", map[string]any{"state": "active", "task": "kept"}))
 			out := statusSet(t, w, "bad", fields)
-			if out.Type != "error" || out.Code != "invalid_status" {
-				t.Fatalf("invalid declaration accepted: %+v", out)
-			}
+			assertEqual(t, "invalid result type", out.Type, "error")
+			assertEqual(t, "invalid result code", out.Code, "invalid_status")
 			got := statusGet(t, w, "")
-			if got == nil || got.Task != "kept" || !got.DeclaredAt.Equal(good.DeclaredAt) {
-				t.Fatalf("rejected write changed stored status: %+v", got)
-			}
+			requireExistingStatus(t, got)
+			assertEqual(t, "task after rejected write", got.Task, "kept")
+			assertEqual(t, "time after rejected write", got.DeclaredAt.Equal(good.DeclaredAt), true)
 		})
 	}
 }
@@ -141,13 +138,14 @@ func TestAgentStatusAcceptanceByteBoundaryAndReplacement(t *testing.T) {
 	w := statusWire(t, socket, "worker")
 	text := strings.Repeat("é", 60)
 	first := requireStatusRecord(t, statusSet(t, w, "boundary", map[string]any{"state": "waiting", "task": text, "step": text, "ref": text, "waiting_on": "ci"}))
-	if first.Task != text || first.Step != text || first.Ref != text {
-		t.Fatal("120-byte fields were truncated")
-	}
+	assertEqual(t, "120-byte task", first.Task, text)
+	assertEqual(t, "120-byte step", first.Step, text)
+	assertEqual(t, "120-byte ref", first.Ref, text)
 	got := requireStatusRecord(t, statusSet(t, w, "replace", map[string]any{"state": "done"}))
-	if got.Task != "" || got.Step != "" || got.Ref != "" || got.WaitingOn != "" {
-		t.Fatalf("status replacement retained obsolete fields: %+v", got)
-	}
+	assertEqual(t, "replaced task", got.Task, "")
+	assertEqual(t, "replaced step", got.Step, "")
+	assertEqual(t, "replaced ref", got.Ref, "")
+	assertEqual(t, "replaced waiting on", got.WaitingOn, "")
 }
 
 func TestAgentStatusAcceptanceRateLimitIsExplicitAndDoesNotOverwrite(t *testing.T) {
@@ -162,9 +160,8 @@ func TestAgentStatusAcceptanceRateLimitIsExplicitAndDoesNotOverwrite(t *testing.
 				t.Fatalf("wrong refusal: %+v", out)
 			}
 			got := statusGet(t, w, "")
-			if got == nil || got.Task != last {
-				t.Fatalf("refused status overwritten: %+v", got)
-			}
+			requireExistingStatus(t, got)
+			assertEqual(t, "task after rate refusal", got.Task, last)
 			return
 		}
 		requireStatusRecord(t, out)
@@ -185,13 +182,14 @@ func TestAgentStatusAcceptanceCrashRetainsHistoricalDeclaration(t *testing.T) {
 	// A pulse from the replacement session cannot revive the old declaration.
 	requireNoError(t, json.NewEncoder(w.conn).Encode(map[string]any{"type": "agent_activity", "source": "codex-launcher"}))
 	got := statusGet(t, w, "")
-	if got == nil || got.Task != old.Task || got.SessionID != old.SessionID || !got.DeclaredAt.Equal(old.DeclaredAt) || got.Connected {
-		t.Fatalf("restart refreshed or lost historical declaration: %+v", got)
-	}
+	requireExistingStatus(t, got)
+	assertEqual(t, "historical task", got.Task, old.Task)
+	assertEqual(t, "historical session", got.SessionID, old.SessionID)
+	assertEqual(t, "historical time", got.DeclaredAt.Equal(old.DeclaredAt), true)
+	assertEqual(t, "historical connection", got.Connected, false)
 	current := requireStatusRecord(t, statusSet(t, w, "new-session", map[string]any{"state": "waiting", "task": "#132", "waiting_on": "peer"}))
-	if current.SessionID != w.welcome.SessionID || current.SessionID == old.SessionID || !current.Connected {
-		t.Fatalf("new declaration did not transfer status ownership: %+v", current)
-	}
+	requireStatusOwner(t, current, "worker", w.welcome.SessionID)
+	assertEqual(t, "new session differs", current.SessionID == old.SessionID, false)
 }
 
 func TestAgentStatusAcceptanceBrokerOwnsIdentityAndTimestamp(t *testing.T) {
@@ -201,9 +199,8 @@ func TestAgentStatusAcceptanceBrokerOwnsIdentityAndTimestamp(t *testing.T) {
 	fields := map[string]any{"state": "active", "agent_id": "operator", "session_id": "forged", "declared_at": "2099-01-01T00:00:00Z", "connected": false}
 	out := statusExchange(t, w, map[string]any{"type": "agent_status_set", "request_id": "spoof", "agent_id": "victim", "session_id": "forged", "agent_status": fields})
 	got := requireStatusRecord(t, out)
-	if got.AgentID != "worker" || got.SessionID != w.welcome.SessionID || !got.Connected || got.DeclaredAt.Before(before) || got.DeclaredAt.After(time.Now().Add(time.Second)) {
-		t.Fatalf("caller controlled broker-owned status fields: %+v", got)
-	}
+	requireStatusOwner(t, got, "worker", w.welcome.SessionID)
+	requireBrokerTime(t, got.DeclaredAt, before)
 	if statusGet(t, w, "victim") != nil || statusGet(t, w, "operator") != nil {
 		t.Fatal("status write crossed agent identity")
 	}
@@ -216,15 +213,36 @@ func TestAgentStatusAcceptanceActivityIsSeparateAndBrokerTimed(t *testing.T) {
 	before := time.Now().Add(-time.Second)
 	requireNoError(t, json.NewEncoder(w.conn).Encode(map[string]any{"type": "agent_activity", "source": "codex-launcher", "at": "2099-01-01T00:00:00Z"}))
 	got := statusGet(t, w, "")
-	if got == nil || got.State != "blocked" || !got.DeclaredAt.Equal(declared.DeclaredAt) {
-		t.Fatalf("activity changed declared status: %+v", got)
-	}
+	requireExistingStatus(t, got)
+	assertEqual(t, "state after activity", got.State, "blocked")
+	assertEqual(t, "declaration time after activity", got.DeclaredAt.Equal(declared.DeclaredAt), true)
 	var activity struct {
 		At     time.Time `json:"at"`
 		Source string    `json:"source"`
 	}
 	requireNoError(t, json.Unmarshal(got.Activity, &activity))
-	if activity.Source != "codex-launcher" || activity.At.Before(before) || activity.At.After(time.Now().Add(time.Second)) {
-		t.Fatalf("activity source or broker timestamp missing: %+v", activity)
+	assertEqual(t, "activity source", activity.Source, "codex-launcher")
+	requireBrokerTime(t, activity.At, before)
+}
+
+func requireExistingStatus(t *testing.T, status *statusRecordView) {
+	t.Helper()
+	if status == nil {
+		t.Fatal("expected stored status, got nil")
+	}
+}
+
+func requireStatusOwner(t *testing.T, status *statusRecordView, agent, session string) {
+	t.Helper()
+	requireExistingStatus(t, status)
+	assertEqual(t, "agent owner", status.AgentID, agent)
+	assertEqual(t, "session owner", status.SessionID, session)
+	assertEqual(t, "current connection", status.Connected, true)
+}
+
+func requireBrokerTime(t *testing.T, stamp, earliest time.Time) {
+	t.Helper()
+	if stamp.Before(earliest) || stamp.After(time.Now().Add(time.Second)) {
+		t.Fatalf("timestamp %s outside broker request window starting %s", stamp, earliest)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -53,6 +54,23 @@ func TestAgentStatusRPCConcurrentRepliesAreMatchedByRequest(t *testing.T) {
 	for _, id := range []string{"first", "second"} {
 		go func(id string) { st, err := c.ReadStatus(ctx, id); done <- answer{id, st, err} }(id)
 	}
+	replyToStatusRequestsInReverse(t, remote)
+	for range 2 {
+		select {
+		case result := <-done:
+			requireNoError(t, result.err)
+			if result.status == nil || result.status.AgentID != result.wanted {
+				t.Fatalf("reply crossed requests: %+v", result)
+			}
+		case <-ctx.Done():
+			t.Fatal("concurrent status RPC did not return")
+		}
+	}
+}
+
+// A peer deliberately reverses two replies to expose FIFO-based correlation.
+func replyToStatusRequestsInReverse(t *testing.T, remote net.Conn) {
+	t.Helper()
 	r := bufio.NewReader(remote)
 	requests := make([]protocol.Message, 2)
 	requireNoError(t, remote.SetDeadline(time.Now().Add(time.Second)))
@@ -65,17 +83,6 @@ func TestAgentStatusRPCConcurrentRepliesAreMatchedByRequest(t *testing.T) {
 	for i := len(requests) - 1; i >= 0; i-- {
 		req := requests[i]
 		requireNoError(t, protocol.WriteFrame(remote, protocol.Message{Type: "agent_status_result", RequestID: req.RequestID, AgentStatus: &protocol.AgentStatus{AgentID: req.AgentID, State: "active"}}))
-	}
-	for range 2 {
-		select {
-		case result := <-done:
-			requireNoError(t, result.err)
-			if result.status == nil || result.status.AgentID != result.wanted {
-				t.Fatalf("reply crossed requests: %+v", result)
-			}
-		case <-ctx.Done():
-			t.Fatal("concurrent status RPC did not return")
-		}
 	}
 }
 
