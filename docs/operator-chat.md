@@ -1088,8 +1088,8 @@ draft: typing `/` into an empty draft, or Ctrl+K at any time, opens it. The
 command picker filters as you type. Tab completes and never runs. Enter with
 the picker open completes the highlighted command and runs it when it runs
 without an argument (`/agents`, `/history`, `/clear`, `/help`, `/quit`, and
-`/ack`, `/reply`, `/find`, whose argument is optional); a command that needs
-one (`/chat`, `/stages`, `/copy`, `/to`) stays on the line, completed,
+`/ack`, `/reply`, `/find`, `/to`, whose argument is optional); a command that
+needs one (`/chat`, `/stages`, `/copy`) stays on the line, completed,
 waiting for it (#121; before,
 Enter ran the typed fragment). With the picker closed Enter runs
 an exact command or alias, or a unique prefix; an ambiguous prefix stays and
