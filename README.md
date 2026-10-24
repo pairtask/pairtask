@@ -20,10 +20,11 @@ control stays offline. Host credentials and conversations are not imported.
 
 **Host prerequisites:** Python, Git, OpenSSH and Incus; macOS also needs Colima.
 [Install commands](docs/sandbox.md#1-install-the-host-tools). No `gh` or browser download needed.
+Every host command, by task: [host commands](docs/host-commands.md).
 
 ```sh
 # First install or upgrade (Incus must be running; upgrades end active sessions)
-python3 scripts/sandbox-provision.py rollout
+python3 scripts/pairtask.py install     # first time; later: python3 scripts/pairtask.py upgrade
 # Pin a version: add --release workspace-vX.Y.Z
 ```
 
@@ -33,21 +34,16 @@ and use `local:` / `--remote local`. For host mounts, see the
 
 ```sh
 # HOST: run from your provisioning checkout
-# Start the Mac VM, then the containers
-python3 scripts/sandbox-host.py apply
-incus --project pairtask start colima-pairtask:secured   # if secured_runtime = true
-incus --project pairtask start colima-pairtask:workspace
-
-# Check: expect workspace (and secured, if enabled) to show RUNNING
-incus --project pairtask list colima-pairtask:
+# Start the Mac VM and the containers; expect workspace (and secured, if enabled) RUNNING
+python3 scripts/pairtask.py start
+python3 scripts/pairtask.py status
 
 # Optional: preview host mounts; uncomment with your file (does not apply)
-# python3 scripts/sandbox-host.py mounts-plan --mounts-file /path/to/mounts.json
+# python3 scripts/pairtask.py mounts plan --mounts-file /path/to/mounts.json
 
-# Configure SSH once, check the broker, then enter dev
-python3 scripts/sandbox-ssh.py --remote colima-pairtask
+# Check the broker, then enter dev (SSH was configured by the install)
 ssh -F infra/incus/ssh/config workspace pairtask status
-ssh -F infra/incus/ssh/config workspace
+python3 scripts/pairtask.py shell
 
 # CONTAINER: all commands below until exit run inside your SSH session
 # First use only: uncomment to sign in before starting agents
@@ -78,9 +74,7 @@ codex                         # new managed Codex conversation
 exit
 
 # HOST AGAIN: optional shutdown; stops agents, keeps persistent files
-# incus --project pairtask stop colima-pairtask:workspace
-# incus --project pairtask stop colima-pairtask:secured   # if secured_runtime = true
-# colima stop pairtask
+# python3 scripts/pairtask.py stop        # add --vm to stop the Mac VM too
 ```
 
 Expect `Broker: ready`. Run one Codex and one Claude session; additional sessions
