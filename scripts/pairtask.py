@@ -7,6 +7,7 @@ unchanged. The reference is docs/host-commands.md.
 """
 
 import argparse
+import json
 import platform
 import re
 import runpy
@@ -128,25 +129,29 @@ def composite(name, rest, system, instances):
 
 
 def containers(action, remote, project, instances):
-    """One Incus command per container: secured starts before workspace and
-    stops after it, and each waits for the previous. The targets come from
-    the live list, at run time unless given."""
+    """One Incus command per container that is not already in the wanted
+    state: secured starts before workspace and stops after it, and each waits
+    for the previous. The states come from the live list, at run time unless
+    given (a mapping name → status, or a set of names when states are unknown)."""
+    wanted = "Running" if action == "start" else "Stopped"
+
     def resolve(lookup):
         present = lookup(remote, project)
-        names = [n for n in ("secured", "workspace") if n in present]
+        states = present if isinstance(present, dict) else {n: None for n in present}
+        names = [n for n in ("secured", "workspace") if n in states and states[n] != wanted]
         if action == "stop":
             names.reverse()
         return [incus(project, action, remote + ":" + n) for n in names]
     if instances is not None:
         return resolve(instances)
-    return [Step("incus", ["incus", "--project", project, action, remote + ":<each container>"], resolve)]
+    return [Step("incus", ["incus", "--project", project, action, remote + ":<each container not yet " + wanted.lower() + ">"], resolve)]
 
 
 def list_instances(remote, project):
-    import json
+    """The containers of the project with their status, from Incus."""
     out = subprocess.run(["incus", "--project", project, "list", remote + ":", "--format=json"],
                          check=True, capture_output=True, text=True).stdout
-    return {item["name"] for item in json.loads(out)}
+    return {item["name"]: item.get("status") for item in json.loads(out)}
 
 
 # The scripts' own argument parsers, by file, so every script step is parsed

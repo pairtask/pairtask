@@ -53,7 +53,7 @@ quota-capable pool and a managed bridge. Details: [sandbox setup](sandbox.md).
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
 | `pairtask mounts plan --mounts-file FILE` | host | Preview host directories mounted into the workspace. Legacy: `python3 scripts/sandbox-host.py mounts-plan`. | no |
-| `pairtask mounts apply --mounts-file FILE` | host | Write the mount variables; then `pairtask plan` and `pairtask apply` to attach them. | yes, at apply |
+| `pairtask mounts apply --mounts-file FILE` | host | Write the mount variables; then `pairtask plan` and `pairtask apply` attach them. On macOS stop the VM first (`pairtask stop --vm`) and follow the [apply sequence](sandbox-mounts.md#apply). | yes, at apply |
 | `pairtask share plan` / `pairtask share setup` / `pairtask share run` (`--mounts-file FILE`) | host (macOS) | Writable sharing through a dedicated local account: preview, create the account and ACLs (asks for sudo), run the helper. Legacy: `python3 scripts/sandbox-share.py`. | no |
 
 Details and the `mounts.json` format: [mounts](sandbox-mounts.md).
