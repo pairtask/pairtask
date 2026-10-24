@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -75,16 +76,13 @@ func parseStart(args []string) (startOptions, error) {
 	if flags.NArg() > 0 {
 		return opts, fmt.Errorf("unexpected argument %q; agent arguments go after --", flags.Arg(0))
 	}
-	if given(flags, "id") && opts.ID == "" {
-		return opts, errors.New("--id cannot be empty")
-	}
 	return opts, opts.validate()
 }
 
 func startFlags(opts *startOptions) *flag.FlagSet {
 	flags := flag.NewFlagSet("start", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	flags.StringVar(&opts.ID, "id", "", "logical agent ID (default claude-1 or codex-1)")
+	flags.StringVar(&opts.ID, "id", opts.Agent+"-1", "logical agent ID") // an explicit empty ID stays empty and is rejected
 	flags.StringVar(&opts.Model, "model", "", "model name for the agent")
 	flags.StringVar(&opts.Effort, "effort", "", "reasoning effort for the agent")
 	flags.StringVar(&opts.Socket, "socket", "", "broker Unix socket path")
@@ -94,16 +92,10 @@ func startFlags(opts *startOptions) *flag.FlagSet {
 
 // splitNative separates the agent's own arguments, after "--", from ours.
 func splitNative(args []string) (ours, native []string) {
-	if i := indexOf(args, "--"); i >= 0 {
+	if i := slices.Index(args, "--"); i >= 0 {
 		return args[:i], args[i+1:]
 	}
 	return args, nil
-}
-
-func given(flags *flag.FlagSet, name string) bool {
-	set := false
-	flags.Visit(func(f *flag.Flag) { set = set || f.Name == name })
-	return set
 }
 
 func (o *startOptions) validate() error {
@@ -125,9 +117,6 @@ func (o *startOptions) validateAgent() error {
 }
 
 func (o *startOptions) validateID() error {
-	if o.ID == "" {
-		o.ID = o.Agent + "-1"
-	}
 	if strings.ContainsRune(o.ID, 0) {
 		return errors.New("--id cannot contain NUL")
 	}
@@ -146,15 +135,6 @@ func (o *startOptions) validateValues() error {
 	return nil
 }
 
-func indexOf(list []string, want string) int {
-	for i, s := range list {
-		if s == want {
-			return i
-		}
-	}
-	return -1
-}
-
 // buildStart turns the options into the launcher command. base is the
 // installed Claude MCP config (unused for Codex).
 func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, error) {
@@ -165,7 +145,7 @@ func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, 
 	if err != nil {
 		return startPlan{}, err
 	}
-	path := configPath(layout.ConfigDir, opts.ID)
+	path := layout.configPath(opts.ID)
 	argv := []string{layout.ClaudeBinary, "--strict-mcp-config", "--mcp-config", path, "--dangerously-load-development-channels", "server:pairtask"}
 	if opts.Model != "" {
 		argv = append(argv, "--model", opts.Model)
@@ -243,26 +223,26 @@ func pairtaskServer(doc map[string]any) (map[string]any, []string, error) {
 // rewriteArgs validates the pairtask flags and sets the ID and the socket.
 func rewriteArgs(args []string, want serverIdentity) ([]string, error) {
 	for _, name := range []string{"--agent-id", "--socket"} {
-		if err := checkFlag(args, name); err != nil {
+		if err := (flagEdit{Name: name}).check(args); err != nil {
 			return nil, err
 		}
 	}
-	args, err := setFlag(args, flagEdit{Name: "--agent-id", Value: want.ID})
+	args, err := flagEdit{Name: "--agent-id", Value: want.ID}.apply(args)
 	if err != nil || want.Socket == "" {
 		return args, err
 	}
-	return setFlag(args, flagEdit{Name: "--socket", Value: want.Socket, AppendMissing: true})
+	return flagEdit{Name: "--socket", Value: want.Socket, AppendMissing: true}.apply(args)
 }
 
-// checkFlag rejects a malformed occurrence of name in args: at the end with
+// check rejects a malformed occurrence of the flag in args: at the end with
 // no value, or followed by another flag instead of a value.
-func checkFlag(args []string, name string) error {
+func (e flagEdit) check(args []string) error {
 	for i, a := range args {
-		if a != name {
+		if a != e.Name {
 			continue
 		}
 		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
-			return fmt.Errorf("claude MCP config: %s has no value in mcpServers.pairtask.args", name)
+			return fmt.Errorf("claude MCP config: %s has no value in mcpServers.pairtask.args", e.Name)
 		}
 	}
 	return nil
@@ -274,20 +254,20 @@ type flagEdit struct {
 	AppendMissing bool // add the flag when absent instead of failing
 }
 
-// setFlag replaces the value of a well-formed flag in args, whether written
+// apply replaces the value of the well-formed flag in args, whether written
 // "--flag X" or "--flag=X"; exactly one occurrence is expected, or none when
 // the edit may append.
-func setFlag(args []string, edit flagEdit) ([]string, error) {
+func (e flagEdit) apply(args []string) ([]string, error) {
 	found := 0
 	out := make([]string, 0, len(args)+2)
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == edit.Name:
-			out = append(out, edit.Name, edit.Value)
+		case args[i] == e.Name:
+			out = append(out, e.Name, e.Value)
 			i++
 			found++
-		case strings.HasPrefix(args[i], edit.Name+"="):
-			out = append(out, edit.Name+"="+edit.Value)
+		case strings.HasPrefix(args[i], e.Name+"="):
+			out = append(out, e.Name+"="+e.Value)
 			found++
 		default:
 			out = append(out, args[i])
@@ -296,21 +276,25 @@ func setFlag(args []string, edit flagEdit) ([]string, error) {
 	if found == 1 {
 		return out, nil
 	}
-	if found == 0 && edit.AppendMissing {
-		return append(out, edit.Name, edit.Value), nil
+	if found == 0 && e.AppendMissing {
+		return append(out, e.Name, e.Value), nil
 	}
-	return nil, fmt.Errorf("claude MCP config: %s appears %d times in mcpServers.pairtask.args, want one", edit.Name, found)
+	return nil, fmt.Errorf("claude MCP config: %s appears %d times in mcpServers.pairtask.args, want one", e.Name, found)
 }
 
 // configPath names the per-ID config without putting the ID in the path.
-func configPath(dir, id string) string {
+func (l startLayout) configPath(id string) string {
 	sum := sha256.Sum256([]byte(id))
-	return filepath.Join(dir, "claude-mcp-"+hex.EncodeToString(sum[:])[:16]+".json")
+	return filepath.Join(l.ConfigDir, "claude-mcp-"+hex.EncodeToString(sum[:])[:16]+".json")
 }
 
-// writePrivate writes data to path for this user only, replacing the old file
-// atomically so a failed write leaves the previous config in place.
-func writePrivate(path string, data []byte) error {
+// writeConfig writes the plan's config for this user only, replacing the old
+// file atomically so a failed write leaves the previous config in place.
+func (p startPlan) writeConfig() error {
+	if p.Config == nil {
+		return nil
+	}
+	path, data := p.ConfigPath, p.Config
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -400,11 +384,9 @@ func printPlan(plan startPlan, stdout io.Writer) {
 
 // launch writes the config, then hands the process to the launcher.
 func launch(plan startPlan, rt startRuntime) int {
-	if plan.Config != nil {
-		if err := writePrivate(plan.ConfigPath, plan.Config); err != nil {
-			fmt.Fprintln(rt.Stderr, err)
-			return 1
-		}
+	if err := plan.writeConfig(); err != nil {
+		fmt.Fprintln(rt.Stderr, err)
+		return 1
 	}
 	if err := rt.Exec(plan.Argv[0], plan.Argv, os.Environ()); err != nil {
 		fmt.Fprintln(rt.Stderr, "exec "+plan.Argv[0]+": "+err.Error())
