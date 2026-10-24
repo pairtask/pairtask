@@ -1,9 +1,9 @@
 # Host commands
 
 Everything you run on your own machine for the sandbox, by task. One command
-does it all: `pairtask`, which today is `python3 scripts/pairtask.py` run from
-your provisioning checkout (`pairtask` below stands for that; a one-line
-installer that puts it on your PATH is the next step of #80). Each `pairtask`
+does it all: `pairtask`, put on your PATH by the one-line installer below, or
+`python3 scripts/pairtask.py` from a provisioning checkout (`pairtask` below
+stands for either). Each `pairtask`
 subcommand runs one of the scripts in `scripts/` with the matching action, or
 an Incus command, and passes your flags through unchanged, so the legacy
 `python3 scripts/sandbox-*.py` forms keep working for one release. `pairtask
@@ -18,6 +18,7 @@ shells in the containers are stopped.
 
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
+| `curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh \| sh` | host | The one-line install: checks Python 3.9+, Git, Incus (and Colima on macOS, offering the `brew install` line), fetches the latest release's host tooling into `~/.pairtask/host`, puts `pairtask` on your PATH, then runs `pairtask install --release <that tag>`; run again later to upgrade both. Options after `sh -s --`: `--version TAG`, `--no-provision`, `--no-modify-path`, `--yes`. Never run as root. | yes, if containers exist |
 | `pairtask install` | host | First install: on macOS starts the Colima VM, then downloads and verifies the latest release, provisions the containers, configures SSH and lists them. Flags go to the rollout (`--release workspace-vX.Y.Z`, `--remote`, `--project`, `--storage-pool`, `--network`, `--tools`). | yes, if containers exist |
 | `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. Legacy: `python3 scripts/sandbox-provision.py rollout`. | yes |
 | `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). Legacy: `python3 scripts/sandbox-download.py`. | no |

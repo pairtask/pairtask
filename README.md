@@ -18,14 +18,15 @@ Provisioning runs OpenTofu in a disposable container; no host Terraform/OpenTofu
 install is needed. Dev has network access; optional
 control stays offline. Host credentials and conversations are not imported.
 
-**Host prerequisites:** Python, Git, OpenSSH and Incus; macOS also needs Colima.
-[Install commands](docs/sandbox.md#1-install-the-host-tools). No `gh` or browser download needed.
+**Host prerequisites:** Python, Git, OpenSSH and Incus; macOS also needs Colima
+(`brew install colima incus python git`). No `gh` or browser download needed.
 Every host command, by task: [host commands](docs/host-commands.md).
 
 ```sh
-# First install or upgrade (Incus must be running; upgrades end active sessions)
-python3 scripts/pairtask.py install     # first time; later: python3 scripts/pairtask.py upgrade
-# Pin a version: add --release workspace-vX.Y.Z
+# Install, and later upgrade (Incus must be running; upgrades end active sessions)
+curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
+# From a checkout instead: python3 scripts/pairtask.py install   (later: upgrade)
+# Pin a version: sh -s -- --version workspace-vX.Y.Z, or --release workspace-vX.Y.Z
 ```
 
 Run host commands from your provisioning checkout. On Linux, skip Colima commands
