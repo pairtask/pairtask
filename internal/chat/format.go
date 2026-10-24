@@ -141,7 +141,7 @@ func (f *formatter) styledLine(text string, l lead, base lipgloss.Style) {
 		if i == 0 {
 			prefix = l.first
 		}
-		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: l.skip + in.origin(pos), text: string(body) + prefix + in.render(pos, pos+len(part), base)})
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: l.skip + in.origin(pos), text: string(body) + prefix + in.render(segment{pos, pos + len(part)}, base)})
 		pos += len(part)
 	}
 	f.b.src++

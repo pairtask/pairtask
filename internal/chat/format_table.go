@@ -125,6 +125,18 @@ func cells(line string) []cell {
 // columnWidths pads every column to its widest cell, then shrinks the widest
 // columns one cell at a time until the row fits in width.
 func columnWidths(rows [][]cell, width int) []int {
+	widths := widestCells(rows)
+	for total(widths) > width {
+		k := widest(widths)
+		if widths[k] <= 1 {
+			break
+		}
+		widths[k]--
+	}
+	return widths
+}
+
+func widestCells(rows [][]cell) []int {
 	var widths []int
 	for _, row := range rows {
 		for k, c := range row {
@@ -134,19 +146,17 @@ func columnWidths(rows [][]cell, width int) []int {
 			widths[k] = max(widths[k], ansi.StringWidth(c.plain))
 		}
 	}
-	for total(widths) > width {
-		widest := 0
-		for k := range widths {
-			if widths[k] > widths[widest] {
-				widest = k
-			}
-		}
-		if widths[widest] <= 1 {
-			break
-		}
-		widths[widest]--
-	}
 	return widths
+}
+
+func widest(widths []int) int {
+	k := 0
+	for i := range widths {
+		if widths[i] > widths[k] {
+			k = i
+		}
+	}
+	return k
 }
 
 func total(widths []int) int {
@@ -162,24 +172,40 @@ func total(widths []int) int {
 // offset of the leftmost cell that still has text on that visual row, so a
 // resize anchor finds the same text again. Returns the next src.
 func (f *formatter) tableRow(row []cell, widths []int, base lipgloss.Style) int {
+	wrapped, offsets := wrapRow(row, widths, base)
+	for line := 0; line < rowHeight(wrapped); line++ {
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: rowOffset(row, offsets, line), text: string(body) + joinCells(wrapped, widths, line)})
+	}
+	return f.b.src + 1
+}
+
+// wrapRow wraps every cell to its column; a missing cell is one empty line.
+func wrapRow(row []cell, widths []int, base lipgloss.Style) ([][]string, [][]int) {
 	wrapped := make([][]string, len(widths))
 	offsets := make([][]int, len(widths))
-	height := 1
 	for k := range widths {
 		wrapped[k] = []string{""}
 		if k < len(row) {
 			wrapped[k], offsets[k] = wrapCell(row[k].inline, widths[k], base)
 		}
-		height = max(height, len(wrapped[k]))
 	}
-	for line := 0; line < height; line++ {
-		var out []string
-		for k := range widths {
-			out = append(out, cellLine(wrapped[k], line, widths[k]))
-		}
-		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: rowOffset(row, offsets, line), text: string(body) + strings.Join(out, ruleStyle.Render(" │ "))})
+	return wrapped, offsets
+}
+
+func rowHeight(wrapped [][]string) int {
+	height := 1
+	for _, lines := range wrapped {
+		height = max(height, len(lines))
 	}
-	return f.b.src + 1
+	return height
+}
+
+func joinCells(wrapped [][]string, widths []int, line int) string {
+	out := make([]string, len(widths))
+	for k := range widths {
+		out[k] = cellLine(wrapped[k], line, widths[k])
+	}
+	return strings.Join(out, ruleStyle.Render(" │ "))
 }
 
 // rowOffset is the source offset of the leftmost cell with text on a visual
@@ -208,7 +234,7 @@ func wrapCell(c inline, width int, base lipgloss.Style) ([]string, []int) {
 		if at := strings.Index(c.plain[pos:], part); at >= 0 {
 			pos += at
 		}
-		out = append(out, c.render(pos, pos+len(part), base)+strings.Repeat(" ", max(0, width-ansi.StringWidth(part))))
+		out = append(out, c.render(segment{pos, pos + len(part)}, base)+strings.Repeat(" ", max(0, width-ansi.StringWidth(part))))
 		offsets = append(offsets, pos)
 		pos += len(part)
 	}

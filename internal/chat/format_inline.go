@@ -73,77 +73,94 @@ type inlineParser struct {
 
 // step consumes a span or one rune at i and returns the next offset.
 func (p *inlineParser) step(i int) int {
+	c := cursor{src: p.src, at: i}
 	if p.parse {
-		if m, end := openingMarker(p.src, i); m != nil {
+		if m, end := c.openingMarker(); m != nil {
 			start := p.plain.Len()
-			p.append(i+len(m.open), end)
+			p.append(segment{i + len(m.open), end})
 			p.in.spans = append(p.in.spans, span{start: start, end: p.plain.Len(), kind: m.kind})
 			return end + len(m.close)
 		}
 	}
-	size := runeLen(p.src, i)
-	p.append(i, i+size)
+	size := c.runeLen()
+	p.append(segment{i, i + size})
 	return i + size
 }
 
-// append adds src[from:to] to the plain text, escaping controls, and records
-// each plain byte's source offset. Joined emoji keep their joiner and
-// variation selector, which safe() would escape for identities.
-func (p *inlineParser) append(from, to int) {
-	for j, r := range p.src[from:to] {
+// segment is a byte range [from, to) of a string.
+type segment struct {
+	from, to int
+}
+
+// append adds the source segment to the plain text, escaping controls, and
+// records each plain byte's source offset. Joined emoji keep their joiner
+// and variation selector, which safe() would escape for identities.
+func (p *inlineParser) append(seg segment) {
+	for j, r := range p.src[seg.from:seg.to] {
 		escaped := safe(string(r))
 		if r == '\u200d' || r == '\ufe0f' {
 			escaped = string(r)
 		}
 		for range len(escaped) {
-			p.in.orig = append(p.in.orig, from+j)
+			p.in.orig = append(p.in.orig, seg.from+j)
 		}
 		p.plain.WriteString(escaped)
 	}
 }
 
-// openingMarker reports a marker opening at i with a balanced close, and the
+// cursor is a position in a source line.
+type cursor struct {
+	src string
+	at  int
+}
+
+// openingMarker reports a marker opening here with a balanced close, and the
 // offset of that close.
-func openingMarker(src string, i int) (*marker, int) {
+func (c cursor) openingMarker() (*marker, int) {
 	for k := range markers {
-		if end := markers[k].closes(src, i); end > 0 {
+		if end := markers[k].closes(c); end > 0 {
 			return &markers[k], end
 		}
 	}
 	return nil, 0
 }
 
-// closes is the offset of the balanced close for a marker opening at i, or
-// 0 when the marker doesn't open there or doesn't close.
-func (m *marker) closes(src string, i int) int {
-	if !m.opensAt(src, i) {
+// closes is the offset of the balanced close for a marker opening at the
+// cursor, or 0 when it doesn't open there or doesn't close.
+func (m *marker) closes(c cursor) int {
+	if !m.opensAt(c) {
 		return 0
 	}
-	body := i + len(m.open)
-	rel := strings.Index(src[body:], m.close)
-	if rel <= 0 || !m.endsAt(src, body+rel) {
+	body := c.at + len(m.open)
+	rel := strings.Index(c.src[body:], m.close)
+	if rel <= 0 || !m.endsAt(cursor{c.src, body + rel + len(m.close)}) {
 		return 0
 	}
-	if m.kind != spanCode && strings.TrimSpace(src[body:body+rel]) == "" {
+	if m.kind != spanCode && strings.TrimSpace(c.src[body:body+rel]) == "" {
 		return 0
 	}
 	return body + rel
 }
 
-func (m *marker) opensAt(src string, i int) bool {
-	return strings.HasPrefix(src[i:], m.open) && (!m.word || boundaryBefore(src, i))
+func (m *marker) opensAt(c cursor) bool {
+	return strings.HasPrefix(c.src[c.at:], m.open) && (!m.word || c.boundaryBefore())
 }
 
-func (m *marker) endsAt(src string, close int) bool {
-	return !m.word || boundaryAfter(src, close+len(m.close))
+func (m *marker) endsAt(c cursor) bool {
+	return !m.word || c.boundaryAfter()
 }
 
-func boundaryBefore(src string, i int) bool {
-	return i == 0 || !isWord(lastRune(src[:i]))
+func (c cursor) boundaryBefore() bool {
+	return c.at == 0 || !isWord(lastRune(c.src[:c.at]))
 }
 
-func boundaryAfter(src string, i int) bool {
-	return i >= len(src) || !isWord(firstRune(src[i:]))
+func (c cursor) boundaryAfter() bool {
+	return c.at >= len(c.src) || !isWord(firstRune(c.src[c.at:]))
+}
+
+func (c cursor) runeLen() int {
+	_, size := firstRuneSize(c.src[c.at:])
+	return size
 }
 
 func isWord(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
@@ -166,27 +183,29 @@ func (in inline) origin(pos int) int {
 	return in.orig[pos]
 }
 
-// render styles plain[from:to], applying base everywhere and the spans on top.
-func (in inline) render(from, to int, base lipgloss.Style) string {
+// render styles the plain segment, applying base everywhere and the spans
+// on top.
+func (in inline) render(seg segment, base lipgloss.Style) string {
 	var out strings.Builder
-	at := from
-	for at < to {
-		next, style := in.styleAt(at, to, base)
+	at := seg.from
+	for at < seg.to {
+		next, style := in.styleAt(segment{at, seg.to}, base)
 		out.WriteString(style.Render(in.plain[at:next]))
 		at = next
 	}
 	return out.String()
 }
 
-// styleAt is the style of the plain text at pos and where it changes next.
-func (in inline) styleAt(pos, limit int, base lipgloss.Style) (int, lipgloss.Style) {
-	next, style := limit, base
+// styleAt is the style at the segment's start and where it changes next,
+// bounded by the segment's end.
+func (in inline) styleAt(seg segment, base lipgloss.Style) (int, lipgloss.Style) {
+	next, style := seg.to, base
 	for _, s := range in.spans {
 		switch {
-		case s.start <= pos && pos < s.end:
+		case s.start <= seg.from && seg.from < s.end:
 			style = spanStyle(s.kind, style)
 			next = min(next, s.end)
-		case s.start > pos:
+		case s.start > seg.from:
 			next = min(next, s.start)
 		}
 	}
@@ -203,11 +222,6 @@ func spanStyle(kind spanKind, base lipgloss.Style) lipgloss.Style {
 		return base.Italic(true)
 	}
 	return base.Underline(true)
-}
-
-func runeLen(s string, i int) int {
-	_, size := firstRuneSize(s[i:])
-	return size
 }
 
 func firstRuneSize(s string) (rune, int) {
