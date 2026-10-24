@@ -262,7 +262,7 @@ not an acknowledgment, not evidence of completion and never an authorization.
   agent that never declared one or is unknown; no state is inferred.
 - `agent_activity` `{source}` comes from the agent's launcher or launch
   hooks, not the model: `source` names where it was observed
-  (`codex-launcher`, `claude-hook`). It is accepted only from the session that
+  (`codex-launcher`, `claude-adapter`; any other source is rejected). It is accepted only from the session that
   owns the agent ID; `activity.at` is the broker's arrival time (a client time
   is ignored); the first report is applied at once, later ones are coalesced
   to one update per 30 s. Activity belongs to the session that reported it:
