@@ -53,7 +53,7 @@ pairtask shell
 # command codex login --device-auth
 # command claude auth login
 # gh auth login --web --git-protocol https  # optional GitHub CLI login
-# pairtask-codescene-login                  # optional CodeScene token; hidden prompt
+# pairtask-codescene-login                  # optional CodeScene PAT, hidden prompt; not `cs-mcp auth` (browser OAuth hangs here)
 
 # First use only: clone if you have not already done so
 # git clone https://github.com/pairtask/pairtask.git /workspace/pairtask
