@@ -109,6 +109,8 @@ printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l'
 The chat runs full screen: the
 conversation fills the window, newest at the bottom, and you type at the
 bottom. A hint line above the input always shows who your message will reach.
+Message text renders lists, pipe tables, headings, bold, italics, underline
+and code from a small Markdown subset; see [operator chat](operator-chat.md#screen).
 
 - **Addressing:**
   - No mention sends to everyone: `Stand-up in 5 minutes`.

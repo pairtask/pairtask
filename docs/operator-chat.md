@@ -1365,6 +1365,28 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   right-aligned when two cells remain and no status is set: a status replaces
   the hints while it shows. A short status and the ack reminder are both
   visible at 80 columns; a status too long for the row takes priority.
+- **Message text** renders a small, fixed subset of Markdown so lists and
+  tables read as such; everything else is plain text. Each source line stays
+  one logical line (hard newlines are kept; runs of blank lines collapse to
+  one blank row; CRLF is a newline, a lone CR an escaped control). Headings
+  (`#` … `######` and a space) are bold without the marker. List items
+  (`- `, `* `, `• `, `1. `, `1)`, with optional leading spaces) keep their
+  marker and wrap with a hanging indent under the text; a very deep indent is
+  cut so the text keeps half the width. Inline, balanced within one line and
+  otherwise literal: `` `code` `` (nothing inside is interpreted), `**bold**`
+  and `__bold__`, `*italic*` and `_italic_` (the underscore forms only at word
+  boundaries, so `snake_case` stays), `<u>underline</u>` (no other HTML).
+  Fenced ```` ``` ```` blocks are verbatim in a muted style, hard-wrapped so
+  nothing is cut. A pipe table is a row, a separator row (`---|:--:|---`)
+  and more rows: columns pad to the widest cell and join with ` │ `, the
+  header is bold over a `─┼─` rule, a table wider than the transcript shrinks
+  its widest columns and wraps cells over several rows, and when even
+  one-cell columns don't fit each row becomes `header: value` lines; no cell
+  is ever dropped; pipes inside cells are not escapable. Emoji keep their
+  joiners and variation selectors; every other control is escaped as before.
+  `/copy` copies the original text; `/find` matches the original or the
+  rendered text; resize anchors and `/find` offsets point into the source
+  line, marker included.
 - **Degradation order** on small terminals, what gets a row first: the
   audience divider, one input row and the footer; up to three transcript rows
   (the newest message's header, first text line and mark), which outrank
