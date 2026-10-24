@@ -63,8 +63,8 @@ tmux new -A -s collab
 # Ctrl+B then C opens another window
 cd /workspace/collab-ai
 codex                         # new managed Codex conversation (codex-1)
-# pairtask start codex --id codex-2        # another Codex seat with its own ID
-# pairtask start claude --id claude-2 --model opus --effort high   # likewise for Claude
+# pairtask start codex --id codex-2        # another Codex session with its own ID
+# pairtask start claude --id claude-2       # likewise for Claude (--model, --effort, -- native args)
 # codex resume                # choose a saved sandbox conversation
 # codex resume SESSION_ID     # resume a specific sandbox conversation
 # claude                      # Claude with collaboration channels enabled
@@ -82,8 +82,9 @@ exit
 ```
 
 Expect `Broker: ready`. Run one Codex and one Claude session; additional sessions
-need distinct agent IDs: `pairtask start codex|claude --id ID` inside the sandbox
-generates the launcher arguments or MCP config, so nobody edits JSON. [Login help](docs/sandbox.md#sign-in-and-network-access).
+need distinct agent IDs: `pairtask start codex --id codex-2` or
+`pairtask start claude --id claude-2` inside the sandbox generates the launcher
+arguments or the MCP config, so nobody edits JSON. [Login help](docs/sandbox.md#sign-in-and-network-access).
 Both agents should read `/usr/local/share/pairtask/SKILL.md`.
 
 [Mount directories](docs/sandbox-mounts.md) ·
