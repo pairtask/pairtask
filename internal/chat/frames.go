@@ -67,6 +67,8 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		m.agents.apply(ev)
 	case protocol.EventSendRefused:
 		return m.sendRefused(ev)
+	case protocol.EventStatusChanged:
+		return m.refreshStatuses()
 	}
 	return nil
 }
@@ -176,6 +178,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 	}
 	m.revision, m.baseline = snap.Watermark.Revision, true
 	m.agents = agentView{list: snap.Agents, total: snap.AgentsTotal, partial: snap.AgentsTruncated}
+	m.statuses.set(snap)
 	m.inbox.pending, m.inbox.headSeq = snap.InboxPending, snap.InboxHeadSeq
 	m.timeline.resetStages()
 	for _, s := range snap.RecentSent {

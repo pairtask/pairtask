@@ -109,10 +109,11 @@ type Model struct {
 	outbox  []protocol.Message
 
 	timeline
-	inbox   inboxState
-	history historyState
-	send    sendState
-	agents  agentView
+	inbox    inboxState
+	history  historyState
+	send     sendState
+	agents   agentView
+	statuses statusView
 
 	compose    composer
 	conv       conversations

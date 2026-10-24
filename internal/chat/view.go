@@ -84,6 +84,9 @@ func (m *Model) screen() string {
 	if l.bar {
 		rows = append(rows, m.barRow())
 	}
+	if l.agentStatus {
+		rows = append(rows, m.statusRow())
+	}
 	if l.divider {
 		rows = append(rows, m.rule())
 	}
@@ -109,6 +112,7 @@ const entryRows = 3
 // the transcript takes the rest.
 type frameLayout struct {
 	header, bar, divider, boxed bool
+	agentStatus                 bool // the open conversation's agent status row
 	transcript                  int
 	picker, composer            int
 }
@@ -135,6 +139,9 @@ func (m *Model) layoutTop(l *frameLayout, rest int) int {
 	}
 	if rest > 0 {
 		l.divider, rest = true, rest-1
+	}
+	if _, ok := m.selectedStatus(); ok && rest > 0 {
+		l.agentStatus, rest = true, rest-1
 	}
 	return rest
 }
