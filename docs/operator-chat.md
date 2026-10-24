@@ -1335,19 +1335,25 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
  connected · 2 online · unread 0 · inbox 3   Enter send · / commands · F1 help
 ```
 
-- **Title band**: a colour band (one background colour, white text, bold
-  title "pairtask operator chat"; "operator chat" under 52 columns) with the
-  title alone. The connection facts moved to the footer (#121).
+- **Title band**: a slate band (background 237, off-white text 252, both
+  set explicitly so the terminal theme cannot wash it out; bold title
+  "pairtask operator chat", "operator chat" under 52 columns) with the title
+  alone. The palette is 256-colour and quiet: gold 179 for the warning and
+  need-ack states, sage 108 for done, soft red 167 for errors, steel blue 110
+  for "you", teal 73 for code, ten muted agent hues; a selection (picker row,
+  selected tab) is a dark blue band (24) with light text (255), never reverse
+  video over faint text, so a highlighted command's explanation stays
+  readable. The connection facts moved to the footer (#121).
 - **Conversation bar**, one row: `1 All`, then `2 claude-1`, with `•N` unread
-  in the warning colour. The selected one is rendered reversed in its agent
-  colour (All in the title colour). The selected tab is always visible; the
+  in the warning colour. The selected one is rendered as a selection band in
+  its agent colour (All in the title colour). The selected tab is always visible; the
   bar scrolls horizontally with `…`.
 - **Divider under the bar.** One line.
 - **Input box.** The audience divider is the box's top edge and replaces the
   v2 hint line with the same content rules (audience, reply target, blocking
   reason, "pasted text, mentions ignored"): `╭─ to codex-1 ─…╮` in codex-1's
   colour, `╭─ to everyone (2 online) ─…╮` in the warning colour (bold
-  yellow), `╭─ reply to #127 → codex-1 ─…╮`, `╭─ ✗ reason ─…╮` in the error
+  gold), `╭─ reply to #127 → codex-1 ─…╮`, `╭─ ✗ reason ─…╮` in the error
   colour; a label longer than the width is cut with `…` so the corner stays.
   The input rows sit inside with one cell of padding (`│ › draft │`), the box
   grows with the draft up to six rows and scrolls inside after that, and a
@@ -1386,7 +1392,10 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   joiners and variation selectors; every other control is escaped as before.
   `/copy` copies the original text; `/find` matches the original or the
   rendered text; resize anchors and `/find` offsets point into the source
-  line, marker included.
+  line, marker included. Limits: a line longer than 4096 bytes is shown as
+  typed (no inline parsing), a pipe inside a table cell cannot be escaped,
+  and this is a fixed subset, not Markdown: links, images, nested lists,
+  block quotes and single-`*` emphasis rules beyond the above stay literal.
 - **Degradation order** on small terminals, what gets a row first: the
   audience divider, one input row and the footer; up to three transcript rows
   (the newest message's header, first text line and mark), which outrank
