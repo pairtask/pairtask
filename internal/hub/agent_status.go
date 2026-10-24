@@ -52,6 +52,16 @@ func (s *statusState) forget(c *Client) {
 	}
 }
 
+// recentActivity reports activity already applied for this session within
+// activityCoalesce.
+func (s *statusState) recentActivity(c *Client, now time.Time) bool {
+	prev, ok := s.activity[c.ID]
+	if !ok || prev.session != c.SessionID {
+		return false
+	}
+	return now.Sub(prev.seen.At) < activityCoalesce
+}
+
 // take spends a token for agent if one is available.
 func (s *statusState) take(agent string, now time.Time) bool {
 	b := s.buckets[agent]
@@ -162,8 +172,7 @@ func (h *Hub) noteActivity(in Inbound) {
 		return
 	}
 	now := time.Now().UTC()
-	prev, ok := h.statuses.activity[in.From.ID]
-	if ok && prev.session == in.From.SessionID && now.Sub(prev.seen.At) < activityCoalesce {
+	if h.statuses.recentActivity(in.From, now) {
 		return
 	}
 	h.statuses.activity[in.From.ID] = sessionActivity{session: in.From.SessionID, seen: protocol.Activity{At: now, Source: in.Msg.Source}}

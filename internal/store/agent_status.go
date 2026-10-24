@@ -74,7 +74,8 @@ func (s *Store) AgentStatusPage(ctx context.Context, current []Current, limit in
 		return page, fmt.Errorf("count agent statuses: %w", err)
 	}
 	records, err := s.currentRecords(ctx, current, limit)
-	if err != nil {
+	if err != nil || len(records) == limit {
+		page.Records = records
 		return page, err
 	}
 	rest, err := s.statusesByID(ctx, limit+len(records))
