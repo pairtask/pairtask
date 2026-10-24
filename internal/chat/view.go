@@ -189,7 +189,11 @@ func (m *Model) footer() string {
 	if reminder := m.ackReminder(); reminder != "" {
 		parts = append(parts, reminder)
 	}
-	left, used := fitParts(append(parts, bandStyle.Render(m.facts())), m.width)
+	parts = append(parts, bandStyle.Render(m.facts()))
+	if summary := m.statusSummary(); summary != "" {
+		parts = append(parts, bandStyle.Render(summary)) // lowest priority: dropped first
+	}
+	left, used := fitParts(parts, m.width)
 	right := ""
 	if gap := m.width - used - ansi.StringWidth(keyReminder); gap >= 2 && status == "" {
 		right = bandStyle.Render(strings.Repeat(" ", gap) + keyReminder)

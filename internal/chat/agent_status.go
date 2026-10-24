@@ -205,3 +205,27 @@ func age(t time.Time) string {
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
+
+// footerStatuses bounds the agents the footer summarises.
+const footerStatuses = 3
+
+// statusSummary is the footer's compact view: current declarations only, as
+// "id ▸ state age", at most footerStatuses agents and a count of the rest.
+func (m *Model) statusSummary() string {
+	var ids []string
+	for id, st := range m.statuses.byAgent {
+		if st.Connected {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var parts []string
+	for _, id := range ids[:min(len(ids), footerStatuses)] {
+		st := m.statuses.byAgent[id]
+		parts = append(parts, safe(id)+" ▸ "+st.State+" "+age(st.DeclaredAt))
+	}
+	if more := len(ids) - footerStatuses; more > 0 {
+		parts = append(parts, fmt.Sprintf("+%d", more))
+	}
+	return strings.Join(parts, " · ")
+}

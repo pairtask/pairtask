@@ -1404,7 +1404,10 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   what it waits on, how long ago it declared it, and when its harness was
   last seen working (`launcher` for Codex, `pairtask tool activity` for
   Claude) or `activity unavailable`; a declaration from an earlier session
-  says so. `/agents` lists the same for every agent with a status. Statuses
+  says so. `/agents` lists the same for every agent with a status, and the
+  footer adds a compact `id ▸ state age` for up to three current agents
+  (lowest priority: dropped first when the row is short, after status
+  messages, the ack reminder and the connection facts). Statuses
   arrive as `status_changed` events and refresh with a snapshot at the
   chat's own watermark (a snapshot past it is installed as a full baseline);
   ages re-render locally every 30 s. A status is never a transcript entry,
