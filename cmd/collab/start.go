@@ -107,20 +107,37 @@ func given(flags *flag.FlagSet, name string) bool {
 }
 
 func (o *startOptions) validate() error {
+	if err := o.validateAgent(); err != nil {
+		return err
+	}
+	if err := o.validateID(); err != nil {
+		return err
+	}
+	return o.validateValues()
+}
+
+func (o *startOptions) validateAgent() error {
 	switch o.Agent {
 	case "claude", "codex":
-	default:
-		return fmt.Errorf("unknown agent %q: use claude or codex", o.Agent)
+		return nil
 	}
+	return fmt.Errorf("unknown agent %q: use claude or codex", o.Agent)
+}
+
+func (o *startOptions) validateID() error {
 	if o.ID == "" {
 		o.ID = o.Agent + "-1"
 	}
-	if err := protocol.ValidateAgentID(o.ID); err != nil {
-		return err
+	if strings.ContainsRune(o.ID, 0) {
+		return errors.New("--id cannot contain NUL")
 	}
-	// The model is an argv value, kept literally (aliases such as opus[1m]);
-	// the effort is interpolated into Codex's TOML, so it is a plain token.
-	if strings.ContainsRune(o.ID, 0) || strings.ContainsRune(o.Model, 0) || strings.ContainsRune(o.Socket, 0) {
+	return protocol.ValidateAgentID(o.ID)
+}
+
+// validateValues: the model is an argv value kept literally (aliases such as
+// opus[1m]); the effort is interpolated into Codex's TOML, so it is a token.
+func (o *startOptions) validateValues() error {
+	if strings.ContainsRune(o.Model, 0) || strings.ContainsRune(o.Socket, 0) {
 		return errors.New("arguments cannot contain NUL")
 	}
 	if o.Effort != "" && !startToken.MatchString(o.Effort) {
@@ -144,7 +161,7 @@ func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, 
 	if opts.Agent == "codex" {
 		return codexPlan(opts, layout), nil
 	}
-	config, err := claudeConfig(base, opts.ID, opts.Socket)
+	config, err := claudeConfig(base, serverIdentity{ID: opts.ID, Socket: opts.Socket})
 	if err != nil {
 		return startPlan{}, err
 	}
@@ -174,10 +191,16 @@ func codexPlan(opts startOptions, layout startLayout) startPlan {
 	return startPlan{Argv: append(argv, opts.Native...)}
 }
 
+// serverIdentity is what start changes in the pairtask MCP server entry; an
+// empty Socket keeps the installed one.
+type serverIdentity struct {
+	ID, Socket string
+}
+
 // claudeConfig is the installed config with only the pairtask server's
 // --agent-id (and --socket, when given) changed; every other field and
 // server is kept as it was.
-func claudeConfig(base []byte, id, socket string) ([]byte, error) {
+func claudeConfig(base []byte, want serverIdentity) ([]byte, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(base, &doc); err != nil {
 		return nil, fmt.Errorf("claude MCP config: %w", err)
@@ -186,7 +209,7 @@ func claudeConfig(base []byte, id, socket string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	args, err = rewriteArgs(args, id, socket)
+	args, err = rewriteArgs(args, want)
 	if err != nil {
 		return nil, err
 	}
@@ -218,17 +241,17 @@ func pairtaskServer(doc map[string]any) (map[string]any, []string, error) {
 }
 
 // rewriteArgs validates the pairtask flags and sets the ID and the socket.
-func rewriteArgs(args []string, id, socket string) ([]string, error) {
+func rewriteArgs(args []string, want serverIdentity) ([]string, error) {
 	for _, name := range []string{"--agent-id", "--socket"} {
 		if err := checkFlag(args, name); err != nil {
 			return nil, err
 		}
 	}
-	args, err := setFlag(args, "--agent-id", id, false)
-	if err != nil || socket == "" {
+	args, err := setFlag(args, flagEdit{Name: "--agent-id", Value: want.ID})
+	if err != nil || want.Socket == "" {
 		return args, err
 	}
-	return setFlag(args, "--socket", socket, true)
+	return setFlag(args, flagEdit{Name: "--socket", Value: want.Socket, AppendMissing: true})
 }
 
 // checkFlag rejects a malformed occurrence of name in args: at the end with
@@ -245,20 +268,26 @@ func checkFlag(args []string, name string) error {
 	return nil
 }
 
+// flagEdit is one flag to set in the server's arguments.
+type flagEdit struct {
+	Name, Value   string
+	AppendMissing bool // add the flag when absent instead of failing
+}
+
 // setFlag replaces the value of a well-formed flag in args, whether written
 // "--flag X" or "--flag=X"; exactly one occurrence is expected, or none when
-// appendMissing.
-func setFlag(args []string, name, value string, appendMissing bool) ([]string, error) {
+// the edit may append.
+func setFlag(args []string, edit flagEdit) ([]string, error) {
 	found := 0
 	out := make([]string, 0, len(args)+2)
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == name:
-			out = append(out, name, value)
+		case args[i] == edit.Name:
+			out = append(out, edit.Name, edit.Value)
 			i++
 			found++
-		case strings.HasPrefix(args[i], name+"="):
-			out = append(out, name+"="+value)
+		case strings.HasPrefix(args[i], edit.Name+"="):
+			out = append(out, edit.Name+"="+edit.Value)
 			found++
 		default:
 			out = append(out, args[i])
@@ -267,10 +296,10 @@ func setFlag(args []string, name, value string, appendMissing bool) ([]string, e
 	if found == 1 {
 		return out, nil
 	}
-	if found == 0 && appendMissing {
-		return append(out, name, value), nil
+	if found == 0 && edit.AppendMissing {
+		return append(out, edit.Name, edit.Value), nil
 	}
-	return nil, fmt.Errorf("claude MCP config: %s appears %d times in mcpServers.pairtask.args, want one", name, found)
+	return nil, fmt.Errorf("claude MCP config: %s appears %d times in mcpServers.pairtask.args, want one", edit.Name, found)
 }
 
 // configPath names the per-ID config without putting the ID in the path.
@@ -307,43 +336,54 @@ func writePrivate(path string, data []byte) error {
 	return err
 }
 
+// execFunc replaces the process; syscall.Exec in production.
+type execFunc func(argv0 string, argv, env []string) error
+
+// startRuntime is where start writes, reads its layout from, and how it
+// hands over the process.
+type startRuntime struct {
+	Stdout, Stderr io.Writer
+	Layout         startLayout
+	Exec           execFunc
+}
+
 // runStart is `pairtask start`: write the config if any, then replace this
 // process with the launcher so it owns the terminal and the exit status.
-func runStart(args []string, stdout, stderr io.Writer, layout startLayout, execve func(argv0 string, argv, env []string) error) int {
+func runStart(args []string, rt startRuntime) int {
 	opts, err := parseStart(args)
 	if errors.Is(err, flag.ErrHelp) {
-		fmt.Fprintln(stdout, startUsage)
+		fmt.Fprintln(rt.Stdout, startUsage)
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		fmt.Fprintln(stderr, startUsage)
+		fmt.Fprintln(rt.Stderr, err)
+		fmt.Fprintln(rt.Stderr, startUsage)
 		return 2
 	}
-	plan, code := planStart(opts, layout, stderr)
+	plan, code := planStart(opts, rt)
 	if code != 0 {
 		return code
 	}
 	if opts.DryRun {
-		printPlan(plan, stdout)
+		printPlan(plan, rt.Stdout)
 		return 0
 	}
-	return launch(plan, stderr, execve)
+	return launch(plan, rt)
 }
 
 // planStart reads the installed config when Claude needs it and builds the plan.
-func planStart(opts startOptions, layout startLayout, stderr io.Writer) (startPlan, int) {
+func planStart(opts startOptions, rt startRuntime) (startPlan, int) {
 	var base []byte
 	if opts.Agent == "claude" {
 		var err error
-		if base, err = os.ReadFile(layout.BaseConfig); err != nil {
-			fmt.Fprintln(stderr, err)
+		if base, err = os.ReadFile(rt.Layout.BaseConfig); err != nil {
+			fmt.Fprintln(rt.Stderr, err)
 			return startPlan{}, 1
 		}
 	}
-	plan, err := buildStart(opts, layout, base)
+	plan, err := buildStart(opts, rt.Layout, base)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(rt.Stderr, err)
 		return startPlan{}, 2
 	}
 	return plan, 0
@@ -359,15 +399,15 @@ func printPlan(plan startPlan, stdout io.Writer) {
 }
 
 // launch writes the config, then hands the process to the launcher.
-func launch(plan startPlan, stderr io.Writer, execve func(argv0 string, argv, env []string) error) int {
+func launch(plan startPlan, rt startRuntime) int {
 	if plan.Config != nil {
 		if err := writePrivate(plan.ConfigPath, plan.Config); err != nil {
-			fmt.Fprintln(stderr, err)
+			fmt.Fprintln(rt.Stderr, err)
 			return 1
 		}
 	}
-	if err := execve(plan.Argv[0], plan.Argv, os.Environ()); err != nil {
-		fmt.Fprintln(stderr, "exec "+plan.Argv[0]+": "+err.Error())
+	if err := rt.Exec(plan.Argv[0], plan.Argv, os.Environ()); err != nil {
+		fmt.Fprintln(rt.Stderr, "exec "+plan.Argv[0]+": "+err.Error())
 		return 1
 	}
 	return 0

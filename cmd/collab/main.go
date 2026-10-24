@@ -40,7 +40,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "operator":
 		return runOperator(ctx, args[1:], stdout, stderr)
 	case "start":
-		return runStart(args[1:], stdout, stderr, defaultStartLayout(), syscall.Exec)
+		return runStart(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec})
 	}
 	return runStatus(ctx, args, stdout, stderr)
 }
