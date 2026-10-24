@@ -37,14 +37,14 @@ quota-capable pool and a managed bridge. Details: [sandbox setup](sandbox.md).
 | `pairtask start` | host | On macOS starts the VM, then starts `secured` (if present) and `workspace`, one Incus call each. `--remote`, `--project`. | no |
 | `pairtask stop` | host | Stops `workspace`, then `secured`; `--vm` also stops the macOS VM. | yes |
 | `pairtask status` | host | Lists the containers and their state (`incus --project pairtask list`). | no |
-| `pairtask shell pairtask status` | workspace | Broker and agent inbox status inside the sandbox; expect `Broker: ready`. `pairtask shell pairtask dashboard` opens the dashboard. | no |
+| `pairtask shell pairtask status` | workspace | Broker and agent inbox status inside the sandbox; expect `Broker: ready`. `pairtask shell --tty pairtask dashboard` opens the dashboard. | no |
 | `incus webui colima-pairtask:` (Linux: `local:`) | host | The Incus web UI, after the one-time setup in [sandbox.md](sandbox.md#incus-web-ui). | no |
 
 ## Shell and chat
 
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
-| `pairtask shell` | host → workspace | SSH into the workspace as `agent` and restore your terminal afterwards; extra arguments run as a remote command with a terminal. Raw: `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace` (or the checkout's `infra/incus/ssh/config`). | no |
+| `pairtask shell` | host → workspace | SSH into the workspace as `agent` and restore your terminal afterwards; extra arguments run as a remote command, with a terminal when `--tty` is given. Raw: `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace` (or the checkout's `infra/incus/ssh/config`). | no |
 | `pairtask chat` | host → secured | The operator chat (`incus exec -t … pairtask operator chat`), terminal restored afterwards. [Chat guide](operator-chat.md). | no |
 | `incus --project pairtask exec colima-pairtask:secured -- pairtask operator send --to codex-1 "text"` | secured | One-shot operator message, receive or ack without the chat; refused while a chat is open. [Secured runtime](secured-runtime.md#operator-messages). | no |
 | `reset` | host | Repairs a terminal left in mouse-reporting mode by a dropped session. | no |

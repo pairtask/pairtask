@@ -97,7 +97,7 @@ Run on your host:
 
 ```sh
 # Agent connections and pending messages (terminal UI)
-pairtask shell pairtask dashboard
+pairtask shell --tty pairtask dashboard
 
 # Containers, resources and logs (browser UI)
 incus webui colima-pairtask:  # Linux: incus webui local:

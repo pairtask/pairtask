@@ -96,6 +96,8 @@ def plan(argv, system=None, instances=None):
     name, rest = argv[0], list(argv[1:])
     if name in SCRIPTED:
         file, leading, _ = SCRIPTED[name]
+        if name == "ssh" and not any(a == "--remote" or a.startswith("--remote=") for a in rest):
+            rest += ["--remote", REMOTE if system == "Darwin" else "local"] # explicit, like the other routes
         return [script(file, *leading, *rest)]
     if name in ACTIONS:
         file, actions, _ = ACTIONS[name]
