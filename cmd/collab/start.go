@@ -59,13 +59,6 @@ const brokerSocketDefault = "/tmp/collab-ai.sock"
 // parseStart reads the arguments after "start".
 func parseStart(args []string) (startOptions, error) {
 	var opts startOptions
-	flags := flag.NewFlagSet("start", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	flags.StringVar(&opts.ID, "id", "", "logical agent ID (default claude-1 or codex-1)")
-	flags.StringVar(&opts.Model, "model", "", "model name for the agent")
-	flags.StringVar(&opts.Effort, "effort", "", "reasoning effort for the agent")
-	flags.StringVar(&opts.Socket, "socket", "", "broker Unix socket path")
-	flags.BoolVar(&opts.DryRun, "dry-run", false, "print the command and the config path; run nothing")
 	if len(args) == 0 {
 		return opts, errors.New(startUsage)
 	}
@@ -73,22 +66,44 @@ func parseStart(args []string) (startOptions, error) {
 		return opts, flag.ErrHelp
 	}
 	opts.Agent = args[0]
-	rest := args[1:]
-	if i := indexOf(rest, "--"); i >= 0 {
-		opts.Native, rest = rest[i+1:], rest[:i]
-	}
+	rest, native := splitNative(args[1:])
+	opts.Native = native
+	flags := startFlags(&opts)
 	if err := flags.Parse(rest); err != nil {
 		return opts, err
 	}
 	if flags.NArg() > 0 {
 		return opts, fmt.Errorf("unexpected argument %q; agent arguments go after --", flags.Arg(0))
 	}
-	given := map[string]bool{}
-	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	if given["id"] && opts.ID == "" {
+	if given(flags, "id") && opts.ID == "" {
 		return opts, errors.New("--id cannot be empty")
 	}
 	return opts, opts.validate()
+}
+
+func startFlags(opts *startOptions) *flag.FlagSet {
+	flags := flag.NewFlagSet("start", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&opts.ID, "id", "", "logical agent ID (default claude-1 or codex-1)")
+	flags.StringVar(&opts.Model, "model", "", "model name for the agent")
+	flags.StringVar(&opts.Effort, "effort", "", "reasoning effort for the agent")
+	flags.StringVar(&opts.Socket, "socket", "", "broker Unix socket path")
+	flags.BoolVar(&opts.DryRun, "dry-run", false, "print the command and the config path; run nothing")
+	return flags
+}
+
+// splitNative separates the agent's own arguments, after "--", from ours.
+func splitNative(args []string) (ours, native []string) {
+	if i := indexOf(args, "--"); i >= 0 {
+		return args[:i], args[i+1:]
+	}
+	return args, nil
+}
+
+func given(flags *flag.FlagSet, name string) bool {
+	set := false
+	flags.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
 }
 
 func (o *startOptions) validate() error {
@@ -167,33 +182,13 @@ func claudeConfig(base []byte, id, socket string) ([]byte, error) {
 	if err := json.Unmarshal(base, &doc); err != nil {
 		return nil, fmt.Errorf("claude MCP config: %w", err)
 	}
-	servers, _ := doc["mcpServers"].(map[string]any)
-	server, _ := servers["pairtask"].(map[string]any)
-	raw, _ := server["args"].([]any)
-	if server == nil || raw == nil {
-		return nil, errors.New("claude MCP config: mcpServers.pairtask.args missing")
-	}
-	args := make([]string, 0, len(raw))
-	for _, a := range raw {
-		s, ok := a.(string)
-		if !ok {
-			return nil, errors.New("claude MCP config: mcpServers.pairtask.args must be strings")
-		}
-		args = append(args, s)
-	}
-	for _, name := range []string{"--agent-id", "--socket"} {
-		if err := checkFlag(args, name); err != nil {
-			return nil, err
-		}
-	}
-	args, err := setFlag(args, "--agent-id", id, false)
+	server, args, err := pairtaskServer(doc)
 	if err != nil {
 		return nil, err
 	}
-	if socket != "" {
-		if args, err = setFlag(args, "--socket", socket, true); err != nil {
-			return nil, err
-		}
+	args, err = rewriteArgs(args, id, socket)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]any, len(args))
 	for i, a := range args {
@@ -201,6 +196,39 @@ func claudeConfig(base []byte, id, socket string) ([]byte, error) {
 	}
 	server["args"] = out
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// pairtaskServer finds mcpServers.pairtask and its string arguments.
+func pairtaskServer(doc map[string]any) (map[string]any, []string, error) {
+	servers, _ := doc["mcpServers"].(map[string]any)
+	server, _ := servers["pairtask"].(map[string]any)
+	raw, _ := server["args"].([]any)
+	if server == nil || raw == nil {
+		return nil, nil, errors.New("claude MCP config: mcpServers.pairtask.args missing")
+	}
+	args := make([]string, 0, len(raw))
+	for _, a := range raw {
+		s, ok := a.(string)
+		if !ok {
+			return nil, nil, errors.New("claude MCP config: mcpServers.pairtask.args must be strings")
+		}
+		args = append(args, s)
+	}
+	return server, args, nil
+}
+
+// rewriteArgs validates the pairtask flags and sets the ID and the socket.
+func rewriteArgs(args []string, id, socket string) ([]string, error) {
+	for _, name := range []string{"--agent-id", "--socket"} {
+		if err := checkFlag(args, name); err != nil {
+			return nil, err
+		}
+	}
+	args, err := setFlag(args, "--agent-id", id, false)
+	if err != nil || socket == "" {
+		return args, err
+	}
+	return setFlag(args, "--socket", socket, true)
 }
 
 // checkFlag rejects a malformed occurrence of name in args: at the end with
@@ -236,15 +264,13 @@ func setFlag(args []string, name, value string, appendMissing bool) ([]string, e
 			out = append(out, args[i])
 		}
 	}
-	switch {
-	case found == 1:
+	if found == 1 {
 		return out, nil
-	case found == 0 && appendMissing:
-		return append(out, name, value), nil
-	case found == 0:
-		return nil, fmt.Errorf("claude MCP config: %s not found in mcpServers.pairtask.args", name)
 	}
-	return nil, fmt.Errorf("claude MCP config: %s appears %d times in mcpServers.pairtask.args", name, found)
+	if found == 0 && appendMissing {
+		return append(out, name, value), nil
+	}
+	return nil, fmt.Errorf("claude MCP config: %s appears %d times in mcpServers.pairtask.args, want one", name, found)
 }
 
 // configPath names the per-ID config without putting the ID in the path.
@@ -294,27 +320,46 @@ func runStart(args []string, stdout, stderr io.Writer, layout startLayout, execv
 		fmt.Fprintln(stderr, startUsage)
 		return 2
 	}
+	plan, code := planStart(opts, layout, stderr)
+	if code != 0 {
+		return code
+	}
+	if opts.DryRun {
+		printPlan(plan, stdout)
+		return 0
+	}
+	return launch(plan, stderr, execve)
+}
+
+// planStart reads the installed config when Claude needs it and builds the plan.
+func planStart(opts startOptions, layout startLayout, stderr io.Writer) (startPlan, int) {
 	var base []byte
 	if opts.Agent == "claude" {
+		var err error
 		if base, err = os.ReadFile(layout.BaseConfig); err != nil {
 			fmt.Fprintln(stderr, err)
-			return 1
+			return startPlan{}, 1
 		}
 	}
 	plan, err := buildStart(opts, layout, base)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
+		return startPlan{}, 2
 	}
-	if opts.DryRun {
-		for _, a := range plan.Argv {
-			fmt.Fprintln(stdout, a)
-		}
-		if plan.ConfigPath != "" {
-			fmt.Fprintln(stdout, "config: "+plan.ConfigPath)
-		}
-		return 0
+	return plan, 0
+}
+
+func printPlan(plan startPlan, stdout io.Writer) {
+	for _, a := range plan.Argv {
+		fmt.Fprintln(stdout, a)
 	}
+	if plan.ConfigPath != "" {
+		fmt.Fprintln(stdout, "config: "+plan.ConfigPath)
+	}
+}
+
+// launch writes the config, then hands the process to the launcher.
+func launch(plan startPlan, stderr io.Writer, execve func(argv0 string, argv, env []string) error) int {
 	if plan.Config != nil {
 		if err := writePrivate(plan.ConfigPath, plan.Config); err != nil {
 			fmt.Fprintln(stderr, err)

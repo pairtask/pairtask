@@ -5,7 +5,9 @@
 Codex and Claude run as the shared unprivileged `agent` account in `workspace`.
 Interactive `codex` selects `pairtask-codex`; `claude` selects the preconfigured
 channel adapter. They use IDs `codex-1` and `claude-1` respectively. Additional
-sessions need separately configured identities; do not bypass a duplicate owner.
+sessions need their own identity: `pairtask start codex|claude --id ID` (with
+`--model`, `--effort`, and the agent's own arguments after `--`) starts one; do
+not bypass a duplicate owner.
 `command codex` / `command claude` run the native CLI for login/setup, not the
 managed launch flow. `dashboard` is an interactive alias; in non-interactive
 shells use `pairtask dashboard` (with a TTY) or `pairtask status --json`.

@@ -75,4 +75,8 @@ Operator inbox backup and archive are tracked in #119.
 
 Not host commands, listed so the split is clear: `codex`, `claude`,
 `dashboard`, `pairtask status`, `pairtask budget …`, `docker …` run in your SSH
-session; see the [README](../README.md#set-up-a-sandbox) block.
+session; see the [README](../README.md#set-up-a-sandbox) block. A second seat
+of either agent starts with `pairtask start codex|claude --id ID [--model NAME]
+[--effort LEVEL] [-- agent arguments]`, which writes a per-ID Claude MCP config
+under `~/.config/pairtask/` or passes the ID to the Codex launcher;
+`--dry-run` shows the command.
