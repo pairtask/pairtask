@@ -216,13 +216,14 @@ func TestStartClaudeRejectsMalformedOrAmbiguousConfig(t *testing.T) {
 
 func TestStartConfigPathsContainArbitraryValidIDs(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "configs")
+	layout := startLayout{ConfigDir: dir}
 	seen := map[string]bool{}
 	for _, id := range []string{"reviewer-2", "../../outside", "team/../two", "team two", "评审"} {
-		path := configPath(dir, id)
+		path := layout.configPath(id)
 		if filepath.Dir(path) != dir || filepath.Ext(path) != ".json" {
 			t.Fatalf("ID %q escaped config directory: %s", id, path)
 		}
-		if seen[path] || configPath(dir, id) != path {
+		if seen[path] || layout.configPath(id) != path {
 			t.Fatalf("unstable or colliding path for %q", id)
 		}
 		seen[path] = true
@@ -269,7 +270,7 @@ func TestStartExecReceivesPrivateConfigAndUnchangedEnvironment(t *testing.T) {
 		assertStartEqual(t, "executable", path, layout.ClaudeBinary)
 		assertStartEqual(t, "argv[0]", argv[0], path)
 		assertStartEqual(t, "launch environment", env, wantEnv)
-		config := configPath(layout.ConfigDir, "reviewer-2")
+		config := layout.configPath("reviewer-2")
 		assertStartMode(t, config, 0600)
 		assertStartMode(t, layout.ConfigDir, 0700)
 		return errors.New("test exec failure")
@@ -297,7 +298,8 @@ func TestStartPrivateWriteReplacesWithoutFollowingTargetSymlink(t *testing.T) {
 	if err := os.Symlink(outside, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := writePrivate(path, []byte("replacement")); err != nil {
+	plan := startPlan{ConfigPath: path, Config: []byte("replacement")}
+	if err := plan.writeConfig(); err != nil {
 		t.Fatal(err)
 	}
 	original, err := os.ReadFile(outside)
@@ -347,7 +349,8 @@ func startLimitedWrite(t *testing.T, path string) {
 	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
 		t.Fatal(err)
 	}
-	if err := writePrivate(path, []byte("replacement config")); err == nil {
+	plan := startPlan{ConfigPath: path, Config: []byte("replacement config")}
+	if err := plan.writeConfig(); err == nil {
 		t.Fatal("partial write was reported as successful")
 	}
 }
