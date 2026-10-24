@@ -75,7 +75,9 @@ decide.
 
 The pattern this operator runs with two agents, each step reported in the
 chat. Use it when the operator chooses this workflow; their standing
-instructions take precedence over it.
+instructions take precedence over it. The roles carry the pattern, not the
+agents or their harnesses: with more agents or another harness, each change
+still has one builder and one reviewer, and everyone reports in the same chat.
 
 1. Agree the design with the peer; send the operator the plan and ask for the
    go when they said they decide the order.
