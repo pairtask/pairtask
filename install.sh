@@ -17,13 +17,16 @@ DRY="${PAIRTASK_INSTALL_DRY_RUN:-}"
 VERSION="" PROVISION=1 MODIFY_PATH=1 YES=0
 
 say() { printf '%s\n' "$*"; }
+# squote: a value as one single-quoted shell word, so generated files never
+# expand or split it ($, spaces, quotes in the path stay literal).
+squote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 die() { code=$1; shift; printf 'pairtask install: %s\n' "$*" >&2; exit "$code"; }
 plan() { say "plan: $*"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) [ $# -ge 2 ] || die 2 "--version needs a tag"; VERSION="$2"; shift 2 ;;
-    --version=*) VERSION="${1#--version=}"; shift ;;
+    --version) [ $# -ge 2 ] && [ -n "$2" ] || die 2 "--version needs a tag"; VERSION="$2"; shift 2 ;;
+    --version=*) VERSION="${1#--version=}"; [ -n "$VERSION" ] || die 2 "--version needs a tag"; shift ;;
     --no-provision) PROVISION=0; shift ;;
     --no-modify-path) MODIFY_PATH=0; shift ;;
     --yes|-y) YES=1; shift ;;
@@ -114,14 +117,14 @@ fi
 shim="$BIN/pairtask"
 if [ -n "$DRY" ]; then plan "write $shim"
 else
-  printf '#!/bin/sh\nexec python3 "%s/scripts/pairtask.py" "$@"\n' "$HOST" > "$shim"
+  printf '#!/bin/sh\nexec python3 %s/scripts/pairtask.py "$@"\n' "$(squote "$HOST")" > "$shim"
   chmod 755 "$shim"
 fi
 if [ "$MODIFY_PATH" -eq 1 ]; then
   case "${SHELL:-}" in
-    */fish) rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"; line="fish_add_path \"$BIN\"" ;;
-    */zsh) rc="$HOME/.zshrc"; line="export PATH=\"$BIN:\$PATH\"" ;;
-    *) rc="$HOME/.bashrc"; line="export PATH=\"$BIN:\$PATH\"" ;;
+    */fish) rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"; line="fish_add_path $(squote "$BIN")" ;;
+    */zsh) rc="$HOME/.zshrc"; line="export PATH=$(squote "$BIN"):\"\$PATH\"" ;;
+    *) rc="$HOME/.bashrc"; line="export PATH=$(squote "$BIN"):\"\$PATH\"" ;;
   esac
   if [ -n "$DRY" ]; then plan "add to $rc: $line"
   elif [ -f "$rc" ] && grep -qF "$line" "$rc"; then :
