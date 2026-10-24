@@ -164,7 +164,8 @@ func contains(e *entry, want string) bool {
 	if e.omitted {
 		return false
 	}
-	return strings.Contains(strings.ToLower(payloadText(e.msg.Payload)), want)
+	text := payloadText(e.msg.Payload)
+	return strings.Contains(strings.ToLower(text), want) || strings.Contains(strings.ToLower(plainText(text)), want)
 }
 
 func firstLine(lines []renderLine, id string) int {

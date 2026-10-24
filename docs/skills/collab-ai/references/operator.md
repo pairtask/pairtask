@@ -46,6 +46,10 @@ decide.
 
 ## Delivery
 
+- Write for a reader: real newlines, one idea per line, lists as `- ` or
+  `1. ` items, a pipe table for columns, `**bold**` for the decision needed;
+  the chat renders that subset and shows anything else as typed. One
+  question per message.
 - Replies and status go durable to the logical ID `operator`. The chat's
   conversations, tabs, and groups are the operator's view, never a destination.
 - `wait_reply` with your request's `message_id` and `from="operator"` for a

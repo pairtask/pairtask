@@ -49,20 +49,26 @@ func TestChatV3StylesHeaderBandSpansEveryCell(t *testing.T) {
 		t.Fatal("header has no background band")
 	}
 	chatEqual(t, "title is bold", first.Attrs&uv.AttrBold != 0, true)
+	formattingReadableStyle(t, "header", first)
 	for _, cell := range cells {
 		v3ColorEqual(t, "continuous header background", cell.Style.Bg, first.Bg)
-		v3ColorEqual(t, "white header text", cell.Style.Fg, ansi.BrightWhite)
+		v3ColorEqual(t, "continuous header foreground", cell.Style.Fg, first.Fg)
 	}
 }
 
 func TestChatV3StylesAudienceUsesBroadcastAndErrorColors(t *testing.T) {
 	h := v3DisplayHarness(t, false)
 	warning := v3StyleAt(t, v3AudienceRow(t, h), "to everyone")
-	v3ColorEqual(t, "broadcast warning", warning.Fg, ansi.Yellow)
+	ack := v3StyleAt(t, formattingRow(t, h, "needs ack"), "needs ack")
+	v3ColorEqual(t, "broadcast uses warning colour", warning.Fg, ack.Fg)
 	chatEqual(t, "broadcast warning is bold", warning.Attrs&uv.AttrBold != 0, true)
 	v2Type(h, "@all @codex-1 body")
 	invalid := v3StyleAt(t, v3AudienceRow(t, h), "✗")
-	v3ColorEqual(t, "blocking reason", invalid.Fg, ansi.Red)
+	if invalid.Fg == nil {
+		t.Fatal("blocking reason has no error colour")
+	}
+	errorColor := color.NRGBAModel.Convert(invalid.Fg).(color.NRGBA)
+	chatEqual(t, "blocking reason remains red", errorColor.R > errorColor.G && errorColor.R > errorColor.B, true)
 }
 
 func TestChatV3StylesDirectAndReplyMatchSenderColor(t *testing.T) {

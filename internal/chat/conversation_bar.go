@@ -29,14 +29,17 @@ func (m *Model) barRow() string {
 			name, style = safe(c.ID), agentStyle(c.ID)
 		}
 		label := strconv.Itoa(c.Position) + " " + name
+		badge := ""
 		if c.Unread > 0 {
-			label += " " + everyoneStyle.Render("•"+strconv.Itoa(c.Unread))
+			badge = " •" + strconv.Itoa(c.Unread)
 		}
 		if c.Selected {
+			// The selected tab is the selection band with explicit colours,
+			// the badge bold inside it; never reverse video.
 			selected = len(items)
-			label = style.Reverse(true).Render(" " + label + " ")
+			label = pickStyle.Render(" "+label) + pickStyle.Bold(true).Render(badge+" ")
 		} else {
-			label = " " + style.Render(label) + " "
+			label = " " + style.Render(label) + everyoneStyle.Render(badge) + " "
 		}
 		items = append(items, label)
 		widths = append(widths, len(name)+len(strconv.Itoa(c.Position))+3+badgeWidth(c.Unread))

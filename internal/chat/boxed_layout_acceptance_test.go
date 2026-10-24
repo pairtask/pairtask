@@ -82,7 +82,7 @@ func TestChatBoxFooterKeepsAckWarningAndShortStatusVisible(t *testing.T) {
 	for _, text := range []string{"12 need ack", "/ack all", "12/16", "reply cancelled"} {
 		v3Contains(t, ansi.Strip(footer), text)
 	}
-	v3ColorEqual(t, "footer retains quota warning colour", v3StyleAt(t, footer, "12/16").Fg, ansi.Yellow)
+	formattingWarningStyle(t, v3StyleAt(t, footer, "12/16"))
 	chatEqual(t, "rendering cannot acknowledge", len(h.m.State().QueuedAcks), 0)
 	v2FrameFits(t, h, 80, 24)
 }

@@ -11,23 +11,28 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// Palette: a quieter 256-colour text palette, and bands (header, footer,
+// selection) that set both foreground and background so their contrast does
+// not depend on the terminal theme; a selection is a dark blue band with
+// light text, never reverse video over faint text.
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true)
 	mutedStyle = lipgloss.NewStyle().Faint(true)
 	warnStyle  = lipgloss.NewStyle().Bold(true)
-	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	youStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	pickStyle  = lipgloss.NewStyle().Reverse(true)
-	needStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	queueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	doneStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	agentHues  = []string{"2", "3", "4", "5", "9", "10", "11", "12", "13", "14"}
-	// The header is a colour band; the audience divider names where the draft
-	// goes, everyone in the warning colour so a broadcast is never a surprise.
-	bandStyle     = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
+	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true) // soft red
+	youStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("110")).Bold(true) // steel blue
+	pickStyle  = lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255"))
+	needStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true) // gold
+	queueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("179"))
+	doneStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("108")) // sage
+	agentHues  = []string{"73", "108", "139", "173", "110", "179", "150", "140", "174", "109"}
+	// The header and footer are slate bands; the audience divider names where
+	// the draft goes, everyone in the warning colour so a broadcast is never a
+	// surprise.
+	bandStyle     = lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("252"))
 	bandTitle     = bandStyle.Bold(true)
-	bandWarn      = bandStyle.Foreground(lipgloss.Color("3")).Bold(true)
-	everyoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	bandWarn      = bandStyle.Foreground(lipgloss.Color("214")).Bold(true)
+	everyoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)
 	ruleStyle     = lipgloss.NewStyle().Faint(true)
 )
 
@@ -254,11 +259,14 @@ func (m *Model) pickerRows(l frameLayout) []string {
 	start := max(0, min(p.selected-n+1, len(p.items)-n))
 	var rows []string
 	for i := start; i < min(start+n, len(p.items)); i++ {
-		label := m.pickerLabel(p, p.items[i])
 		if i == p.selected {
-			label = pickStyle.Render(label)
+			// The selected row is a band: plain text, explicit colours, no
+			// faint help that a reverse-video highlight would wash out.
+			label := ansi.Strip(m.pickerLabel(p, p.items[i]))
+			rows = append(rows, pickStyle.Render(label+strings.Repeat(" ", max(0, m.width-ansi.StringWidth(label)))))
+			continue
 		}
-		rows = append(rows, label)
+		rows = append(rows, m.pickerLabel(p, p.items[i]))
 	}
 	return rows
 }

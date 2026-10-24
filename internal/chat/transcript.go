@@ -59,10 +59,7 @@ func (m *Model) entryLines(e *entry) []renderLine {
 	if e.omitted {
 		b.add([]string{mutedStyle.Render("[text not available: this message exceeds the history page size]")}, body)
 	} else {
-		for _, line := range strings.Split(payloadText(e.msg.Payload), "\n") {
-			text := safeText(line)
-			b.addText(text, wrap(text, width-len(body)), body)
-		}
+		b.formatBody(payloadText(e.msg.Payload), width)
 	}
 	b.add(m.statusLines(e, width), body)
 	if e.gapBelow {
