@@ -241,7 +241,7 @@ to healthy recipients. Socket writes time out after five seconds. Disconnecting 
 slow reader can discard in-memory frames; unacknowledged durable messages remain
 pending for replay. Other frames are not recoverable.
 
-## Agent status (#133)
+## Agent status (#133, v6)
 
 An agent tells the operator what it is doing with one small request at each
 change, never as a heartbeat. Status is informational: it is not a message,
@@ -254,12 +254,15 @@ not an acknowledgment, not evidence of completion and never an authorization.
   UTF-8 bytes each, without control characters. The broker answers
   `agent_status_result` `{request_id, agent_status: record}` or an error with
   the same `request_id`: `invalid_status` (nothing stored), `status_rate_limited`
-  (retryable; a token bucket per agent, burst 10, one token per 2 s; a status
-  is never dropped silently), or `not_owner` for a superseded session. No
-  sequence number, inbox entry or acknowledgment is created.
+  (retryable; a token bucket per connected agent, burst 10, one token per
+  2 s; a status is never dropped silently), or `malformed_frame` without a
+  `request_id` (at most 128 bytes). Frames from a session that is no longer
+  the agent's owner are not served. No sequence number, inbox entry or
+  acknowledgment is created.
 - `agent_status_get` `{request_id, agent_id?}` (default: the caller) answers
-  `agent_status_result` with the latest record, or with a null record for an
-  agent that never declared one or is unknown; no state is inferred.
+  `agent_status_result` with the latest record; for an agent that never
+  declared one or is unknown the result has no `agent_status` (read it as
+  null); no state is inferred.
 - `agent_activity` `{source}` comes from the agent's launcher or launch
   hooks, not the model: `source` names where it was observed
   (`codex-launcher`, `claude-adapter`; any other source is rejected). It is accepted only from the session that
@@ -277,6 +280,8 @@ not an acknowledgment, not evidence of completion and never an authorization.
   agent ID (SQLite `agent_status`) with its originating session; after a
   restart or reconnect it is served with `connected: false` until the owning
   session declares again, so an old status is never shown as fresh.
+- A client finds the feature by the negotiated `protocol_version` 6 in
+  `welcome`; against an older broker it must not send these frames.
 - Operator sessions get the event `status_changed` `{agent_id}` on the
   existing watermark, and `operator_snapshot` carries `agent_status`
   (connected agents first, then retained offline ones, at most 64) with

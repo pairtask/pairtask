@@ -35,11 +35,12 @@ const (
 )
 
 const (
-	Version                = OperatorInboxVersion
+	Version                = AgentStatusVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
 	OperatorInboxVersion   = 5
+	AgentStatusVersion     = 6 // agent_status_set/get/result and agent_activity
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -149,6 +150,8 @@ type Message struct {
 	SessionID       string            `json:"session_id,omitempty"`       // broker-assigned connection identity
 	OwnerSessionID  string            `json:"owner_session_id,omitempty"` // duplicate_id: current inbox owner
 	Harness         string            `json:"harness,omitempty"`          // hello: e.g. "claude-code 1.5"
+	AgentStatus     *AgentStatus      `json:"agent_status,omitempty"`     // agent_status_set request and agent_status_result
+	Source          string            `json:"source,omitempty"`           // agent_activity: who observed it
 	Model           string            `json:"model,omitempty"`            // hello: e.g. "claude-sonnet-4"
 	From            string            `json:"from,omitempty"`             // msg (broker -> client)
 	To              string            `json:"to,omitempty"`               // msg: agent id or "*"
