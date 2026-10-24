@@ -39,8 +39,11 @@ From a checkout of this repository on your host instead:
 
 ```sh
 python3 scripts/pairtask.py install        # later: python3 scripts/pairtask.py upgrade
-python3 scripts/sandbox-provision.py rollout   # the same, legacy form
+python3 scripts/sandbox-provision.py rollout   # legacy form of upgrade: the rollout alone
 ```
+
+`install` also starts the macOS VM first and lists the containers at the end;
+`upgrade` and the legacy rollout are the same download-and-replace step.
 
 Downloads the latest tested release for your server, verifies it, stops existing
 containers, then provisions and configures SSH. No GitHub CLI, browser download,

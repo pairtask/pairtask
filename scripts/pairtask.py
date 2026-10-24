@@ -98,34 +98,57 @@ def plan(argv, system=None, instances=None):
         file, leading, _ = SCRIPTED[name]
         return [script(file, *leading, *rest)]
     if name in ACTIONS:
-        file, actions, _ = ACTIONS[name]
-        if not rest or rest[0] not in actions:
-            raise SystemExit("pairtask %s needs one of: %s" % (name, ", ".join(actions)))
-        return [script(file, actions[rest[0]], *rest[1:])]
-    if name not in COMPOSITE:
-        raise SystemExit("unknown subcommand %s" % name)
-    return composite(name, rest, system, instances)
+        return [action_step(name, rest)]
+    if name in COMPOSITES:
+        return COMPOSITES[name](rest, system, instances)
+    raise SystemExit("unknown subcommand %s" % name)
 
 
-def composite(name, rest, system, instances):
+def action_step(name, rest):
+    file, actions, _ = ACTIONS[name]
+    if not rest or rest[0] not in actions:
+        raise SystemExit("pairtask %s needs one of: %s" % (name, ", ".join(actions)))
+    return script(file, actions[rest[0]], *rest[1:])
+
+
+def composite_options(name, rest, system):
+    """The parsed flags of a composite command and the remote it targets;
+    install keeps the rest for the rollout."""
     parser = composite_parser(name)
-    if name == "install":
-        opts, _ = parser.parse_known_args(rest) # the rollout parses the rest before any step runs
-    else:
-        opts = parser.parse_args(rest)
-    remote = opts.remote or (REMOTE if system == "Darwin" else "local")
-    mac = system == "Darwin"
-    vm = [script("sandbox-host.py", "apply")] if mac else []
-    if name == "install":
-        return vm + [script("sandbox-provision.py", "rollout", *rest), incus(opts.project, "list", remote + ":")]
-    if name == "start":
-        return vm + containers("start", remote, opts.project, instances)
-    if name == "stop":
-        steps = containers("stop", remote, opts.project, instances)
-        if opts.vm and mac:
-            steps.append(Step("command", ["colima", "stop", PROJECT]))
-        return steps
-    return [incus(opts.project, "list", remote + ":")]
+    opts = parser.parse_known_args(rest)[0] if name == "install" else parser.parse_args(rest)
+    opts.remote = opts.remote or (REMOTE if system == "Darwin" else "local")
+    opts.mac = system == "Darwin"
+    return opts
+
+
+def vm_steps(opts):
+    return [script("sandbox-host.py", "apply")] if opts.mac else []
+
+
+def install_steps(rest, system, instances):
+    opts = composite_options("install", rest, system)
+    return vm_steps(opts) + [script("sandbox-provision.py", "rollout", *rest), incus(opts.project, "list", opts.remote + ":")]
+
+
+def start_steps(rest, system, instances):
+    opts = composite_options("start", rest, system)
+    return vm_steps(opts) + containers("start", opts.remote, opts.project, instances)
+
+
+def stop_steps(rest, system, instances):
+    opts = composite_options("stop", rest, system)
+    steps = containers("stop", opts.remote, opts.project, instances)
+    if opts.vm and opts.mac:
+        steps.append(Step("command", ["colima", "stop", PROJECT]))
+    return steps
+
+
+def status_steps(rest, system, instances):
+    opts = composite_options("status", rest, system)
+    return [incus(opts.project, "list", opts.remote + ":")]
+
+
+COMPOSITES = {"install": install_steps, "start": start_steps, "stop": stop_steps, "status": status_steps}
 
 
 def containers(action, remote, project, instances):
@@ -195,8 +218,7 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(usage())
         return 0
-    known = set(COMPOSITE) | set(SCRIPTED) | set(ACTIONS)
-    if argv[0] not in known:
+    if argv[0] not in set(COMPOSITE) | set(SCRIPTED) | set(ACTIONS):
         print(usage(), file=sys.stderr)
         return 2
     steps = plan(argv)
@@ -205,9 +227,14 @@ def main(argv=None):
             print(step)
         return 0
     preflight(steps)
+    return execute(steps)
+
+
+def execute(steps):
+    """Run the steps in order, resolving a lazy one right before its turn
+    (so the VM is up when the containers are listed); stop at the first failure."""
     for step in steps:
-        resolved = step.resolve(list_instances) if step.resolve else [step] # after the steps before it, so the VM is up
-        for each in resolved:
+        for each in step.resolve(list_instances) if step.resolve else [step]:
             code = run(each)
             if code:
                 return code
