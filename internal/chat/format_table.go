@@ -79,12 +79,9 @@ func (f *formatter) stacked(rows [][]cell) {
 // wrapped under the name with a two-cell indent; when the name leaves too
 // little room, the value starts on its own line. col is the source offset.
 func (f *formatter) stackedCell(name string, c cell, avail int) {
-	first := boldStyle.Render(name)
-	width := avail - ansi.StringWidth(name)
-	if width < 8 { // the name on its own rows, wrapped, the value below
-		for _, part := range wrap(name, avail) {
-			f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: c.start, text: string(body) + boldStyle.Render(strings.TrimRight(part, " "))})
-		}
+	first, width := boldStyle.Render(name), avail-ansi.StringWidth(name)
+	if width < 8 {
+		f.stackedName(name, c.start, avail)
 		first, width = "  ", avail
 	}
 	parts, offsets := wrapCell(c.inline, max(1, width), lipgloss.NewStyle())
@@ -94,6 +91,13 @@ func (f *formatter) stackedCell(name string, c cell, avail int) {
 			prefix = first
 		}
 		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: c.start + c.origin(offsets[i]), text: string(body) + prefix + strings.TrimRight(part, " ")})
+	}
+}
+
+// stackedName is a header name on rows of its own, wrapped.
+func (f *formatter) stackedName(name string, col, avail int) {
+	for _, part := range wrap(name, avail) {
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: col, text: string(body) + boldStyle.Render(strings.TrimRight(part, " "))})
 	}
 }
 

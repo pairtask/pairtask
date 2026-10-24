@@ -54,51 +54,88 @@ const inlineLimit = 4096
 // inlineSpans parses one source line. A marker that has no balancing close
 // on the same line stays literal.
 func inlineSpans(src string) inline {
-	var in inline
-	var plain strings.Builder
-	parse := len(src) <= inlineLimit
-	i := 0
-	for i < len(src) {
-		var m *marker
-		var end int
-		if parse {
-			m, end = openingMarker(src, i)
-		}
-		if m != nil {
-			start := plain.Len()
-			appendSafe(&in, &plain, src[i+len(m.open):end], i+len(m.open))
-			in.spans = append(in.spans, span{start: start, end: plain.Len(), kind: m.kind})
-			i = end + len(m.close)
-			continue
-		}
-		size := runeLen(src, i)
-		appendSafe(&in, &plain, src[i:i+size], i)
-		i += size
+	p := inlineParser{src: src, parse: len(src) <= inlineLimit}
+	for i := 0; i < len(src); {
+		i = p.step(i)
 	}
-	in.plain = plain.String()
-	in.orig = append(in.orig, len(src))
-	return in
+	p.in.plain = p.plain.String()
+	p.in.orig = append(p.in.orig, len(src))
+	return p.in
+}
+
+// inlineParser walks a source line, building the plain text and its spans.
+type inlineParser struct {
+	src   string
+	parse bool
+	plain strings.Builder
+	in    inline
+}
+
+// step consumes a span or one rune at i and returns the next offset.
+func (p *inlineParser) step(i int) int {
+	if p.parse {
+		if m, end := openingMarker(p.src, i); m != nil {
+			start := p.plain.Len()
+			p.append(i+len(m.open), end)
+			p.in.spans = append(p.in.spans, span{start: start, end: p.plain.Len(), kind: m.kind})
+			return end + len(m.close)
+		}
+	}
+	size := runeLen(p.src, i)
+	p.append(i, i+size)
+	return i + size
+}
+
+// append adds src[from:to] to the plain text, escaping controls, and records
+// each plain byte's source offset. Joined emoji keep their joiner and
+// variation selector, which safe() would escape for identities.
+func (p *inlineParser) append(from, to int) {
+	for j, r := range p.src[from:to] {
+		escaped := safe(string(r))
+		if r == '\u200d' || r == '\ufe0f' {
+			escaped = string(r)
+		}
+		for range len(escaped) {
+			p.in.orig = append(p.in.orig, from+j)
+		}
+		p.plain.WriteString(escaped)
+	}
 }
 
 // openingMarker reports a marker opening at i with a balanced close, and the
 // offset of that close.
 func openingMarker(src string, i int) (*marker, int) {
 	for k := range markers {
-		m := &markers[k]
-		if !strings.HasPrefix(src[i:], m.open) || (m.word && !boundaryBefore(src, i)) {
-			continue
+		if end := markers[k].closes(src, i); end > 0 {
+			return &markers[k], end
 		}
-		body := i + len(m.open)
-		rel := strings.Index(src[body:], m.close)
-		if rel <= 0 || (m.word && !boundaryAfter(src, body+rel+len(m.close))) {
-			continue
-		}
-		if m.kind != spanCode && strings.TrimSpace(src[body:body+rel]) == "" {
-			continue
-		}
-		return m, body + rel
 	}
 	return nil, 0
+}
+
+// closes is the offset of the balanced close for a marker opening at i, or
+// 0 when the marker doesn't open there or doesn't close.
+func (m *marker) closes(src string, i int) int {
+	if !m.opensAt(src, i) {
+		return 0
+	}
+	body := i + len(m.open)
+	rel := strings.Index(src[body:], m.close)
+	if rel <= 0 || !m.endsAt(src, body+rel) {
+		return 0
+	}
+	if m.kind != spanCode && strings.TrimSpace(src[body:body+rel]) == "" {
+		return 0
+	}
+	return body + rel
+}
+
+func (m *marker) opensAt(src string, i int) bool {
+	return strings.HasPrefix(src[i:], m.open) && (!m.word || boundaryBefore(src, i))
+}
+
+func (m *marker) endsAt(src string, close int) bool {
+	return !m.word || boundaryAfter(src, close+len(m.close))
 }
 
 func boundaryBefore(src string, i int) bool {
@@ -119,23 +156,6 @@ func plainText(text string) string {
 		lines[i] = inlineSpans(line).plain
 	}
 	return strings.Join(lines, "\n")
-}
-
-// appendSafe adds src text (already positioned at offset in the source line)
-// to the plain text, escaping controls, and records each plain byte's origin.
-// Joined emoji keep their joiner and variation selector, which safe() would
-// escape for identities.
-func appendSafe(in *inline, plain *strings.Builder, text string, offset int) {
-	for j, r := range text {
-		escaped := safe(string(r))
-		if r == '\u200d' || r == '\ufe0f' {
-			escaped = string(r)
-		}
-		for range len(escaped) {
-			in.orig = append(in.orig, offset+j)
-		}
-		plain.WriteString(escaped)
-	}
 }
 
 // origin maps a plain byte offset to the source line.
