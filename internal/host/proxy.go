@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ type Proxy struct {
 	budgetThread       string
 	budgetTurn         string
 	toolCalls          chan Frame
+	reporting          atomic.Bool // an activity report is in flight
 }
 
 func NewProxy(upstream, operator *Wire) *Proxy {
@@ -177,10 +179,42 @@ func (p *Proxy) FromHost(ctx context.Context, frame Frame) error {
 	if err := p.Operator.Write(ctx, frame); err != nil {
 		return err
 	}
+	p.observeActivity(frame)
 	if ready {
 		return p.activateListener(ctx)
 	}
 	return nil
+}
+
+// observeActivity reports launcher-observed activity for this proxy's own
+// thread only: a turn or item event whose threadId is the owned thread. It
+// is best effort and never blocks or fails the host stream.
+func (p *Proxy) observeActivity(frame Frame) {
+	if p.Listener == nil || !(strings.HasPrefix(frame.Method, "turn/") || strings.HasPrefix(frame.Method, "item/")) {
+		return
+	}
+	var params struct {
+		ThreadID string `json:"threadId"`
+	}
+	if json.Unmarshal(frame.Params, &params) != nil || params.ThreadID == "" {
+		return
+	}
+	p.mu.Lock()
+	owned := p.threadID
+	p.mu.Unlock()
+	if owned == "" || params.ThreadID != owned {
+		return
+	}
+	// One report in flight at most, off the host path. No cancellation: a
+	// write cancelled midway would close the shared broker transport; the
+	// client's own write deadline bounds it. A failed report is not retried.
+	if !p.reporting.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer p.reporting.Store(false)
+		_ = p.Listener.ReportActivity(context.Background(), "codex-launcher")
+	}()
 }
 
 func (p *Proxy) activateListener(ctx context.Context) error {

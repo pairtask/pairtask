@@ -43,6 +43,7 @@ type Client struct {
 	sessionID       string
 	protocolVersion int
 	pending         map[string]chan protocol.Message // status requests by request_id
+	lastActivity    time.Time                        // last agent_activity written
 }
 
 type Inbox struct {

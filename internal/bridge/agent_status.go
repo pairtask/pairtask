@@ -173,3 +173,43 @@ func (l *Listener) ReadStatus(ctx context.Context, agent string) (*protocol.Agen
 	}
 	return l.LazyClient.ReadStatus(ctx, agent)
 }
+
+// activitySpacing spaces activity reports from one connection; the broker
+// coalesces as well.
+const activitySpacing = 30 * time.Second
+
+// ReportActivity tells the broker that the harness was seen working in this
+// connection's own session. It never connects, waits or retries: without an
+// active connection, or on a broker before protocol 6, it does nothing.
+func (c *Client) ReportActivity(ctx context.Context, source string) error {
+	if c.protocolVersion < protocol.AgentStatusVersion {
+		return nil
+	}
+	now := time.Now()
+	c.mu.Lock()
+	recent := !c.lastActivity.IsZero() && now.Sub(c.lastActivity) < activitySpacing
+	if !recent {
+		c.lastActivity = now
+	}
+	c.mu.Unlock()
+	if recent {
+		return nil
+	}
+	return c.writeFrame(ctx, protocol.Message{Type: protocol.TypeAgentActivity, Source: source})
+}
+
+// ReportActivity reports only through an already active listener; activity
+// never starts a broker session.
+func (l *Listener) ReportActivity(ctx context.Context, source string) error {
+	l.mu.Lock()
+	started := l.started
+	l.mu.Unlock()
+	if !started {
+		return nil
+	}
+	client, err := l.connection(ctx)
+	if err != nil {
+		return err
+	}
+	return client.ReportActivity(ctx, source)
+}
