@@ -27,7 +27,7 @@ func TestChatInboxWarningLoadsUsageForPendingWorkAtStartup(t *testing.T) {
 	row := footerRow(h)
 	v3Contains(t, ansi.Strip(row), "12 need ack · /ack all")
 	v3Contains(t, ansi.Strip(row), "12/16")
-	v3ColorEqual(t, "near-bound count uses warning colour", v3StyleAt(t, row, "12/16").Fg, ansi.Yellow)
+	formattingWarningStyle(t, v3StyleAt(t, row, "12/16"))
 	chatEqual(t, "warning does not acknowledge", len(h.m.State().QueuedAcks), 0)
 	v2FrameFits(t, h, 180, 24)
 }
