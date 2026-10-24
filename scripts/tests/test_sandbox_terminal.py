@@ -200,9 +200,17 @@ class SessionEntryPointAcceptanceTests(unittest.TestCase):
         self.addCleanup(self.patch.stop)
 
     def test_shell_uses_existing_config_and_preserves_arguments(self):
-        result = self.main(["shell", "--ssh-config", "/tmp/a config", "printf", "literal;$(no)"])
+        with mock.patch("sys.stdin.isatty", return_value=True):
+            result = self.main(["shell", "--ssh-config", "/tmp/a config", "printf", "literal;$(no)"])
         self.assertEqual(result, 23)
         self.run.assert_called_once_with(["ssh", "-F", "/tmp/a config", "workspace", "printf", "literal;$(no)"])
+
+    def test_shell_allocates_a_remote_tty_only_when_requested(self):
+        result = self.main(["shell", "--tty", "--config", "/tmp/a config", "pairtask", "dashboard"])
+        self.assertEqual(result, 23)
+        self.run.assert_called_once_with([
+            "ssh", "-t", "-F", "/tmp/a config", "workspace", "pairtask", "dashboard",
+        ])
 
     def test_chat_wraps_current_secured_entry_point(self):
         result = self.main(["chat", "--remote", "lab", "--project", "work", "--secured", "secured-one"])

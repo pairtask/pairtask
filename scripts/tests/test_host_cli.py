@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import runpy
 from pathlib import Path
 import subprocess
 import sys
@@ -58,10 +59,26 @@ class HostRoutingTests(unittest.TestCase):
         flags = ["--example", "a directory/$(literal);file", "--", "-n"]
         for command, expected in routes.items():
             with self.subTest(command=command):
-                steps = cli.plan([*command, *flags], system="Linux")
+                passed = ["--remote", "local", *flags] if command == ("ssh",) else flags
+                steps = cli.plan([*command, *passed], system="Linux")
                 self.assertEqual(len(steps), 1)
                 self.assertEqual(steps[0].kind, "script")
-                self.assertEqual(steps[0].argv, [*expected, *flags])
+                self.assertEqual(steps[0].argv, [*expected, *passed])
+
+    def test_ssh_defaults_to_host_os_and_preserves_explicit_remote(self):
+        main = runpy.run_path(str(SCRIPTS / "sandbox-ssh.py"))["main"]
+        for system, remote in (("Linux", "local"), ("Darwin", "colima-pairtask")):
+            for flags, wanted in (([], remote), (["--remote", "custom"], "custom"),
+                                  (["--remote=custom"], "custom")):
+                with self.subTest(system=system, flags=flags), \
+                        mock.patch.object(cli.platform, "system", return_value=system), \
+                        mock.patch("sys.argv", ["sandbox-ssh.py", *flags]):
+                    self.assertEqual(cli.plan(["ssh", *flags], system=system)[0].argv,
+                                     ["sandbox-ssh.py", *flags])
+                    setup = mock.Mock()
+                    with mock.patch.dict(main.__globals__, {"setup": setup, "os": mock.Mock()}):
+                        main()
+                    self.assertEqual(setup.call_args.args[0].remote, wanted)
 
     def test_script_executes_as_main_with_literal_argv(self):
         original = sys.argv
