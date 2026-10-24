@@ -1,9 +1,9 @@
 ---
 name: collab-ai
-description: Coordinate authorized implementation and review work with another coding agent and with the human operator through collab-ai. Use for peer requests, correlated replies, handoffs, delivery recovery, and operator messages (acknowledge, reply, status, steering) when the collab broker is available.
+description: Coordinate authorized implementation and review work with another coding agent and with the human operator through pairtask. Use for peer requests, correlated replies, handoffs, delivery recovery, and operator messages (acknowledge, reply, status, steering) when the pairtask broker is available.
 ---
 
-# Collaboration over collab-ai
+# Collaboration over pairtask
 
 Use the person's requested workflow and existing authorization. Agree who owns
 which task and what the peer should return. Read each message by its broker-set
