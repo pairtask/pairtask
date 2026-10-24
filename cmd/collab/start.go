@@ -181,6 +181,11 @@ func claudeConfig(base []byte, id, socket string) ([]byte, error) {
 		}
 		args = append(args, s)
 	}
+	for _, name := range []string{"--agent-id", "--socket"} {
+		if err := checkFlag(args, name); err != nil {
+			return nil, err
+		}
+	}
 	args, err := setFlag(args, "--agent-id", id, false)
 	if err != nil {
 		return nil, err
@@ -198,14 +203,29 @@ func claudeConfig(base []byte, id, socket string) ([]byte, error) {
 	return json.MarshalIndent(doc, "", "  ")
 }
 
-// setFlag replaces the value of flag in args, whether written "--flag X" or
-// "--flag=X"; exactly one occurrence is expected, or none when appendMissing.
+// checkFlag rejects a malformed occurrence of name in args: at the end with
+// no value, or followed by another flag instead of a value.
+func checkFlag(args []string, name string) error {
+	for i, a := range args {
+		if a != name {
+			continue
+		}
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+			return fmt.Errorf("claude MCP config: %s has no value in mcpServers.pairtask.args", name)
+		}
+	}
+	return nil
+}
+
+// setFlag replaces the value of a well-formed flag in args, whether written
+// "--flag X" or "--flag=X"; exactly one occurrence is expected, or none when
+// appendMissing.
 func setFlag(args []string, name, value string, appendMissing bool) ([]string, error) {
 	found := 0
 	out := make([]string, 0, len(args)+2)
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == name && i+1 < len(args):
+		case args[i] == name:
 			out = append(out, name, value)
 			i++
 			found++
