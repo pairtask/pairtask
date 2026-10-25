@@ -540,6 +540,8 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 	switch {
 	case isStatusFrame(in.Msg.Type):
 		h.handleStatus(ctx, clients, in)
+	case claimFrames[in.Msg.Type]:
+		h.handleClaim(ctx, clients, in)
 	case in.Msg.Type == protocol.TypeAck:
 		h.acknowledge(ctx, clients, in)
 	default:

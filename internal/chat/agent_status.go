@@ -95,6 +95,7 @@ func (m *Model) statusRefreshed(_ pendingRequest, resp protocol.Message) tea.Cmd
 		return m.snapshotLoaded(resp)
 	}
 	m.statuses.set(resp.Snapshot)
+	m.claims.set(resp.Snapshot)
 	if m.statuses.dirty {
 		m.statuses.dirty = false
 		return tea.Batch(m.refreshStatuses(), m.statusTicker())
@@ -104,8 +105,8 @@ func (m *Model) statusRefreshed(_ pendingRequest, resp protocol.Message) tea.Cmd
 
 // selectedStatus is the status of the agent whose conversation is open.
 func (m *Model) selectedStatus() (protocol.AgentStatus, bool) {
-	if m.conv.selected.common() {
-		return protocol.AgentStatus{}, false
+	if m.conv.selected.agent() == "" {
+		return protocol.AgentStatus{}, false // All and groups have no single agent's status
 	}
 	st, ok := m.statuses.byAgent[m.conv.selected.agent()]
 	return st, ok

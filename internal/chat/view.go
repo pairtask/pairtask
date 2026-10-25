@@ -81,8 +81,8 @@ func (m *Model) screen() string {
 	if l.header {
 		rows = append(rows, m.titleBand())
 	}
-	if l.bar {
-		rows = append(rows, m.barRow())
+	if l.bar > 0 {
+		rows = append(rows, m.barLines(l.bar)...)
 	}
 	if l.agentStatus {
 		rows = append(rows, m.statusRow())
@@ -111,10 +111,11 @@ const entryRows = 3
 // rule under it, the box's bottom edge, more composer rows and the picker;
 // the transcript takes the rest.
 type frameLayout struct {
-	header, bar, divider, boxed bool
-	agentStatus                 bool // the open conversation's agent status row
-	transcript                  int
-	picker, composer            int
+	header, divider, boxed bool
+	bar                    int  // conversation bar rows, at most barMaxRows
+	agentStatus            bool // the open conversation's agent status row
+	transcript             int
+	picker, composer       int
 }
 
 func (m *Model) layout() frameLayout {
@@ -135,13 +136,18 @@ func (m *Model) layoutTop(l *frameLayout, rest int) int {
 		l.header, rest = true, rest-1
 	}
 	if rest > 0 {
-		l.bar, rest = true, rest-1
+		l.bar, rest = 1, rest-1
 	}
 	if rest > 0 {
 		l.divider, rest = true, rest-1
 	}
 	if _, ok := m.selectedStatus(); ok && rest > 0 {
 		l.agentStatus, rest = true, rest-1
+	}
+	if l.bar > 0 {
+		// Extra bar rows come after every single-row decoration.
+		extra := min(rest, m.barNeed()-1)
+		l.bar, rest = l.bar+max(0, extra), rest-max(0, extra)
 	}
 	return rest
 }

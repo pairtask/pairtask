@@ -291,6 +291,13 @@ not an acknowledgment, not evidence of completion and never an authorization.
   `declared_at` and `activity.at`; no activity for a while is shown as an age,
   never turned into `blocked`.
 
+## Group metadata
+
+A group send from the operator carries `group`, its canonical member list
+(sorted, unique), on the live delivery, on replay and in operator history.
+`to` remains `group:<message_id>` for compatibility, but no client infers a
+group from it: an agent may literally be named `group:foo`.
+
 ## Public broadcast (v7)
 
 From protocol version 7, an agent's `to: "*"` is the public conversation. The
@@ -324,6 +331,55 @@ All conversation, with the author and `origin: "agent"`.
   a public answer is never silently narrowed; direct sends still work.
 - **The operator's own `@all`** is unchanged: it reaches the agents, never the
   operator's own inbox.
+
+## Task claims (v8)
+
+When the operator addresses several agents at once, each of them starts on
+the request. A claim records, at the broker, which agent owns, or reviews,
+one task of that request, so the others don't do the same work. A claim
+coordinates; it is never an approval, an authorization or a file lock.
+
+Frames, with `request_id` correlating the answer only:
+
+```json
+{"type":"claim_set","request_id":"r1","operator_message_id":"op-7","task":"reply","topic":"answer the request","role":"owner"}
+{"type":"claim_release","request_id":"r2","operator_message_id":"op-7","task":"reply","role":"owner"}
+{"type":"claim_done","request_id":"r3","operator_message_id":"op-7","task":"reply"}
+{"type":"claim_get","request_id":"r4","operator_message_id":"op-7"}
+```
+
+The answer is `claim_result {operator_message_id, claims, claims_total,
+claims_truncated}`, or an error: `invalid_claim`, `claim_conflict` (with
+`claims` naming the holder) or `claim_rate_limited`.
+
+- **What can be claimed:** an operator-origin message whose frozen
+  recipients include the claimant. A peer message, a missing message or
+  another agent's delivery is `invalid_claim`, without saying whether the
+  message exists. `task` is a stable key, `[a-z0-9-]{1,64}`; `topic` is a
+  label of at most 120 bytes. The key decides identity, never the label.
+- **First wins:** at most one active or done claim per message, task and
+  role, enforced by the database. A second claimant gets `claim_conflict`
+  naming the holder; nothing changes. Repeating your own claim is idempotent
+  and may update the topic.
+- **Reviewer:** only the reviewer agent itself can claim the reviewer role,
+  which is its consent; one agent can't be both owner and reviewer of a task.
+- **States:** `active`; `released` by the holder, which frees the slot;
+  `done` by the owner, which is terminal and keeps the task unavailable.
+  There is no takeover: a disconnect or reprovision keeps ownership until the
+  same agent releases it.
+- **Bounds:** at most 16 held claims per message; reads return held claims
+  first with `claims_total` and `claims_truncated`. Claim changes share a
+  per-agent rate limit; reads are not limited.
+- **Operator:** each committed change emits `claims_changed
+  {operator_message_id}`, and the snapshot carries `claims` for the newest
+  32 operator messages that have any, with `claims_total` and
+  `claims_truncated`. A snapshot too large for one frame drops recent sent
+  messages first, then the oldest messages' claims, then statuses, and
+  reports each truncation.
+- **Canonical reply key:** before answering an operator message sent to
+  everyone, every agent claims `task: "reply"`; whoever gets
+  `claim_conflict` doesn't answer. Claims don't deduplicate different
+  messages, or the same work under different keys.
 
 ## State
 

@@ -77,6 +77,18 @@ send a short status message at the meaningful milestones instead.
   there is no private "everyone". Before protocol 7, `"*"` reached agents
   only: the send tool then refuses it as an unsupported public broadcast, and
   you send the answer to `operator` instead.
+- **Claim before you answer a request sent to everyone** (protocol 8). Call
+  `claim` with that operator message's ID and `task: "reply"` first. If it
+  returns `claim_conflict`, another agent owns the answer: don't answer, and
+  don't announce the conflict; speak up on `"*"` only to object or to add a
+  fact. For other work, the owner announces its task keys publicly, and
+  others claim those keys or a reviewer role. Finish with `finish_claim`, or
+  `release_claim` to hand the task back.
+- **What claims don't do:** they don't deduplicate different operator
+  messages, or the same work under different task keys; they don't fence
+  file writes; and they never approve or authorize anything. Before protocol
+  8 the claim tools report themselves unsupported; then agree ownership on
+  `"*"` before acting.
 - `wait_reply` with your request's `message_id` and `from="operator"` for a
   specific answer. `listener_status` and `receive` when a notification may have
   dropped; a healthy channel needs no routine drains.

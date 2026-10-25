@@ -82,9 +82,10 @@ and `reset` fixes a terminal that is already in that state (#122).
 | `command codex` / `command claude` | Native CLI for login/setup |
 
 Use one session per ID; extra sessions need separate identities. Scripts use native
-binaries, not these aliases. Ask both agents to read `/usr/local/share/pairtask/SKILL.md`;
-it is not automatically discovered. Copy only `SKILL.md` and `references/` when
-installing that skill elsewhere.
+binaries, not these aliases. The image installs the `collab-ai` skill for both
+agents from `/usr/local/share/pairtask/SKILL.md`; ask them to use it when they
+start collaborating. Copy only `SKILL.md` and `references/` when installing the
+skill elsewhere.
 
 Starship settings go in persistent `~/.config/starship.toml`. Older containers need
 an [image update](sandbox-storage.md#replace-dev-retain-data).

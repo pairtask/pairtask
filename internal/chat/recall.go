@@ -44,10 +44,14 @@ func (e *entry) sentIntact() bool {
 }
 
 func (m *Model) recallableHere(e *entry) bool {
-	if m.conv.selected.common() {
+	key := m.conv.selected
+	switch {
+	case key.common():
 		return true
+	case key.isGroup():
+		return len(e.msg.Group) > 0 && groupKey(e.msg.Group) == key
 	}
-	return e.msg.To == m.conv.selected.agent() && len(e.msg.Group) == 0
+	return e.msg.To == key.agent() && len(e.msg.Group) == 0
 }
 
 // recallUp starts recall from an empty draft, or walks one message older.

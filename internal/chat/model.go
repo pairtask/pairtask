@@ -114,6 +114,7 @@ type Model struct {
 	send     sendState
 	agents   agentView
 	statuses statusView
+	claims   claimView
 
 	compose    composer
 	conv       conversations
@@ -158,6 +159,7 @@ func New(opts Options) *Model {
 	m.inbox.quiet = map[string]bool{}
 	m.compose = newComposer()
 	m.conv.saved = map[viewKey]*view{}
+	m.conv.hidden = map[viewKey]bool{}
 	m.view.following = true
 	m.resize(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	return m

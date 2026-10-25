@@ -23,6 +23,8 @@ func (m *Model) chatCommand(arg argument) tea.Cmd {
 	return nil
 }
 
+// chatTarget parses /chat: all, one agent (a mention, or a JSON string for
+// any ID), or a group (two or more mentions, or a JSON array).
 func chatTarget(arg string) (viewKey, error) {
 	switch {
 	case arg == ConversationAll:
@@ -32,11 +34,79 @@ func chatTarget(arg string) (viewKey, error) {
 		if err := json.Unmarshal([]byte(arg), &id); err != nil {
 			return allKey, fmt.Errorf("/chat takes all, an agent mention, or a JSON string: %w", err)
 		}
-		return viewKey(id), protocol.ValidateAgentID(id)
-	case mentionID.MatchString(arg):
-		return viewKey(arg), nil
+		return agentKey(id), protocol.ValidateAgentID(id)
+	case strings.HasPrefix(arg, "["):
+		var ids []string
+		if err := json.Unmarshal([]byte(arg), &ids); err != nil {
+			return allKey, fmt.Errorf("/chat takes a JSON array of agent IDs for a group: %w", err)
+		}
+		return membersKey(ids)
 	}
-	return allKey, fmt.Errorf("/chat takes all, an agent mention, or a JSON string")
+	fields := strings.Fields(arg)
+	ids := make([]string, 0, len(fields))
+	for _, f := range fields {
+		id := strings.TrimPrefix(f, "@")
+		if !mentionID.MatchString(id) {
+			return allKey, fmt.Errorf("/chat takes all, agent mentions, a JSON string or a JSON array")
+		}
+		ids = append(ids, id)
+	}
+	return membersKey(ids)
+}
+
+// membersKey is the conversation of the given agents: a 1:1 for one, a
+// group for two or more.
+func membersKey(ids []string) (viewKey, error) {
+	members := canonicalGroup(ids)
+	for _, id := range members {
+		if err := protocol.ValidateAgentID(id); err != nil {
+			return allKey, err
+		}
+	}
+	switch len(members) {
+	case 0:
+		return allKey, fmt.Errorf("/chat needs at least one agent")
+	case 1:
+		return agentKey(members[0]), nil
+	}
+	if len(members) > protocol.MaxRecipients {
+		return allKey, fmt.Errorf("a group has at most %d agents", protocol.MaxRecipients)
+	}
+	return groupKey(members), nil
+}
+
+// closeCommand hides the selected conversation from the bar and returns to
+// All. It is UI only: no message, receipt, acknowledgment or recipient
+// changes, and new traffic or /chat shows it again.
+func (m *Model) closeCommand(argument) tea.Cmd {
+	key := m.conv.selected
+	if key.common() {
+		m.status = "All can't be closed"
+		return nil
+	}
+	m.selectView(allKey)
+	m.conv.hidden[key] = true
+	m.status = key.label() + " closed; new messages or /chat reopen it"
+	return nil
+}
+
+// reopenFor shows hidden conversations an entry belongs to.
+func (m *Model) reopenFor(e *entry) {
+	for _, key := range entryViews(e) {
+		delete(m.conv.hidden, key)
+	}
+}
+
+// reopenScope shows the hidden conversation of a send's recipients.
+func (m *Model) reopenScope(scope protocol.Message) {
+	switch {
+	case len(scope.Group) > 1:
+		delete(m.conv.hidden, groupKey(scope.Group))
+	case len(scope.Group) == 1:
+		delete(m.conv.hidden, agentKey(scope.Group[0]))
+	case scope.To != "" && scope.To != protocol.Broadcast:
+		delete(m.conv.hidden, agentKey(scope.To))
+	}
 }
 
 func chatArg(a argument) error {

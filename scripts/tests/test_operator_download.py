@@ -28,7 +28,8 @@ class OperatorDownloadTests(unittest.TestCase):
             package.writestr("tofu", b"verified binary")
         contents = archive.getvalue()
         lock = {"tofu_version": "1.0.0", "architectures": {"x86_64": {
-            "archive": "tofu.zip", "sha256": hashlib.sha256(contents).hexdigest()}}}
+            "archive": "tofu.zip", "sha256": hashlib.sha256(contents).hexdigest(),
+            "binary_sha256": hashlib.sha256(b"verified binary").hexdigest()}}}
         operator = runtime.Operator("local", {"architectures": ["x86_64"]}, "pool", "network")
         error = http_error(504)
         with tempfile.TemporaryDirectory() as directory, \

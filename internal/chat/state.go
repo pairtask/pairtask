@@ -31,6 +31,8 @@ type StateView struct {
 	Recall            *RecallView
 	Selected          string // the selected conversation's agent ID; empty for the common chat
 	SelectedAll       bool
+	HiddenViews       int // conversations closed with /close
+	HiddenUnread      int // unread messages in hidden conversations
 	Draft             string
 	Pasted            bool
 	Audience          AudienceView
@@ -90,6 +92,7 @@ type EntryView struct {
 	StagesTruncated bool
 	Conflict        bool
 	GapBelow        bool
+	Claims          []protocol.Claim // an operator-sent message's task claims (#141)
 }
 
 type IntentView struct {
@@ -115,15 +118,17 @@ func (m *Model) State() StateView {
 		Agents:      append([]protocol.AgentPresence(nil), m.agents.list...),
 		AgentsTotal: m.agents.total, AgentsPartial: m.agents.partial, InboxPending: m.inbox.pending,
 		InboxHeadSeq: m.inbox.headSeq, Unread: m.unreadIn(allKey), Paused: m.timeline.paused,
-		Conversations: m.conversationViews(), Selected: m.conv.selected.agent(), SelectedAll: m.conv.selected.common(), Recall: m.recallView(),
+		Conversations: m.conversationViews(), Selected: m.selectedID(), SelectedAll: m.conv.selected.common(), Recall: m.recallView(),
 		InFlight: m.inFlight(), Queued: len(m.outbox), InboxUsage: m.usage, BulkAck: m.bulkView(), Draft: c.editor.Value(), Pasted: c.pasted,
 		Audience: m.audienceView(), Hint: m.hintText(), ScrollOffset: m.scrollOffset(), Cutoff: m.cutoff,
 		Status: m.status, Help: m.panel != nil && m.panel.kind == panelHelp, TooSmall: m.tooSmall(),
 		KeyDisambiguation: m.keyboard, ExitCode: m.exitCode, Fatal: m.fatal,
 	}
 	m.composeState(&v)
+	v.HiddenViews, v.HiddenUnread = m.hiddenCounts()
 	for _, e := range m.timeline.order {
 		ev := e.view()
+		ev.Claims = append([]protocol.Claim(nil), m.claimsOf(e)...)
 		if e.direction == "received" {
 			ev.Ack = m.ackState(e)
 		}

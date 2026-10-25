@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestRuntimePolicyApprovesOnlyScopedCollaborationAndStatusCalls(t *testing.T) {
+func TestRuntimePolicyApprovesOnlyScopedCollaborationStatusAndClaimCalls(t *testing.T) {
 	endpoint, _ := runtimeFixture(t)
 	config, err := endpoint.config()
 	terminalCheck(t, err)
@@ -24,9 +24,13 @@ func TestRuntimePolicyApprovesOnlyScopedCollaborationAndStatusCalls(t *testing.T
 		"listener_status": {"approval_mode": "approve"},
 		"status":          {"approval_mode": "approve"},
 		"read_status":     {"approval_mode": "approve"},
+		"claim":           {"approval_mode": "approve"},
+		"release_claim":   {"approval_mode": "approve"},
+		"finish_claim":    {"approval_mode": "approve"},
+		"read_claims":     {"approval_mode": "approve"},
 	}
 	if !reflect.DeepEqual(policies, want) {
-		t.Fatalf("runtime tool policy = %v, want the seven scoped approvals %v", policies, want)
+		t.Fatalf("runtime tool policy = %v, want the eleven scoped approvals %v", policies, want)
 	}
 	// No server-wide grant, global execution policy, or sandbox override may
 	// accompany this narrowly scoped tool configuration.

@@ -210,6 +210,8 @@ func (m *Model) panelRows(height int) []string {
 		rows = append([]string{titleStyle.Render("Agents") + mutedStyle.Render("  (Esc closes)")}, m.agentRows()...)
 	case panelStages:
 		rows = m.stageRows()
+	case panelClaims:
+		rows = m.claimRows()
 	}
 	var out []string
 	for _, row := range rows {

@@ -181,6 +181,7 @@ func (m *Model) upsert(fresh *entry, source string) (*entry, bool) {
 func (m *Model) arrived(e *entry, inserted bool) {
 	if inserted {
 		e.unread = true
+		m.reopenFor(e) // new traffic shows a closed conversation again, unselected
 	}
 }
 

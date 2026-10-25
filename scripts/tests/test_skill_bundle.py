@@ -45,9 +45,21 @@ class SkillBundleTests(unittest.TestCase):
     def test_image_installer_preserves_bundle_and_resolvable_links(self):
         with tempfile.TemporaryDirectory() as temporary:
             installed = Path(temporary) / "installed"
+            codex_skills = Path(temporary) / "codex-skills"
+            claude_skills = Path(temporary) / "claude-skills"
             subprocess.run(["sh", str(ROOT / "infra/image/install-skill.sh"),
-                            str(SKILL), str(installed)], check=True)
+                            str(SKILL), str(installed), str(codex_skills),
+                            str(claude_skills)], check=True)
+            subprocess.run(["sh", str(ROOT / "infra/image/install-skill.sh"),
+                            str(SKILL), str(installed), str(codex_skills),
+                            str(claude_skills)], check=True)
+            self.assertFalse((installed / "collab-ai").exists())
             self.assertEqual(markdown_files(installed), markdown_files(SKILL))
+            for skills in (codex_skills, claude_skills):
+                discovered = skills / "collab-ai"
+                self.assertTrue(discovered.is_symlink())
+                self.assertEqual(discovered.resolve(), installed.resolve())
+                self.assertEqual(markdown_files(discovered), markdown_files(SKILL))
             for relative, contents in markdown_files(installed).items():
                 self.check_local_links(installed, relative, contents.decode())
             self.assertEqual(reachable_documents(installed), set(markdown_files(installed)),
@@ -59,6 +71,31 @@ class SkillBundleTests(unittest.TestCase):
             with self.subTest(document=str(relative), target=target):
                 self.assertTrue(resolved.resolve().is_relative_to(installed.resolve()))
                 self.assertTrue(resolved.is_file(), f"Missing bundled reference: {target}")
+
+    def test_image_installer_does_not_replace_existing_skill(self):
+        for kind in ("directory", "symlink"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                existing = root / "codex-skills/collab-ai"
+                existing.parent.mkdir()
+                if kind == "directory":
+                    existing.mkdir()
+                    target = existing
+                else:
+                    target = root / "foreign-skill"
+                    target.mkdir()
+                    existing.symlink_to(target, target_is_directory=True)
+                marker = target / "keep"
+                marker.write_text("user skill")
+                result = subprocess.run(
+                    ["sh", str(ROOT / "infra/image/install-skill.sh"), str(SKILL),
+                     str(root / "installed"), str(root / "codex-skills"),
+                     str(root / "claude-skills")], capture_output=True, text=True,
+                    check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("refusing to replace", result.stderr)
+                self.assertEqual(marker.read_text(), "user skill")
+                self.assertEqual(list(target.iterdir()), [marker])
 
     def test_source_archive_contains_and_hashes_every_skill_document(self):
         with tempfile.TemporaryDirectory() as temporary:
