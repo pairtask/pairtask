@@ -15,3 +15,13 @@ def verify(ssh, manifest):
         result = subprocess.run(ssh + [command], check=True, capture_output=True, text=True)
         if result.stdout.split()[0] != manifest["files_sha256"][name]:
             raise ValueError(f"Installed collaboration skill differs from the image recipe: {name}")
+    verify_discovery_links(ssh)
+
+
+def verify_discovery_links(ssh):
+    for skill in ("/etc/codex/skills/collab-ai",
+                  "/etc/claude-code/.claude/skills/collab-ai"):
+        command = shlex.join(["readlink", skill])
+        result = subprocess.run(ssh + [command], check=True, capture_output=True, text=True)
+        if result.stdout.strip() != "/usr/local/share/pairtask":
+            raise ValueError(f"Collaboration skill is not registered for agent discovery: {skill}")
