@@ -143,7 +143,7 @@ func (m *Model) dispatch(scope protocol.Message, payload json.RawMessage, inRepl
 func (m *Model) sendIntent() tea.Cmd {
 	in := m.send.intent
 	in.State = IntentSending
-	msg := protocol.Message{Type: protocol.TypeOperatorSend, MessageID: in.ID, To: in.Scope.To, Group: in.Scope.Group, Payload: in.Payload, InReplyTo: in.InReplyTo}
+	msg := protocol.Message{Type: protocol.TypeOperatorSend, MessageID: in.ID, To: in.Scope.To, Group: in.Scope.Group, Room: in.Scope.Room, Payload: in.Payload, InReplyTo: in.InReplyTo}
 	return m.request(kindSend, msg, in.ID)
 }
 

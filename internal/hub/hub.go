@@ -182,6 +182,10 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	if h.reportRetry(ctx, clients, in) {
 		return
 	}
+	if err := h.admitRoomPost(ctx, in); err != nil {
+		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
+		return
+	}
 	recipients, err := h.resolveRecipients(ctx, clients, in)
 	if err != nil {
 		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))

@@ -42,6 +42,9 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 		}
 	}
 	h.noteConnected(c, reclaimed)
+	if c.ProtocolVersion >= protocol.RoomVersion && len(c.JoinRooms) > 0 {
+		h.emit(protocol.SessionEvent{Kind: protocol.EventRoomsChanged, AgentID: c.ID})
+	}
 	h.log.Info("agent connected", "agent_id", c.ID, "session_id", c.SessionID, "replayed", len(pending), "online", len(clients))
 }
 

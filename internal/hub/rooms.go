@@ -33,28 +33,30 @@ func (h *Hub) welcomeRooms(ctx context.Context, c *Client, welcome protocol.Mess
 	return welcome
 }
 
-// scopeAgentSend decides the room of an agent's "*": the one it names (it
-// must be a member), else its parent's, else the Square. Other sends carry
-// no room.
+// scopeAgentSend decides the room of an agent's "*": the one it names, else
+// its parent's, else the Square. Other sends carry no room. Membership is
+// checked later, for new sends only, so an accepted retry still reports.
 func (h *Hub) scopeAgentSend(ctx context.Context, in *Inbound) *routingError {
 	if in.Msg.To != protocol.Broadcast {
 		in.Msg.Room = ""
 		return nil
 	}
 	room, rerr := h.replyRoom(ctx, in.Msg)
-	if rerr != nil {
-		return rerr
-	}
 	in.Msg.Room = room
-	if room == "" {
+	return rerr
+}
+
+// admitRoomPost refuses a new post to a room the sender isn't in.
+func (h *Hub) admitRoomPost(ctx context.Context, in Inbound) *routingError {
+	if in.Msg.Room == "" {
 		return nil
 	}
 	rooms, err := h.store.AgentRooms(ctx, in.From.ID)
 	if err != nil {
 		return &routingError{protocol.ErrInternal, "rooms unavailable"}
 	}
-	if !slices.Contains(rooms, room) {
-		return &routingError{protocol.ErrRoomDenied, "join room " + room + " before posting to it"}
+	if !slices.Contains(rooms, in.Msg.Room) {
+		return &routingError{protocol.ErrRoomDenied, "join room " + in.Msg.Room + " before posting to it"}
 	}
 	return nil
 }
@@ -141,12 +143,20 @@ func (h *Hub) changeOwnRoom(ctx context.Context, agent string, msg protocol.Mess
 // scopeOperatorSend checks an operator message's room: only a "*" names one,
 // and it must exist.
 func (h *Hub) scopeOperatorSend(ctx context.Context, msg *protocol.Message, scope store.OperatorScope) *routingError {
-	msg.Room = protocol.RoomScope(msg.Room)
-	if msg.Room == "" {
+	if scope.Kind != store.ScopeAll {
+		if protocol.RoomScope(msg.Room) != "" {
+			return &routingError{protocol.ErrMalformedFrame, "room applies to \"*\" only"}
+		}
+		msg.Room = ""
 		return nil
 	}
-	if scope.Kind != store.ScopeAll {
-		return &routingError{protocol.ErrMalformedFrame, "room applies to \"*\" only"}
+	room, rerr := h.replyRoom(ctx, *msg) // a reply stays in its parent's room
+	if rerr != nil {
+		return rerr
+	}
+	msg.Room = room
+	if room == "" {
+		return nil
 	}
 	exists, err := h.store.RoomExists(ctx, msg.Room)
 	if err != nil {

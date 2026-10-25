@@ -170,7 +170,7 @@ func (s *keySet) addAll(keys []viewKey) {
 // nameless keys never get a conversation of their own: All, and 1:1s with a
 // reserved ID.
 func nameless(key viewKey) bool {
-	if key.isGroup() {
+	if key.isGroup() || key.isRoom() {
 		return false
 	}
 	return reservedID(key.agentID)
