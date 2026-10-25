@@ -1,8 +1,14 @@
 #!/bin/bash
-# Only for a disposable GitHub-hosted Ubuntu runner, never a developer machine.
+# Only for a disposable CI runner, never a developer machine: a GitHub-hosted
+# runner, or a self-hosted runner that the workflow explicitly marks as an
+# ephemeral Namespace profile (PAIRTASK_EPHEMERAL_RUNNER=namespace).
 set -euo pipefail
 test "${GITHUB_ACTIONS:-}" = true
-test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+case "${RUNNER_ENVIRONMENT:-}" in
+    github-hosted) ;;
+    self-hosted) test "${PAIRTASK_EPHEMERAL_RUNNER:-}" = namespace ;;
+    *) exit 1 ;;
+esac
 test "$EUID" = 0
 if test -e /var/lib/incus/database; then
     echo 'Refusing to initialize an existing Incus server' >&2

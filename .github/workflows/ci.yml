@@ -114,8 +114,14 @@ jobs:
             arch: amd64
           - runner: ubuntu-24.04-arm
             arch: arm64
-    runs-on: ${{ matrix.runner }}
+    # A repository variable can move an architecture to another runner (for
+    # example a Namespace profile); unset, it stays on the GitHub runner. The
+    # matrix values, and so the check names, never change.
+    runs-on: ${{ (matrix.arch == 'amd64' && vars.IMAGE_RUNNER_AMD64) || (matrix.arch == 'arm64' && vars.IMAGE_RUNNER_ARM64) || matrix.runner }}
     timeout-minutes: 45
+    env:
+      # Lets scripts/ci-incus.sh accept a self-hosted runner only when it is an ephemeral Namespace profile.
+      PAIRTASK_EPHEMERAL_RUNNER: ${{ startsWith((matrix.arch == 'amd64' && vars.IMAGE_RUNNER_AMD64) || (matrix.arch == 'arm64' && vars.IMAGE_RUNNER_ARM64) || '', 'namespace-profile-') && 'namespace' || '' }}
     steps:
       - name: Skip the image proofs for unshipped documentation
         if: needs.classify.outputs.images == 'false'
@@ -134,7 +140,7 @@ jobs:
           tofu_wrapper: false
       - name: Initialize disposable Incus host
         if: needs.classify.outputs.images != 'false'
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT bash scripts/ci-incus.sh
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,PAIRTASK_EPHEMERAL_RUNNER bash scripts/ci-incus.sh
       - name: Cache the verified base image pair without publishing it
         if: needs.classify.outputs.images != 'false'
         env:
