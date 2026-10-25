@@ -73,7 +73,7 @@ func TestChatConversationOlderHistoryStopsAtFirstMatchingPage(t *testing.T) {
 	chatEqual(t, "matching page ends the automatic run", h.m.State().Queued, 0)
 }
 
-func TestChatConversationLateStagesRevealBroadcastWithoutUnread(t *testing.T) {
+func TestChatConversationLateStagesDoNotRevealBroadcastInAgentView(t *testing.T) {
 	h := conversationHarness(t, "alice", "bob")
 	broadcast := chatIncoming("older-broadcast", 11)
 	broadcast.From, broadcast.To, broadcast.Origin = protocol.OperatorID, protocol.Broadcast, protocol.OriginOperator
@@ -98,9 +98,13 @@ func TestChatConversationLateStagesRevealBroadcastWithoutUnread(t *testing.T) {
 	}})
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	h.input(chatKey(tea.KeyEscape, 0))
-	v3Contains(t, ansi.Strip(h.m.View().Content), "body older-broadcast")
+	if strings.Contains(ansi.Strip(h.m.View().Content), "body older-broadcast") {
+		t.Fatal("receipt hydration put a public message in a direct conversation")
+	}
 	chatEqual(t, "late membership is not an arrival", h.m.State().Unread, 0)
 	chatEqual(t, "late membership does not invent badge", conversationBadge(t, h, "bob", false), 0)
+	v2Command(h, "/chat all")
+	v3Contains(t, ansi.Strip(h.m.View().Content), "body older-broadcast")
 }
 
 func TestChatConversationOlderHistoryFailureResetsNextKeyPageBudget(t *testing.T) {

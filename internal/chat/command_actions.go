@@ -274,6 +274,9 @@ func (m *Model) clearCommand(argument) tea.Cmd {
 }
 
 func (m *Model) copyCommand(arg argument) tea.Cmd {
+	if agent, ok := arg.refAgent(); ok {
+		return m.copyRef(agent)
+	}
 	e, reason := m.target(arg, noEntry)
 	if e != nil && e.omitted {
 		e, reason = nil, "that message's text isn't available"

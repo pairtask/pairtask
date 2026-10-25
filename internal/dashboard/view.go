@@ -58,6 +58,18 @@ func (m *model) freshness() string {
 }
 
 func (m *model) notices() string {
+	notes := append(m.snapshotNotes(), m.agentStatusNotes()...)
+	if m.latest.Error != "" {
+		notes = append(notes, "Error: "+safe(m.latest.Error))
+	}
+	if len(notes) == 0 {
+		return m.styles.muted.Render("Snapshots only · refresh " + m.cfg.Interval.String() + " after each response")
+	}
+	return strings.Join(notes, " · ")
+}
+
+// snapshotNotes are the session and inbox gaps of the snapshot.
+func (m *model) snapshotNotes() []string {
 	var notes []string
 	if m.haveSnapshot && !m.snapshot.HistoryAvailable {
 		notes = append(notes, "history unavailable")
@@ -68,13 +80,18 @@ func (m *model) notices() string {
 	if p := m.snapshot.DurablePending; p != nil && p.RecipientsTruncated {
 		notes = append(notes, "inbox list truncated")
 	}
-	if m.latest.Error != "" {
-		notes = append(notes, "Error: "+safe(m.latest.Error))
+	return notes
+}
+
+// agentStatusNotes are the gaps in the agents' declarations.
+func (m *model) agentStatusNotes() []string {
+	switch {
+	case m.snapshot.AgentStatusTruncated:
+		return []string{"agent status truncated"}
+	case m.haveSnapshot && !m.snapshot.AgentStatusAvailable:
+		return []string{"agent status unavailable"}
 	}
-	if len(notes) == 0 {
-		return m.styles.muted.Render("Snapshots only · refresh " + m.cfg.Interval.String() + " after each response")
-	}
-	return strings.Join(notes, " · ")
+	return nil
 }
 
 func (m *model) body(area viewport) []string {
@@ -115,9 +132,9 @@ func (m *model) roster(area viewport) []string {
 	count := max(1, height-3)
 	start := max(0, m.cursor-count+1)
 	for i := start; i < min(len(rows), start+count); i++ {
-		line := "  " + rowText(rows[i], width-2)
+		line := "  " + m.rowText(rows[i], width-2)
 		if i == m.cursor {
-			line = m.styles.selected.Render("> " + rowText(rows[i], width-2))
+			line = m.styles.selected.Render("> " + m.rowText(rows[i], width-2))
 		}
 		lines = append(lines, line)
 	}
@@ -125,12 +142,17 @@ func (m *model) roster(area viewport) []string {
 	return area.fit(lines)
 }
 
-func rowText(r row, width int) string {
+func (m *model) rowText(r row, width int) string {
 	if r.session == nil {
 		return pad(safe(r.id.agent), max(1, width-10)) + fmt.Sprintf("  %d", r.pending)
 	}
 	state := stateLabel(r.session.State)
 	agentWidth := max(1, width-16)
+	if width >= 90 {
+		agentWidth = width - 63
+		return pad(safe(r.id.agent), agentWidth) + "  " + pad(state, 13) + "  " + ansi.Truncate(safe(r.id.session), 18, "…") +
+			"  " + ansi.Truncate(m.statusCell(r.session), 24, "…")
+	}
 	if width >= 60 {
 		agentWidth = width - 37
 		return pad(safe(r.id.agent), agentWidth) + "  " + pad(state, 13) + "  " + ansi.Truncate(safe(r.id.session), 18, "…")

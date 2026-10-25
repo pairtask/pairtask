@@ -26,10 +26,12 @@ func WriteText(w io.Writer, out protocol.StatusSnapshot) error {
 		fmt.Fprintf(&b, "Error: %q\n", out.Error)
 	}
 	writeSessions(&b, out)
+	writeAgentStatus(&b, out)
 	writePending(&b, out.DurablePending)
 	fmt.Fprintln(&b, "\nConnected describes transport only. Pending requires explicit agent acknowledgment.")
 	fmt.Fprintln(&b, "Last seen is registration/latest inbound frame, not a heartbeat; historical values and disconnect reasons are unavailable.")
 	fmt.Fprintln(&b, "Session history is retained until operator-managed database maintenance; stale means no live owner and no recorded disconnect.")
+	fmt.Fprintln(&b, "Agent status is what each agent last declared, never inferred; previous means an earlier session declared it.")
 	_, err := w.Write(b.Bytes())
 	return err
 }

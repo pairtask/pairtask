@@ -10,7 +10,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-func TestChatConversationMembershipUsesAcceptedHistoryNotPresence(t *testing.T) {
+func TestChatConversationMembershipKeepsOnlyDirectTrafficInAgentViews(t *testing.T) {
 	h := conversationHarness(t, "alice", "bob", "carol")
 	h.input(tea.WindowSizeMsg{Width: 120, Height: 45})
 	incomingAlice := chatIncoming("from-alice", 15)
@@ -24,8 +24,10 @@ func TestChatConversationMembershipUsesAcceptedHistoryNotPresence(t *testing.T) 
 	group.Group = []string{"alice", "bob"}
 	broadcast := chatIncoming("broadcast-accepted-alice", 11)
 	broadcast.From, broadcast.To, broadcast.Origin = protocol.OperatorID, protocol.Broadcast, protocol.OriginOperator
-	page := chatHistory(incomingAlice, incomingBob, direct, group, broadcast)
-	for i := 2; i < len(page.History.Entries); i++ {
+	publicReply := chatIncoming("public-from-alice", 10)
+	publicReply.From, publicReply.To = "alice", protocol.Broadcast
+	page := chatHistory(incomingAlice, incomingBob, direct, group, broadcast, publicReply)
+	for i := 2; i < 5; i++ {
 		page.History.Entries[i].Direction = "sent"
 	}
 	page.History.Entries[4].Recipients = []protocol.RecipientStage{{AgentID: "alice", Stage: protocol.StageAccepted}}
@@ -37,9 +39,9 @@ func TestChatConversationMembershipUsesAcceptedHistoryNotPresence(t *testing.T) 
 		id                 string
 		included, excluded []string
 	}{
-		{"alice", []string{"from-alice", "direct-alice", "group-alice-bob", "broadcast-accepted-alice"}, []string{"from-bob"}},
-		{"bob", []string{"from-bob", "group-alice-bob"}, []string{"from-alice", "direct-alice", "broadcast-accepted-alice"}},
-		{"carol", nil, []string{"from-alice", "from-bob", "direct-alice", "group-alice-bob", "broadcast-accepted-alice"}},
+		{"alice", []string{"from-alice", "direct-alice"}, []string{"from-bob", "group-alice-bob", "broadcast-accepted-alice", "public-from-alice"}},
+		{"bob", []string{"from-bob"}, []string{"from-alice", "direct-alice", "group-alice-bob", "broadcast-accepted-alice", "public-from-alice"}},
+		{"carol", nil, []string{"from-alice", "from-bob", "direct-alice", "group-alice-bob", "broadcast-accepted-alice", "public-from-alice"}},
 	} {
 		conversationOpen(h, tc.id)
 		frame := ansi.Strip(h.m.View().Content)
@@ -54,7 +56,7 @@ func TestChatConversationMembershipUsesAcceptedHistoryNotPresence(t *testing.T) 
 	}
 	v2Command(h, "/chat all")
 	frame := ansi.Strip(h.m.View().Content)
-	for _, id := range []string{"from-alice", "from-bob", "direct-alice", "group-alice-bob", "broadcast-accepted-alice"} {
+	for _, id := range []string{"from-alice", "from-bob", "direct-alice", "group-alice-bob", "broadcast-accepted-alice", "public-from-alice"} {
 		v3Contains(t, frame, "body "+id)
 	}
 }

@@ -1119,6 +1119,7 @@ acknowledges, quits or picks recipients.
 | `/clear` | Hide everything above the current point (view only) |
 | `/find <text>` | Jump to the next message containing text; `/find` again continues |
 | `/copy #n` | Ask the terminal to copy message #n's text (OSC 52, base64 of the raw body); reports "copy requested", since terminals may not support it |
+| `/copy ref AGENT` | Copy the full `ref` of an agent's latest status (`@AGENT` works too), the value `/agents` may show as a short commit; reports when the agent declared no status, its status has no ref, or a partial status list left it out |
 | `/help` | Keys, commands and addressing rules |
 | `/quit` | Quit (warns about an unresolved send, as today) |
 
@@ -1272,20 +1273,17 @@ scope.
 
 - **All**, the common chat: every entry, exactly the v2 transcript.
   Broadcasts are composed here.
-- **1:1 with agent X**: what you received from X, and what X received from
-  you. A sent entry belongs to X's view only when the broker-accepted
-  recipients include X: `to` is X, `group` includes X, or X appears in the
-  entry's recipient stages. Presence never implies membership, and a past
-  broadcast never appears in a newly discovered agent's view. A truncated
-  stage list means "not yet known", never exclusion: when `/stages #n` later
-  reveals X, the entry appears in X's view at its sequence position with no
-  unread flag and no arrival notice. The row keeps its real audience label
-  ("you → everyone").
-- **Group messages** land in All and in each member's 1:1. There are no
-  group conversations in this step.
+- **1:1 with agent X**: only the direct traffic between you and X: what X
+  sent to you directly, and what you sent to X alone (`to` is X, or a group of
+  just X). Public `"*"` messages, yours and the agents', are only in All, and
+  your group sends are only in their group's conversation. Neither counts as
+  unread in a 1:1 or reopens a closed one. An agent known only from public
+  messages still has a (possibly empty) 1:1, so `/chat @x` opens it.
+- **Group conversations**: a send to exactly those members, keyed by the
+  broker's member list, never by `to`.
 - Rejected: All as a broadcasts-only room with agent replies placed by
-  `in_reply_to`. Agents' messages are always direct to the operator and
-  `in_reply_to` is a sender's claim, so that view would be empty or wrong.
+  `in_reply_to`. All aggregates everything, and `in_reply_to` is a sender's
+  claim: reply correlation never places a message into a conversation.
 
 **Which conversations exist.** The bar lists All, then one entry per agent
 in the live directory: agents online or with an entry in the loaded
@@ -1407,7 +1405,11 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   what it waits on, how long ago it declared it, and when its harness was
   last seen working (`launcher` for Codex, `pairtask tool activity` for
   Claude) or `activity unavailable`; a declaration from an earlier session
-  says so. `/agents` lists the same for every agent with a status, and the
+  says so. `/agents` lists the same for every agent with a status, one
+  block per agent set apart by blank lines, with a full commit `ref` shortened
+  to 12 characters (`/copy ref AGENT` copies the full value) and, when the
+  status list is complete, an online agent without one as `no status
+  declared`; the
   footer adds a compact `id ▸ state age` for up to three current agents
   (lowest priority: dropped first when the row is short, after status
   messages, the ack reminder and the connection facts). Statuses
@@ -1549,9 +1551,9 @@ An agent's `"*"` from v7 reaches the operator inbox as well as the other
 agents ([protocol](protocol.md#public-broadcast-v7)). Before this, a group
 discussion was one-way: the operator could speak to everyone with `@all` but
 never saw the agents' answers.
-- **Where it shows:** in All, with the author, like any received message. It
-  also appears in the author's 1:1, since that view holds what the agent
-  sent. History and the live inbox deliver the same message once.
+- **Where it shows:** in All, with the author, like any received message;
+  never in the author's 1:1, which holds direct traffic only. History and the
+  live inbox deliver the same message once.
 - **Receipts:** adopting it records `adapter_received` as for any inbox
   message. It still needs the operator's explicit acknowledgment.
 - **Replying:** `/reply #n` on a public message composes in All and sends to

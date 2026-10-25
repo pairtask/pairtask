@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/status"
 )
 
 // Agent status is what each agent declared it is doing (protocol v6), shown
@@ -140,12 +141,57 @@ func (m *Model) statusRows() []string {
 	sort.Strings(ids)
 	var rows []string
 	for _, id := range ids {
+		// A blank line ends the presence list and each agent's block, so a
+		// status reads as one unit.
+		rows = append(rows, "")
 		rows = append(rows, statusBlock(m.statuses.byAgent[id])...)
 	}
+	if silent := m.undeclared(); len(silent) > 0 {
+		rows = append(rows, "")
+		for _, id := range silent {
+			rows = append(rows, mutedStyle.Render("· "+safe(id)+"  online, no status declared"))
+		}
+	}
 	if m.statuses.truncated {
-		rows = append(rows, fmt.Sprintf("(status list is partial: %d agents have a status)", m.statuses.total))
+		rows = append(rows, "", fmt.Sprintf("(status list is partial: %d agents have a status)", m.statuses.total))
 	}
 	return rows
+}
+
+// undeclared is the online agents without a status. Only a complete status
+// list proves absence; a partial one may have left the record out.
+func (m *Model) undeclared() []string {
+	if m.statuses.truncated {
+		return nil
+	}
+	var ids []string
+	for _, a := range m.agents.list {
+		if _, ok := m.statuses.byAgent[a.AgentID]; !ok {
+			ids = append(ids, a.AgentID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// copyRef asks the terminal to copy an agent's full status ref, the value
+// the panel may show shortened.
+func (m *Model) copyRef(agent string) tea.Cmd {
+	st, ok := m.statuses.byAgent[agent]
+	switch {
+	case !ok && m.statuses.truncated:
+		m.status = "status of " + safe(agent) + " not loaded (status list truncated)"
+	case !ok && !m.known(agent):
+		m.status = "unknown agent " + safe(agent) + ": not online or seen"
+	case !ok:
+		m.status = "no status declared by " + safe(agent)
+	case st.Ref == "":
+		m.status = safe(agent) + "'s status has no ref"
+	default:
+		m.status = fmt.Sprintf("copy of %s's ref requested (%d bytes; the terminal may not support it)", safe(agent), len(st.Ref))
+		return tea.SetClipboard(st.Ref)
+	}
+	return nil
 }
 
 func statusBlock(st protocol.AgentStatus) []string {
@@ -161,7 +207,7 @@ func statusBlock(st protocol.AgentStatus) []string {
 		detail = append(detail, "waiting on "+st.WaitingOn)
 	}
 	if st.Ref != "" {
-		detail = append(detail, "ref "+safe(st.Ref))
+		detail = append(detail, "ref "+safe(status.ShortRef(st.Ref)))
 	}
 	when := "declared " + age(st.DeclaredAt) + " ago · " + activityText(st)
 	if !st.Connected {

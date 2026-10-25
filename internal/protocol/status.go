@@ -4,7 +4,7 @@ import "time"
 
 const (
 	TypeStatus          = "status"
-	StatusSchemaVersion = 1
+	StatusSchemaVersion = 2
 	StatusLimit         = 100
 )
 
@@ -26,8 +26,14 @@ type StatusSnapshot struct {
 	LegacyUnacknowledged *int            `json:"legacy_unacknowledged"`
 	// OperatorPending counts the same rows as DurablePending for the operator
 	// inbox; nil from an older broker means unknown, not zero.
-	OperatorPending *int   `json:"operator_pending,omitempty"`
-	Error           string `json:"error,omitempty"`
+	OperatorPending *int `json:"operator_pending,omitempty"`
+	// AgentStatus is the agents' latest declarations (schema 2), bounded like
+	// the operator snapshot's. Unavailable means unknown, never "none".
+	AgentStatus          []AgentStatus `json:"agent_status"`
+	AgentStatusTotal     int           `json:"agent_status_total"`
+	AgentStatusTruncated bool          `json:"agent_status_truncated"`
+	AgentStatusAvailable bool          `json:"agent_status_available"`
+	Error                string        `json:"error,omitempty"`
 }
 
 type SessionStatus struct {
@@ -56,5 +62,5 @@ type PendingRecipient struct {
 
 func UnavailableStatus() StatusSnapshot {
 	return StatusSnapshot{SchemaVersion: StatusSchemaVersion, Health: "unavailable",
-		Sessions: []SessionStatus{}, SessionLimit: StatusLimit}
+		Sessions: []SessionStatus{}, SessionLimit: StatusLimit, AgentStatus: []AgentStatus{}}
 }
