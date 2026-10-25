@@ -1282,8 +1282,8 @@ scope.
 - **Group conversations**: a send to exactly those members, keyed by the
   broker's member list, never by `to`.
 - Rejected: All as a broadcasts-only room with agent replies placed by
-  `in_reply_to`. Agents' messages are always direct to the operator and
-  `in_reply_to` is a sender's claim, so that view would be empty or wrong.
+  `in_reply_to`. All aggregates everything, and `in_reply_to` is a sender's
+  claim: reply correlation never places a message into a conversation.
 
 **Which conversations exist.** The bar lists All, then one entry per agent
 in the live directory: agents online or with an entry in the loaded
