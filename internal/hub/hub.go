@@ -171,19 +171,11 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	if h.routeControl(ctx, clients, in) {
 		return
 	}
-	if err := prepareMessage(&in); err != nil {
+	if err := h.prepareAgentSend(ctx, &in); err != nil {
 		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
 		return
 	}
-	if err := h.scopeAgentSend(ctx, &in); err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
-		return
-	}
-	if h.reportRetry(ctx, clients, in) {
-		return
-	}
-	if err := h.admitRoomPost(ctx, in); err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
+	if !h.newSend(ctx, clients, in) {
 		return
 	}
 	recipients, err := h.resolveRecipients(ctx, clients, in)
@@ -201,6 +193,27 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: publicRecipients(recipients), Durable: out.Durable})
 	}
 	h.deliver(clients, in.From, out, recipients)
+}
+
+// newSend reports whether the message is a new send to route: a retry gets
+// its retained outcome, and a room post needs the sender's membership.
+func (h *Hub) newSend(ctx context.Context, clients map[string]*Client, in Inbound) bool {
+	if h.reportRetry(ctx, clients, in) {
+		return false
+	}
+	if err := h.admitRoomPost(ctx, in); err != nil {
+		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
+		return false
+	}
+	return true
+}
+
+// prepareAgentSend checks the envelope and decides the message's room.
+func (h *Hub) prepareAgentSend(ctx context.Context, in *Inbound) *routingError {
+	if err := prepareMessage(in); err != nil {
+		return err
+	}
+	return h.scopeAgentSend(ctx, in)
 }
 
 func prepareMessage(in *Inbound) *routingError {

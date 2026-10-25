@@ -17,7 +17,18 @@ func (h *Hub) joinHelloRooms(ctx context.Context, c *Client) error {
 	if c.ProtocolVersion < protocol.RoomVersion || len(c.JoinRooms) == 0 {
 		return nil
 	}
-	return h.store.JoinRooms(ctx, c.ID, c.JoinRooms)
+	members := make([]store.RoomMember, len(c.JoinRooms))
+	for i, room := range c.JoinRooms {
+		members[i] = store.RoomMember{Room: room, Agent: c.ID}
+	}
+	return h.store.JoinRooms(ctx, members...)
+}
+
+// noteHelloRooms tells the operator about rooms a v9 hello joined.
+func (h *Hub) noteHelloRooms(c *Client) {
+	if c.ProtocolVersion >= protocol.RoomVersion && len(c.JoinRooms) > 0 {
+		h.emit(protocol.SessionEvent{Kind: protocol.EventRoomsChanged, AgentID: c.ID})
+	}
 }
 
 // welcomeRooms adds the agent's rooms to a v9 welcome.
@@ -129,9 +140,9 @@ func (h *Hub) changeOwnRoom(ctx context.Context, agent string, msg protocol.Mess
 	}
 	var err error
 	if msg.Type == protocol.TypeRoomJoin {
-		err = h.store.JoinRooms(ctx, agent, []string{msg.Room})
+		err = h.store.JoinRooms(ctx, store.RoomMember{Room: msg.Room, Agent: agent})
 	} else {
-		err = h.store.LeaveRoom(ctx, agent, msg.Room)
+		err = h.store.LeaveRoom(ctx, store.RoomMember{Room: msg.Room, Agent: agent})
 	}
 	if err != nil {
 		return &routingError{protocol.ErrInternal, "room change not stored"}
@@ -218,10 +229,10 @@ var roomOps = map[string]roomOp{
 		return err
 	}},
 	protocol.RoomOpAdd: {memberArgs, func(h *Hub, ctx context.Context, msg protocol.Message) error {
-		return h.store.JoinRooms(ctx, msg.AgentID, []string{msg.Room})
+		return h.store.JoinRooms(ctx, store.RoomMember{Room: msg.Room, Agent: msg.AgentID})
 	}},
 	protocol.RoomOpRemove: {memberArgs, func(h *Hub, ctx context.Context, msg protocol.Message) error {
-		return h.store.LeaveRoom(ctx, msg.AgentID, msg.Room)
+		return h.store.LeaveRoom(ctx, store.RoomMember{Room: msg.Room, Agent: msg.AgentID})
 	}},
 }
 

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -35,20 +34,25 @@ func (s *Store) CreateRoom(ctx context.Context, room string) (bool, error) {
 	return n != 0, err
 }
 
-// JoinRooms adds the agent to each room, creating rooms that don't exist.
-// Joining is additive: existing memberships stay.
-func (s *Store) JoinRooms(ctx context.Context, agent string, rooms []string) error {
+// RoomMember is one agent in one room.
+type RoomMember struct {
+	Room, Agent string
+}
+
+// JoinRooms adds each membership, creating rooms that don't exist. Joining is
+// additive: existing memberships stay.
+func (s *Store) JoinRooms(ctx context.Context, members ...RoomMember) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	now := stamp(time.Now())
-	for _, room := range rooms {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO rooms (id, created_at) VALUES (?, ?)`, room, now); err != nil {
+	for _, m := range members {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO rooms (id, created_at) VALUES (?, ?)`, m.Room, now); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO room_members (room_id, agent_id, joined_at) VALUES (?, ?, ?)`, room, agent, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO room_members (room_id, agent_id, joined_at) VALUES (?, ?, ?)`, m.Room, m.Agent, now); err != nil {
 			return err
 		}
 	}
@@ -56,8 +60,8 @@ func (s *Store) JoinRooms(ctx context.Context, agent string, rooms []string) err
 }
 
 // LeaveRoom removes the membership. Deliveries already accepted stay.
-func (s *Store) LeaveRoom(ctx context.Context, agent, room string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM room_members WHERE room_id = ? AND agent_id = ?`, room, agent)
+func (s *Store) LeaveRoom(ctx context.Context, m RoomMember) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM room_members WHERE room_id = ? AND agent_id = ?`, m.Room, m.Agent)
 	return err
 }
 
@@ -103,38 +107,4 @@ func (s *Store) roomInfo(ctx context.Context, id string) (protocol.RoomInfo, err
 	members, err := s.column(ctx, `SELECT agent_id FROM room_members WHERE room_id = ? ORDER BY agent_id LIMIT ?`, id, protocol.ListedRoomMembers)
 	room.Members, room.MembersTruncated = members, room.MembersTotal > len(members)
 	return room, err
-}
-
-// MessageRoom is the room a stored message was sent to: "" for the Square
-// or an unknown message.
-func (s *Store) MessageRoom(ctx context.Context, messageID string) (string, error) {
-	var room sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT room FROM message_metadata WHERE message_id = ?`, messageID).Scan(&room)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return room.String, err
-}
-
-// column reads one text column.
-func (s *Store) column(ctx context.Context, query string, args ...any) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-// RoomMembers is the room's members.
-func (s *Store) RoomMembers(ctx context.Context, room string) ([]string, error) {
-	return s.column(ctx, `SELECT agent_id FROM room_members WHERE room_id = ? ORDER BY agent_id`, room)
 }

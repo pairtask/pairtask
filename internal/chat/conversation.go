@@ -295,8 +295,8 @@ func (m *Model) openable(key viewKey) bool {
 // unlisted is a 1:1 the directory doesn't know; All, groups and rooms are
 // always openable, so a room past the bounded room list stays reachable.
 func (m *Model) unlisted(key viewKey) bool {
-	if key.common() || key.isGroup() || key.isRoom() {
-		return false
+	if key.agentID == "" {
+		return false // All, a group or a room
 	}
 	return !slices.Contains(m.conv.order, key)
 }

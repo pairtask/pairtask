@@ -371,8 +371,8 @@ func checkBroadcastSize(recipients []protocol.Recipient) *routingError {
 // broadcastEligible admits a connected agent that can display origin and whose
 // own inbox has room; global limits are checked later for the whole set.
 func (h *Hub) broadcastEligible(ctx context.Context, c *Client, room bool, wire int) (bool, *routingError) {
-	if c.ProtocolVersion < protocol.OriginVersion || (room && c.ProtocolVersion < protocol.RoomVersion) {
-		return false, nil // a room post never reaches an agent that would read it as the Square
+	if c.ProtocolVersion < broadcastVersion(room) {
+		return false, nil
 	}
 	fits, err := h.store.RecipientCapacity(ctx, c.ID, wire)
 	if err != nil {
@@ -405,4 +405,13 @@ func checkOperatorPayload(payload json.RawMessage) *routingError {
 		return &routingError{protocol.ErrMalformedFrame, "payload too large; operator messages are limited to 512 KiB"}
 	}
 	return nil
+}
+
+// broadcastVersion is the least version that can receive an operator "*":
+// origin (v4), or rooms (v9) for a room post, so no one reads it as the Square.
+func broadcastVersion(room bool) int {
+	if room {
+		return protocol.RoomVersion
+	}
+	return protocol.OriginVersion
 }

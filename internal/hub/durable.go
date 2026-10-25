@@ -16,21 +16,8 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 			Detail: "agent id " + c.ID + " is owned by session " + owner.SessionID + "; disconnect that owner before retrying, or use a distinct agent_id"})
 		return
 	}
-	if err := h.recordConnect(c); err != nil {
-		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "session not persisted; registration rejected"})
-		return
-	}
-	if err := h.joinHelloRooms(context.Background(), c); err != nil {
-		h.log.Error("hello rooms not joined", "agent_id", c.ID, "error", err)
-		h.recordDisconnect(c)
-		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "rooms not joined; registration rejected"})
-		return
-	}
-	pending, reclaimed, err := h.claimPending(c)
-	if err != nil {
-		h.log.Error("recover inbox failed", "agent_id", c.ID, "error", err)
-		h.recordDisconnect(c)
-		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "durable inbox recovery failed; registration rejected; retry after fixing storage"})
+	pending, reclaimed, ok := h.admitSession(c)
+	if !ok {
 		return
 	}
 	clients[c.ID] = c
@@ -42,10 +29,31 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 		}
 	}
 	h.noteConnected(c, reclaimed)
-	if c.ProtocolVersion >= protocol.RoomVersion && len(c.JoinRooms) > 0 {
-		h.emit(protocol.SessionEvent{Kind: protocol.EventRoomsChanged, AgentID: c.ID})
-	}
+	h.noteHelloRooms(c)
 	h.log.Info("agent connected", "agent_id", c.ID, "session_id", c.SessionID, "replayed", len(pending), "online", len(clients))
+}
+
+// admitSession records the session, joins its hello rooms and recovers its
+// inbox; on failure the registration is rejected and nothing stays owned.
+func (h *Hub) admitSession(c *Client) ([]protocol.Message, []string, bool) {
+	if err := h.recordConnect(c); err != nil {
+		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "session not persisted; registration rejected"})
+		return nil, nil, false
+	}
+	if err := h.joinHelloRooms(context.Background(), c); err != nil {
+		h.log.Error("hello rooms not joined", "agent_id", c.ID, "error", err)
+		h.recordDisconnect(c)
+		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "rooms not joined; registration rejected"})
+		return nil, nil, false
+	}
+	pending, reclaimed, err := h.claimPending(c)
+	if err != nil {
+		h.log.Error("recover inbox failed", "agent_id", c.ID, "error", err)
+		h.recordDisconnect(c)
+		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "durable inbox recovery failed; registration rejected; retry after fixing storage"})
+		return nil, nil, false
+	}
+	return pending, reclaimed, true
 }
 
 func rejectRegistration(c *Client, frame protocol.Message) {
