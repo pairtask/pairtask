@@ -96,6 +96,7 @@ func publicChatHistoryHarness(t *testing.T) *chatHarness {
 func TestPublicBroadcastAcceptanceChatReplyFromAuthorViewMovesToAll(t *testing.T) {
 	h := publicChatHistoryHarness(t)
 	conversationOpen(h, "author")
+	chatEqual(t, "reply begins in the private view", h.m.State().Selected, "author")
 	sent := replyAckSend(h)
 	chatEqual(t, "public reply displayed in All", h.m.State().SelectedAll, true)
 	chatEqual(t, "public audience retained from author view", sent.To, "*")
