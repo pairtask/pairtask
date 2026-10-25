@@ -1,0 +1,40 @@
+#!/usr/bin/python3
+"""Run the Pi coding agent from the tool store's pi bundle (#155).
+
+The bundle is resolved once here, and PAIRTASK_PI_BUNDLE names it for the
+pairtask extension's shim, so Pi and its extension always come from the same
+digest-verified bundle. Nothing is downloaded at run time.
+"""
+
+import json
+import os
+from pathlib import Path, PurePosixPath
+import sys
+
+sys.path.insert(0, "/usr/local/lib/pairtask")
+import tool_store  # noqa: E402
+
+NODE = "/usr/local/bin/node"
+
+
+def bundle_root(store):
+    """The active pi bundle and its CLI entry; Pi exists only in store mode."""
+    if tool_store.mode() != "store":
+        raise tool_store.StoreError("tools are baked into this image, without Pi")
+    reason = tool_store.ready()
+    if reason:
+        raise tool_store.StoreError(reason)
+    bundle = (store.current / "pi").resolve()
+    cli = PurePosixPath(json.loads((bundle / "bundle.json").read_text())["cli"])
+    if cli.is_absolute() or ".." in cli.parts:
+        raise tool_store.StoreError(f"the pi bundle names an unsafe entry: {cli}")
+    return bundle, bundle / cli
+
+
+if __name__ == "__main__":
+    try:
+        bundle, cli = bundle_root(tool_store.Store())
+    except (tool_store.StoreError, OSError, KeyError, ValueError) as error:
+        sys.exit(f"pairtask-pi: Pi is not installed in this sandbox ({error}); select the pi tool and roll out")
+    env = dict(os.environ, PAIRTASK_PI_BUNDLE=str(bundle))
+    os.execve(NODE, [NODE, str(cli), *sys.argv[1:]], env)

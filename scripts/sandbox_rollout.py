@@ -12,7 +12,7 @@ from sandbox_operator_state import deployment_lock
 from sandbox_operator_recipe import refresh_recipe
 from sandbox_operator_workflow import initialize_variables, require_recovered, run_locked_operation
 from sandbox_releases import download_release
-from sandbox_tools_install import (Container, OPTIONAL_TOOLS, Release, RETRY_COMMAND, has_tool_store, install,
+from sandbox_tools_install import (Container, Release, shipped_tools, RETRY_COMMAND, has_tool_store, install,
                                    load_bundles,
                                    release_lock_from, release_provenance, selection, supports_tool_store)
 
@@ -83,7 +83,8 @@ def activate_running(remote, project, image_dir):
     optional tool, in each running managed instance. Idempotent: a root already
     released for this generation only has its gated units started."""
     machine = json.loads((Path(image_dir) / "manifest.json").read_text())["architecture"]
-    args = SimpleNamespace(remote=remote, project=project, tools=list(OPTIONAL_TOOLS))
+    # Every optional tool the release ships: an older release lacks newer bundles.
+    args = SimpleNamespace(remote=remote, project=project, tools=shipped_tools(tool_release(image_dir, machine)))
     install_tools(args, {"architectures": [machine]}, image_dir)
 
 

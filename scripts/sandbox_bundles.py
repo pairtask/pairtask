@@ -32,7 +32,7 @@ CHROMIUM_FONTS = [
 DOCKER_SUPPORT = ["uidmap", "dbus-user-session", "slirp4netns", "fuse-overlayfs", "bubblewrap",
                   "apparmor", "apparmor-profiles"]
 DOCKER_KEY = "https://download.docker.com/linux/ubuntu/gpg"
-BUNDLE_KINDS = ("playwright", "chromium-deps", "docker")
+BUNDLE_KINDS = ("playwright", "chromium-deps", "docker", "pi")
 
 
 def bundle_file(kind, arch):
@@ -107,6 +107,22 @@ class BundleBuild:
         details.update(json.loads(self.builder.output("cat", "/root/playwright-bundle/bundle.json")))
         return details
 
+    def pi_bundle(self):
+        """Pi and the pairtask extension (#155); build-pi-bundle.py prunes
+        examples, checks every license and writes the notices."""
+        self.builder.execute("mkdir", "-p", "/root/bundle-src/pi")
+        for name in ("tool_download.py", "tool_lock.py", "build-pi-bundle.py"):
+            self.builder.push(ROOT / "infra/image" / name, "/root/bundle-src/" + name)
+        for name in ("package.json", "package-lock.json"):
+            self.builder.push(ROOT / "infra/image/pi" / name, "/root/bundle-src/pi/" + name)
+        self.builder.push(ROOT / "integrations/pi/index.ts", "/root/bundle-src/pi-extension-source.ts")
+        self.builder.push(self.lock_file, "/root/bundle-src/tools.lock.json")
+        self.builder.execute("apt-get", "install", "-y", "--no-install-recommends", "ca-certificates", "python3")
+        self.builder.execute("python3", "/root/bundle-src/build-pi-bundle.py")
+        details = self.archive("pi", "/root/pi-bundle")
+        details.update(json.loads(self.builder.output("cat", "/root/pi-bundle/bundle.json")))
+        return details
+
     def build(self, kinds=BUNDLE_KINDS):
         """Build the requested bundles and write their manifest next to them."""
         self.builder.execute("apt-get", "-o", "APT::Update::Error-Mode=any", "-o", "Acquire::Retries=3", "update")
@@ -118,6 +134,8 @@ class BundleBuild:
         if "docker" in kinds:
             self.docker_repository()
             bundles["docker"] = self.deb_bundle("docker", docker_packages() + DOCKER_SUPPORT)
+        if "pi" in kinds:
+            bundles["pi"] = self.pi_bundle()
         manifest = {"architecture": self.arch, "bundles": bundles}
         (self.output / manifest_file(self.arch)).write_text(json.dumps(manifest, indent=2) + "\n")
         return manifest

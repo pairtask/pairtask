@@ -34,12 +34,12 @@ class BundleFixture(unittest.TestCase):
         self.tag = "bundles-" + bundles.inputs_digest(self.inputs)
         self.manifest = {"architecture": "arm64", "release": self.tag, "bundles": {}}
         self.payload = {}
-        for kind in ("playwright", "chromium-deps", "docker"):
+        for kind in self.inputs["kinds"]:
             name = f"collab-ai-bundle-{kind}-linux-arm64.tar.gz"
             data = (kind + " verified payload").encode()
             self.payload[name] = data
             self.manifest["bundles"][kind] = {"file": name, "sha256": hashlib.sha256(data).hexdigest()}
-            if kind != "playwright":
+            if kind in ("chromium-deps", "docker"):
                 self.manifest["bundles"][kind]["packages"] = {"package": "1.2.3"}
         self.manifest_name = "collab-ai-bundles-linux-arm64.json"
         self.inputs_name = "collab-ai-bundle-inputs-linux-arm64.json"

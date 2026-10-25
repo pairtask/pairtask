@@ -1,0 +1,9 @@
+{
+  "name": "pairtask-pi-bundle",
+  "private": true,
+  "description": "The pinned Pi coding agent and the pairtask extension's dependencies, built into the pi tool bundle.",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-mcp": "1.4.0"
+  }
+}

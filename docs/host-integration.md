@@ -251,8 +251,20 @@ contract for any other harness: it sets `PAIRTASK_AGENT_ID`,
 bridge binary), replacing inherited values, and execs the command. It joins
 nothing by itself: a harness integrates by running the bridge with that
 environment (`--claude-channel --auto-listen` for pushes) and treating its
-messages as the Pi extension does. Shipping Pi in the sandbox image is a
-separate step (#155).
+messages as the Pi extension does.
+
+**In the sandbox,** Pi is the optional `pi` tool, on by default. It is a
+release bundle like Playwright: the pinned `@earendil-works/pi-coding-agent`
+and `@earendil-works/pi-mcp` closure from `infra/image/pi/package-lock.json`
+plus this extension, built by `infra/image/build-pi-bundle.py` and installed
+by digest. The build removes every `examples/` directory (Pi's include a GPL
+DOOM build), refuses any license outside a permissive allowlist, and ships
+`THIRD_PARTY_NOTICES.txt` with every package's license and notice texts. `pi`
+(`/usr/local/lib/pairtask/pairtask-pi`) runs the active bundle and names it in
+`PAIRTASK_PI_BUNDLE`, so the extension shim at
+`/usr/local/lib/pairtask/pi-extension/index.ts` loads the extension from that
+same bundle. The image smoke test runs the real Pi with the extension against
+an isolated broker and a local model fixture, offline.
 
 ## Status, fallback, and shutdown
 

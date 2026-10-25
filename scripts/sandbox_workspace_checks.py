@@ -10,6 +10,7 @@ import sandbox_skill_checks
 import sandbox_rtk_checks
 import sandbox_docker_checks
 import sandbox_mcp_checks
+import sandbox_pi_checks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +94,7 @@ def check_workspace(args, directory, project, manifest):
     sandbox_rtk_checks.verify(ssh)
     sandbox_docker_checks.verify(ssh, create=True)
     sandbox_mcp_checks.verify(ssh)
+    sandbox_pi_checks.verify(ssh)
     run(ssh + ["touch /workspace/restart-check"])
     run(["incus", "--project", project, "stop", target])
     run(["incus", "--project", project, "start", target])

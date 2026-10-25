@@ -46,6 +46,9 @@ class StoreHarness(unittest.TestCase):
         self.incoming = root / "incoming"
         self.incoming.mkdir()
         self.store = tool_store.Store(root / "store", root / "state.json", root / "root-deps.json")
+        # Activation fixtures must never discover or rewrite the live image's
+        # configuration when these tests run inside a provisioned workspace.
+        self.store.share, self.store.etc = root / "share", root / "etc"
         self.mode = root / "tools-mode"
         self.mode.write_text("store\n")
         self.lock, self.source = root / "lock.json", root / "source.json"

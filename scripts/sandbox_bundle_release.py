@@ -28,6 +28,8 @@ INPUT_FILES = (
     "scripts/sandbox_bundles.py", "scripts/sandbox-bundles.py", "scripts/sandbox_builder.py",
     "infra/image/build-playwright-bundle.py", "infra/image/tool_download.py", "infra/image/tool_lock.py",
     "infra/image/mcp/package.json", "infra/image/mcp/package-lock.json", "infra/image/docker-packages.txt",
+    "infra/image/build-pi-bundle.py", "infra/image/pi/package.json", "infra/image/pi/package-lock.json",
+    "integrations/pi/index.ts",
 )
 SCHEMA = 1
 
