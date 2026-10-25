@@ -48,11 +48,18 @@ func statusReply(out protocol.StatusSnapshot, reply protocol.Message) (protocol.
 	if reply.Type != protocol.TypeStatus || reply.Status == nil {
 		return failed(out, errors.New("invalid broker status response"))
 	}
-	if reply.Status.SchemaVersion != protocol.StatusSchemaVersion {
+	if !supportedSchema(reply.Status.SchemaVersion) {
 		out.Health = "unsupported"
 		return failed(out, errors.New("unsupported broker status schema"))
 	}
 	out = *reply.Status
+	if out.SchemaVersion < protocol.StatusSchemaVersion {
+		// Schema 1 brokers don't report declarations: unknown, not none.
+		out.AgentStatusAvailable, out.AgentStatusTotal, out.AgentStatusTruncated = false, 0, false
+	}
+	if out.AgentStatus == nil {
+		out.AgentStatus = []protocol.AgentStatus{}
+	}
 	if out.Health != "ready" {
 		return failed(out, errors.New("broker status is "+out.Health+": "+out.Error))
 	}
@@ -63,3 +70,6 @@ func failed(out protocol.StatusSnapshot, err error) (protocol.StatusSnapshot, er
 	out.Error = err.Error()
 	return out, err
 }
+
+// supportedSchema accepts this schema and schema 1, which lacks declarations.
+func supportedSchema(v int) bool { return v == 1 || v == protocol.StatusSchemaVersion }

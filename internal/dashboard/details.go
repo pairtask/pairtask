@@ -20,6 +20,7 @@ func (m *model) details() string {
 			"Only committed agent acknowledgment clears pending delivery.", "A message may have been submitted to its host without acknowledgment.")
 	} else {
 		lines = append(lines, sessionDetails(r.session)...)
+		lines = append(lines, m.statusDetails(r.session)...)
 	}
 	if m.stale(time.Now()) {
 		lines = append(lines, "", "STALE: these are retained observations, not current ownership.")

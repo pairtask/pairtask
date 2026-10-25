@@ -57,7 +57,23 @@ func (h *Hub) snapshot(ctx context.Context, clients map[string]*Client) protocol
 	out.DurablePending = &records.Pending
 	out.OperatorPending = &records.OperatorPending
 	appendHistory(&out, clients, records.Sessions)
+	h.snapshotAgentStatus(ctx, clients, &out)
 	return out
+}
+
+// snapshotAgentStatus adds the agents' declarations, as the operator snapshot
+// has them. A failed read leaves them unavailable rather than empty.
+func (h *Hub) snapshotAgentStatus(ctx context.Context, clients map[string]*Client, out *protocol.StatusSnapshot) {
+	records, total, err := h.snapshotStatuses(ctx, clients)
+	if err != nil {
+		h.log.Error("agent status query failed", "error", err)
+		out.Health, out.Error = "degraded", "agent status unavailable"
+		return
+	}
+	if records != nil {
+		out.AgentStatus = records
+	}
+	out.AgentStatusTotal, out.AgentStatusTruncated, out.AgentStatusAvailable = total, total > len(records), true
 }
 
 func liveSessions(clients map[string]*Client) ([]protocol.SessionStatus, bool) {

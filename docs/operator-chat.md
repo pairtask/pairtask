@@ -1119,6 +1119,7 @@ acknowledges, quits or picks recipients.
 | `/clear` | Hide everything above the current point (view only) |
 | `/find <text>` | Jump to the next message containing text; `/find` again continues |
 | `/copy #n` | Ask the terminal to copy message #n's text (OSC 52, base64 of the raw body); reports "copy requested", since terminals may not support it |
+| `/copy ref AGENT` | Copy the full `ref` of an agent's latest status (`@AGENT` works too), the value `/agents` may show as a short commit; reports when the agent declared no status, its status has no ref, or a partial status list left it out |
 | `/help` | Keys, commands and addressing rules |
 | `/quit` | Quit (warns about an unresolved send, as today) |
 
@@ -1407,7 +1408,11 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   what it waits on, how long ago it declared it, and when its harness was
   last seen working (`launcher` for Codex, `pairtask tool activity` for
   Claude) or `activity unavailable`; a declaration from an earlier session
-  says so. `/agents` lists the same for every agent with a status, and the
+  says so. `/agents` lists the same for every agent with a status, one
+  block per agent set apart by blank lines, with a full commit `ref` shortened
+  to 12 characters (`/copy ref AGENT` copies the full value) and, when the
+  status list is complete, an online agent without one as `no status
+  declared`; the
   footer adds a compact `id ▸ state age` for up to three current agents
   (lowest priority: dropped first when the row is short, after status
   messages, the ack reminder and the connection facts). Statuses

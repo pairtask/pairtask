@@ -89,7 +89,7 @@ returns `durable_pending: null`, never a fabricated zero.
 
 ## JSON contract
 
-The JSON schema has `schema_version: 1`, separate from the broker messaging
+The JSON schema has `schema_version: 2`, separate from the broker messaging
 `protocol_version`. New optional fields may be added; consumers should ignore
 unknown fields. Unknown metrics/timestamps are `null`, available zero counts are
 numeric zero, and empty lists are `[]`. On a failed connection `protocol_version`
@@ -97,7 +97,7 @@ is zero because no version was observed. A successful empty broker returns:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "reachable": true,
   "health": "ready",
   "snapshot_at": "2026-09-22T12:00:00Z",
@@ -114,7 +114,11 @@ is zero because no version was observed. A successful empty broker returns:
     "recipient_limit": 100,
     "recipients_truncated": false
   },
-  "legacy_unacknowledged": null
+  "legacy_unacknowledged": null,
+  "agent_status": [],
+  "agent_status_total": 0,
+  "agent_status_truncated": false,
+  "agent_status_available": true
 }
 ```
 
@@ -124,6 +128,32 @@ objects contain `agent_id` and `pending`. Errors add a human-readable `error`;
 scripts should use `health` and exit status rather than matching that prose.
 The CLI quotes identifiers in human output so control characters cannot alter
 the terminal display.
+
+## Agent status (schema 2)
+
+`agent_status` holds the agents' latest declarations (#133), the same records
+and order as the operator chat's snapshot: connected agents' records first,
+then retained offline ones by agent ID, at most **64**. `agent_status_total`
+counts every retained record, so `agent_status_truncated` marks an omission.
+Each record has `agent_id`, `session_id`, `state`, `task`, `step`,
+`waiting_on`, `ref`, `declared_at`, `activity` (`{at, source}` observed for the
+declaring session, or `null`) and `connected` (the declaring session is the
+agent's current one). A record from an earlier session stays as declared: its
+state is never inferred from its age or from a disconnect.
+
+`agent_status_available: false` means the declarations are unknown, never that
+there are none: a failed read (health `degraded`) or a schema 1 broker. The
+client accepts both schemas; a schema 1 response keeps `schema_version: 1` and
+reports `agent_status_available: false`. Any other schema is `unsupported`.
+
+The text output adds an **Agent status** table with declared and activity ages,
+`current` or `previous` session, and a 12-character short form of a full
+commit `ref` (JSON keeps the full value). A connected agent without a record is
+listed as `no status declared` only when the list is complete. The dashboard
+shows the declaration on the session row that declared it, or as `previous:`
+on the agent's live row; other historical rows show `—`, and an agent without
+a record shows `no status`, or `unknown` when the list is truncated or
+unavailable.
 
 ## Wire and compatibility
 
