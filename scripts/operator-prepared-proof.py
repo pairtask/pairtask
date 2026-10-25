@@ -61,6 +61,9 @@ def prove(args):
     with ExitStack() as cleanup:
         states = []
         for operator in operators:
+            # Projects share the bridge's DNS namespace. These two instances
+            # coexist, so derive distinct names from their unique projects.
+            operator.place(operator.project, "proof-" + operator.project)
             cleanup.callback(operator.cleanup)
             operator.create()
             actual = operator.run("config", "get", operator.target, "volatile.base_image",
