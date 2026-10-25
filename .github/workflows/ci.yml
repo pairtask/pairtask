@@ -116,6 +116,9 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    env:
+      # Reuse one prepared operator image within this job; see scripts/sandbox_operator_prepared.py.
+      PAIRTASK_OPERATOR_PREPARED: run-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
       - name: Skip the image proofs for unshipped documentation
         if: needs.classify.outputs.images == 'false'
@@ -133,6 +136,7 @@ jobs:
           tofu_version: '1.12.6'
           tofu_wrapper: false
       - name: Initialize disposable Incus host
+        id: incus
         if: needs.classify.outputs.images != 'false'
         run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT bash scripts/ci-incus.sh
       - name: Cache the verified base image pair without publishing it
@@ -174,7 +178,8 @@ jobs:
         if: needs.classify.outputs.images != 'false'
         run: |
           sudo python3 scripts/sandbox-download.py --remote local --from-dir dist/workspace/release --output dist/installed
-          sudo env "PATH=$PATH" python3 scripts/sandbox-smoke.py --remote local --image-dir dist/installed --mount-check --secured-check --network-check
+          set -o pipefail
+          sudo env "PATH=$PATH" "PAIRTASK_OPERATOR_PREPARED=$PAIRTASK_OPERATOR_PREPARED" python3 scripts/sandbox-smoke.py --remote local --image-dir dist/installed --mount-check --secured-check --network-check | tee -a operator-prepared.log
       - name: Prove offline controller and dev boundaries
         if: needs.classify.outputs.images != 'false'
         run: sudo env "PATH=$PATH" python3 scripts/sandbox-boundary.py --remote local --image-dir dist/installed
@@ -182,7 +187,16 @@ jobs:
         if: needs.classify.outputs.images != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: sudo --preserve-env=PATH,GH_TOKEN python3 scripts/sandbox-operator-smoke.py --remote local --repo "$GITHUB_REPOSITORY"
+        run: |
+          set -o pipefail
+          sudo --preserve-env=PATH,GH_TOKEN,PAIRTASK_OPERATOR_PREPARED python3 scripts/sandbox-operator-smoke.py --remote local --repo "$GITHUB_REPOSITORY" | tee -a operator-prepared.log
+      - name: Prove the prepared operator image was built and reused, with no fallback
+        if: needs.classify.outputs.images != 'false'
+        run: |
+          grep -E '^prepared: (built|reused|fallback)' operator-prepared.log | sort | uniq -c
+          grep -q '^prepared: built ' operator-prepared.log
+          grep -q '^prepared: reused ' operator-prepared.log
+          if grep -q '^prepared: fallback' operator-prepared.log; then exit 1; fi
       - name: Prove the previous release and its host checkout work across the layout change
         if: needs.classify.outputs.images != 'false'
         env:
@@ -197,6 +211,10 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Remove this job's prepared operator images
+        # Only once Incus setup started; a docs-only run or an earlier failure skips it.
+        if: always() && steps.incus.outcome != 'skipped' && steps.incus.outcome != ''
+        run: sudo python3 scripts/sandbox_operator_prepared.py cleanup --remote local --token "$PAIRTASK_OPERATOR_PREPARED"
 
   base-mirror:
     # Every published workspace must have its base images retained, whatever upstream prunes.

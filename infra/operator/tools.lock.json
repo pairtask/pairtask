@@ -3,11 +3,13 @@
   "architectures": {
     "aarch64": {
       "archive": "tofu_1.12.6_linux_arm64.zip",
-      "sha256": "e573979ba68a17fe7b881752051a694a7efcd970e39521f6a25775197861ed4d"
+      "sha256": "e573979ba68a17fe7b881752051a694a7efcd970e39521f6a25775197861ed4d",
+      "binary_sha256": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59"
     },
     "x86_64": {
       "archive": "tofu_1.12.6_linux_amd64.zip",
-      "sha256": "5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8"
+      "sha256": "5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8",
+      "binary_sha256": "8f95cbe1523ef7b7913773634a6d6ac94c38f3c8eadba2e18b1e5b01567561ad"
     }
   }
 }
