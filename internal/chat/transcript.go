@@ -124,7 +124,7 @@ func (m *Model) entryHeader(e *entry) []string {
 	if e.direction == "sent" {
 		who = youStyle.Render("you") + " → " + recipientsLabel(e.msg)
 	} else {
-		who = agentStyle(e.msg.From).Render(safe(e.msg.From)) + " → " + youStyle.Render("you") +
+		who = agentStyle(e.msg.From).Render(safe(e.msg.From)) + " → " + receivedAudience(e.msg) +
 			mutedStyle.Render(" ["+protocol.DisplayOrigin(e.msg.Origin)+"]")
 	}
 	left := mutedStyle.Render(stamp) + who
@@ -135,6 +135,15 @@ func (m *Model) entryHeader(e *entry) []string {
 	}
 	// Narrow: the number leads, and a long sender wraps instead of being cut.
 	return wrap(seq+"  "+left, width)
+}
+
+// receivedAudience names who a received message went to: everyone for an
+// agent's public "*" (v7), otherwise the operator.
+func receivedAudience(msg protocol.Message) string {
+	if msg.To == protocol.Broadcast {
+		return "everyone"
+	}
+	return youStyle.Render("you")
 }
 
 func recipientsLabel(msg protocol.Message) string {
