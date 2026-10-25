@@ -212,7 +212,7 @@ func (m *Model) continueOlder(page *protocol.HistoryPage, _ int) tea.Cmd {
 	}
 	if run.pages >= m.opts.Bounds.CatchupPages {
 		m.history.run = nil
-		m.status = fmt.Sprintf("no older messages from %s in the last %d pages; PgUp continues", safe(run.key.agent()), run.pages)
+		m.status = fmt.Sprintf("no older messages from %s in the last %d pages; PgUp continues", run.key.label(), run.pages)
 		return nil
 	}
 	m.status = fmt.Sprintf("loading older history (%d pages)", run.pages)

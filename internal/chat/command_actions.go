@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -120,7 +121,7 @@ func (m *Model) replyCommand(arg argument) {
 // inSelected restricts the default reply target to the selected 1:1's agent;
 // in All any received message qualifies.
 func (m *Model) inSelected(e *entry) bool {
-	return m.conv.selected.common() || e.msg.From == m.conv.selected.agent()
+	return m.conv.selected.common() || e.msg.From == m.conv.selected.agent() || slices.Contains(m.conv.selected.group(), e.msg.From)
 }
 
 func (m *Model) replyRefusal(e *entry) string {
@@ -148,7 +149,7 @@ func replyView(e *entry) viewKey {
 	if isPublic(e) {
 		return allKey
 	}
-	return viewKey(e.msg.From)
+	return agentKey(e.msg.From)
 }
 
 // switchRefusal is why a reply can't move into its view: a draft addressed
@@ -165,10 +166,7 @@ func (m *Model) switchRefusal(key viewKey) string {
 
 // viewName is a conversation's name in a status line.
 func viewName(key viewKey) string {
-	if key.common() {
-		return "All"
-	}
-	return safe(key.agent())
+	return key.label()
 }
 
 // moveTo switches a reply into its view; an unaddressed draft typed in All

@@ -1562,3 +1562,23 @@ never saw the agents' answers.
   messages, public or not.
 - **Older agents:** `/agents` marks an agent below v7, because its `"*"`
   still reaches agents only.
+
+## Groups, closing conversations and task claims (#148, #141)
+
+- **Group conversations:** a message the operator sends to several agents
+  belongs to one group conversation per member set, in any order. It also
+  shows in All and in each member's 1:1. `/chat @alpha @beta` or
+  `/chat ["alpha","beta"]` opens it, and its label lists the members, never
+  a transport ID. A group is known only from the broker's member list, so an
+  agent named `group:foo` keeps an ordinary 1:1.
+- **The bar** wraps to at most three rows; beyond that, "+N more" counts the
+  tabs left out. The selected tab always shows, and closed conversations are
+  counted at the end as "N hidden · M unread".
+- **`/close`** hides the selected conversation; All can't be closed. Nothing
+  is deleted, acknowledged or re-addressed, and the draft is kept. A new
+  message in it, a send to the same recipients, or `/chat` shows it again;
+  presence changes don't. Closing lasts for this chat session.
+- **Claims:** under a message you sent, one muted line per held claim, for
+  example `◇ reply: codex-1 (owner, active)`. `/claims #n` lists them with
+  topics and ages, and says so when the list, or the snapshot, is truncated.
+  A claim tells you who took a task; it is never an approval.

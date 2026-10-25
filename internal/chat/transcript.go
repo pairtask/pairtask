@@ -61,6 +61,7 @@ func (m *Model) entryLines(e *entry) []renderLine {
 	} else {
 		b.formatBody(payloadText(e.msg.Payload), width)
 	}
+	b.add(m.claimLines(e, width-len(body)), body)
 	b.add(m.statusLines(e, width), body)
 	if e.gapBelow {
 		b.add([]string{warnStyle.Render("── older messages may be missing here · /history loads them ──")}, body)
@@ -124,7 +125,7 @@ func (m *Model) entryHeader(e *entry) []string {
 	if e.direction == "sent" {
 		who = youStyle.Render("you") + " → " + recipientsLabel(e.msg)
 	} else {
-		who = agentStyle(e.msg.From).Render(safe(e.msg.From)) + " → " + youStyle.Render("you") +
+		who = agentStyle(e.msg.From).Render(safe(e.msg.From)) + " → " + receivedAudience(e.msg) +
 			mutedStyle.Render(" ["+protocol.DisplayOrigin(e.msg.Origin)+"]")
 	}
 	left := mutedStyle.Render(stamp) + who
@@ -135,6 +136,15 @@ func (m *Model) entryHeader(e *entry) []string {
 	}
 	// Narrow: the number leads, and a long sender wraps instead of being cut.
 	return wrap(seq+"  "+left, width)
+}
+
+// receivedAudience names who a received message went to: everyone for an
+// agent's public "*" (v7), otherwise the operator.
+func receivedAudience(msg protocol.Message) string {
+	if msg.To == protocol.Broadcast {
+		return "everyone"
+	}
+	return youStyle.Render("you")
 }
 
 func recipientsLabel(msg protocol.Message) string {

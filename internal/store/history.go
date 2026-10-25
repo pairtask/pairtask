@@ -140,7 +140,7 @@ func entrySize(entry protocol.HistoryEntry) (int, error) {
 }
 
 func historyRows(ctx context.Context, tx *sql.Tx, scan historyScan) ([]historyRow, error) {
-	query := `SELECT mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.ack_requested, mm.origin
+	query := `SELECT mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.ack_requested, mm.origin, ` + groupColumn + `
 	 FROM message_metadata mm JOIN messages m USING(seq)
 	 WHERE ` + historyScope + ` AND m.seq <= ? AND (? = 0 OR m.seq < ?) ORDER BY m.seq DESC LIMIT ?`
 	rows, err := tx.QueryContext(ctx, query, scan.upper, scan.before, scan.before, scan.limit)
@@ -161,10 +161,16 @@ func historyRows(ctx context.Context, tx *sql.Tx, scan historyScan) ([]historyRo
 
 func scanHistoryRow(rows *sql.Rows) (historyRow, error) {
 	var row historyRow
-	var origin sql.NullString
+	var origin, group sql.NullString
 	m := &row.entry.Message
-	err := rows.Scan(&m.MessageID, &m.Seq, &m.TS, &m.From, &row.entry.SenderSession, &m.To, &row.payload, &m.InReplyTo, &m.AckRequested, &origin)
+	err := rows.Scan(&m.MessageID, &m.Seq, &m.TS, &m.From, &row.entry.SenderSession, &m.To, &row.payload, &m.InReplyTo, &m.AckRequested, &origin, &group)
+	if err != nil {
+		return row, err
+	}
 	m.Type, m.Durable, m.Origin = protocol.TypeMsg, true, protocol.DisplayOrigin(origin.String)
+	if m.Group, err = groupList(group); err != nil {
+		return row, err
+	}
 	row.entry.Direction = "received"
 	if origin.String == protocol.OriginOperator {
 		row.entry.Direction = "sent"

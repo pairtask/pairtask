@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -206,7 +207,10 @@ func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error
 	return int(version.Int64), err
 }
 
-const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin`
+const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn
+
+// groupColumn is a group send's canonical members (JSON), or NULL.
+const groupColumn = `(SELECT o.members FROM operator_requests o WHERE o.message_id = mm.message_id AND o.scope_kind = 'group')`
 
 func readPending(ctx context.Context, tx *sql.Tx, id string, canShowOrigin bool) ([]protocol.Message, error) {
 	query := `SELECT ` + durableColumns + ` FROM durable_inbox i JOIN message_metadata mm USING(message_id) JOIN messages m USING(seq) WHERE i.agent_id = ? AND i.acknowledged_at IS NULL AND (? OR mm.origin IS NULL OR mm.origin != 'operator') ORDER BY m.seq LIMIT ?`
@@ -235,9 +239,28 @@ type scanner interface{ Scan(...any) error }
 func scanDurableMessage(row scanner) (protocol.Message, error) {
 	msg := protocol.Message{Type: protocol.TypeMsg, Durable: true, AckRequested: true}
 	var payload string
-	var origin sql.NullString
-	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin)
+	var origin, group sql.NullString
+	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group)
+	if err != nil {
+		return msg, err
+	}
 	msg.Payload = json.RawMessage(payload)
 	msg.Origin = protocol.DisplayOrigin(origin.String)
+	msg.Group, err = groupList(group)
 	return msg, err
+}
+
+// groupList decodes stored group members; NULL is no group.
+func groupList(group sql.NullString) ([]string, error) {
+	if !group.Valid {
+		return nil, nil
+	}
+	if group.String == "" {
+		return nil, nil // an empty stored value is no group, as before
+	}
+	var members []string // JSON null decodes to no members
+	if err := json.Unmarshal([]byte(group.String), &members); err != nil {
+		return nil, fmt.Errorf("group members: %w", err)
+	}
+	return members, nil
 }

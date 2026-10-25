@@ -57,7 +57,7 @@ func (e *runtimeMCP) requireReady(next mcp.MethodHandler) mcp.MethodHandler {
 }
 
 // runtimeTools are the collaboration tools the runtime MCP server serves.
-var runtimeTools = []string{"send", "acknowledge", "receive", "wait_reply", "listener_status", "status", "read_status"}
+var runtimeTools = []string{"send", "acknowledge", "receive", "wait_reply", "listener_status", "status", "read_status", "claim", "release_claim", "finish_claim", "read_claims"}
 
 func (e *runtimeMCP) config() (map[string]any, error) {
 	binary, err := os.Executable()
