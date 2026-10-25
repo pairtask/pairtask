@@ -164,6 +164,7 @@ Claude requires channel consent and account/organization support.
 ## Reference and contributing
 
 [Protocol](docs/protocol.md) · [Manual MCP](docs/mcp.md) ·
+[CI checks and image builds](docs/ci.md) ·
 [Status API](docs/status.md) · [Operator chat formatting](docs/chat-formatting.md) ·
 [Agent skill](docs/skills/collab-ai/SKILL.md)
 
