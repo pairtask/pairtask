@@ -1,6 +1,7 @@
 package host
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,14 +29,19 @@ type Proxy struct {
 	RuntimeMCP         map[string]any
 	Budget             *budget.Budget
 	RestrictedOperator bool
-	session            sessionAccounting
-	mu                 sync.Mutex
-	startID            string
-	threadID           string
-	budgetThread       string
-	budgetTurn         string
-	toolCalls          chan Frame
-	reporting          atomic.Bool // an activity report is in flight
+	// OnThread, if set, learns the owned thread once its lifecycle request
+	// succeeds; it runs outside the proxy's lock.
+	OnThread     func(Thread)
+	session      sessionAccounting
+	mu           sync.Mutex
+	startID      string
+	startCwd     string // the lifecycle request's cwd, if any
+	threadID     string
+	threadCwd    string
+	budgetThread string
+	budgetTurn   string
+	toolCalls    chan Frame
+	reporting    atomic.Bool // an activity report is in flight
 }
 
 func NewProxy(upstream, operator *Wire) *Proxy {
@@ -129,6 +135,7 @@ func (p *Proxy) prepareThread(frame *Frame) error {
 	}
 	frame.Params = data
 	p.startID = string(frame.ID)
+	p.startCwd, _ = params["cwd"].(string)
 	return nil
 }
 
@@ -164,6 +171,9 @@ func (p *Proxy) FromHost(ctx context.Context, frame Frame) error {
 			return nil
 		}
 		ready = p.captureThread(&frame)
+	}
+	if ready {
+		p.notifyThread()
 	}
 	if p.ownsToolCall(frame) {
 		select {
@@ -230,29 +240,45 @@ func (p *Proxy) captureThread(frame *Frame) bool {
 		p.startID = ""
 		return false
 	}
-	id, err := startedThreadID(frame.Result)
+	thread, err := startedThread(frame.Result)
 	if err != nil {
 		p.startID = ""
 		*frame = errorFrame(frame.ID, err)
 		return false
 	}
-	p.threadID = id
+	p.threadID = thread.ID
+	p.threadCwd = cmp.Or(thread.Cwd, p.startCwd)
 	return true
 }
 
-func startedThreadID(data json.RawMessage) (string, error) {
+// Thread is the owned thread and its working directory: the host's reported
+// cwd, else the lifecycle request's, else empty.
+type Thread struct {
+	ID, Cwd string
+}
+
+// notifyThread tells OnThread about the owned thread, outside the lock.
+func (p *Proxy) notifyThread() {
+	if p.OnThread == nil {
+		return
+	}
+	p.mu.Lock()
+	thread := Thread{ID: p.threadID, Cwd: p.threadCwd}
+	p.mu.Unlock()
+	p.OnThread(thread)
+}
+
+func startedThread(data json.RawMessage) (Thread, error) {
 	var result struct {
-		Thread struct {
-			ID string `json:"id"`
-		} `json:"thread"`
+		Thread Thread `json:"thread"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return "", fmt.Errorf("invalid host thread lifecycle response: %w", err)
+		return Thread{}, fmt.Errorf("invalid host thread lifecycle response: %w", err)
 	}
 	if result.Thread.ID == "" {
-		return "", errors.New("host thread lifecycle response is missing thread.id")
+		return Thread{}, errors.New("host thread lifecycle response is missing thread.id")
 	}
-	return result.Thread.ID, nil
+	return result.Thread, nil
 }
 
 func (p *Proxy) ownsToolCall(frame Frame) bool {

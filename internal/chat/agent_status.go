@@ -150,7 +150,7 @@ func (m *Model) statusRows() []string {
 	if silent := m.undeclared(); len(silent) > 0 {
 		rows = append(rows, m.blockSeparator(rows))
 		for _, id := range silent {
-			rows = append(rows, mutedStyle.Render("· "+safe(id)+"  online, no status declared"))
+			rows = append(rows, mutedStyle.Render("· "+safe(id)+"  "+m.missingStatus()))
 			rows = append(rows, m.agentClaimLines(id)...)
 		}
 	}
@@ -172,12 +172,9 @@ func (m *Model) blockSeparator(rows []string) string {
 	return ""
 }
 
-// undeclared is the online agents without a status. Only a complete status
-// list proves absence; a partial one may have left the record out.
+// undeclared is the online agents without a loaded status; see missingStatus
+// for what that absence means.
 func (m *Model) undeclared() []string {
-	if m.statuses.truncated {
-		return nil
-	}
 	var ids []string
 	for _, a := range m.agents.list {
 		if _, ok := m.statuses.byAgent[a.AgentID]; !ok {
@@ -186,6 +183,15 @@ func (m *Model) undeclared() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// missingStatus says what an online agent's absent status means: only a
+// complete status list proves none was declared.
+func (m *Model) missingStatus() string {
+	if m.statuses.truncated {
+		return "online, status not loaded (the status list is partial)"
+	}
+	return "online, no status declared"
 }
 
 // copyRef asks the terminal to copy an agent's full status ref, the value

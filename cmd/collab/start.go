@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,13 +21,14 @@ import (
 // startOptions is what `pairtask start` was asked for.
 type startOptions struct {
 	Agent, ID, Model, Effort, Socket string
-	DryRun                           bool
+	DryRun, Resume                   bool
 	Native                           []string // everything after --, for the agent itself
 }
 
 // startLayout is where the launchers and configs live; tests point it elsewhere.
 type startLayout struct {
 	CodexLauncher, CodexBinary, ClaudeBinary, BaseConfig, ConfigDir string
+	StateDir, CodexHome                                             string // resume bindings; Codex's saved conversations
 }
 
 func defaultStartLayout() startLayout {
@@ -40,7 +42,17 @@ func defaultStartLayout() startLayout {
 		ClaudeBinary:  "/usr/local/bin/claude",
 		BaseConfig:    "/etc/pairtask/claude-mcp.json",
 		ConfigDir:     filepath.Join(dir, "pairtask"),
+		StateDir:      stateDir(),
+		CodexHome:     cmp.Or(os.Getenv("CODEX_HOME"), filepath.Join(os.Getenv("HOME"), ".codex")),
 	}
+}
+
+func stateDir() string {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
+		dir = filepath.Join(os.Getenv("HOME"), ".local", "state")
+	}
+	return filepath.Join(dir, "pairtask")
 }
 
 // startPlan is what a start would run: the launcher argv and, for Claude,
@@ -51,7 +63,7 @@ type startPlan struct {
 	Config     []byte
 }
 
-const startUsage = "usage: pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--dry-run] [-- agent arguments]"
+const startUsage = "usage: pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--resume] [--dry-run] [-- agent arguments]"
 
 var startToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -76,6 +88,9 @@ func parseStart(args []string) (startOptions, error) {
 	if flags.NArg() > 0 {
 		return opts, fmt.Errorf("unexpected argument %q; agent arguments go after --", flags.Arg(0))
 	}
+	if err := opts.normalizeResume(); err != nil {
+		return opts, err
+	}
 	return opts, opts.validate()
 }
 
@@ -87,6 +102,7 @@ func startFlags(opts *startOptions) *flag.FlagSet {
 	flags.StringVar(&opts.Effort, "effort", "", "reasoning effort for the agent")
 	flags.StringVar(&opts.Socket, "socket", "", "broker Unix socket path")
 	flags.BoolVar(&opts.DryRun, "dry-run", false, "print the command and the config path; run nothing")
+	flags.BoolVar(&opts.Resume, "resume", false, "codex: continue the conversation this ID last owned")
 	return flags
 }
 
@@ -96,6 +112,25 @@ func splitNative(args []string) (ours, native []string) {
 		return args[:i], args[i+1:]
 	}
 	return args, nil
+}
+
+// normalizeResume turns a managed selector into --resume and refuses
+// --resume next to arguments that already choose a conversation.
+func (o *startOptions) normalizeResume() error {
+	if o.Agent == "codex" && !o.Resume && managedSelector(o.Native) {
+		o.Resume, o.Native = true, nil
+		return nil
+	}
+	if !o.Resume {
+		return nil
+	}
+	if o.Agent != "codex" {
+		return errors.New("--resume is for codex; claude has its own --resume and --continue")
+	}
+	if nativeLifecycle(o.Native) {
+		return errors.New("--resume already chooses the conversation; drop the resume or fork arguments after --")
+	}
+	return nil
 }
 
 func (o *startOptions) validate() error {
@@ -329,6 +364,8 @@ type startRuntime struct {
 	Stdout, Stderr io.Writer
 	Layout         startLayout
 	Exec           execFunc
+	Status         statusFunc             // broker status for the resume checks; nil skips them
+	Chdir          func(dir string) error // os.Chdir in production
 }
 
 // runStart is `pairtask start`: write the config if any, then replace this
@@ -344,13 +381,24 @@ func runStart(args []string, rt startRuntime) int {
 		fmt.Fprintln(rt.Stderr, startUsage)
 		return 2
 	}
+	dir, err := resolveResume(&opts, rt)
+	if err != nil {
+		return 2
+	}
 	plan, code := planStart(opts, rt)
 	if code != 0 {
 		return code
 	}
 	if opts.DryRun {
 		printPlan(plan, rt.Stdout)
+		printDir(dir, rt.Stdout)
 		return 0
+	}
+	if dir != "" && rt.Chdir != nil {
+		if err := rt.Chdir(dir); err != nil {
+			fmt.Fprintln(rt.Stderr, err)
+			return 1
+		}
 	}
 	return launch(plan, rt)
 }

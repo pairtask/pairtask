@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"time"
@@ -59,8 +60,30 @@ func (h *Hub) snapshot(ctx context.Context, clients map[string]*Client) protocol
 	appendHistory(&out, clients, records.Sessions)
 	h.snapshotAgentStatus(ctx, clients, &out)
 	h.snapshotClaimSets(ctx, &out)
-	return out
+	return fitStatus(out)
 }
+
+// fitStatus drops the oldest claimed messages, then the last declarations,
+// until the status frame fits; the totals keep the omission visible.
+func fitStatus(out protocol.StatusSnapshot) protocol.StatusSnapshot {
+	for {
+		data, err := json.Marshal(protocol.Message{Type: protocol.TypeStatus, Status: &out})
+		if err != nil || len(data)+statusReserve <= protocol.MaxFrameBytes {
+			return out
+		}
+		switch {
+		case len(out.Claims) > 0:
+			out.Claims, out.ClaimsTruncated = out.Claims[:len(out.Claims)-1], true
+		case len(out.AgentStatus) > 0:
+			out.AgentStatus, out.AgentStatusTruncated = out.AgentStatus[:len(out.AgentStatus)-1], true
+		default:
+			return out
+		}
+	}
+}
+
+// statusReserve leaves room for the frame's newline.
+const statusReserve = 16
 
 // snapshotClaimSets adds the claims, as the operator snapshot has them. A
 // failed read leaves them unavailable rather than empty.

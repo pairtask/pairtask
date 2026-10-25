@@ -45,3 +45,14 @@ go vet ./...
 
 The collaboration skill also passed the Skill Creator validator. Targeted race
 tests were rerun after changes to the MCP readiness guard and test helpers.
+
+## Managed resume (2026-10-25, #67)
+
+Codex's own resume picker (`resume` without an ID) and `resume --last` don't
+resume through the managed launcher: the picker sends `thread/list` and
+nothing else (observed with 0.159.3; the cause, likely a source filter
+excluding App Server sessions, is unconfirmed). Instead of changing what the
+proxy forwards, the launcher records the owned thread (its ID and directory,
+from the successful lifecycle response) per agent ID, and `pairtask start
+codex --id ID --resume` resumes it by ID, the path validated above. Explicit
+native resume arguments still go to Codex unchanged.
