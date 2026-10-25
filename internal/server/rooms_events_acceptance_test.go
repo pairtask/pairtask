@@ -3,9 +3,10 @@
 package server
 
 import (
-	"github.com/pairtask/pairtask/internal/protocol"
 	"os"
 	"testing"
+
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 func TestRoomsAcceptanceHelloMembershipNotifiesOpenOperatorChat(t *testing.T) {
@@ -13,9 +14,11 @@ func TestRoomsAcceptanceHelloMembershipNotifiesOpenOperatorChat(t *testing.T) {
 	operator := sessionOpen(f)
 	operator.request("operator_snapshot", nil)
 	roomPeer(f, "worker", 9, "fresh-room")
-	snapshot, events := operator.request("operator_snapshot", nil)
+	// A new snapshot supersedes queued events, so await the notification
+	// before requesting the snapshot it tells the chat to refresh.
 	found := false
-	for _, frame := range events {
+	for i := 0; i < 8 && !found; i++ {
+		frame := operator.frame()
 		if frame.text("type") != "event" {
 			continue
 		}
@@ -25,6 +28,7 @@ func TestRoomsAcceptanceHelloMembershipNotifiesOpenOperatorChat(t *testing.T) {
 		}
 	}
 	operatorEqual(t, "hello updates live room directory", found, true)
+	snapshot, _ := operator.request("operator_snapshot", nil)
 	type room struct {
 		ID      string   `json:"id"`
 		Members []string `json:"members"`
