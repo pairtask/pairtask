@@ -297,8 +297,10 @@ class PreparedStore:
             self.run("image", "delete", f"{self.remote}:{fingerprint}")
 
     def copy_into(self, fingerprint, project):
+        # Relay through this client: the default pull mode needs the source
+        # server listening on the network, which this host deliberately isn't.
         self.incus(["incus", "image", "copy", f"{self.remote}:{fingerprint}", f"{self.remote}:",
-                    "--project", self.project, "--target-project", project], check=True)
+                    "--project", self.project, "--target-project", project, "--mode", "relay"], check=True)
 
     def cleanup(self):
         """Remove only this run's project; a missing project is a no-op."""
