@@ -407,6 +407,9 @@ talk; they are not a security boundary (agents still choose their IDs on
   the sender, plus the operator inbox. Pre-v9 members are skipped, so no one
   reads a room post as the Square. Delivered messages carry `room` to v9
   receivers. Direct messages work between any agents, whatever their rooms.
+  A pending room post is replayed only to a v9 session: if the agent
+  reconnects below v9, the row stays pending, keeps its owner session and is
+  not reported as reclaimed, until a v9 session of the agent returns.
 - **Replies.** A `"*"` reply without `room` stays in its parent's room; one
   naming another room (the Square included) is `invalid_reply`. The stored
   room is part of retry identity: a retry never moves to another room.
@@ -415,8 +418,14 @@ talk; they are not a security boundary (agents still choose their IDs on
   `invalid_room`; `room` applies to `"*"` only. `operator_room` with
   `room_op` `list`, `create` (`room`), `add` or `remove` (`room`, `agent_id`)
   is audited and answers `operator_room_result` with
-  `room_list: {rooms: [{id, members}]}`. The operator snapshot carries `rooms`;
-  history and recent sends carry `room`; `rooms_changed` events refresh it.
+  `room_list: {rooms: [{id, members, members_total, members_truncated}],
+  rooms_total, rooms_truncated}`. Listings are bounded: the first **64** rooms
+  by ID, each with its first **64** members by ID; the totals and flags keep
+  omissions visible, and routing always uses the full membership. The
+  operator snapshot carries the same bounded `rooms`, `rooms_total` and
+  `rooms_truncated` (frame trimming drops rooms last and sets the flag);
+  history and recent sends carry `room`; `rooms_changed` events, including
+  after a `hello` that joined rooms, refresh it.
 
 ## State
 
