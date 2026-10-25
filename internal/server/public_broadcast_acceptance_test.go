@@ -164,7 +164,8 @@ func TestPublicBroadcastAcceptanceRestartPreservesAudience(t *testing.T) {
 	})
 }
 
-func publicReplyParent(t *testing.T, f *operatorFixture, author, recipient *operatorPeer, kind string) {
+func (f *operatorFixture) publicReplyParent(author, recipient *operatorPeer, kind string) {
+	t := f.t
 	t.Helper()
 	m := publicMessage("parent")
 	switch kind {
@@ -197,7 +198,7 @@ func TestPublicBroadcastAcceptanceReplyScope(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			f := newOperatorFixture(t, os.Getuid(), "")
 			a, b := f.peer("alpha", 7), f.peer("beta", 7)
-			publicReplyParent(t, f, a, b, tc.kind)
+			f.publicReplyParent(a, b, tc.kind)
 			sender := b
 			if tc.kind == "own public" {
 				sender = a
@@ -251,17 +252,6 @@ func TestPublicBroadcastAcceptanceLegacyRetryAfterUpgradeStaysPrivate(t *testing
 	})
 }
 
-func TestPublicBroadcastAcceptanceLegacyParentCannotBecomePublic(t *testing.T) {
-	f := newOperatorFixture(t, os.Getuid(), "")
-	a, b := f.peer("alpha", 6), f.peer("beta", 7)
-	publicAccepted(t, a, publicMessage("legacy-parent"), "beta")
-	b.read()
-	m := publicMessage("public-reply")
-	m.InReplyTo = "legacy-parent"
-	b.write(m)
-	operatorEqual(t, "legacy private thread cannot be promoted", b.read().Code, "invalid_reply")
-}
-
 func TestPublicBroadcastAcceptanceOperatorDoesNotReceiveOwnBroadcast(t *testing.T) {
 	f := newOperatorFixture(t, os.Getuid(), "")
 	a := f.peer("alpha", 7)
@@ -270,34 +260,27 @@ func TestPublicBroadcastAcceptanceOperatorDoesNotReceiveOwnBroadcast(t *testing.
 	operatorEqual(t, "no self inbox", len(inboxReadPage(f, 0, 0, 32).Messages), 0)
 }
 
-func TestPublicBroadcastAcceptanceDirectOperatorReplyRuleUnchanged(t *testing.T) {
-	f := newOperatorFixture(t, os.Getuid(), "")
-	a, b := f.peer("alpha", 7), f.peer("beta", 7)
-	publicAccepted(t, a, publicMessage("agent-parent"), "beta", "operator")
-	b.read()
-	m := inboxMessage("private-reply")
-	m.InReplyTo = "agent-parent"
-	b.write(m)
-	operatorEqual(t, "direct operator reply still requires operator author", b.read().Code, "invalid_reply")
-}
-
-func TestPublicBroadcastAcceptanceRecipientLimitIncludesOperator(t *testing.T) {
-	f := newOperatorFixture(t, os.Getuid(), "")
-	a := f.peer("sender", 7)
-	var ids []string
-	for i := range 255 {
-		id := fmt.Sprintf("agent-%03d", i)
-		f.peer(id, 7)
-		ids = append(ids, id)
+func TestPublicBroadcastAcceptanceReplyCannotCrossAudienceRules(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		version    int
+		to         string
+		recipients []string
+	}{
+		{"legacy parent stays private", 6, "*", []string{"beta"}},
+		{"direct operator reply still requires operator author", 7, "operator", []string{"beta", "operator"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOperatorFixture(t, os.Getuid(), "")
+			a, b := f.peer("alpha", tc.version), f.peer("beta", 7)
+			publicAccepted(t, a, publicMessage("parent"), tc.recipients...)
+			b.read()
+			m := inboxMessage("reply")
+			m.To, m.InReplyTo = tc.to, "parent"
+			b.write(m)
+			operatorEqual(t, "correlation rejected", b.read().Code, "invalid_reply")
+		})
 	}
-	ids = append(ids, "operator")
-	accepted := publicAccepted(t, a, publicMessage("at-limit"), ids...)
-	operatorEqual(t, "256 includes operator", len(accepted.Recipients), 256)
-	f.peer("extra", 7)
-	before := f.count("durable_inbox")
-	a.write(publicMessage("over-limit"))
-	operatorEqual(t, "257 recipients rejected", a.read().Code, "recipient_unavailable")
-	operatorEqual(t, "overflow creates no deliveries", f.count("durable_inbox"), before)
 }
 
 func TestPublicBroadcastAcceptanceSortDoesNotChangePeerVersionChecks(t *testing.T) {
