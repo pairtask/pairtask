@@ -1,10 +1,11 @@
 # CI checks and image builds
 
-The [CI workflow](../.github/workflows/ci.yml) runs Go, Python, OpenTofu,
-macOS sharing, CodeQL, and CodeScene checks on pull requests. Most changes
-also build and test the workspace image on AMD64 and ARM64. Those image jobs
-prove provisioning, offline SSH, control boundaries, persistence, and upgrade
-compatibility; they take much longer than the other checks.
+Pull request checks include Go, Python, OpenTofu, and macOS sharing from the
+[CI workflow](../.github/workflows/ci.yml), plus separate CodeQL and
+CodeScene checks. Most changes also build and test the workspace image on
+AMD64 and ARM64. Those image jobs prove provisioning, offline SSH, control
+boundaries, persistence, and upgrade compatibility; they take much longer
+than the other checks.
 
 ## When a pull request skips image builds
 
@@ -23,18 +24,20 @@ Publishing requires an explicit build decision.
 
 For a qualifying pull request, both architecture check names still appear.
 Each job prints `No image input changed (safe-docs-only)` and skips its image
-steps. The other checks still run. A skipped image job therefore means the
-classifier found only unshipped documentation in that PR; it does not claim
-the image was built.
+steps. The other checks still run. When both matrix jobs succeed with that
+message, the classifier found only unshipped documentation in that PR; those
+successful checks do not claim an image was built. A job skipped because a
+prerequisite failed is a different result.
 
 ## Measuring the result
 
-Use the PR timeline's push or force-push time as the start, and the last
-required check's completion time as green. For a new PR's first run, use the
-PR creation time: the branch push happened before the PR existed and did not
-start that run. The workflow run's creation and completion times provide a
-reproducible CI-only interval. Job durations below are each job's `startedAt`
-to `completedAt`, so parallel jobs must not be added together. GitHub queue
+Use the PR timeline's push or force-push time as the start, and the CI
+workflow's completion time, after its required jobs passed, as green. For a
+new PR's first run, use the PR creation time: the branch push happened before
+the PR existed and did not start that run. The workflow run's creation and
+completion times provide a reproducible CI-only interval. Job durations below
+use each job's `startedAt` and `completedAt`, so parallel jobs must not be
+added together. GitHub queue
 and runner variation can affect any one run.
 
 Before the classifier, the [#144 guide-and-test PR run](https://github.com/pairtask/pairtask/actions/runs/40188708805)
@@ -45,7 +48,7 @@ recorded at 2026-10-25 11:24:04 UTC; the run completed at 11:39:58 UTC.
 
 The [#146 docs-only run](https://github.com/pairtask/pairtask/actions/runs/40190395717)
 after [#145](https://github.com/pairtask/pairtask/pull/145) opened at 11:48:15
-UTC and went green at 11:50:27 UTC. Its
+UTC, and its CI workflow completed successfully at 11:50:27 UTC. Its
 [classifier job](https://github.com/pairtask/pairtask/actions/runs/40190395717/job/121159969677)
 logged `images=false` and `reason=safe-docs-only`. Both the
 [AMD64](https://github.com/pairtask/pairtask/actions/runs/40190395717/job/121160392703)
