@@ -55,6 +55,18 @@ func TestAgentClaimsSurfacesAcceptanceNoStatusStillShowsClaims(t *testing.T) {
 	}
 }
 
+func TestAgentClaimsSurfacesAcceptancePartialStatusesDoNotHideLoadedClaims(t *testing.T) {
+	snap := agentClaimsSnapshot()
+	snap.Snapshot.AgentStatus = nil
+	snap.Snapshot.AgentStatusTotal, snap.Snapshot.AgentStatusTruncated = 80, true
+	_, panel := agentClaimsPanel(t, snap, "task-parent")
+	v3Contains(t, panel, "build")
+	v3Contains(t, panel, "#7")
+	if strings.Contains(panel, "no status declared") {
+		t.Fatal("missing declaration inferred from truncated statuses")
+	}
+}
+
 func TestAgentClaimsSurfacesAcceptanceBothPartialLevelsAreVisible(t *testing.T) {
 	for _, global := range []bool{false, true} {
 		name := "per parent"

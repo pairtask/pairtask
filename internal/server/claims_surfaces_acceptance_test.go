@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,4 +101,23 @@ func TestClaimsSurfacesAcceptanceStatusBoundsEachLevel(t *testing.T) {
 	operatorEqual(t, "individual page bounded", len(latest.Claims), 16)
 	operatorEqual(t, "individual omission visible", latest.Truncated, true)
 	operatorEqual(t, "holder not displaced by released history", latest.Claims[0].State, "active")
+}
+
+func TestClaimsSurfacesAcceptanceStatusFitsFrameWithEscapedFields(t *testing.T) {
+	f := newOperatorFixture(t, os.Getuid(), "")
+	for i := 0; i < protocol.SnapshotClaimed; i++ {
+		parent := strings.Repeat("<", 125) + fmt.Sprintf("%03d", i)
+		for j := 0; j < protocol.ClaimsPerMessage; j++ {
+			_, err := f.db.Exec(`INSERT INTO claims(operator_message_id,task,role,agent_id,topic,state,claimed_at) VALUES(?,?,?,?,?,?,?)`,
+				parent, fmt.Sprintf("task-%02d", j), "owner", strings.Repeat("<", 128), strings.Repeat("&", 120), "active", "2026-10-25T00:00:00Z")
+			operatorNoError(t, err)
+		}
+	}
+	out := readClaimsStatus(t, f)
+	operatorEqual(t, "escaped claims remain available", out.Available, true)
+	operatorEqual(t, "byte trimming retains total", out.Total, protocol.SnapshotClaimed)
+	operatorEqual(t, "byte trimming reports omission", out.Truncated, true)
+	if len(out.Claims) == 0 || len(out.Claims) >= protocol.SnapshotClaimed {
+		t.Fatalf("want a usable bounded claim page, got %d sets", len(out.Claims))
+	}
 }
