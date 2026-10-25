@@ -51,7 +51,7 @@ def prove(args):
     store = prepared.store_from_env(args.remote)
     require(store is not None, "this proof requires an enabled prepared-image cache")
     server = json.loads(subprocess.check_output(["incus", "query", args.remote + ":/1.0"]))["environment"]
-    operators = [Operator(args.remote, server, args.pool, args.network, prepared_store=store)
+    operators = [Operator(args.remote, server, args.pool, args.network).using(prepared_store=store)
                  for _ in range(2)]
     first = operators[0]
     key = prepared.recipe_key(first.arch, first.base_fingerprint(),

@@ -50,8 +50,8 @@ class PreparedLifecycleTests(unittest.TestCase):
         return snapshot() if project == self.store.project else snapshot("1" * 32)
 
     def operator(self):
-        return runtime.Operator("local", {"architectures": ["x86_64"]}, "pool", "network",
-                                incus=self.run_incus, prepared_store=self.store)
+        return runtime.Operator("local", {"architectures": ["x86_64"]}, "pool", "network").using(
+            incus=self.run_incus, prepared_store=self.store)
 
     def init_calls(self):
         return [command for command in self.calls if "init" in command]
@@ -115,8 +115,8 @@ class PreparedLifecycleTests(unittest.TestCase):
         self.store.discard.assert_called_once()
 
     def test_disabled_cache_uses_existing_full_bootstrap(self):
-        operator = runtime.Operator("local", {"architectures": ["x86_64"]}, "pool", "network",
-                                    incus=self.run_incus)
+        operator = runtime.Operator("local", {"architectures": ["x86_64"]}, "pool", "network").using(
+            incus=self.run_incus)
         operator.create()
         self.store.find.assert_not_called()
         self.inspection.assert_not_called()
