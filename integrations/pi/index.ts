@@ -106,28 +106,50 @@ class Extension {
 		const generation = ++this.generation;
 		await this.closeBridge();
 		if (generation !== this.generation) return; // stopped while the old bridge closed
-		const config = readConfig(this.env);
-		if (typeof config === "string") {
-			if (config !== "") this.status(config);
-			return;
-		}
+		const config = this.config();
+		if (!config) return;
 		const bridge = this.openBridge(config, generation);
 		this.bridge = bridge;
 		try {
-			await bridge.client.connect(transportFor(config));
-			if (this.stale(bridge)) return void (await bridge.client.close());
-			await this.registerTools(bridge.client);
-			if (this.stale(bridge)) return void (await bridge.client.close());
-			await this.checkListener(bridge);
-			if (this.stale(bridge)) return void (await bridge.client.close());
+			if (await this.launch(bridge, config)) this.flush(bridge);
 		} catch (error) {
-			if (this.stale(bridge)) return;
-			this.bridge = undefined;
-			await bridge.client.close().catch(() => {});
-			this.status(`pairtask bridge failed to start: ${errorText(error)}`);
-			return;
+			await this.failed(bridge, error);
 		}
-		this.flush(bridge);
+	}
+
+	// config is the bridge configuration, or undefined after reporting why
+	// there is none (an idle extension reports nothing).
+	private config(): Config | undefined {
+		const config = readConfig(this.env);
+		if (typeof config !== "string") return config;
+		if (config !== "") this.status(config);
+		return undefined;
+	}
+
+	// launch connects the bridge, registers its tools and checks its
+	// listener, stopping at whichever step finds the bridge stale. It reports
+	// whether the bridge is ready.
+	private async launch(bridge: Bridge, config: Config): Promise<boolean> {
+		const steps = [
+			() => bridge.client.connect(transportFor(config)),
+			() => this.registerTools(bridge.client),
+			() => this.checkListener(bridge),
+		];
+		for (const step of steps) {
+			await step();
+			if (this.stale(bridge)) {
+				await bridge.client.close();
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private async failed(bridge: Bridge, error: unknown): Promise<void> {
+		if (this.stale(bridge)) return;
+		this.bridge = undefined;
+		await bridge.client.close().catch(() => {});
+		this.status(`pairtask bridge failed to start: ${errorText(error)}`);
 	}
 
 	async stop(): Promise<void> {
