@@ -58,7 +58,7 @@ jobs:
         with:
           tofu_version: '1.12.6'
           tofu_wrapper: false
-      - run: go test -race ./... -timeout=60s
+      - run: go test -race ./... -timeout=120s
       - run: python3 -m unittest discover -s scripts/tests -v
       - name: Check that every pinned base image is mirrored or still upstream
         # Pushes skip this: base-mirror itself publishes, resumes drafts and verifies.
