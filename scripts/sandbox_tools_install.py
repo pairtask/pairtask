@@ -109,15 +109,21 @@ def bundle_entries(release, selected, role, store_mode):
     parts = bundle_parts(selected) if role == "workspace" and store_mode else []
     if not parts:
         return {}
+    bundles = release_bundles(release, selected, parts)
+    return {name: bundle_entry(bundles[name], kind, entry) for name, kind, entry in parts}
+
+
+def release_bundles(release, selected, parts):
+    """The release's bundles, refusing a release that lacks any of parts."""
     if release.bundles is None:
         wanted = ", ".join(tool for tool in BUNDLE_TOOLS if selected[tool])
         raise ValueError(f"the selected tools need release bundles ({wanted}) that this release does not carry")
     bundles = release.bundles["manifest"]["bundles"]
-    missing = sorted({name for name, _, _ in parts if name not in bundles})
+    missing = sorted({name for name, _, _ in parts} - set(bundles))
     if missing:
         raise ValueError(f"this release has no {', '.join(missing)} bundle for the selected tools; "
                          "deselect them or roll out a newer release")
-    return {name: bundle_entry(bundles[name], kind, entry) for name, kind, entry in parts}
+    return bundles
 
 
 def shipped_tools(release):
