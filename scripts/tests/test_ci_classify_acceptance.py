@@ -59,7 +59,8 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                          "images=false\nreason=safe-docs-only\n")
 
     def test_unknown_or_shipped_paths_build_even_with_safe_docs(self):
-        self.write("README.md")
+        # Keep the safe companion distinct from readme.md on macOS too.
+        self.write("docs/safe-guide.md")
         for name in ("internal/example.go", "scripts/tool.py", "infra/image/install.sh",
                      ".github/workflows/ci.yml", "go.mod", "LICENSE", "readme.md",
                      "docs/nested/guide.md", "docs/diagram.svg", "docs/guide.MD",
