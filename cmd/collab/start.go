@@ -476,7 +476,7 @@ func launch(plan startPlan, rt startRuntime) int {
 		fmt.Fprintln(rt.Stderr, err)
 		return 1
 	}
-	if err := rt.Exec(plan.Argv[0], plan.Argv, append(os.Environ(), plan.Env...)); err != nil {
+	if err := rt.Exec(plan.Argv[0], plan.Argv, withEnv(os.Environ(), plan.Env)); err != nil {
 		fmt.Fprintln(rt.Stderr, "exec "+plan.Argv[0]+": "+err.Error())
 		return 1
 	}
