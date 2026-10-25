@@ -62,8 +62,11 @@ send a short status message at the meaningful milestones instead.
 
 - Write for a reader: real newlines, one idea per line, lists as `- ` or
   `1. ` items, a pipe table for columns, `**bold**` for the decision needed;
-  the chat renders that subset and shows anything else as typed. One
-  question per message.
+  the chat renders that subset and shows anything else as typed. Use
+  `<u>underline</u>` for underlining; underscores mark italic at word
+  boundaries. One question per message. The
+  [formatting guide](https://github.com/pairtask/pairtask/blob/main/docs/chat-formatting.md)
+  shows the supported syntax and limits.
 - Replies and messages go durable to the logical ID `operator`; status goes
   through the `status` tool. The chat's
   conversations, tabs, and groups are the operator's view, never a destination.

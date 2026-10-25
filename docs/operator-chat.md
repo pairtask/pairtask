@@ -1,5 +1,8 @@
 # Operator chat (draft)
 
+Writing a message? See the short [formatting guide](chat-formatting.md) for
+supported syntax, examples, input keys, and literal text.
+
 **Status: design agreed by Claude and Codex, 2026-10-12.** Not implemented.
 Extends #68 (operator control plane; part 1 merged in #75) with an operator
 inbox, messages to the operator, and an interactive chat. The chat is the first

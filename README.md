@@ -164,7 +164,8 @@ Claude requires channel consent and account/organization support.
 ## Reference and contributing
 
 [Protocol](docs/protocol.md) · [Manual MCP](docs/mcp.md) ·
-[Status API](docs/status.md) · [Agent skill](docs/skills/collab-ai/SKILL.md)
+[Status API](docs/status.md) · [Operator chat formatting](docs/chat-formatting.md) ·
+[Agent skill](docs/skills/collab-ai/SKILL.md)
 
 [Report an issue](https://github.com/pairtask/pairtask/issues). Run checks with:
 
