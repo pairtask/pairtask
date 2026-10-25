@@ -142,3 +142,18 @@ func TestStatusSurfacesAcceptanceTextEscapesDeclarationFields(t *testing.T) {
 		t.Fatal("status field injected terminal control")
 	}
 }
+
+func TestStatusSurfacesAcceptanceLegacySchemaDiscardsDeclarations(t *testing.T) {
+	snapshot := statusSurfaceWire(t)
+	snapshot["schema_version"] = 1
+	snapshot["agent_status_truncated"] = true
+	code, out := runJSON(t, "--socket", serveStatusSurface(t, snapshot))
+	assertStatusEqual(t, "legacy JSON exit", code, 0)
+	assertJSONField(t, out, "agent_status_available", false)
+	assertJSONField(t, out, "agent_status_total", float64(0))
+	assertJSONField(t, out, "agent_status_truncated", false)
+	records, ok := out["agent_status"].([]any)
+	if !ok || len(records) != 0 {
+		t.Fatalf("schema 1 must expose an empty declaration array, got %#v", out["agent_status"])
+	}
+}
