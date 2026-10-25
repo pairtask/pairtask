@@ -43,31 +43,13 @@ func groupConversationHarness(t *testing.T) *chatHarness {
 
 func TestGroupConversationAcceptanceCanonicalMembersAndLiteralAgent(t *testing.T) {
 	h := groupConversationHarness(t)
-	matching, literal := 0, 0
-	for _, view := range h.m.State().Conversations {
-		if slices.Equal(view.Group, []string{"alpha", "beta"}) {
-			matching++
-		}
-		if view.ID == "group:foo" && len(view.Group) == 0 && !view.All {
-			literal++
-		}
-		if strings.HasPrefix(view.ID, "group:opaque-") && len(view.Group) == 0 {
-			t.Fatal("transport group ID became an agent conversation")
-		}
-	}
-	chatEqual(t, "same member set has one conversation", matching, 1)
-	chatEqual(t, "literal group-prefixed agent retained", literal, 1)
+	views := h.m.State().Conversations
+	chatEqual(t, "same member set has one conversation", countGroupViews(views), 1)
+	requireLiteralGroupAgent(t, views)
+	requireStructuredGroupViews(t, views)
 	v2Command(h, `/chat ["beta","alpha","alpha"]`)
 	frame := ansi.Strip(h.m.View().Content)
-	for _, body := range []string{"body group-message-0", "body group-message-1"} {
-		v3Contains(t, frame, body)
-	}
-	if strings.Contains(frame, "body group-message-2") || strings.Contains(frame, "body literal-group-agent") {
-		t.Fatal("group view includes another audience")
-	}
-	if strings.Contains(frame, "group:opaque-") {
-		t.Fatal("opaque transport group ID leaked into display")
-	}
+	requireGroupHistory(t, frame)
 	v2Type(h, "group draft")
 	v2Command(h, "/chat all")
 	v2Command(h, "/chat @alpha @beta")
@@ -75,6 +57,49 @@ func TestGroupConversationAcceptanceCanonicalMembersAndLiteralAgent(t *testing.T
 	req := v2Send(h)
 	chatEqual(t, "group send uses canonical members", slices.Equal(req.Group, []string{"alpha", "beta"}), true)
 	chatEqual(t, "group send does not become broadcast", req.To == protocol.Broadcast, false)
+}
+
+func countGroupViews(views []chat.ConversationView) int {
+	n := 0
+	for _, view := range views {
+		if slices.Equal(view.Group, []string{"alpha", "beta"}) {
+			n++
+		}
+	}
+	return n
+}
+
+func requireLiteralGroupAgent(t *testing.T, views []chat.ConversationView) {
+	t.Helper()
+	matches := 0
+	for _, view := range views {
+		if view.ID != "group:foo" {
+			continue
+		}
+		chatEqual(t, "literal group-prefixed agent has no members", len(view.Group), 0)
+		chatEqual(t, "literal group-prefixed agent is not All", view.All, false)
+		matches++
+	}
+	chatEqual(t, "exactly one literal group-prefixed agent", matches, 1)
+}
+
+func requireStructuredGroupViews(t *testing.T, views []chat.ConversationView) {
+	t.Helper()
+	for _, view := range views {
+		if strings.HasPrefix(view.ID, "group:opaque-") {
+			chatEqual(t, "transport group ID is not an agent", len(view.Group) > 0, true)
+		}
+	}
+}
+
+func requireGroupHistory(t *testing.T, frame string) {
+	t.Helper()
+	for _, body := range []string{"body group-message-0", "body group-message-1"} {
+		v3Contains(t, frame, body)
+	}
+	for _, absent := range []string{"body group-message-2", "body literal-group-agent", "group:opaque-"} {
+		chatEqual(t, "group view excludes unrelated or opaque text", strings.Contains(frame, absent), false)
+	}
 }
 
 func TestGroupConversationAcceptanceHideReopenKeepsMembersAndHistory(t *testing.T) {

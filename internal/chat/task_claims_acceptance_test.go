@@ -80,9 +80,7 @@ func TestTaskClaimsChatAcceptanceMissingSnapshotEntryDoesNotInventApproval(t *te
 	h := claimChatHarness(t, snapshot, "older-parent", 3)
 	v2Command(h, "/claims #3")
 	plain := strings.ToLower(ansi.Strip(h.m.View().Content))
-	if !strings.Contains(plain, "truncat") && !strings.Contains(plain, "partial") && !strings.Contains(plain, "not loaded") {
-		t.Fatalf("bounded snapshot presented as complete absence: %s", plain)
-	}
+	requirePartialClaimNotice(t, plain, []string{"truncat", "partial", "not loaded"})
 	chatEqual(t, "read-only claims panel never sends", h.m.State().Intent, nil)
 }
 
@@ -93,8 +91,34 @@ func TestTaskClaimsChatAcceptanceReportsTruncatedClaimHistoryForLoadedParent(t *
 	h := claimChatHarness(t, snapshot, "task-parent", 7)
 	v2Command(h, "/claims #7")
 	plain := strings.ToLower(ansi.Strip(h.m.View().Content))
-	if !strings.Contains(plain, "truncat") && !strings.Contains(plain, "partial") && !strings.Contains(plain, "of 20") {
-		t.Fatalf("loaded parent lost its own claim truncation metadata: %s", plain)
-	}
+	requirePartialClaimNotice(t, plain, []string{"truncat", "partial", "of 20"})
 	v3Contains(t, plain, "alpha")
+}
+
+func requirePartialClaimNotice(t *testing.T, plain string, notices []string) {
+	t.Helper()
+	for _, notice := range notices {
+		if strings.Contains(plain, notice) {
+			return
+		}
+	}
+	t.Fatalf("bounded claim data was presented as complete: %s", plain)
+}
+
+func TestTaskClaimsChatAcceptanceWrappedIdentityIncludesIndentWidth(t *testing.T) {
+	snapshot := claimChatSnapshot(t, 1, "active")
+	claims := &snapshot.Snapshot.Claims[0]
+	claims.Claims = claims.Claims[:1]
+	claims.Total = 1
+	name := strings.Repeat("a", 72) + "END"
+	claims.Claims[0].AgentID = name
+	h := claimChatHarness(t, snapshot, "task-parent", 7)
+	for _, width := range []int{32, 80} {
+		h.input(tea.WindowSizeMsg{Width: width, Height: 35})
+		plain := strings.Join(strings.Fields(ansi.Strip(h.m.View().Content)), "")
+		want := "reply:" + name + "(owner,active)"
+		if !strings.Contains(plain, want) {
+			t.Fatalf("width %d clipped a claim identity or state after adding transcript indent: %s", width, plain)
+		}
+	}
 }
