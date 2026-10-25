@@ -131,12 +131,12 @@ func TestPublicBroadcastAcceptanceStorageFailureIsAtomic(t *testing.T) {
 
 func TestPublicBroadcastAcceptanceRetryFreezesMembership(t *testing.T) {
 	f := newOperatorFixture(t, os.Getuid(), "")
-	a, b := f.peer("alpha", 7), f.peer("beta", 7)
+	a, b := f.peer("alpha", 7), f.peer("zulu", 7)
 	m := publicMessage("retry")
-	first := publicAccepted(t, a, m, "beta", "operator")
+	first := publicAccepted(t, a, m, "operator", "zulu")
 	b.read()
 	f.peer("later", 7)
-	again := publicAccepted(t, a, m, "beta", "operator")
+	again := publicAccepted(t, a, m, "operator", "zulu")
 	operatorEqual(t, "stable sequence", again.Seq, first.Seq)
 	operatorEqual(t, "frozen recipient sessions", reflect.DeepEqual(again.Recipients, first.Recipients), true)
 	operatorEqual(t, "one operator copy", len(inboxReadPage(f, 0, 0, 32).Messages), 1)
@@ -298,4 +298,13 @@ func TestPublicBroadcastAcceptanceRecipientLimitIncludesOperator(t *testing.T) {
 	a.write(publicMessage("over-limit"))
 	operatorEqual(t, "257 recipients rejected", a.read().Code, "recipient_unavailable")
 	operatorEqual(t, "overflow creates no deliveries", f.count("durable_inbox"), before)
+}
+
+func TestPublicBroadcastAcceptanceSortDoesNotChangePeerVersionChecks(t *testing.T) {
+	f := newOperatorFixture(t, os.Getuid(), "")
+	a := f.peer("sender", 7)
+	for _, id := range []string{"zulu", "yankee", "xray"} {
+		f.peer(id, 7)
+	}
+	publicAccepted(t, a, publicMessage("sorted"), "operator", "xray", "yankee", "zulu")
 }

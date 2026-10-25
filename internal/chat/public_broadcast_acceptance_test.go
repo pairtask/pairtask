@@ -82,3 +82,44 @@ func TestPublicBroadcastAcceptanceChatNewBroadcastDoesNotAcknowledgePending(t *t
 	audienceAckState(t, h, "target", chat.AckNeeded)
 	chatEqual(t, "no queued acknowledgment", len(h.m.State().QueuedAcks), 0)
 }
+
+func publicChatHistoryHarness(t *testing.T) *chatHarness {
+	t.Helper()
+	h := newChatHarness(t, chat.Bounds{})
+	inbox, history := h.baseline()
+	h.reply(history, chatHistory(publicChatMessage("target", 1)))
+	h.reply(inbox, chatInbox())
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	return h
+}
+
+func TestPublicBroadcastAcceptanceChatReplyFromAuthorViewMovesToAll(t *testing.T) {
+	h := publicChatHistoryHarness(t)
+	conversationOpen(h, "author")
+	sent := replyAckSend(h)
+	chatEqual(t, "public reply displayed in All", h.m.State().SelectedAll, true)
+	chatEqual(t, "public audience retained from author view", sent.To, "*")
+	chatEqual(t, "parent retained", sent.InReplyTo, "target")
+}
+
+func TestPublicBroadcastAcceptanceChatReplyCannotOverwriteAllDraft(t *testing.T) {
+	h := publicChatHistoryHarness(t)
+	v2Type(h, "existing public draft")
+	conversationOpen(h, "author")
+	v2Command(h, "/reply #1")
+	chatEqual(t, "occupied All prevents switch", h.m.State().Selected, "author")
+	chatEqual(t, "no send dispatched", h.m.State().Intent, nil)
+	v2Command(h, "/chat all")
+	chatEqual(t, "original All draft retained", h.m.State().Draft, "existing public draft")
+}
+
+func TestPublicBroadcastAcceptanceChatReplyCannotPromotePrivateDraft(t *testing.T) {
+	h := publicChatHistoryHarness(t)
+	conversationOpen(h, "author")
+	v2Type(h, "private draft")
+	v2Command(h, "/reply #1")
+	chatEqual(t, "private view retained", h.m.State().Selected, "author")
+	chatEqual(t, "private text retained", h.m.State().Draft, "private draft")
+	chatEqual(t, "no send dispatched", h.m.State().Intent, nil)
+	v3Contains(t, h.m.State().Status, "already addressed")
+}
