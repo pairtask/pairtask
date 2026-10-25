@@ -217,8 +217,10 @@ These agents have no Incus isolation.
 ### Resume or fork
 
 [Host commands and compatibility](docs/host-integration.md#codex-terminal).
-For saved sandbox conversations, run `codex resume` or `claude --resume` from
-the project directory inside the workspace.
+For saved sandbox conversations, run `codex resume SESSION_ID` or
+`claude --resume` from the project directory inside the workspace. The Codex
+resume picker does not currently resume managed sessions
+([#67](https://github.com/pairtask/pairtask/issues/67)).
 
 ### Set a Codex soft cap
 
