@@ -58,7 +58,7 @@ class SkillBundleTests(unittest.TestCase):
             for skills in (codex_skills, claude_skills):
                 discovered = skills / "collab-ai"
                 self.assertTrue(discovered.is_symlink())
-                self.assertEqual(discovered.resolve(), installed)
+                self.assertEqual(discovered.resolve(), installed.resolve())
                 self.assertEqual(markdown_files(discovered), markdown_files(SKILL))
             for relative, contents in markdown_files(installed).items():
                 self.check_local_links(installed, relative, contents.decode())
