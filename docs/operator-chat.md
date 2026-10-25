@@ -1405,8 +1405,11 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   what it waits on, how long ago it declared it, and when its harness was
   last seen working (`launcher` for Codex, `pairtask tool activity` for
   Claude) or `activity unavailable`; a declaration from an earlier session
-  says so. `/agents` lists the same for every agent with a status, one
-  block per agent set apart by blank lines, with a full commit `ref` shortened
+  says so. `/agents` lists the same for every agent with a status, below a
+  horizontal rule that ends the presence list, one block per agent set apart
+  by blank lines, each followed by the agent's active and done claims
+  (`◇ task (role, state) on #seq · topic`, or the message ID's start when the
+  message isn't loaded; a note says when the claims are partial), with a full commit `ref` shortened
   to 12 characters (`/copy ref AGENT` copies the full value) and, when the
   status list is complete, an online agent without one as `no status
   declared`; the

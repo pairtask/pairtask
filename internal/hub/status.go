@@ -58,7 +58,30 @@ func (h *Hub) snapshot(ctx context.Context, clients map[string]*Client) protocol
 	out.OperatorPending = &records.OperatorPending
 	appendHistory(&out, clients, records.Sessions)
 	h.snapshotAgentStatus(ctx, clients, &out)
+	h.snapshotClaimSets(ctx, &out)
 	return out
+}
+
+// snapshotClaimSets adds the claims, as the operator snapshot has them. A
+// failed read leaves them unavailable rather than empty.
+func (h *Hub) snapshotClaimSets(ctx context.Context, out *protocol.StatusSnapshot) {
+	sets, total, err := h.snapshotClaims(ctx)
+	if err != nil {
+		h.log.Error("claims query failed", "error", err)
+		out.Health, out.Error = "degraded", joinError(out.Error, "claims unavailable")
+		return
+	}
+	if sets != nil {
+		out.Claims = sets
+	}
+	out.ClaimsTotal, out.ClaimsTruncated, out.ClaimsAvailable = total, total > len(sets), true
+}
+
+func joinError(prev, next string) string {
+	if prev == "" {
+		return next
+	}
+	return prev + "; " + next
 }
 
 // snapshotAgentStatus adds the agents' declarations, as the operator snapshot
@@ -67,7 +90,7 @@ func (h *Hub) snapshotAgentStatus(ctx context.Context, clients map[string]*Clien
 	records, total, err := h.snapshotStatuses(ctx, clients)
 	if err != nil {
 		h.log.Error("agent status query failed", "error", err)
-		out.Health, out.Error = "degraded", "agent status unavailable"
+		out.Health, out.Error = "degraded", joinError(out.Error, "agent status unavailable")
 		return
 	}
 	if records != nil {

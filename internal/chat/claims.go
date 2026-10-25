@@ -114,3 +114,54 @@ func (m *Model) claimRows() []string {
 	}
 	return append(rows, mutedStyle.Render("  a claim coordinates agents; it is never an approval"))
 }
+
+// agentClaimLines are the claims an agent holds, active or done, on the
+// loaded operator messages: "◇ task (role, state) on #seq · topic", or the
+// message ID's start when the message isn't loaded.
+func (m *Model) agentClaimLines(agent string) []string {
+	var held []protocol.Claim
+	for _, page := range m.claims.byMessage {
+		for _, c := range page.Claims {
+			if c.AgentID == agent && c.State != protocol.ClaimReleased {
+				held = append(held, c)
+			}
+		}
+	}
+	sort.Slice(held, func(i, j int) bool {
+		if held[i].OperatorMessageID != held[j].OperatorMessageID {
+			return held[i].OperatorMessageID < held[j].OperatorMessageID
+		}
+		return held[i].Task < held[j].Task
+	})
+	lines := make([]string, 0, len(held))
+	for _, c := range held {
+		line := "    ◇ " + safe(c.Task) + " (" + c.Role + ", " + c.State + ") on " + m.parentLabel(c.OperatorMessageID)
+		if topic := safe(c.Topic); topic != "" {
+			line += " · " + topic
+		}
+		lines = append(lines, mutedStyle.Render(line))
+	}
+	return lines
+}
+
+// parentLabel names an operator message by its #seq when loaded.
+func (m *Model) parentLabel(id string) string {
+	if e := m.timeline.entries[id]; e != nil {
+		return fmt.Sprintf("#%d", e.msg.Seq)
+	}
+	return safe(id[:min(len(id), 8)])
+}
+
+// claimsPartialNote says when the agents' claims may be incomplete: the
+// snapshot left messages out, or a message left claims out.
+func (m *Model) claimsPartialNote() string {
+	if m.claims.truncated {
+		return fmt.Sprintf("(claims are partial: shown for the newest messages, %d have claims)", m.claims.total)
+	}
+	for _, page := range m.claims.byMessage {
+		if page.Truncated {
+			return "(claims are partial: some messages have more claims than shown)"
+		}
+	}
+	return ""
+}

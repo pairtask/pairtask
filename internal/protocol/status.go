@@ -4,7 +4,7 @@ import "time"
 
 const (
 	TypeStatus          = "status"
-	StatusSchemaVersion = 2
+	StatusSchemaVersion = 3
 	StatusLimit         = 100
 )
 
@@ -33,7 +33,14 @@ type StatusSnapshot struct {
 	AgentStatusTotal     int           `json:"agent_status_total"`
 	AgentStatusTruncated bool          `json:"agent_status_truncated"`
 	AgentStatusAvailable bool          `json:"agent_status_available"`
-	Error                string        `json:"error,omitempty"`
+	// Claims (schema 3) are the operator messages' claims, as the operator
+	// snapshot has them: newest claimed messages first, each with its own
+	// bound. Unavailable means unknown, never "none".
+	Claims          []ClaimSet `json:"claims"`
+	ClaimsTotal     int        `json:"claims_total"`
+	ClaimsTruncated bool       `json:"claims_truncated"`
+	ClaimsAvailable bool       `json:"claims_available"`
+	Error           string     `json:"error,omitempty"`
 }
 
 type SessionStatus struct {
@@ -62,5 +69,5 @@ type PendingRecipient struct {
 
 func UnavailableStatus() StatusSnapshot {
 	return StatusSnapshot{SchemaVersion: StatusSchemaVersion, Health: "unavailable",
-		Sessions: []SessionStatus{}, SessionLimit: StatusLimit, AgentStatus: []AgentStatus{}}
+		Sessions: []SessionStatus{}, SessionLimit: StatusLimit, AgentStatus: []AgentStatus{}, Claims: []ClaimSet{}}
 }

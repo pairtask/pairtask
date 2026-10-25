@@ -21,6 +21,7 @@ func (m *model) details() string {
 	} else {
 		lines = append(lines, sessionDetails(r.session)...)
 		lines = append(lines, m.statusDetails(r.session)...)
+		lines = append(lines, m.claimDetails(r.session.AgentID)...)
 	}
 	if m.stale(time.Now()) {
 		lines = append(lines, "", "STALE: these are retained observations, not current ownership.")

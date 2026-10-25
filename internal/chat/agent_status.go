@@ -141,21 +141,35 @@ func (m *Model) statusRows() []string {
 	sort.Strings(ids)
 	var rows []string
 	for _, id := range ids {
-		// A blank line ends the presence list and each agent's block, so a
-		// status reads as one unit.
-		rows = append(rows, "")
+		// A rule ends the presence list and a blank line each agent's block,
+		// so a status and its claims read as one unit.
+		rows = append(rows, m.blockSeparator(rows))
 		rows = append(rows, statusBlock(m.statuses.byAgent[id])...)
+		rows = append(rows, m.agentClaimLines(id)...)
 	}
 	if silent := m.undeclared(); len(silent) > 0 {
-		rows = append(rows, "")
+		rows = append(rows, m.blockSeparator(rows))
 		for _, id := range silent {
 			rows = append(rows, mutedStyle.Render("· "+safe(id)+"  online, no status declared"))
+			rows = append(rows, m.agentClaimLines(id)...)
 		}
 	}
 	if m.statuses.truncated {
 		rows = append(rows, "", fmt.Sprintf("(status list is partial: %d agents have a status)", m.statuses.total))
 	}
+	if note := m.claimsPartialNote(); note != "" {
+		rows = append(rows, "", note)
+	}
 	return rows
+}
+
+// blockSeparator is the rule under the presence list, then a blank line
+// between agents.
+func (m *Model) blockSeparator(rows []string) string {
+	if len(rows) == 0 {
+		return ruleStyle.Render(strings.Repeat("─", 24))
+	}
+	return ""
 }
 
 // undeclared is the online agents without a status. Only a complete status
