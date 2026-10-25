@@ -58,8 +58,14 @@ jobs:
         with:
           tofu_version: '1.12.6'
           tofu_wrapper: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
       - run: go test -race ./... -timeout=120s
       - run: python3 -m unittest discover -s scripts/tests -v
+      - name: Test the Pi extension
+        working-directory: integrations/pi
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm test
       - name: Check that every pinned base image is mirrored or still upstream
         # Pushes skip this: base-mirror itself publishes, resumes drafts and verifies.
         if: github.event_name != 'push'
