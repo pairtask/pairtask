@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -31,10 +32,20 @@ func managedSelector(native []string) bool {
 	return slices.Equal(native, []string{"resume"}) || slices.Equal(native, []string{"resume", "--last"})
 }
 
-// nativeLifecycle reports native arguments that already choose a
-// conversation, which --resume can't be combined with.
+// nativeLifecycle reports native arguments that start with a subcommand
+// choosing a conversation, which --resume can't be combined with. A later
+// "resume" or "fork" may be a flag value or a prompt, so it is left alone.
 func nativeLifecycle(native []string) bool {
-	return slices.Contains(native, "resume") || slices.Contains(native, "fork")
+	return len(native) > 0 && (native[0] == "resume" || native[0] == "fork")
+}
+
+// nativeSelector is the conversation an explicit `resume X …` names, when X
+// is positively the first argument after resume; "" when ambiguous.
+func nativeSelector(native []string) string {
+	if len(native) < 2 || native[0] != "resume" || strings.HasPrefix(native[1], "-") {
+		return ""
+	}
+	return native[1]
 }
 
 // resolveResume prepares a Codex start: --resume becomes `resume <thread>`
@@ -97,12 +108,13 @@ func refuseConnected(opts *startOptions, rt startRuntime) error {
 // refuseBrokerID refuses `resume ID` when ID is a pairtask session ID, the
 // usual mix-up; anything else goes to Codex unchanged.
 func refuseBrokerID(opts *startOptions, rt startRuntime) error {
-	if len(opts.Native) < 2 || opts.Native[0] != "resume" || rt.Status == nil {
+	selector := nativeSelector(opts.Native)
+	if selector == "" || rt.Status == nil {
 		return nil
 	}
 	snap, _ := brokerStatus(opts, rt)
 	for _, s := range snap.Sessions {
-		if slices.Contains(opts.Native[1:], s.SessionID) {
+		if s.SessionID == selector {
 			fmt.Fprintf(rt.Stderr, "%s is a pairtask session ID, not a Codex conversation ID.\n", s.SessionID)
 			printCandidates(rt, opts.ID)
 			return errStartRefused
