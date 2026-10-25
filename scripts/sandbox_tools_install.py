@@ -28,15 +28,19 @@ INCOMING = "/var/lib/collab-ai-tools/incoming"
 AGENT_KEY = "/etc/ssh/authorized_keys/agent"
 # Every launch mode needs these; the rest can be turned off per preset.
 REQUIRED_TOOLS = ("go", "codex", "claude", "rtk", "starship")
-OPTIONAL_TOOLS = ("cs-mcp", "playwright", "docker")
+OPTIONAL_TOOLS = ("cs-mcp", "playwright", "docker", "pi")
 # Optional tools delivered as release bundles rather than lock artifacts. They
 # are installed into store-mode roots only; a baked root already has them.
-BUNDLE_TOOLS = ("playwright", "docker")
+BUNDLE_TOOLS = ("playwright", "docker", "pi")
 PLAYWRIGHT_ENTRY = "node_modules/@playwright/mcp/cli.js"
+PI_ENTRY = "node_modules/@earendil-works/pi-coding-agent/package.json"
+# Bundle-backed tools that run on the lock's Node.
+NODE_TOOLS = ("playwright", "pi")
 # The release bundles each bundle-backed tool consists of: (bundle, kind, entry).
 BUNDLE_PARTS = {
     "playwright": (("playwright", "archive", PLAYWRIGHT_ENTRY), ("chromium-deps", "debs", ".")),
     "docker": (("docker", "debs", "."),),
+    "pi": (("pi", "archive", PI_ENTRY),),
 }
 SECURED_TOOLS = ("codex", "claude")
 PROVENANCE_KEYS = ("collab", "recipe_commit", "files_sha256")
@@ -90,11 +94,11 @@ def selection(enabled):
 
 def tools_for(role, selected, store_mode=False):
     """Lock artifacts for a role. Bundle-backed tools are separate (see
-    bundle_entries); Node travels with Playwright in store mode."""
+    bundle_entries); Node travels with Playwright or Pi in store mode."""
     if role == "secured":
         return list(SECURED_TOOLS)
     tools = [name for name in (*REQUIRED_TOOLS, *OPTIONAL_TOOLS) if selected[name] and name not in BUNDLE_TOOLS]
-    if store_mode and selected["playwright"]:
+    if store_mode and any(selected[name] for name in NODE_TOOLS):
         tools.append("node")
     return tools
 
@@ -109,7 +113,19 @@ def bundle_entries(release, selected, role, store_mode):
         wanted = ", ".join(tool for tool in BUNDLE_TOOLS if selected[tool])
         raise ValueError(f"the selected tools need release bundles ({wanted}) that this release does not carry")
     bundles = release.bundles["manifest"]["bundles"]
+    missing = sorted({name for name, _, _ in parts if name not in bundles})
+    if missing:
+        raise ValueError(f"this release has no {', '.join(missing)} bundle for the selected tools; "
+                         "deselect them or roll out a newer release")
     return {name: bundle_entry(bundles[name], kind, entry) for name, kind, entry in parts}
+
+
+def shipped_tools(release):
+    """The optional tools a release can install: every lock-backed one, and a
+    bundle-backed one only when the release carries all of its bundles."""
+    bundles = release.bundles["manifest"]["bundles"] if release and release.bundles else {}
+    return [tool for tool in OPTIONAL_TOOLS
+            if tool not in BUNDLE_TOOLS or all(name in bundles for name, _, _ in BUNDLE_PARTS[tool])]
 
 
 def bundle_parts(selected):
@@ -119,7 +135,7 @@ def bundle_parts(selected):
 
 def bundle_entry(details, kind, entry):
     item = {"kind": kind, "entry": entry, "sha256": details["sha256"], "file": details["file"],
-            "version": details.get("playwright_mcp") or details["sha256"][:12]}
+            "version": details.get("playwright_mcp") or details.get("pi_coding_agent") or details["sha256"][:12]}
     if kind == "debs":
         item["packages"] = details["packages"]
     return item

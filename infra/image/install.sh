@@ -66,6 +66,11 @@ cp infra/image/codex-config.toml /usr/local/share/pairtask/codex-config.base.tom
 cp infra/image/mcp/servers.json /usr/local/share/pairtask/mcp-servers.json
 install -d /etc/pairtask/tools
 install -m 0755 infra/image/pairtask-playwright /usr/local/lib/pairtask/pairtask-playwright
+# Pi (#155): the wrapper runs the tool store's pi bundle; the shim is the stable
+# `pi -e` path that loads the pairtask extension from that same bundle.
+install -m 0755 infra/image/pairtask-pi /usr/local/lib/pairtask/pairtask-pi
+ln -s ../lib/pairtask/pairtask-pi /usr/local/bin/pi
+install -D -m 0644 infra/image/pi-extension.ts /usr/local/lib/pairtask/pi-extension/index.ts
 install -m 0755 infra/image/pairtask-codescene-login /usr/local/bin/pairtask-codescene-login
 install -m 0644 infra/image/pairtask-chromium.apparmor /etc/apparmor.d/pairtask-chromium
 cp infra/image/sshd_config /etc/ssh/sshd_config.collab-ai

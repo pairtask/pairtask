@@ -46,7 +46,7 @@ func defaultStartLayout() startLayout {
 		ConfigDir:     filepath.Join(dir, "pairtask"),
 		StateDir:      stateDir(),
 		PiBinary:      "/usr/local/bin/pi",
-		PiExtension:   cmp.Or(os.Getenv("PAIRTASK_PI_EXTENSION"), "/usr/local/lib/pairtask/pi-extension"),
+		PiExtension:   cmp.Or(os.Getenv("PAIRTASK_PI_EXTENSION"), "/usr/local/lib/pairtask/pi-extension/index.ts"),
 		MCPBinary:     "/usr/local/lib/pairtask/pairtask-mcp",
 		CodexHome:     cmp.Or(os.Getenv("CODEX_HOME"), filepath.Join(os.Getenv("HOME"), ".codex")),
 	}

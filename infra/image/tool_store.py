@@ -31,7 +31,7 @@ SOURCE_FILE = SHARE / "build-source.json"
 KINDS = ("archive", "binary", "zip", "debs")
 REQUIRED_MANIFEST = ("release", "lock_sha256", "architecture", "selection", "tools")
 # Optional tools and the MCP server each one provides (None: no server).
-OPTIONAL_TOOLS = {"cs-mcp": "codescene", "playwright": "playwright", "docker": None}
+OPTIONAL_TOOLS = {"cs-mcp": "codescene", "playwright": "playwright", "docker": None, "pi": None}
 # Launcher names that are not a tool's own entry: (tool, path in the artifact
 # or a sibling of the entry).
 TOOL_NAMES = {"gofmt": ("go", "go/bin/gofmt"), "npm": ("node", "npm"), "npx": ("node", "npx")}

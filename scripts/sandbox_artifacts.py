@@ -96,7 +96,7 @@ def bundles_name(architecture):
     return f"collab-ai-bundles-linux-{ARCHITECTURES[architecture]}.json"
 
 
-BUNDLE_KINDS = {"playwright": False, "chromium-deps": True, "docker": True}  # name: is a deb set
+BUNDLE_KINDS = {"playwright": False, "chromium-deps": True, "docker": True, "pi": False}  # name: is a deb set
 RESERVED = {"workspace.tar.gz", "manifest.json", "image.tfvars.json", "bundle-source.json"}
 BUNDLE_RELEASE = re.compile(r"bundles-[0-9a-f]{64}")
 # Where bundles come from: a URL prefix to fetch them from on demand, or None

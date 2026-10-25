@@ -88,6 +88,7 @@ per-tool fields are folded into it by the lock refresh script.
 | playwright bundle: `node_modules` from `npm ci` + Chromium (or `chromium-headless-shell`) | `archive` | **built in CI** and published as a release asset with its sha256 in the release manifest |
 | chromium-deps: the `.deb` set `playwright install --with-deps` would install | `debs` | built in CI with `apt-get download` against the signed archive, bundled, sha256 in the manifest |
 | docker: Docker's `.deb` set plus `uidmap slirp4netns fuse-overlayfs …` | `debs` | same |
+| pi: the pinned Pi closure plus the pairtask extension, examples removed, licenses checked, notices included (#155) | `archive` | **built in CI** by `infra/image/build-pi-bundle.py`, like Playwright; runs on the lock's Node |
 
 CI-built bundles make the "closure" explicit: pinned Node + pinned MCP
 dependencies + a pinned browser archive, verified by one digest. apt
