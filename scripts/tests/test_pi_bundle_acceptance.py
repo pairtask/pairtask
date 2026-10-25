@@ -34,15 +34,16 @@ class PiBundleAcceptance(unittest.TestCase):
         self.builder = builder_module()
         self.extension = self.root / "index.ts"
         self.extension.write_text('export default function extension(pi) { pi.testMarker = "fixture"; }\n')
-        self.agent = self.add_package("@earendil-works/pi-coding-agent", "MIT", "1.4.0", bin={"pi": "dist/cli.js"})
+        self.agent = self.add_package("@earendil-works/pi-coding-agent", "MIT", version="1.4.0", bin={"pi": "dist/cli.js"})
         (self.agent / "dist").mkdir()
         (self.agent / "dist/cli.js").write_text("console.log('1.4.0');\n")
-        self.add_package("@earendil-works/pi-mcp", "MIT", "1.4.0")
+        self.add_package("@earendil-works/pi-mcp", "MIT", version="1.4.0")
         self.nested = self.add_package("nested-dependency", "(MIT OR Apache-2.0)", parent=self.agent)
         (self.nested / "NOTICE").write_text("NESTED ATTRIBUTION MUST SURVIVE\n")
 
-    def add_package(self, name, license, version="2.3.4", parent=None, **fields):
-        path = (parent or self.bundle) / "node_modules" / name
+    def add_package(self, name, license, **fields):
+        path = fields.pop("parent", self.bundle) / "node_modules" / name
+        version = fields.pop("version", "2.3.4")
         path.mkdir(parents=True)
         (path / "package.json").write_text(json.dumps(dict(name=name, version=version, license=license, **fields)))
         (path / "LICENSE").write_text(f"LICENSE TEXT FOR {name}\n")

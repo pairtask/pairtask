@@ -67,13 +67,58 @@ function responseTools(id) {
 }
 
 async function stop(child) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child?.pid) return;
+  if (child.exitCode !== null) return;
+  if (child.signalCode !== null) return;
   const exited = once(child, 'exit');
   const kill = setTimeout(() => child.kill('SIGKILL'), 2000);
   child.stdin?.end();
   if (!child.stdin) child.kill('SIGTERM');
   await exited;
   clearTimeout(kill);
+}
+
+async function readRequest(request) {
+  assert.equal(request.url, '/v1/chat/completions');
+  let body = '';
+  for await (const bytes of request) body += bytes;
+  return JSON.parse(body);
+}
+
+function assertProviderTools(input) {
+  for (const name of ['pairtask_acknowledge', 'pairtask_send']) {
+    assert.ok(input.tools.some(tool => tool.function.name === name), `Pi exposes ${name}`);
+  }
+}
+
+async function respondToPrompt(input, response, fixture) {
+  fixture.requests.push(input);
+  const last = input.messages.at(-1);
+  if (last.role === 'tool') return completion(response);
+  const content = typeof last.content === 'string' ? last.content : last.content.map(block => block.text || '').join('\n');
+  const id = content.match(/message_id="(host-idle|host-busy)"/)?.[1];
+  if (!id && content.includes('hold busy request')) {
+    await fixture.busyGate.promise;
+    return completion(response);
+  }
+  assert.ok(id, `unexpected fake-provider prompt: ${content.slice(0, 300)}`);
+  assert.match(content, /origin="operator"/);
+  assert.match(content, /room="alpha"/);
+  assertProviderTools(input);
+  if (id === 'host-idle') await fixture.idleGate.promise;
+  completion(response, responseTools(id));
+}
+
+function providerServer(fixture) {
+  return createServer(async (request, response) => {
+    try {
+      await respondToPrompt(await readRequest(request), response, fixture);
+    } catch (error) {
+      fixture.failures.push(error);
+      response.writeHead(500);
+      response.end('fixture provider failed');
+    }
+  });
 }
 
 test('installed Pi wakes on idle push and queues busy push, with real tools and explicit acknowledgments', { timeout: 90000 }, async t => {
@@ -85,35 +130,7 @@ test('installed Pi wakes on idle push and queues busy push, with real tools and 
   const requests = [], events = [], failures = [];
   let broker, pi;
   let stderr = '';
-  const server = createServer(async (request, response) => {
-    try {
-      assert.equal(request.url, '/v1/chat/completions');
-      let body = '';
-      for await (const bytes of request) body += bytes;
-      const input = JSON.parse(body);
-      requests.push(input);
-      const last = input.messages.at(-1);
-      if (last.role === 'tool') return completion(response);
-      const content = typeof last.content === 'string' ? last.content : last.content.map(block => block.text || '').join('\n');
-      const id = content.match(/message_id="(host-idle|host-busy)"/)?.[1];
-      if (!id && content.includes('hold busy request')) {
-        await busyGate.promise;
-        return completion(response);
-      }
-      assert.ok(id, `unexpected fake-provider prompt: ${content.slice(0, 300)}`);
-      assert.match(content, /origin="operator"/);
-      assert.match(content, /room="alpha"/);
-      for (const name of ['pairtask_acknowledge', 'pairtask_send']) {
-        assert.ok(input.tools.some(tool => tool.function.name === name), `Pi exposes ${name}`);
-      }
-      if (id === 'host-idle') await idleGate.promise;
-      completion(response, responseTools(id));
-    } catch (error) {
-      failures.push(error);
-      response.writeHead(500);
-      response.end(String(error));
-    }
-  });
+  const server = providerServer({ requests, failures, idleGate, busyGate });
   t.after(async () => {
     idleGate.resolve(); busyGate.resolve();
     await stop(pi); await stop(broker);
