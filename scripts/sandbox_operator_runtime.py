@@ -22,6 +22,12 @@ INIT_OPTIONS = ("--no-profiles", "-c", "security.privileged=false",
                 "-d", "root,size=8GiB")
 
 
+def stage_times(marks):
+    """'image 0.3s copy 4.1s launch 2.0s verify 0.9s total 7.3s' from (name, time) marks."""
+    parts = [f"{name} {end - begin:.1f}s" for (_, begin), (name, end) in zip(marks, marks[1:])]
+    return " ".join(parts + [f"total {marks[-1][1] - marks[0][1]:.1f}s"])
+
+
 class Operator:
     def __init__(self, remote, server, pool, network):
         self.remote = remote + ":"
@@ -79,8 +85,10 @@ class Operator:
         self.create_project()
         if self.prepared is not None and self.launch_prepared(repo):
             return
+        start = time.monotonic()
         self.launch(ensure_base(Store(self.remote[:-1], self.project), self.base_fingerprint(), repo).ref)
         self.bootstrap()
+        print(f"operator: full bootstrap in {time.monotonic() - start:.1f}s (before the tofu install)", flush=True)
 
     def bootstrap(self):
         self.execute("mkdir", "-p", "/operator/config", "/operator/bin")
@@ -94,14 +102,18 @@ class Operator:
         launched container that fails validation is deleted and raises."""
         key = prepared.recipe_key(self.arch, self.base_fingerprint(), prepared.operator_lock_bytes(),
                                   prepared.recipe_bytes())
+        marks = [("start", time.monotonic())]
         try:
             fingerprint = self.prepared_image(key, repo)
+            marks.append(("image", time.monotonic()))
             self.prepared.copy_into(fingerprint, self.project)
+            marks.append(("copy", time.monotonic()))
         except (subprocess.CalledProcessError, OSError, RuntimeError, prepared.Contaminated) as error:
             print(f"prepared: fallback ({type(error).__name__}: {error})", flush=True)
             self.discard_images()
             return False
         self.launch(fingerprint)
+        marks.append(("launch", time.monotonic()))
         try:
             snapshot = prepared.inspect(self.incus, self.remote[:-1], self.project, self.name)
             prepared.verify_launch(snapshot, prepared.expected_binary_sha256(self.arch))
@@ -109,6 +121,8 @@ class Operator:
             self.run("delete", self.target, "--force")
             self.prepared.discard(key)
             raise
+        marks.append(("verify", time.monotonic()))
+        print(f"prepared: ready {key[:12]} {stage_times(marks)}", flush=True)
         self.verified = True
         return True
 
