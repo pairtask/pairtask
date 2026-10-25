@@ -127,19 +127,32 @@ def regular_sha256(path):
     return sha256_file(path) if mode is not None and stat.S_ISREG(mode) else ""
 
 
-def tree_entries(root):
-    """Non-directory entries under root, relative, without following links;
-    raises if a required directory is a link or not a directory."""
+def check_required_directories(root):
+    """/operator and its bin and config must be real directories, not links."""
     for name in REQUIRED_DIRECTORIES:
-        if lstat_mode(root / name) is None or not stat.S_ISDIR(lstat_mode(root / name)):
+        mode = lstat_mode(root / name)
+        if mode is None or not stat.S_ISDIR(mode):
             raise Contaminated("/operator/" + name + " must be a real directory")
-    entries = set()
-    for directory, names, files in os.walk(root, followlinks=False):
-        for name in names + files:
-            path = Path(directory) / name
-            if not stat.S_ISDIR(os.lstat(path).st_mode):
-                entries.add(str(path.relative_to(root)))
-    return frozenset(entries)
+
+
+def non_directory_entries(root):
+    """Every entry under root that is not a directory, relative, without following links."""
+    paths = (Path(directory) / name
+             for directory, names, files in os.walk(root, followlinks=False)
+             for name in names + files)
+    return frozenset(str(path.relative_to(root)) for path in paths
+                     if not stat.S_ISDIR(lstat_mode(path)))
+
+
+def tree_entries(root):
+    """Non-directory entries under root; raises if a required directory is a link or missing."""
+    check_required_directories(root)
+    return non_directory_entries(root)
+
+
+def plain_name(entry):
+    """A directory entry as a bare name: no path separator, dot entries or NUL."""
+    return isinstance(entry, str) and entry not in ("", ".", "..") and "/" not in entry and "\0" not in entry
 
 
 class Instance:
@@ -159,9 +172,12 @@ class Instance:
         result = self.incus(["incus", "query", endpoint], capture_output=True, text=True)
         if result.returncode != 0:
             raise Contaminated(f"cannot list {directory}: {result.stderr.strip()}")
-        names = json.loads(result.stdout)
-        if not isinstance(names, list):
-            raise Contaminated(f"{directory} is not a directory")
+        try:
+            names = json.loads(result.stdout)
+        except ValueError:
+            raise Contaminated(f"malformed listing for {directory}") from None
+        if not isinstance(names, list) or not all(map(plain_name, names)):
+            raise Contaminated(f"malformed listing for {directory}")
         return set(names)
 
     def exists(self, path):

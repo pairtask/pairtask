@@ -117,8 +117,8 @@ def run_operation(args, directory, server):
 
 def run_locked_operation(args, directory, server):
     prepared = prepare(args, directory, server)
-    operator = Operator(args.remote, server, args.storage_pool, args.network,
-                        prepared_store=store_from_env(args.remote))
+    operator = Operator(args.remote, server, args.storage_pool, args.network).using(
+        prepared_store=store_from_env(args.remote))
     write_json(directory / PENDING, {"project": operator.project, "remote": args.remote,
                                     "action": args.action, "server": server["certificate_fingerprint"],
                                     "deployment_project": args.project})

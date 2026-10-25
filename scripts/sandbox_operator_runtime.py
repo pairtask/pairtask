@@ -23,17 +23,29 @@ INIT_OPTIONS = ("--no-profiles", "-c", "security.privileged=false",
 
 
 class Operator:
-    def __init__(self, remote, server, pool, network, incus=subprocess.run, prepared_store=None,
-                 project=None, name="operator"):
+    def __init__(self, remote, server, pool, network):
         self.remote = remote + ":"
-        self.project = project or "pairtask-operator-" + uuid.uuid4().hex[:16]
-        self.name = name
-        self.target = self.remote + name
-        self.base = ["incus", "--project", self.project]
         self.server, self.pool, self.network = server, pool, network
-        self.incus, self.prepared = incus, prepared_store
+        self.incus, self.prepared = subprocess.run, None
         self.created = False
         self.verified = False  # launched from a prepared image and validated
+        self.place("pairtask-operator-" + uuid.uuid4().hex[:16], "operator")
+
+    def using(self, incus=subprocess.run, prepared_store=None):
+        """Inject the Incus runner and the run's prepared-image store; returns self."""
+        self.incus, self.prepared = incus, prepared_store
+        return self
+
+    def place(self, project, name):
+        self.project, self.name = project, name
+        self.target = self.remote + name
+        self.base = ["incus", "--project", project]
+
+    def scratch_in(self, project):
+        """A sibling operator that prepares the image inside the store's project."""
+        scratch = Operator(self.remote[:-1], self.server, self.pool, self.network).using(self.incus)
+        scratch.place(project, "scratch-" + uuid.uuid4().hex[:12])
+        return scratch
 
     @property
     def arch(self):
@@ -107,8 +119,7 @@ class Operator:
             return fingerprint
         start = time.monotonic()
         self.prepared.ensure_project()
-        scratch = Operator(self.remote[:-1], self.server, self.pool, self.network, incus=self.incus,
-                           project=self.prepared.project, name="scratch-" + uuid.uuid4().hex[:12])
+        scratch = self.scratch_in(self.prepared.project)
         try:
             scratch.launch(ensure_base(Store(self.remote[:-1], self.prepared.project), self.base_fingerprint(), repo).ref)
             scratch.bootstrap()
