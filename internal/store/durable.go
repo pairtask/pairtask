@@ -252,10 +252,13 @@ func scanDurableMessage(row scanner) (protocol.Message, error) {
 
 // groupList decodes stored group members; NULL is no group.
 func groupList(group sql.NullString) ([]string, error) {
-	if !group.Valid || group.String == "" || group.String == "null" {
+	if !group.Valid {
 		return nil, nil
 	}
-	var members []string
+	if group.String == "" {
+		return nil, nil // an empty stored value is no group, as before
+	}
+	var members []string // JSON null decodes to no members
 	if err := json.Unmarshal([]byte(group.String), &members); err != nil {
 		return nil, fmt.Errorf("group members: %w", err)
 	}

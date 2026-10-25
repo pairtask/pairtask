@@ -151,7 +151,7 @@ type keySet struct {
 }
 
 func (s *keySet) add(key viewKey) {
-	if key.common() || reservedID(key.agentID) && !key.isGroup() || s.has[key] {
+	if nameless(key) || s.has[key] {
 		return
 	}
 	s.has[key] = true
@@ -162,6 +162,15 @@ func (s *keySet) addAll(keys []viewKey) {
 	for _, key := range keys {
 		s.add(key)
 	}
+}
+
+// nameless keys never get a conversation of their own: All, and 1:1s with a
+// reserved ID.
+func nameless(key viewKey) bool {
+	if key.isGroup() {
+		return false
+	}
+	return reservedID(key.agentID)
 }
 
 // reservedID is an ID that never names a conversation.
@@ -218,21 +227,38 @@ func entryViews(e *entry) []viewKey {
 // recipient of. Presence never implies membership; a truncated stage list
 // means "not yet known".
 func (m *Model) inView(e *entry, key viewKey) bool {
-	if key.common() {
+	switch {
+	case key.common():
 		return true
+	case key.isGroup():
+		return inGroupView(e, key)
 	}
-	if key.isGroup() {
-		return e.direction == "sent" && len(e.msg.Group) > 0 && groupKey(e.msg.Group) == key
+	return inAgentView(e, key.agent())
+}
+
+// inGroupView: a group holds the messages sent to exactly its members.
+func inGroupView(e *entry, key viewKey) bool {
+	if e.direction != "sent" || len(e.msg.Group) == 0 {
+		return false
 	}
-	id := key.agent()
+	return groupKey(e.msg.Group) == key
+}
+
+// inAgentView: a 1:1 holds what the agent sent and what it is a recipient of.
+func inAgentView(e *entry, id string) bool {
 	if e.direction == "received" {
 		return e.msg.From == id
 	}
-	if len(e.msg.Group) == 0 && e.msg.To == id || slices.Contains(e.msg.Group, id) {
+	if sentDirectlyTo(e, id) || slices.Contains(e.msg.Group, id) {
 		return true
 	}
 	_, ok := e.stages[id]
 	return ok
+}
+
+// sentDirectlyTo reports a direct send to id; a group's to is a transport ID.
+func sentDirectlyTo(e *entry, id string) bool {
+	return len(e.msg.Group) == 0 && e.msg.To == id
 }
 
 // selectView switches to a conversation, saving the current one. A new view
@@ -266,7 +292,7 @@ func (m *Model) selectView(key viewKey) bool {
 // openable reports whether a conversation without saved state may be
 // opened: its agent is in the directory and a view slot is free.
 func (m *Model) openable(key viewKey) bool {
-	if !key.common() && !key.isGroup() && !slices.Contains(m.conv.order, key) {
+	if m.unlisted(key) {
 		m.status = "no conversation with " + key.label()
 		return false
 	}
@@ -275,6 +301,14 @@ func (m *Model) openable(key viewKey) bool {
 		return false
 	}
 	return true
+}
+
+// unlisted is a 1:1 the directory doesn't know; All and groups are always openable.
+func (m *Model) unlisted(key viewKey) bool {
+	if key.common() || key.isGroup() {
+		return false
+	}
+	return !slices.Contains(m.conv.order, key)
 }
 
 // allocateView makes room for one more saved view.

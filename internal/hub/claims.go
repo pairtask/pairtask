@@ -37,18 +37,9 @@ func (h *Hub) handleClaim(ctx context.Context, clients map[string]*Client, in In
 
 func (h *Hub) claim(ctx context.Context, in Inbound) protocol.Message {
 	msg := in.Msg
-	if msg.RequestID == "" || len(msg.RequestID) > 128 {
-		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
-	}
-	if in.From.ProtocolVersion < protocol.ClaimVersion {
-		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "claims require protocol_version 8")
-	}
-	if err := validClaimFrame(msg); err != nil {
-		return statusError(msg.RequestID, protocol.ErrInvalidClaim, err.Error())
-	}
 	now := time.Now().UTC()
-	if msg.Type != protocol.TypeClaimGet && !h.statuses.takeClaim(in.From.ID, now) {
-		return statusError(msg.RequestID, protocol.ErrClaimRateLimited, "too many claim changes; retry shortly")
+	if refusal := h.claimPreflight(in, now); refusal != nil {
+		return *refusal
 	}
 	req := store.ClaimRequest{MessageID: msg.OperatorMessageID, Task: msg.Task, Topic: msg.Topic, Role: msg.Role, Agent: in.From.ID, At: now}
 	set, err := h.runClaim(ctx, msg.Type, req)
@@ -60,6 +51,29 @@ func (h *Hub) claim(ctx context.Context, in Inbound) protocol.Message {
 	}
 	return protocol.Message{Type: protocol.TypeClaimResult, RequestID: msg.RequestID, OperatorMessageID: msg.OperatorMessageID,
 		ClaimPage: page(set)}
+}
+
+// claimPreflight refuses a frame before the store sees it: a missing
+// request_id, an old protocol, bad fields, or a spent change budget.
+func (h *Hub) claimPreflight(in Inbound, now time.Time) *protocol.Message {
+	msg := in.Msg
+	refuse := func(code, detail string) *protocol.Message {
+		frame := statusError(msg.RequestID, code, detail)
+		return &frame
+	}
+	switch {
+	case msg.RequestID == "" || len(msg.RequestID) > 128:
+		return refuse(protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
+	case in.From.ProtocolVersion < protocol.ClaimVersion:
+		return refuse(protocol.ErrMalformedFrame, "claims require protocol_version 8")
+	}
+	if err := validClaimFrame(msg); err != nil {
+		return refuse(protocol.ErrInvalidClaim, err.Error())
+	}
+	if msg.Type != protocol.TypeClaimGet && !h.statuses.takeClaim(in.From, now) {
+		return refuse(protocol.ErrClaimRateLimited, "too many claim changes; retry shortly")
+	}
+	return nil
 }
 
 func (h *Hub) runClaim(ctx context.Context, kind string, req store.ClaimRequest) (protocol.ClaimSet, error) {
@@ -126,4 +140,17 @@ func validClaimFrame(msg protocol.Message) error {
 // with the total so an omission stays visible.
 func (h *Hub) snapshotClaims(ctx context.Context) ([]protocol.ClaimSet, int, error) {
 	return h.store.RecentClaims(ctx, protocol.SnapshotClaimed)
+}
+
+// bucketMap holds one token bucket per agent.
+type bucketMap map[string]*tokenBucket
+
+// of is the agent's bucket, created full.
+func (m bucketMap) of(agent string, now time.Time) *tokenBucket {
+	b := m[agent]
+	if b == nil {
+		b = &tokenBucket{tokens: statusBurst, at: now}
+		m[agent] = b
+	}
+	return b
 }

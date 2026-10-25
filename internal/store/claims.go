@@ -110,7 +110,7 @@ WHERE mm.message_id = ? AND mm.origin = 'operator' AND r.agent_id = ?`, messageI
 }
 
 func setClaim(ctx context.Context, tx *sql.Tx, req ClaimRequest) error {
-	holder, done, err := heldBy(ctx, tx, req.MessageID, req.Task, req.Role)
+	holder, done, err := heldBy(ctx, tx, req)
 	switch {
 	case err != nil:
 		return err
@@ -133,10 +133,10 @@ func setClaim(ctx context.Context, tx *sql.Tx, req ClaimRequest) error {
 
 // heldBy is the agent holding the slot ("" when free) and whether the owner
 // finished it, which makes the slot terminal.
-func heldBy(ctx context.Context, tx *sql.Tx, messageID, task, role string) (string, bool, error) {
+func heldBy(ctx context.Context, tx *sql.Tx, req ClaimRequest) (string, bool, error) {
 	var agent, state string
 	err := tx.QueryRowContext(ctx, `SELECT agent_id, state FROM claims WHERE operator_message_id = ? AND task = ? AND role = ? AND state != 'released'`,
-		messageID, task, role).Scan(&agent, &state)
+		req.MessageID, req.Task, req.Role).Scan(&agent, &state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -208,20 +208,10 @@ func (s *Store) RecentClaims(ctx context.Context, limit int) ([]protocol.ClaimSe
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT operator_message_id) FROM claims`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT operator_message_id FROM claims GROUP BY operator_message_id ORDER BY MAX(claimed_at) DESC LIMIT ?`, limit)
+	ids, err := s.recentClaimedMessages(ctx, limit)
 	if err != nil {
 		return nil, 0, err
 	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, 0, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
 	sets := make([]protocol.ClaimSet, 0, len(ids))
 	for _, id := range ids {
 		set, err := messageClaims(ctx, s.db, id)
@@ -231,6 +221,25 @@ func (s *Store) RecentClaims(ctx context.Context, limit int) ([]protocol.ClaimSe
 		sets = append(sets, set)
 	}
 	return sets, total, nil
+}
+
+// recentClaimedMessages lists the operator messages with claims, newest
+// claim first.
+func (s *Store) recentClaimedMessages(ctx context.Context, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT operator_message_id FROM claims GROUP BY operator_message_id ORDER BY MAX(claimed_at) DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 const claimColumns = `operator_message_id, task, topic, role, agent_id, state, claimed_at, finished_at`

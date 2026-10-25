@@ -84,12 +84,20 @@ func (m *Model) resolveAudience() audience {
 	if c.to != nil {
 		return audience{err: "use either /to or @mentions, not both"}
 	}
-	if key := m.conv.selected; key.isGroup() {
+	return m.viewMentions(p.tokens)
+}
+
+// viewMentions resolves leading mentions in the selected conversation: any
+// agents in All, only its own agent in a 1:1, none in a group.
+func (m *Model) viewMentions(tokens []string) audience {
+	key := m.conv.selected
+	switch {
+	case key.isGroup():
 		return audience{err: "mentions address other agents only in All (Tab)"}
-	} else if !key.common() {
-		return m.ownMentions(p.tokens, key.agent())
+	case !key.common():
+		return m.ownMentions(tokens, key.agent())
 	}
-	return m.mentionAudience(p.tokens)
+	return m.mentionAudience(tokens)
 }
 
 // ownMentions allows mentions in a 1:1 only when they name that agent. The

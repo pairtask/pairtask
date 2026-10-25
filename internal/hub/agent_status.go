@@ -20,8 +20,8 @@ const (
 
 // statusState is the hub's per-agent status bookkeeping, owned by Run.
 type statusState struct {
-	buckets  map[string]*tokenBucket
-	claims   map[string]*tokenBucket // claim changes, a separate budget per agent
+	buckets  bucketMap
+	claims   bucketMap // claim changes, a separate budget per agent
 	activity map[string]sessionActivity
 }
 
@@ -38,8 +38,8 @@ type sessionActivity struct {
 
 func (s *statusState) init() {
 	if s.buckets == nil {
-		s.buckets = map[string]*tokenBucket{}
-		s.claims = map[string]*tokenBucket{}
+		s.buckets = bucketMap{}
+		s.claims = bucketMap{}
 		s.activity = map[string]sessionActivity{}
 	}
 }
@@ -67,23 +67,18 @@ func (s *statusState) recentActivity(c *Client, now time.Time) bool {
 
 // take spends a status token for agent if one is available.
 func (s *statusState) take(agent string, now time.Time) bool {
-	return spend(s.buckets, agent, now)
+	return s.buckets.of(agent, now).spend(now)
 }
 
-// takeClaim spends a claim token for agent if one is available.
-func (s *statusState) takeClaim(agent string, now time.Time) bool {
+// takeClaim spends a claim token for the client's agent; claims have a
+// budget of their own.
+func (s *statusState) takeClaim(c *Client, now time.Time) bool {
 	s.init()
-	return spend(s.claims, agent, now)
+	return s.claims.of(c.ID, now).spend(now)
 }
 
-// spend takes one token from agent's bucket: a burst of statusBurst, then one
-// every statusRefill.
-func spend(buckets map[string]*tokenBucket, agent string, now time.Time) bool {
-	b := buckets[agent]
-	if b == nil {
-		b = &tokenBucket{tokens: statusBurst, at: now}
-		buckets[agent] = b
-	}
+// spend takes one token: a burst of statusBurst, then one every statusRefill.
+func (b *tokenBucket) spend(now time.Time) bool {
 	b.tokens = min(statusBurst, b.tokens+now.Sub(b.at).Seconds()/statusRefill.Seconds())
 	b.at = now
 	if b.tokens < 1 {
