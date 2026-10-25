@@ -58,14 +58,17 @@ func (m *Model) claimsOf(e *entry) []protocol.Claim {
 	return m.claims.byMessage[e.msg.MessageID].Claims
 }
 
-// claimLines are the muted lines under a message, one per held claim.
-func (m *Model) claimLines(e *entry) []string {
+// claimLines are the muted lines under a message, one per held claim,
+// wrapped to the width so a narrow view never cuts the role or state.
+func (m *Model) claimLines(e *entry, width int) []string {
 	var lines []string
 	for _, c := range m.claimsOf(e) {
 		if c.State == protocol.ClaimReleased {
 			continue
 		}
-		lines = append(lines, mutedStyle.Render("◇ "+claimText(c)))
+		for _, line := range wrap("◇ "+claimText(c), width) {
+			lines = append(lines, mutedStyle.Render(line))
+		}
 	}
 	return lines
 }

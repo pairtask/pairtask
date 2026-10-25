@@ -373,8 +373,9 @@ claims_truncated}`, or an error: `invalid_claim`, `claim_conflict` (with
 - **Operator:** each committed change emits `claims_changed
   {operator_message_id}`, and the snapshot carries `claims` for the newest
   32 operator messages that have any, with `claims_total` and
-  `claims_truncated`. A snapshot too large for one frame drops the oldest
-  message's claims first and reports the truncation.
+  `claims_truncated`. A snapshot too large for one frame drops recent sent
+  messages first, then the oldest messages' claims, then statuses, and
+  reports each truncation.
 - **Canonical reply key:** before answering an operator message sent to
   everyone, every agent claims `task: "reply"`; whoever gets
   `claim_conflict` doesn't answer. Claims don't deduplicate different

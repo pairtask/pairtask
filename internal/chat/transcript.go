@@ -61,7 +61,7 @@ func (m *Model) entryLines(e *entry) []renderLine {
 	} else {
 		b.formatBody(payloadText(e.msg.Payload), width)
 	}
-	b.add(m.claimLines(e), body)
+	b.add(m.claimLines(e, width), body)
 	b.add(m.statusLines(e, width), body)
 	if e.gapBelow {
 		b.add([]string{warnStyle.Render("── older messages may be missing here · /history loads them ──")}, body)
