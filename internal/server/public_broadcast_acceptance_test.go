@@ -230,3 +230,72 @@ func TestPublicBroadcastAcceptanceOperatorReceiptsStayExplicit(t *testing.T) {
 	operatorEqual(t, "explicit acknowledgment", inboxAck(f, "receipts").Stage, "agent_acknowledged")
 	inboxStage(t, a, "receipts", "agent_acknowledged")
 }
+
+func TestPublicBroadcastAcceptanceLegacyRetryAfterUpgradeStaysPrivate(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "broker.db")
+	var seq uint64
+	m := publicMessage("legacy-retry")
+	t.Run("legacy acceptance", func(t *testing.T) {
+		f := newOperatorFixture(t, os.Getuid(), db)
+		a, b := f.peer("alpha", 6), f.peer("beta", 7)
+		seq = publicAccepted(t, a, m, "beta").Seq
+		b.read()
+	})
+	t.Run("upgraded retry", func(t *testing.T) {
+		f := newOperatorFixture(t, os.Getuid(), db)
+		a := f.peer("alpha", 7)
+		f.peer("later", 7)
+		again := publicAccepted(t, a, m, "beta")
+		operatorEqual(t, "original sequence", again.Seq, seq)
+		operatorEqual(t, "operator never added on retry", len(inboxReadPage(f, 0, 0, 32).Messages), 0)
+	})
+}
+
+func TestPublicBroadcastAcceptanceLegacyParentCannotBecomePublic(t *testing.T) {
+	f := newOperatorFixture(t, os.Getuid(), "")
+	a, b := f.peer("alpha", 6), f.peer("beta", 7)
+	publicAccepted(t, a, publicMessage("legacy-parent"), "beta")
+	b.read()
+	m := publicMessage("public-reply")
+	m.InReplyTo = "legacy-parent"
+	b.write(m)
+	operatorEqual(t, "legacy private thread cannot be promoted", b.read().Code, "invalid_reply")
+}
+
+func TestPublicBroadcastAcceptanceOperatorDoesNotReceiveOwnBroadcast(t *testing.T) {
+	f := newOperatorFixture(t, os.Getuid(), "")
+	a := f.peer("alpha", 7)
+	requireOperatorAccepted(t, f.send(operatorRequest("operator-public", "*")), "alpha")
+	operatorEqual(t, "agent receives", a.read().MessageID, "operator-public")
+	operatorEqual(t, "no self inbox", len(inboxReadPage(f, 0, 0, 32).Messages), 0)
+}
+
+func TestPublicBroadcastAcceptanceDirectOperatorReplyRuleUnchanged(t *testing.T) {
+	f := newOperatorFixture(t, os.Getuid(), "")
+	a, b := f.peer("alpha", 7), f.peer("beta", 7)
+	publicAccepted(t, a, publicMessage("agent-parent"), "beta", "operator")
+	b.read()
+	m := inboxMessage("private-reply")
+	m.InReplyTo = "agent-parent"
+	b.write(m)
+	operatorEqual(t, "direct operator reply still requires operator author", b.read().Code, "invalid_reply")
+}
+
+func TestPublicBroadcastAcceptanceRecipientLimitIncludesOperator(t *testing.T) {
+	f := newOperatorFixture(t, os.Getuid(), "")
+	a := f.peer("sender", 7)
+	var ids []string
+	for i := range 255 {
+		id := fmt.Sprintf("agent-%03d", i)
+		f.peer(id, 7)
+		ids = append(ids, id)
+	}
+	ids = append(ids, "operator")
+	accepted := publicAccepted(t, a, publicMessage("at-limit"), ids...)
+	operatorEqual(t, "256 includes operator", len(accepted.Recipients), 256)
+	f.peer("extra", 7)
+	before := f.count("durable_inbox")
+	a.write(publicMessage("over-limit"))
+	operatorEqual(t, "257 recipients rejected", a.read().Code, "recipient_unavailable")
+	operatorEqual(t, "overflow creates no deliveries", f.count("durable_inbox"), before)
+}

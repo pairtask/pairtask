@@ -64,3 +64,21 @@ func TestPublicBroadcastAcceptanceChatAdoptsBeforeReceipt(t *testing.T) {
 	chatEqual(t, "only adopted target", receipt.MessageIDs[0], "public")
 	chatEqual(t, "adoption never acknowledges", h.m.State().Entries[0].Ack, chat.AckNeeded)
 }
+
+func TestPublicBroadcastAcceptanceChatNewBroadcastDoesNotAcknowledgePending(t *testing.T) {
+	h := newChatHarness(t, chat.Bounds{})
+	inbox, history := h.baseline()
+	h.reply(history, chatHistory())
+	h.reply(inbox, chatInbox(publicChatMessage("target", 1)))
+	receipt := h.take(protocol.TypeOperatorReceived)
+	h.reply(receipt, chatReceipt("target"))
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	v2Type(h, "new public topic")
+	sent := v2Send(h)
+	chatEqual(t, "public destination", sent.To, "*")
+	chatEqual(t, "no implicit reply", sent.InReplyTo, "")
+	audienceAckAccept(h, sent, "author")
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	audienceAckState(t, h, "target", chat.AckNeeded)
+	chatEqual(t, "no queued acknowledgment", len(h.m.State().QueuedAcks), 0)
+}
