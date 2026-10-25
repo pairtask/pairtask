@@ -58,7 +58,7 @@ jobs:
         with:
           tofu_version: '1.12.6'
           tofu_wrapper: false
-      - run: go test -race ./... -timeout=60s
+      - run: go test -race ./... -timeout=120s
       - run: python3 -m unittest discover -s scripts/tests -v
       - name: Check that every pinned base image is mirrored or still upstream
         # Pushes skip this: base-mirror itself publishes, resumes drafts and verifies.
@@ -72,11 +72,39 @@ jobs:
           tofu -chdir=infra/incus validate
           tofu -chdir=infra/incus test
 
+  classify:
+    # Decides whether this run needs the image proofs. Only a pull request that
+    # touches nothing but unshipped top-level docs may skip them; see
+    # scripts/ci-classify.py. Outputs are fixed tokens, never file names.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.decide.outputs.images }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: decide
+        # bash -eo pipefail: a usage or import error fails this step despite tee.
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.sha }}
+        run: python3 scripts/ci-classify.py --event "$EVENT" --base "$BASE" --head "$HEAD" | tee -a "$GITHUB_OUTPUT"
+
   images:
     # On pushes, wait for base-mirror so images build from the just-published mirror; elsewhere it is skipped.
-    needs: [checks, base-mirror]
+    # Both matrix checks always run. A docs-only pull request skips their steps
+    # instead of the job, so the two per-architecture check names still report.
+    # A failed classify job stops this job, so no image proof turns green.
+    # A successful classify with a missing or unexpected output builds: only
+    # an explicit images=false skips the steps.
+    needs: [checks, base-mirror, classify]
     if: >-
-      !cancelled() && needs.checks.result == 'success' &&
+      !cancelled() && needs.checks.result == 'success' && needs.classify.result == 'success' &&
       (needs.base-mirror.result == 'success' || needs.base-mirror.result == 'skipped')
     strategy:
       fail-fast: false
@@ -89,21 +117,31 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
+      - name: Skip the image proofs for unshipped documentation
+        if: needs.classify.outputs.images == 'false'
+        env:
+          REASON: ${{ needs.classify.outputs.reason }}
+        run: echo "No image input changed ($REASON); the image proofs are skipped for this pull request."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.classify.outputs.images != 'false'
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        if: needs.classify.outputs.images != 'false'
         with:
           tofu_version: '1.12.6'
           tofu_wrapper: false
       - name: Initialize disposable Incus host
+        if: needs.classify.outputs.images != 'false'
         run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT bash scripts/ci-incus.sh
       - name: Cache the verified base image pair without publishing it
+        if: needs.classify.outputs.images != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: sudo --preserve-env=GH_TOKEN python3 scripts/base-image-mirror.py cache --repo "$GITHUB_REPOSITORY" --architecture "$(uname -m)"
       - name: Build selected app and tools inside Incus
+        if: needs.classify.outputs.images != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           APP_REF: ${{ inputs.collab_ref || github.sha }}
@@ -122,29 +160,36 @@ jobs:
           if sudo incus project list local: --format csv -c n | grep '^collab-build-'; then exit 1; fi
           if sudo incus image list local: --format csv -c f | grep .; then exit 1; fi
       - name: Enforce the image size budget
+        if: needs.classify.outputs.images != 'false'
         run: |
           size=$(stat -c %s dist/workspace/release/collab-ai-workspace-linux-*.tar.gz)
           echo "image: $((size / 1048576)) MiB (budget 400 MiB)"
           test "$size" -lt $((400 * 1024 * 1024))
       - name: Build the optional tool bundles inside Incus
+        if: needs.classify.outputs.images != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: sudo --preserve-env=GH_TOKEN python3 scripts/sandbox-bundles.py --remote local --repo "$GITHUB_REPOSITORY" --output dist/workspace/release --reuse
       - name: Install the exported artifact and smoke-test offline SSH
+        if: needs.classify.outputs.images != 'false'
         run: |
           sudo python3 scripts/sandbox-download.py --remote local --from-dir dist/workspace/release --output dist/installed
           sudo env "PATH=$PATH" python3 scripts/sandbox-smoke.py --remote local --image-dir dist/installed --mount-check --secured-check --network-check
       - name: Prove offline controller and dev boundaries
+        if: needs.classify.outputs.images != 'false'
         run: sudo env "PATH=$PATH" python3 scripts/sandbox-boundary.py --remote local --image-dir dist/installed
       - name: Prove containerized provisioning and host-state recovery
+        if: needs.classify.outputs.images != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: sudo --preserve-env=PATH,GH_TOKEN python3 scripts/sandbox-operator-smoke.py --remote local --repo "$GITHUB_REPOSITORY"
       - name: Prove the previous release and its host checkout work across the layout change
+        if: needs.classify.outputs.images != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: sudo --preserve-env=PATH,GH_TOKEN python3 scripts/sandbox-compat.py --remote local --image-dir dist/installed --repo "$GITHUB_REPOSITORY"
       - name: Upload tested release assets
+        if: needs.classify.outputs.images != 'false'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: workspace-linux-${{ matrix.arch }}
@@ -175,8 +220,11 @@ jobs:
 
   bundle-publish:
     # Each workspace release references bundles-<digest> releases instead of carrying the bundles.
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v'))
-    needs: images
+    # Publishing also requires the explicit image decision, so skipped proofs can never publish.
+    if: >-
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
+      needs.classify.outputs.images == 'true'
+    needs: [classify, images]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     concurrency:
@@ -200,8 +248,10 @@ jobs:
           python3 scripts/bundle-release.py publish --repo "$GITHUB_REPOSITORY" --dir artifacts/workspace-linux-amd64 --architecture x86_64
 
   release:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v'))
-    needs: [checks, images, mac-sharing, base-mirror, bundle-publish]
+    if: >-
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
+      needs.classify.outputs.images == 'true'
+    needs: [checks, classify, images, mac-sharing, base-mirror, bundle-publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

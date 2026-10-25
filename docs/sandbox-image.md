@@ -103,6 +103,14 @@ resolve at build time and metadata includes timestamps. OS versions are recorded
 image tests: provisioning, SSH, installed tools, broker, persistence, replacement,
 network opt-out and control boundaries. Tests use no credentials or model requests.
 
+A pull request that changes only unshipped documentation skips the image proofs.
+That means `README.md` or a Markdown page directly under `docs/`, outside every
+path the image is built from. A `classify` job decides with
+[`scripts/ci-classify.py`](../scripts/ci-classify.py). Both per-architecture
+image checks still run and report, with their steps skipped. Any other path,
+pushes, tags and manual runs always build. So does any failure to read the diff.
+Publishing also requires that explicit decision.
+
 Successful pushes to `main` publish both architectures under a unique
 `workspace-v0.0.0-build.RUN.ATTEMPT` tag and make that release `latest`.
 Explicit `workspace-vX.Y.Z` tags publish versioned releases too. Publication happens
