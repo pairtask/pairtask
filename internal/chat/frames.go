@@ -182,7 +182,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 	m.agents = agentView{list: snap.Agents, total: snap.AgentsTotal, partial: snap.AgentsTruncated}
 	m.statuses.set(snap)
 	m.claims.set(snap)
-	m.rooms = snap.Rooms
+	m.rooms, m.roomsCut = snap.Rooms, snap.RoomsTruncated
 	m.statuses.inFlight, m.statuses.dirty = false, false // a new baseline supersedes any refresh
 	m.inbox.pending, m.inbox.headSeq = snap.InboxPending, snap.InboxHeadSeq
 	m.timeline.resetStages()

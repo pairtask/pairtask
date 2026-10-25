@@ -82,7 +82,7 @@ func (m *Model) roomResult(req pendingRequest, resp protocol.Message) tea.Cmd {
 		m.status = "room change refused: " + brokerReason(resp)
 		return nil
 	}
-	m.rooms = resp.RoomList.Rooms
+	m.rooms, m.roomsCut = resp.RoomList.Rooms, resp.RoomList.Truncated
 	m.refreshDirectory()
 	if len(req.ids) == 1 {
 		m.selectView(roomKey(req.ids[0]))
@@ -116,7 +116,13 @@ func (m *Model) roomRows() []string {
 		if len(r.Members) > 0 {
 			members = safe(strings.Join(r.Members, ", "))
 		}
+		if r.MembersTruncated {
+			members += fmt.Sprintf(" (+%d more)", r.MembersTotal-len(r.Members))
+		}
 		rows = append(rows, fmt.Sprintf("  #%s  %s", safe(r.ID), members))
+	}
+	if m.roomsCut {
+		rows = append(rows, "  (room list is partial: more rooms exist than shown)")
 	}
 	return append(rows, mutedStyle.Render("  /room NAME opens a room · /room add NAME @a @b · /room remove NAME @a"))
 }

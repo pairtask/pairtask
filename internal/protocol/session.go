@@ -69,7 +69,9 @@ type AgentPresence struct {
 type OperatorSnapshot struct {
 	Watermark           Watermark       `json:"watermark"`
 	Agents              []AgentPresence `json:"agents"`
-	Rooms               []RoomInfo      `json:"rooms"` // v9: every room and its members (#153)
+	Rooms               []RoomInfo      `json:"rooms"`           // v9: rooms and members, bounded (#153)
+	RoomsTotal          int             `json:"rooms_total"`     // every room
+	RoomsTruncated      bool            `json:"rooms_truncated"` // the list or a frame trim left rooms out
 	AgentsTotal         int             `json:"agents_total"`
 	AgentsTruncated     bool            `json:"agents_truncated"`
 	InboxHeadSeq        uint64          `json:"inbox_head_seq"`

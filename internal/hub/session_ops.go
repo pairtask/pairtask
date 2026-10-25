@@ -151,7 +151,7 @@ func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (pr
 	if err != nil {
 		return snap, err
 	}
-	snap.Rooms = rooms.Rooms
+	snap.Rooms, snap.RoomsTotal, snap.RoomsTruncated = rooms.Rooms, rooms.Total, rooms.Truncated
 	return fitSnapshot(snap)
 }
 
@@ -177,6 +177,9 @@ func fitSnapshot(snap protocol.OperatorSnapshot) (protocol.OperatorSnapshot, err
 		case len(snap.AgentStatus) > 0:
 			snap.AgentStatus = snap.AgentStatus[:len(snap.AgentStatus)-1]
 			snap.AgentStatusTruncated = true
+		case len(snap.Rooms) > 0:
+			snap.Rooms = snap.Rooms[:len(snap.Rooms)-1]
+			snap.RoomsTruncated = true
 		default:
 			return snap, nil
 		}

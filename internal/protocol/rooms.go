@@ -31,15 +31,26 @@ const (
 	ErrInvalidRoom = "invalid_room" // malformed, reserved or unknown room
 )
 
-// RoomList is the rooms and their members.
+// Bounds on a room listing: rooms in ID order, members in ID order per room.
+// Totals and truncation flags keep every omission visible.
+const (
+	ListedRooms       = 64
+	ListedRoomMembers = 64
+)
+
+// RoomList is the rooms and their members, bounded.
 type RoomList struct {
-	Rooms []RoomInfo `json:"rooms"`
+	Rooms     []RoomInfo `json:"rooms"`
+	Total     int        `json:"rooms_total"`
+	Truncated bool       `json:"rooms_truncated"`
 }
 
-// RoomInfo is one room and its members, sorted.
+// RoomInfo is one room and its members, sorted and bounded.
 type RoomInfo struct {
-	ID      string   `json:"id"`
-	Members []string `json:"members"`
+	ID               string   `json:"id"`
+	Members          []string `json:"members"`
+	MembersTotal     int      `json:"members_total"`
+	MembersTruncated bool     `json:"members_truncated"`
 }
 
 var roomID = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)

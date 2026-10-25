@@ -73,35 +73,36 @@ func (s *Store) RoomExists(ctx context.Context, room string) (bool, error) {
 	return n != 0, err
 }
 
-// Rooms lists every room, empty ones included, with its members.
+// Rooms lists the rooms in ID order, empty ones included, at most
+// ListedRooms with at most ListedRoomMembers members each, with the totals.
 func (s *Store) Rooms(ctx context.Context) (protocol.RoomList, error) {
 	list := protocol.RoomList{Rooms: []protocol.RoomInfo{}}
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id, m.agent_id FROM rooms r LEFT JOIN room_members m ON m.room_id = r.id ORDER BY r.id, m.agent_id`)
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rooms`).Scan(&list.Total); err != nil {
+		return list, err
+	}
+	ids, err := s.column(ctx, `SELECT id FROM rooms ORDER BY id LIMIT ?`, protocol.ListedRooms)
 	if err != nil {
 		return list, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var room string
-		var agent sql.NullString
-		if err := rows.Scan(&room, &agent); err != nil {
+	for _, id := range ids {
+		room, err := s.roomInfo(ctx, id)
+		if err != nil {
 			return list, err
 		}
-		list.Rooms = addMember(list.Rooms, room, agent)
+		list.Rooms = append(list.Rooms, room)
 	}
-	return list, rows.Err()
+	list.Truncated = list.Total > len(list.Rooms)
+	return list, nil
 }
 
-// addMember appends a row of the ordered room listing.
-func addMember(rooms []protocol.RoomInfo, room string, agent sql.NullString) []protocol.RoomInfo {
-	if n := len(rooms); n == 0 || rooms[n-1].ID != room {
-		rooms = append(rooms, protocol.RoomInfo{ID: room, Members: []string{}})
+func (s *Store) roomInfo(ctx context.Context, id string) (protocol.RoomInfo, error) {
+	room := protocol.RoomInfo{ID: id}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM room_members WHERE room_id = ?`, id).Scan(&room.MembersTotal); err != nil {
+		return room, err
 	}
-	if agent.Valid {
-		last := &rooms[len(rooms)-1]
-		last.Members = append(last.Members, agent.String)
-	}
-	return rooms
+	members, err := s.column(ctx, `SELECT agent_id FROM room_members WHERE room_id = ? ORDER BY agent_id LIMIT ?`, id, protocol.ListedRoomMembers)
+	room.Members, room.MembersTruncated = members, room.MembersTotal > len(members)
+	return room, err
 }
 
 // MessageRoom is the room a stored message was sent to: "" for the Square

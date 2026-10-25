@@ -152,18 +152,19 @@ func (s *Store) ClaimPendingReport(ctx context.Context, recipient protocol.Recip
 		return nil, nil, err
 	}
 	defer tx.Rollback()
-	canShowOrigin := version >= protocol.OriginVersion
+	shows := replayable{origin: version >= protocol.OriginVersion, room: version >= protocol.RoomVersion}
 	var reclaimed []string
-	if canShowOrigin {
-		if reclaimed, err = pendingOperatorIDs(ctx, tx, recipient.AgentID); err != nil {
+	if shows.origin {
+		if reclaimed, err = pendingOperatorIDs(ctx, tx, recipient.AgentID, shows.room); err != nil {
 			return nil, nil, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE durable_inbox SET session_id = ?, received_at = NULL WHERE agent_id = ? AND acknowledged_at IS NULL AND (? OR NOT `+operatorRow+`)`, recipient.SessionID, recipient.AgentID, canShowOrigin)
+	// Rows this session can't show stay pending for a later, capable owner.
+	_, err = tx.ExecContext(ctx, `UPDATE durable_inbox SET session_id = ?, received_at = NULL WHERE agent_id = ? AND acknowledged_at IS NULL AND (? OR NOT `+operatorRow+`) AND (? OR NOT `+roomRow+`)`, recipient.SessionID, recipient.AgentID, shows.origin, shows.room)
 	if err != nil {
 		return nil, nil, err
 	}
-	messages, err := readPending(ctx, tx, recipient.AgentID, canShowOrigin)
+	messages, err := readPending(ctx, tx, recipient.AgentID, shows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -177,8 +178,8 @@ func (s *Store) ClaimPendingReport(ctx context.Context, recipient protocol.Recip
 	return messages, reclaimed, nil
 }
 
-func pendingOperatorIDs(ctx context.Context, tx *sql.Tx, agentID string) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT message_id FROM durable_inbox WHERE agent_id = ? AND acknowledged_at IS NULL AND `+operatorRow+` ORDER BY message_id`, agentID)
+func pendingOperatorIDs(ctx context.Context, tx *sql.Tx, agentID string, showsRoom bool) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT message_id FROM durable_inbox WHERE agent_id = ? AND acknowledged_at IS NULL AND `+operatorRow+` AND (? OR NOT `+roomRow+`) ORDER BY message_id`, agentID, showsRoom)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +197,16 @@ func pendingOperatorIDs(ctx context.Context, tx *sql.Tx, agentID string) ([]stri
 
 const operatorRow = `EXISTS (SELECT 1 FROM message_metadata o WHERE o.message_id = durable_inbox.message_id AND o.origin = 'operator')`
 
+// roomRow is a pending room post, which only a v9 session can tell apart
+// from the Square.
+const roomRow = `EXISTS (SELECT 1 FROM message_metadata r WHERE r.message_id = durable_inbox.message_id AND r.room IS NOT NULL)`
+
+// replayable is what a reconnecting session can show: operator origin (v4)
+// and rooms (v9).
+type replayable struct {
+	origin, room bool
+}
+
 // AgentProtocolVersion returns the version negotiated at the agent's last durable
 // registration, or 0 when unknown.
 func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error) {
@@ -212,9 +223,9 @@ const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session,
 // groupColumn is a group send's canonical members (JSON), or NULL.
 const groupColumn = `(SELECT o.members FROM operator_requests o WHERE o.message_id = mm.message_id AND o.scope_kind = 'group')`
 
-func readPending(ctx context.Context, tx *sql.Tx, id string, canShowOrigin bool) ([]protocol.Message, error) {
-	query := `SELECT ` + durableColumns + ` FROM durable_inbox i JOIN message_metadata mm USING(message_id) JOIN messages m USING(seq) WHERE i.agent_id = ? AND i.acknowledged_at IS NULL AND (? OR mm.origin IS NULL OR mm.origin != 'operator') ORDER BY m.seq LIMIT ?`
-	rows, err := tx.QueryContext(ctx, query, id, canShowOrigin, MaxPendingMessages+1)
+func readPending(ctx context.Context, tx *sql.Tx, id string, shows replayable) ([]protocol.Message, error) {
+	query := `SELECT ` + durableColumns + ` FROM durable_inbox i JOIN message_metadata mm USING(message_id) JOIN messages m USING(seq) WHERE i.agent_id = ? AND i.acknowledged_at IS NULL AND (? OR mm.origin IS NULL OR mm.origin != 'operator') AND (? OR mm.room IS NULL) ORDER BY m.seq LIMIT ?`
+	rows, err := tx.QueryContext(ctx, query, id, shows.origin, shows.room, MaxPendingMessages+1)
 	if err != nil {
 		return nil, err
 	}

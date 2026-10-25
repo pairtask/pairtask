@@ -94,7 +94,13 @@ func writeRooms(w io.Writer, list *protocol.RoomList) {
 		if len(r.Members) > 0 {
 			members = fmt.Sprintf("%q", strings.Join(r.Members, ", "))
 		}
+		if r.MembersTruncated {
+			members += fmt.Sprintf(" (+%d more)", r.MembersTotal-len(r.Members))
+		}
 		fmt.Fprintf(w, "#%s  %s\n", r.ID, members)
+	}
+	if list.Truncated {
+		fmt.Fprintf(w, "(showing %d of %d rooms)\n", len(list.Rooms), list.Total)
 	}
 }
 
