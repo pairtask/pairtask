@@ -101,6 +101,16 @@ test('shutdown during initialize disposes the in-flight child without a restart'
   assert.equal((await trace()).filter(row => row.event === 'spawn').length, 1);
 });
 
+test('shutdown in the same turn as startup prevents a stale child from launching', { timeout: 10000 }, async t => {
+  const { pi, trace } = await fixture(t, 'hang-init');
+  let settled = false;
+  const starting = pi.event('session_start');
+  starting.then(() => { settled = true; }, () => { settled = true; });
+  await pi.event('session_shutdown');
+  await until(() => settled, 'cancelled startup settles without initializing a child', 2000);
+  assert.equal((await trace()).filter(row => row.event === 'spawn').length, 0);
+});
+
 test('child death produces a visible diagnostic and does not auto-restart', { timeout: 10000 }, async t => {
   const { pi, trace } = await fixture(t);
   await pi.event('session_start');
