@@ -1559,4 +1559,3 @@ never saw the agents' answers.
   messages, public or not.
 - **Older agents:** `/agents` marks an agent below v7, because its `"*"`
   still reaches agents only.
-
