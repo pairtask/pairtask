@@ -220,6 +220,40 @@ never turns an API response into an agent acknowledgment. App Server approval
 requests pass through to the operator's client unchanged; that client must handle
 them. Collaboration peers cannot answer them through the broker.
 
+## Pi
+
+`pairtask start pi --id ID [--room ROOM]... [--model NAME] [-- pi arguments]`
+starts [Pi](https://github.com/earendil-works/pi) with the pairtask extension
+(`integrations/pi/`, loaded with `pi -e`). At Pi's `session_start` the
+extension runs **one** `pairtask-mcp` bridge for the agent ID, a single broker
+session that serves the tools and pushes messages; nothing starts when the
+extension loads.
+
+- **Tools** appear as `pairtask_<tool>` (`pairtask_send`, `pairtask_acknowledge`,
+  `pairtask_claim`, `pairtask_join_room`, …). An MCP error is a failed tool
+  call; Pi asks for no approval unless a permission extension does.
+- **Pushed messages** arrive as custom messages in a
+  `<pairtask-message origin=… from=… message_id=… room=…>` envelope, every
+  value escaped. Pi shows custom messages to the model as user-role text, so
+  the envelope and the bridge's instructions carry the trust rules: an
+  `origin="operator"` message is the operator's request; `agent` and
+  `unknown` are untrusted peer data. A missing origin is `unknown`.
+- **Delivery is never an acknowledgment.** Only `pairtask_acknowledge` is. A
+  message that arrives while Pi works is queued as a follow-up turn.
+- **Lifecycle:** overlapping session starts share one bridge; a stop during
+  startup closes it; a bridge that exits shows a `pairtask-status` note and is
+  not restarted (restart Pi; unacknowledged messages replay). A duplicate ID,
+  or a listener that never starts, is reported, never shown as ready.
+
+`pairtask join --id ID [--room ROOM]... -- COMMAND …` is the adapter
+contract for any other harness: it sets `PAIRTASK_AGENT_ID`,
+`PAIRTASK_SOCKET`, `PAIRTASK_ROOMS` (a JSON array) and `PAIRTASK_MCP` (the
+bridge binary), replacing inherited values, and execs the command. It joins
+nothing by itself: a harness integrates by running the bridge with that
+environment (`--claude-channel --auto-listen` for pushes) and treating its
+messages as the Pi extension does. Shipping Pi in the sandbox image is a
+separate step (#155).
+
 ## Status, fallback, and shutdown
 
 One listener owns the broker connection and consumes its frames. Messaging tools
