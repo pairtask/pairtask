@@ -238,7 +238,10 @@ class Extension {
 		this.deliver(params);
 	}
 
+	// flush delivers what was queued during startup, unless the bridge was
+	// stopped or replaced, or closed, since launch finished.
 	private flush(bridge: Bridge): void {
+		if (this.stale(bridge) || this.bridge !== bridge) return;
 		bridge.ready = true;
 		const queued = bridge.queued.splice(0);
 		for (const params of queued) this.deliver(params);
