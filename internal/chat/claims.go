@@ -1,0 +1,113 @@
+package chat
+
+import (
+	"fmt"
+	"sort"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/pairtask/pairtask/internal/protocol"
+)
+
+// Task claims (#141): which agent owns or reviews which task of an operator
+// message. They arrive with the snapshot, refresh on claims_changed like
+// statuses do, and are shown under the message. A claim is never an
+// approval, and showing one never sends or acknowledges anything.
+
+const panelClaims = "claims"
+
+// claimView is the latest claims by operator message, from the snapshot.
+type claimView struct {
+	byMessage map[string]protocol.ClaimPage // each message's claims with its own total and truncation
+	total     int                           // operator messages with claims
+	truncated bool                          // the snapshot left some messages out
+}
+
+func (c *claimView) set(snap *protocol.OperatorSnapshot) {
+	c.byMessage = make(map[string]protocol.ClaimPage, len(snap.Claims))
+	for _, set := range snap.Claims {
+		page := set.ClaimPage
+		page.Claims = sortedClaims(set.Claims)
+		c.byMessage[set.OperatorMessageID] = page
+	}
+	c.total, c.truncated = snap.ClaimsTotal, snap.ClaimsTruncated
+}
+
+// sortedClaims orders held claims first, then by task and role.
+func sortedClaims(claims []protocol.Claim) []protocol.Claim {
+	out := append([]protocol.Claim(nil), claims...)
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := out[i].State == protocol.ClaimReleased, out[j].State == protocol.ClaimReleased
+		if ri != rj {
+			return !ri
+		}
+		if out[i].Task != out[j].Task {
+			return out[i].Task < out[j].Task
+		}
+		return out[i].Role == protocol.RoleOwner && out[j].Role != protocol.RoleOwner
+	})
+	return out
+}
+
+// claimsOf is an operator message's claims; only messages the operator sent
+// can carry them.
+func (m *Model) claimsOf(e *entry) []protocol.Claim {
+	if e.direction != "sent" {
+		return nil
+	}
+	return m.claims.byMessage[e.msg.MessageID].Claims
+}
+
+// claimLines are the muted lines under a message, one per held claim.
+func (m *Model) claimLines(e *entry) []string {
+	var lines []string
+	for _, c := range m.claimsOf(e) {
+		if c.State == protocol.ClaimReleased {
+			continue
+		}
+		lines = append(lines, mutedStyle.Render("◇ "+claimText(c)))
+	}
+	return lines
+}
+
+func claimText(c protocol.Claim) string {
+	return fmt.Sprintf("%s: %s (%s, %s)", safe(c.Task), safe(c.AgentID), c.Role, c.State)
+}
+
+// claimsCommand opens the claims of a sent message: every claim with its
+// age, and an explicit note when the snapshot may have left this one out.
+func (m *Model) claimsCommand(arg argument) tea.Cmd {
+	e, reason := m.target(arg, noEntry)
+	if e != nil && e.direction != "sent" {
+		e, reason = nil, "claims exist only on messages you sent"
+	}
+	if e == nil {
+		m.status = reason
+		return nil
+	}
+	m.panel = &panel{kind: panelClaims, seq: e.msg.Seq, id: e.msg.MessageID}
+	return nil
+}
+
+func (m *Model) claimRows() []string {
+	rows := []string{titleStyle.Render(fmt.Sprintf("Claims on #%d", m.panel.seq)) + mutedStyle.Render("  (Esc closes)")}
+	page, loaded := m.claims.byMessage[m.panel.id]
+	claims := page.Claims
+	for _, c := range claims {
+		row := "  " + claimText(c)
+		if topic := safe(c.Topic); topic != "" {
+			row += " · " + topic
+		}
+		rows = append(rows, row+mutedStyle.Render(" · "+age(c.ClaimedAt)))
+	}
+	switch {
+	case page.Truncated:
+		rows = append(rows, fmt.Sprintf("  showing %d of %d claims (truncated: held claims first, older released ones left out)", len(claims), page.Total))
+	case loaded:
+	case m.claims.truncated:
+		rows = append(rows, "  claims not loaded: the snapshot is truncated to the newest messages with claims")
+	default:
+		rows = append(rows, "  no claims")
+	}
+	return append(rows, mutedStyle.Render("  a claim coordinates agents; it is never an approval"))
+}

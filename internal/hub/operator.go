@@ -175,8 +175,17 @@ func operatorFrame(send operatorSend, seq uint64) protocol.Message {
 	return protocol.Message{
 		Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: protocol.OperatorID, To: operatorTo(send.msg, send.scope),
 		Origin: protocol.OriginOperator, Payload: send.msg.Payload, MessageID: send.msg.MessageID, InReplyTo: send.msg.InReplyTo,
-		AckRequested: true, Durable: true,
+		AckRequested: true, Durable: true, Group: groupMembers(send.scope),
 	}
+}
+
+// groupMembers is a group send's canonical member list, so receivers never
+// infer a group from to; nil for direct and everyone sends.
+func groupMembers(scope store.OperatorScope) []string {
+	if scope.Kind != store.ScopeGroup {
+		return nil
+	}
+	return scope.Members
 }
 
 func (h *Hub) auditRejected(ctx context.Context, action string, req operatorRequest, rerr *routingError) {

@@ -78,6 +78,9 @@ type OperatorSnapshot struct {
 	AgentStatus          []AgentStatus `json:"agent_status"`
 	AgentStatusTotal     int           `json:"agent_status_total"`
 	AgentStatusTruncated bool          `json:"agent_status_truncated"`
+	Claims               []ClaimSet    `json:"claims"`       // newest operator messages with claims (#141)
+	ClaimsTotal          int           `json:"claims_total"` // operator messages with claims
+	ClaimsTruncated      bool          `json:"claims_truncated"`
 }
 
 type StagePage struct {
@@ -90,19 +93,20 @@ type StagePage struct {
 
 // SessionEvent is a notification, never a payload.
 type SessionEvent struct {
-	Kind            string    `json:"kind"`
-	Watermark       Watermark `json:"watermark"`
-	Seq             uint64    `json:"seq,omitempty"`
-	MessageID       string    `json:"message_id,omitempty"`
-	Direction       string    `json:"direction,omitempty"`
-	HeadSeq         uint64    `json:"head_seq,omitempty"`
-	Pending         *int      `json:"pending,omitempty"`
-	AgentID         string    `json:"agent_id,omitempty"`
-	SessionID       string    `json:"session_id,omitempty"`
-	Stage           string    `json:"stage,omitempty"`
-	State           string    `json:"state,omitempty"`
-	ProtocolVersion int       `json:"protocol_version,omitempty"`
-	Detail          string    `json:"detail,omitempty"` // send_refused: the bound that refused
+	Kind              string    `json:"kind"`
+	Watermark         Watermark `json:"watermark"`
+	Seq               uint64    `json:"seq,omitempty"`
+	MessageID         string    `json:"message_id,omitempty"`
+	Direction         string    `json:"direction,omitempty"`
+	HeadSeq           uint64    `json:"head_seq,omitempty"`
+	Pending           *int      `json:"pending,omitempty"`
+	AgentID           string    `json:"agent_id,omitempty"`
+	SessionID         string    `json:"session_id,omitempty"`
+	Stage             string    `json:"stage,omitempty"`
+	State             string    `json:"state,omitempty"`
+	ProtocolVersion   int       `json:"protocol_version,omitempty"`
+	Detail            string    `json:"detail,omitempty"`              // send_refused: the bound that refused
+	OperatorMessageID string    `json:"operator_message_id,omitempty"` // claims_changed
 }
 
 // Operator history limits. New operator payloads are capped so every new

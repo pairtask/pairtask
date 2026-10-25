@@ -143,6 +143,10 @@ func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (pr
 		return snap, err
 	}
 	snap.AgentStatusTruncated = snap.AgentStatusTotal > len(snap.AgentStatus)
+	if snap.Claims, snap.ClaimsTotal, err = h.snapshotClaims(ctx); err != nil {
+		return snap, err
+	}
+	snap.ClaimsTruncated = snap.ClaimsTotal > len(snap.Claims)
 	return fitSnapshot(snap)
 }
 
@@ -160,6 +164,11 @@ func fitSnapshot(snap protocol.OperatorSnapshot) (protocol.OperatorSnapshot, err
 		case len(snap.RecentSent) > 0:
 			snap.RecentSent = snap.RecentSent[:len(snap.RecentSent)-1]
 			snap.RecentSentTruncated = true
+		case len(snap.Claims) > 0:
+			// Newest first: drop the oldest message's claims; the total keeps
+			// the omission visible.
+			snap.Claims = snap.Claims[:len(snap.Claims)-1]
+			snap.ClaimsTruncated = true
 		case len(snap.AgentStatus) > 0:
 			snap.AgentStatus = snap.AgentStatus[:len(snap.AgentStatus)-1]
 			snap.AgentStatusTruncated = true

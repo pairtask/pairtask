@@ -84,7 +84,9 @@ func (m *Model) resolveAudience() audience {
 	if c.to != nil {
 		return audience{err: "use either /to or @mentions, not both"}
 	}
-	if key := m.conv.selected; !key.common() {
+	if key := m.conv.selected; key.isGroup() {
+		return audience{err: "mentions address other agents only in All (Tab)"}
+	} else if !key.common() {
 		return m.ownMentions(p.tokens, key.agent())
 	}
 	return m.mentionAudience(p.tokens)
@@ -112,6 +114,9 @@ func (m *Model) explicitAudience() audience {
 		return audience{ids: []string{c.reply.sender}, source: SourceReply, notSeen: m.unseen([]string{c.reply.sender})}
 	case c.to != nil:
 		return audience{ids: c.to, source: SourceTo, notSeen: m.unseen(c.to)}
+	case m.conv.selected.isGroup():
+		ids := m.conv.selected.group()
+		return audience{ids: ids, source: SourceConversation, notSeen: m.unseen(ids)}
 	case !m.conv.selected.common():
 		id := m.conv.selected.agent()
 		return audience{ids: []string{id}, source: SourceConversation, notSeen: m.unseen([]string{id})}

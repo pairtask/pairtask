@@ -131,6 +131,7 @@ func encodeText(text string) (json.RawMessage, error) {
 // let go of the draft and its audience.
 func (m *Model) dispatch(scope protocol.Message, payload json.RawMessage, inReplyTo string) tea.Cmd {
 	m.send.intent = &intent{ID: uuid.NewString(), Scope: scope, Payload: payload, InReplyTo: inReplyTo, State: IntentSending, Ack: m.bindAck(), AckBatch: m.bindAudience(scope, inReplyTo)}
+	m.reopenScope(scope) // writing to the same recipients shows their closed conversation
 	cmd := m.sendIntent()
 	m.compose.resetDraft()
 	m.endRecall()

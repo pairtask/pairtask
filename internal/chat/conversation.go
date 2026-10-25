@@ -1,7 +1,9 @@
 package chat
 
 import (
+	"encoding/json"
 	"slices"
+	"strings"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -17,15 +19,61 @@ const savedViewsMax = 64
 // SourceConversation is the audience a 1:1 view gives a draft by itself.
 const SourceConversation = "conversation"
 
-// viewKey names a conversation: an agent ID, or allKey for the common chat,
-// which no valid agent ID can equal.
-type viewKey string
+// viewKey names a conversation: the common chat (allKey), a 1:1 with an
+// agent, or a group by its canonical members. The kinds are separate fields,
+// so an agent literally named like a group, "group:x" or "all", stays a 1:1.
+type viewKey struct {
+	agentID string // a 1:1; empty otherwise
+	members string // a group: its sorted, unique member IDs as JSON; empty otherwise
+}
 
-const allKey viewKey = ""
+var allKey = viewKey{}
+
+func agentKey(id string) viewKey { return viewKey{agentID: id} }
+
+// groupKey is the conversation of a member set, in any order and with repeats.
+func groupKey(ids []string) viewKey {
+	members, _ := json.Marshal(canonicalGroup(ids))
+	return viewKey{members: string(members)}
+}
+
+func canonicalGroup(ids []string) []string {
+	members := slices.Clone(ids)
+	slices.Sort(members)
+	return slices.Compact(members)
+}
 
 func (k viewKey) common() bool { return k == allKey }
 
-func (k viewKey) agent() string { return string(k) }
+func (k viewKey) isGroup() bool { return k.members != "" }
+
+// agent is a 1:1's agent ID, empty for All and for groups.
+func (k viewKey) agent() string { return k.agentID }
+
+// group is a group's members, nil otherwise.
+func (k viewKey) group() []string {
+	if !k.isGroup() {
+		return nil
+	}
+	var members []string
+	_ = json.Unmarshal([]byte(k.members), &members)
+	return members
+}
+
+// label is how a conversation is named on screen.
+func (k viewKey) label() string {
+	switch {
+	case k.common():
+		return "All"
+	case k.isGroup():
+		names := k.group()
+		for i, id := range names {
+			names[i] = safe(id)
+		}
+		return strings.Join(names, ", ")
+	}
+	return safe(k.agentID)
+}
 
 // view is one conversation's saved state: where it was scrolled, what it
 // hides and searches for, and its own draft with the draft's reply target
@@ -40,12 +88,13 @@ type view struct {
 	used    int // selection order, for eviction
 }
 
-// conversations is the directory of agents by first appearance, the
-// selected conversation and the saved views.
+// conversations is the directory of agents and groups by first appearance,
+// the selected conversation, the saved views and the hidden ones.
 type conversations struct {
-	order    []string // agent IDs by first appearance in this session
+	order    []viewKey // agents and groups by first appearance in this session
 	selected viewKey
 	saved    map[viewKey]*view
+	hidden   map[viewKey]bool // closed with /close; UI only, reopened by traffic or /chat
 	uses     int
 }
 
@@ -53,63 +102,65 @@ type conversations struct {
 // ID and empty for the common chat, which All marks, so an agent literally
 // named "all" is never confused with it.
 type ConversationView struct {
-	ID       string
+	ID       string   // the agent ID of a 1:1; the member names of a group; empty for All
+	Group    []string // a group's sorted members; nil for All and 1:1s
 	All      bool
-	Position int
+	Hidden   bool // closed with /close; not shown in the bar
+	Position int  // bar position; 0 while hidden
 	Unread   int
 	Selected bool
 	Draft    bool
 }
 
 // refreshDirectory keeps the directory in step with presence and the loaded
-// timeline: agents that vanished from both leave it, new ones append, and
-// the selected agent stays while selected. Positions are displayed order,
-// so they move only when an agent leaves.
+// timeline: conversations that vanished from both leave it, new ones append,
+// and the selected one stays while selected. Positions are displayed order,
+// so they move only when a conversation leaves.
 func (m *Model) refreshDirectory() {
-	live := m.liveAgents()
+	live := m.liveViews()
 	m.conv.order = pruneOrder(m.conv.order, live)
 	m.conv.order = appendUnseen(m.conv.order, live)
 }
 
 // pruneOrder keeps the directory entries that are still live.
-func pruneOrder(order []string, live agentSet) []string {
+func pruneOrder(order []viewKey, live keySet) []viewKey {
 	kept := order[:0]
-	for _, id := range order {
-		if live.has[id] {
-			kept = append(kept, id)
+	for _, key := range order {
+		if live.has[key] {
+			kept = append(kept, key)
 		}
 	}
 	return kept
 }
 
-// appendUnseen adds live agents the directory doesn't list yet, in order of
-// first appearance.
-func appendUnseen(order []string, live agentSet) []string {
-	for _, id := range live.seen {
-		if !slices.Contains(order, id) {
-			order = append(order, id)
+// appendUnseen adds live conversations the directory doesn't list yet, in
+// order of first appearance.
+func appendUnseen(order []viewKey, live keySet) []viewKey {
+	for _, key := range live.seen {
+		if !slices.Contains(order, key) {
+			order = append(order, key)
 		}
 	}
 	return order
 }
 
-// agentSet is an ordered set of agent IDs.
-type agentSet struct {
-	has  map[string]bool
-	seen []string
+// keySet is an ordered set of conversations.
+type keySet struct {
+	has  map[viewKey]bool
+	seen []viewKey
 }
 
-func (s *agentSet) add(id string) {
-	if reservedID(id) || s.has[id] {
+func (s *keySet) add(key viewKey) {
+	if key.common() || reservedID(key.agentID) && !key.isGroup() || s.has[key] {
 		return
 	}
-	s.has[id] = true
-	s.seen = append(s.seen, id)
+	s.has[key] = true
+	s.seen = append(s.seen, key)
 }
 
-func (s *agentSet) addAll(ids []string) {
-	for _, id := range ids {
-		s.add(id)
+func (s *keySet) addAll(keys []viewKey) {
+	for _, key := range keys {
+		s.add(key)
 	}
 }
 
@@ -118,53 +169,48 @@ func reservedID(id string) bool {
 	return id == "" || id == protocol.OperatorID || id == protocol.Broadcast
 }
 
-// liveAgents are the agents the directory lists: in the loaded timeline, in
-// presence, selected, or holding a protected view, in that order of first
-// appearance. A view with an unsent draft or a reply binding stays reachable
-// even when its agent left presence and the timeline.
-func (m *Model) liveAgents() agentSet {
-	live := agentSet{has: map[string]bool{}}
-	m.addTimelineAgents(&live)
-	m.addPresentAgents(&live)
-	live.add(m.conv.selected.agent())
-	m.addProtectedViews(&live)
+// liveViews are the conversations the directory lists: in the loaded
+// timeline, in presence, selected, or holding a protected view, in that order
+// of first appearance. A view with an unsent draft or a reply binding stays
+// reachable even when nothing else lists it.
+func (m *Model) liveViews() keySet {
+	live := keySet{has: map[viewKey]bool{}}
+	for _, e := range m.timeline.order {
+		live.addAll(entryViews(e))
+	}
+	for _, a := range m.agents.list {
+		live.add(agentKey(a.AgentID))
+	}
+	live.add(m.conv.selected)
+	for key, v := range m.conv.saved {
+		if v.protected() {
+			live.add(key)
+		}
+	}
 	return live
 }
 
-func (m *Model) addTimelineAgents(live *agentSet) {
-	for _, e := range m.timeline.order {
-		live.addAll(entryAgents(e))
-	}
-}
-
-func (m *Model) addPresentAgents(live *agentSet) {
-	for _, a := range m.agents.list {
-		live.add(a.AgentID)
-	}
-}
-
-func (m *Model) addProtectedViews(live *agentSet) {
-	for key, v := range m.conv.saved {
-		if v.protected() {
-			live.add(key.agent())
-		}
-	}
-}
-
-// entryAgents lists the agents an entry belongs to: its sender, or its
-// accepted recipients.
-func entryAgents(e *entry) []string {
+// entryViews lists the conversations an entry belongs to besides All: its
+// sender's 1:1, or for a sent message its group's conversation and each
+// accepted recipient's 1:1. A group is known only from the broker's member
+// list, never from the to field.
+func entryViews(e *entry) []viewKey {
 	if e.direction == "received" {
-		return []string{e.msg.From}
+		return []viewKey{agentKey(e.msg.From)}
 	}
-	ids := append([]string(nil), e.msg.Group...)
-	if e.msg.To != "" && e.msg.To != protocol.Broadcast {
-		ids = append(ids, e.msg.To)
+	var keys []viewKey
+	if len(e.msg.Group) > 0 {
+		keys = append(keys, groupKey(e.msg.Group))
+		for _, id := range e.msg.Group {
+			keys = append(keys, agentKey(id))
+		}
+	} else if e.msg.To != "" && e.msg.To != protocol.Broadcast {
+		keys = append(keys, agentKey(e.msg.To))
 	}
 	for id := range e.stages {
-		ids = append(ids, id)
+		keys = append(keys, agentKey(id))
 	}
-	return ids
+	return keys
 }
 
 // inView reports whether an entry belongs to a conversation: All holds
@@ -175,11 +221,14 @@ func (m *Model) inView(e *entry, key viewKey) bool {
 	if key.common() {
 		return true
 	}
+	if key.isGroup() {
+		return e.direction == "sent" && len(e.msg.Group) > 0 && groupKey(e.msg.Group) == key
+	}
 	id := key.agent()
 	if e.direction == "received" {
 		return e.msg.From == id
 	}
-	if e.msg.To == id || slices.Contains(e.msg.Group, id) {
+	if len(e.msg.Group) == 0 && e.msg.To == id || slices.Contains(e.msg.Group, id) {
 		return true
 	}
 	_, ok := e.stages[id]
@@ -191,6 +240,7 @@ func (m *Model) inView(e *entry, key viewKey) bool {
 // no draft and no reply binding is evicted, and when none is, the switch is
 // refused and nothing changes.
 func (m *Model) selectView(key viewKey) bool {
+	delete(m.conv.hidden, key) // selecting a conversation always shows it
 	if key == m.conv.selected {
 		return true
 	}
@@ -216,8 +266,8 @@ func (m *Model) selectView(key viewKey) bool {
 // openable reports whether a conversation without saved state may be
 // opened: its agent is in the directory and a view slot is free.
 func (m *Model) openable(key viewKey) bool {
-	if !key.common() && !slices.Contains(m.conv.order, key.agent()) {
-		m.status = "no conversation with " + safe(key.agent())
+	if !key.common() && !key.isGroup() && !slices.Contains(m.conv.order, key) {
+		m.status = "no conversation with " + key.label()
 		return false
 	}
 	if !m.allocateView() {
@@ -265,7 +315,7 @@ func (m *Model) placeholder() string {
 	if m.conv.selected.common() {
 		return "Message everyone · @agent for one · / for commands"
 	}
-	return "Message " + safe(m.conv.selected.agent()) + " · / for commands"
+	return "Message " + m.conv.selected.label() + " · / for commands"
 }
 
 // savedDraft reports whether a conversation holds an unsent draft or a reply
@@ -284,18 +334,21 @@ func (c *composer) protectedDraft() bool {
 	return !c.draftEmpty() || c.reply != nil || c.to != nil
 }
 
-// cycleView moves the selection along the bar.
+// cycleView moves the selection along the visible bar.
 func (m *Model) cycleView(step int) {
 	positions := m.positions()
 	i := max(0, slices.Index(positions, m.conv.selected))
 	m.selectView(positions[(i+step+len(positions))%len(positions)])
 }
 
-// positions is the bar in order: All, then the directory.
+// positions is the visible bar in order: All, then the directory without the
+// hidden conversations.
 func (m *Model) positions() []viewKey {
 	keys := []viewKey{allKey}
-	for _, id := range m.conv.order {
-		keys = append(keys, viewKey(id))
+	for _, key := range m.conv.order {
+		if !m.conv.hidden[key] {
+			keys = append(keys, key)
+		}
 	}
 	return keys
 }
