@@ -176,3 +176,37 @@ func TestStartResumeAcceptanceConflictingResumeOptionsAreUsageErrors(t *testing.
 		assertStartEqual(t, "conflict never launches", len(f.argv), 0)
 	}
 }
+
+func TestStartResumeAcceptanceBrokerIDInNativeValuesIsForwarded(t *testing.T) {
+	for _, native := range [][]string{
+		{"resume", "valid-thread", "broker-session"},
+		{"resume", "valid-thread", "--model", "broker-session"},
+		{"resume", "--cd", "broker-session", "valid-thread"},
+	} {
+		t.Run(strings.Join(native, " "), func(t *testing.T) {
+			f := newResumeStartFixture(t, false)
+			f.runtime.Status = func(context.Context, string) (protocol.StatusSnapshot, error) {
+				snap := readyStatus()
+				snap.Sessions = []protocol.SessionStatus{{AgentID: "other", SessionID: "broker-session", State: "disconnected"}}
+				return snap, nil
+			}
+			assertStartEqual(t, "native values are not selectors: "+f.stderr.String(), f.run(append([]string{"--"}, native...)...), 0)
+			if len(f.argv) < len(native) || !slices.Equal(f.argv[len(f.argv)-len(native):], native) {
+				t.Fatalf("native arguments rewritten: %q", f.argv)
+			}
+		})
+	}
+}
+
+func TestStartResumeAcceptanceLifecycleWordsInOptionValuesAreForwarded(t *testing.T) {
+	for _, model := range []string{"fork", "resume"} {
+		t.Run(model, func(t *testing.T) {
+			f := newResumeStartFixture(t, true)
+			assertStartEqual(t, "model value is not a lifecycle command", f.run("--resume", "--", "--model", model), 0)
+			want := []string{"--model", model, "resume", f.binding.ThreadID}
+			if len(f.argv) < len(want) || !slices.Equal(f.argv[len(f.argv)-len(want):], want) {
+				t.Fatalf("managed resume lost native options: %q", f.argv)
+			}
+		})
+	}
+}
