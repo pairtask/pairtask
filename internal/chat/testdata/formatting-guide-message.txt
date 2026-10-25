@@ -1,0 +1,13 @@
+## Release check ✅
+- **Build** passes
+- *Review* is ready
+- <u>Deploy</u> after approval
+
+Item | Owner
+--- | ---
+Checks | codex-1
+Notes | `README.md`
+
+```text
+**literal** stays in the code block
+```
