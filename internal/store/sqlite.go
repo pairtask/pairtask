@@ -66,7 +66,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -82,6 +82,7 @@ func Open(path string) (*Store, error) {
 var addedColumns = []struct{ table, column, decl string }{
 	{"message_metadata", "origin", "TEXT"},
 	{"durable_agents", "protocol_version", "INTEGER"},
+	{"message_metadata", "room", "TEXT"}, // NULL is the Square
 }
 
 func migrate(db *sql.DB) error {
@@ -193,7 +194,7 @@ func persistMessage(ctx context.Context, tx *sql.Tx, routed routedMessage) error
 	if _, err := tx.ExecContext(ctx, `INSERT INTO messages (seq, ts, sender, recipient, payload) VALUES (?, ?, ?, ?, ?)`, msg.Seq, msg.TS.UTC(), msg.From, msg.To, string(msg.Payload)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO message_metadata (message_id, seq, sender_session, in_reply_to, ack_requested, origin) VALUES (?, ?, ?, ?, ?, ?)`, msg.MessageID, msg.Seq, routed.senderSession, msg.InReplyTo, msg.AckRequested, nullString(msg.Origin)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO message_metadata (message_id, seq, sender_session, in_reply_to, ack_requested, origin, room) VALUES (?, ?, ?, ?, ?, ?, ?)`, msg.MessageID, msg.Seq, routed.senderSession, msg.InReplyTo, msg.AckRequested, nullString(msg.Origin), nullString(msg.Room)); err != nil {
 		return err
 	}
 	if err := insertRecipients(ctx, tx, msg.MessageID, recipients); err != nil {

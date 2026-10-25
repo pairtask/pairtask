@@ -23,6 +23,7 @@ var mentionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 // audience is who a draft would go to, or why it can't be sent.
 type audience struct {
 	everyone bool
+	room     string // with everyone: a room's members instead of the Square
 	ids      []string
 	notSeen  []string
 	source   string
@@ -92,7 +93,7 @@ func (m *Model) resolveAudience() audience {
 func (m *Model) viewMentions(tokens []string) audience {
 	key := m.conv.selected
 	switch {
-	case key.isGroup():
+	case key.isGroup() || key.isRoom():
 		return audience{err: "mentions address other agents only in All (Tab)"}
 	case !key.common():
 		return m.ownMentions(tokens, key.agent())
@@ -117,11 +118,13 @@ func (m *Model) explicitAudience() audience {
 	c := &m.compose
 	switch {
 	case c.reply != nil && c.reply.public:
-		return audience{everyone: true, source: SourceReply}
+		return audience{everyone: true, room: c.reply.room, source: SourceReply}
 	case c.reply != nil:
 		return audience{ids: []string{c.reply.sender}, source: SourceReply, notSeen: m.unseen([]string{c.reply.sender})}
 	case c.to != nil:
 		return audience{ids: c.to, source: SourceTo, notSeen: m.unseen(c.to)}
+	case m.conv.selected.isRoom():
+		return audience{everyone: true, room: m.conv.selected.room, source: SourceConversation}
 	case m.conv.selected.isGroup():
 		ids := m.conv.selected.group()
 		return audience{ids: ids, source: SourceConversation, notSeen: m.unseen(ids)}
@@ -167,7 +170,7 @@ func (m *Model) known(id string) bool {
 // scope is the operator_send addressing for a sendable audience.
 func (a audience) scope() (protocol.Message, error) {
 	if a.everyone {
-		return protocol.Message{To: protocol.Broadcast}, nil
+		return protocol.Message{To: protocol.Broadcast, Room: a.room}, nil
 	}
 	return scopeFor(a.ids)
 }

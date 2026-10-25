@@ -35,7 +35,8 @@ type replyTarget struct {
 	messageID string
 	sender    string
 	seq       uint64
-	public    bool // a reply to a public "*" goes to everyone
+	public    bool   // a reply to a public "*" goes to everyone, or to its room
+	room      string // the parent's room; the broker keeps the reply there
 }
 
 // commandLine is the separate input for commands; it never touches the draft.

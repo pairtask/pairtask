@@ -49,7 +49,7 @@ func (s *Store) RecentOperatorSent(ctx context.Context, q SentQuery) ([]protocol
 }
 
 func (s *Store) recentSent(ctx context.Context, limit int) ([]protocol.SentSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT mm.message_id, m.seq, m.ts, m.recipient FROM message_metadata mm JOIN messages m USING(seq) WHERE mm.origin = 'operator' ORDER BY m.seq DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT mm.message_id, m.seq, m.ts, m.recipient, COALESCE(mm.room, '') FROM message_metadata mm JOIN messages m USING(seq) WHERE mm.origin = 'operator' ORDER BY m.seq DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (s *Store) recentSent(ctx context.Context, limit int) ([]protocol.SentSumma
 	var sent []protocol.SentSummary
 	for rows.Next() {
 		var m protocol.SentSummary
-		if err := rows.Scan(&m.MessageID, &m.Seq, &m.TS, &m.To); err != nil {
+		if err := rows.Scan(&m.MessageID, &m.Seq, &m.TS, &m.To, &m.Room); err != nil {
 			return nil, err
 		}
 		sent = append(sent, m)

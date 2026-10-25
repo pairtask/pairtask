@@ -25,6 +25,7 @@ const SourceConversation = "conversation"
 type viewKey struct {
 	agentID string // a 1:1; empty otherwise
 	members string // a group: its sorted, unique member IDs as JSON; empty otherwise
+	room    string // a room (#153); empty otherwise
 }
 
 var allKey = viewKey{}
@@ -65,6 +66,8 @@ func (k viewKey) label() string {
 	switch {
 	case k.common():
 		return "All"
+	case k.isRoom():
+		return "#" + safe(k.room)
 	case k.isGroup():
 		names := k.group()
 		for i, id := range names {
@@ -167,7 +170,7 @@ func (s *keySet) addAll(keys []viewKey) {
 // nameless keys never get a conversation of their own: All, and 1:1s with a
 // reserved ID.
 func nameless(key viewKey) bool {
-	if key.isGroup() {
+	if key.isGroup() || key.isRoom() {
 		return false
 	}
 	return reservedID(key.agentID)
@@ -190,6 +193,9 @@ func (m *Model) liveViews() keySet {
 	}
 	for _, a := range m.agents.list {
 		live.add(agentKey(a.AgentID))
+	}
+	for _, r := range m.rooms {
+		live.add(roomKey(r.ID))
 	}
 	live.add(m.conv.selected)
 	live.addAll(m.protectedViews())
@@ -225,7 +231,7 @@ func senderView(e *entry) []viewKey {
 func entryViews(e *entry) []viewKey {
 	switch {
 	case e.msg.To == protocol.Broadcast:
-		return nil
+		return roomEntryViews(e)
 	case e.direction == "received":
 		return []viewKey{agentKey(e.msg.From)}
 	case len(canonicalGroup(e.msg.Group)) == 1:
@@ -286,10 +292,11 @@ func (m *Model) openable(key viewKey) bool {
 	return true
 }
 
-// unlisted is a 1:1 the directory doesn't know; All and groups are always openable.
+// unlisted is a 1:1 the directory doesn't know; All, groups and rooms are
+// always openable, so a room past the bounded room list stays reachable.
 func (m *Model) unlisted(key viewKey) bool {
-	if key.common() || key.isGroup() {
-		return false
+	if key.agentID == "" {
+		return false // All, a group or a room
 	}
 	return !slices.Contains(m.conv.order, key)
 }

@@ -16,27 +16,44 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 			Detail: "agent id " + c.ID + " is owned by session " + owner.SessionID + "; disconnect that owner before retrying, or use a distinct agent_id"})
 		return
 	}
-	if err := h.recordConnect(c); err != nil {
-		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "session not persisted; registration rejected"})
-		return
-	}
-	pending, reclaimed, err := h.claimPending(c)
-	if err != nil {
-		h.log.Error("recover inbox failed", "agent_id", c.ID, "error", err)
-		h.recordDisconnect(c)
-		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "durable inbox recovery failed; registration rejected; retry after fixing storage"})
+	pending, reclaimed, ok := h.admitSession(c)
+	if !ok {
 		return
 	}
 	clients[c.ID] = c
 	h.seq++
-	h.enqueue(clients, c, protocol.Message{Type: protocol.TypeWelcome, AgentID: c.ID, SessionID: c.SessionID, Seq: h.seq, ProtocolVersion: c.ProtocolVersion})
+	h.enqueue(clients, c, h.welcomeRooms(context.Background(), c, protocol.Message{Type: protocol.TypeWelcome, AgentID: c.ID, SessionID: c.SessionID, Seq: h.seq, ProtocolVersion: c.ProtocolVersion}))
 	for _, msg := range pending {
 		if !h.enqueue(clients, c, msg) {
 			return
 		}
 	}
 	h.noteConnected(c, reclaimed)
+	h.noteHelloRooms(c)
 	h.log.Info("agent connected", "agent_id", c.ID, "session_id", c.SessionID, "replayed", len(pending), "online", len(clients))
+}
+
+// admitSession records the session, joins its hello rooms and recovers its
+// inbox; on failure the registration is rejected and nothing stays owned.
+func (h *Hub) admitSession(c *Client) ([]protocol.Message, []string, bool) {
+	if err := h.recordConnect(c); err != nil {
+		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "session not persisted; registration rejected"})
+		return nil, nil, false
+	}
+	if err := h.joinHelloRooms(context.Background(), c); err != nil {
+		h.log.Error("hello rooms not joined", "agent_id", c.ID, "error", err)
+		h.recordDisconnect(c)
+		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "rooms not joined; registration rejected"})
+		return nil, nil, false
+	}
+	pending, reclaimed, err := h.claimPending(c)
+	if err != nil {
+		h.log.Error("recover inbox failed", "agent_id", c.ID, "error", err)
+		h.recordDisconnect(c)
+		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "durable inbox recovery failed; registration rejected; retry after fixing storage"})
+		return nil, nil, false
+	}
+	return pending, reclaimed, true
 }
 
 func rejectRegistration(c *Client, frame protocol.Message) {
@@ -80,7 +97,7 @@ func (h *Hub) resolveRecipients(ctx context.Context, clients map[string]*Client,
 		return h.publicBroadcast(ctx, clients, in)
 	}
 	if in.Msg.To == protocol.Broadcast {
-		recipients, err := broadcastRecipients(clients, in.From)
+		recipients, err := broadcastRecipients(clients, in.From, everyone)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +166,11 @@ func (h *Hub) publicBroadcast(ctx context.Context, clients map[string]*Client, i
 	if rerr := h.validReply(ctx, h.store.ValidatePublicReply, in); rerr != nil {
 		return nil, rerr
 	}
-	peers, rerr := broadcastRecipients(clients, in.From)
+	admit, rerr := h.roomAudience(ctx, in.Msg.Room)
+	if rerr != nil {
+		return nil, rerr
+	}
+	peers, rerr := broadcastRecipients(clients, in.From, admit)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -217,3 +238,6 @@ func mapCopy[T any](in []T, f func(T) T) []T {
 	}
 	return out
 }
+
+// everyone admits every connected agent: the Square.
+func everyone(*Client) bool { return true }

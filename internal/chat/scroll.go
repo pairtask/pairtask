@@ -201,17 +201,21 @@ func (p *panel) scroll(direction, height int) {
 	p.offset = max(0, min(p.offset+direction*page, max(0, p.rows-page)))
 }
 
+// panelBuilders are each panel's rows.
+var panelBuilders = map[string]func(*Model) []string{
+	panelHelp: (*Model).helpRows,
+	panelAgents: func(m *Model) []string {
+		return append([]string{titleStyle.Render("Agents") + mutedStyle.Render("  (Esc closes)")}, m.agentRows()...)
+	},
+	panelStages: (*Model).stageRows,
+	panelClaims: (*Model).claimRows,
+	panelRooms:  (*Model).roomRows,
+}
+
 func (m *Model) panelRows(height int) []string {
 	var rows []string
-	switch m.panel.kind {
-	case panelHelp:
-		rows = m.helpRows()
-	case panelAgents:
-		rows = append([]string{titleStyle.Render("Agents") + mutedStyle.Render("  (Esc closes)")}, m.agentRows()...)
-	case panelStages:
-		rows = m.stageRows()
-	case panelClaims:
-		rows = m.claimRows()
+	if build := panelBuilders[m.panel.kind]; build != nil {
+		rows = build(m)
 	}
 	var out []string
 	for _, row := range rows {

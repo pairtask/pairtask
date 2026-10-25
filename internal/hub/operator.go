@@ -72,6 +72,7 @@ type operatorHandler func(h *Hub, ctx context.Context, clients map[string]*Clien
 // refused here, since they need an open operator session.
 var operatorHandlers = map[string]operatorHandler{
 	protocol.TypeOperatorSend:     (*Hub).routeOperatorSend,
+	protocol.TypeOperatorRoom:     (*Hub).operatorRoom,
 	protocol.TypeOperatorReceived: (*Hub).operatorReceived,
 	protocol.TypeOperatorAck:      (*Hub).operatorAck,
 	protocol.TypeOperatorAckMany:  (*Hub).operatorAckMany,
@@ -104,6 +105,9 @@ func (h *Hub) routeOperator(ctx context.Context, clients map[string]*Client, req
 func (h *Hub) routeOperatorSend(ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message {
 	msg := req.msg
 	scope, rerr := operatorScope(msg)
+	if rerr == nil {
+		rerr = h.scopeOperatorSend(ctx, &msg, scope)
+	}
 	if rerr != nil {
 		h.auditRejected(ctx, "send", req, rerr)
 		return rerr.frame(msg.MessageID)
@@ -175,7 +179,7 @@ func operatorFrame(send operatorSend, seq uint64) protocol.Message {
 	return protocol.Message{
 		Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: protocol.OperatorID, To: operatorTo(send.msg, send.scope),
 		Origin: protocol.OriginOperator, Payload: send.msg.Payload, MessageID: send.msg.MessageID, InReplyTo: send.msg.InReplyTo,
-		AckRequested: true, Durable: true, Group: groupMembers(send.scope),
+		AckRequested: true, Durable: true, Group: groupMembers(send.scope), Room: send.msg.Room,
 	}
 }
 
@@ -300,7 +304,11 @@ func (h *Hub) operatorBroadcast(ctx context.Context, clients map[string]*Client,
 	if err != nil {
 		return nil, nil, &routingError{protocol.ErrMalformedFrame, "payload is not valid JSON"}
 	}
-	recipients, excluded, rerr := h.partitionBroadcast(ctx, sortedClients(clients), wire)
+	candidates, rerr := h.roomCandidates(ctx, clients, out.Room)
+	if rerr != nil {
+		return nil, nil, rerr
+	}
+	recipients, excluded, rerr := h.partitionBroadcast(ctx, candidates, out.Room != "", wire)
 	if rerr == nil {
 		rerr = checkBroadcastSize(recipients)
 	}
@@ -319,11 +327,25 @@ func sortedClients(clients map[string]*Client) []*Client {
 	return sorted
 }
 
-func (h *Hub) partitionBroadcast(ctx context.Context, candidates []*Client, wire int) ([]protocol.Recipient, []string, *routingError) {
+// roomCandidates are the connected agents an operator "*" is for: everyone
+// for the Square, a room's members otherwise.
+func (h *Hub) roomCandidates(ctx context.Context, clients map[string]*Client, room string) ([]*Client, *routingError) {
+	all := sortedClients(clients)
+	if room == "" {
+		return all, nil
+	}
+	members, err := h.store.RoomMembers(ctx, room)
+	if err != nil {
+		return nil, &routingError{protocol.ErrInternal, "rooms unavailable"}
+	}
+	return slices.DeleteFunc(all, func(c *Client) bool { return !slices.Contains(members, c.ID) }), nil
+}
+
+func (h *Hub) partitionBroadcast(ctx context.Context, candidates []*Client, room bool, wire int) ([]protocol.Recipient, []string, *routingError) {
 	recipients := []protocol.Recipient{}
 	excluded := []string{}
 	for _, c := range candidates {
-		eligible, rerr := h.broadcastEligible(ctx, c, wire)
+		eligible, rerr := h.broadcastEligible(ctx, c, room, wire)
 		if rerr != nil {
 			return nil, nil, rerr
 		}
@@ -348,8 +370,8 @@ func checkBroadcastSize(recipients []protocol.Recipient) *routingError {
 
 // broadcastEligible admits a connected agent that can display origin and whose
 // own inbox has room; global limits are checked later for the whole set.
-func (h *Hub) broadcastEligible(ctx context.Context, c *Client, wire int) (bool, *routingError) {
-	if c.ProtocolVersion < protocol.OriginVersion {
+func (h *Hub) broadcastEligible(ctx context.Context, c *Client, room bool, wire int) (bool, *routingError) {
+	if c.ProtocolVersion < broadcastVersion(room) {
 		return false, nil
 	}
 	fits, err := h.store.RecipientCapacity(ctx, c.ID, wire)
@@ -383,4 +405,13 @@ func checkOperatorPayload(payload json.RawMessage) *routingError {
 		return &routingError{protocol.ErrMalformedFrame, "payload too large; operator messages are limited to 512 KiB"}
 	}
 	return nil
+}
+
+// broadcastVersion is the least version that can receive an operator "*":
+// origin (v4), or rooms (v9) for a room post, so no one reads it as the Square.
+func broadcastVersion(room bool) int {
+	if room {
+		return protocol.RoomVersion
+	}
+	return protocol.OriginVersion
 }

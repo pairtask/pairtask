@@ -23,6 +23,7 @@ type Client struct {
 	Harness         string
 	Model           string
 	ProtocolVersion int
+	JoinRooms       []string              // v9 hello: rooms to join on registration
 	Send            chan protocol.Message // buffered; sent to and closed only by the hub
 	Disconnect      func()                // closes the transport; must return promptly
 	connectedAt     time.Time
@@ -170,11 +171,11 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	if h.routeControl(ctx, clients, in) {
 		return
 	}
-	if err := prepareMessage(&in); err != nil {
+	if err := h.prepareAgentSend(ctx, &in); err != nil {
 		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
 		return
 	}
-	if h.reportRetry(ctx, clients, in) {
+	if !h.newSend(ctx, clients, in) {
 		return
 	}
 	recipients, err := h.resolveRecipients(ctx, clients, in)
@@ -192,6 +193,27 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: publicRecipients(recipients), Durable: out.Durable})
 	}
 	h.deliver(clients, in.From, out, recipients)
+}
+
+// newSend reports whether the message is a new send to route: a retry gets
+// its retained outcome, and a room post needs the sender's membership.
+func (h *Hub) newSend(ctx context.Context, clients map[string]*Client, in Inbound) bool {
+	if h.reportRetry(ctx, clients, in) {
+		return false
+	}
+	if err := h.admitRoomPost(ctx, in); err != nil {
+		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
+		return false
+	}
+	return true
+}
+
+// prepareAgentSend checks the envelope and decides the message's room.
+func (h *Hub) prepareAgentSend(ctx context.Context, in *Inbound) *routingError {
+	if err := prepareMessage(in); err != nil {
+		return err
+	}
+	return h.scopeAgentSend(ctx, in)
 }
 
 func prepareMessage(in *Inbound) *routingError {
@@ -288,10 +310,12 @@ func checkOperatorAddress(msg protocol.Message, version int) *routingError {
 	return nil
 }
 
-func broadcastRecipients(clients map[string]*Client, sender *Client) ([]protocol.Recipient, *routingError) {
+// broadcastRecipients is every connected agent the audience admits, except
+// the sender.
+func broadcastRecipients(clients map[string]*Client, sender *Client, admit func(*Client) bool) ([]protocol.Recipient, *routingError) {
 	var recipients []protocol.Recipient
 	for _, c := range clients {
-		if c != sender {
+		if c != sender && admit(c) {
 			recipients = append(recipients, c.identity())
 		}
 	}
@@ -314,7 +338,7 @@ func (h *Hub) persistRoute(ctx context.Context, in Inbound, recipients []protoco
 		Type: protocol.TypeMsg, Seq: h.seq, TS: &ts,
 		From: in.From.ID, SessionID: in.From.SessionID, To: msg.To,
 		Payload: msg.Payload, MessageID: msg.MessageID, Origin: protocol.OriginAgent,
-		InReplyTo: msg.InReplyTo, AckRequested: msg.AckRequested, Durable: msg.Durable,
+		InReplyTo: msg.InReplyTo, AckRequested: msg.AckRequested, Durable: msg.Durable, Room: msg.Room,
 	}
 	// Added broker metadata must still fit the receiver's frame limit.
 	sized := out
@@ -542,6 +566,8 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 		h.handleStatus(ctx, clients, in)
 	case claimFrames[in.Msg.Type]:
 		h.handleClaim(ctx, clients, in)
+	case roomFrames[in.Msg.Type]:
+		h.handleRoom(ctx, clients, in)
 	case in.Msg.Type == protocol.TypeAck:
 		h.acknowledge(ctx, clients, in)
 	default:

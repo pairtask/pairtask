@@ -32,6 +32,9 @@ func (m *Model) conversationViews() []ConversationView {
 // viewID is a conversation's ID in the state view: the agent ID of a 1:1, or
 // the raw member IDs of a group joined by ", ".
 func viewID(key viewKey) string {
+	if key.isRoom() {
+		return key.label() // "#room"; never a valid agent ID
+	}
 	if key.isGroup() {
 		return strings.Join(key.group(), ", ")
 	}

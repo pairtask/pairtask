@@ -245,8 +245,11 @@ func (l *Listener) observeToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
 }
 
 // isStatusAnswer reports a status result or an error correlated by request_id.
+// statusAnswers are the correlated answers to an agent's own requests.
+var statusAnswers = map[string]bool{protocol.TypeAgentStatusResult: true, protocol.TypeClaimResult: true, protocol.TypeRoomResult: true}
+
 func isStatusAnswer(msg protocol.Message) bool {
-	if msg.Type == protocol.TypeAgentStatusResult || msg.Type == protocol.TypeClaimResult {
+	if statusAnswers[msg.Type] {
 		return true
 	}
 	return msg.Type == protocol.TypeError && msg.RequestID != ""

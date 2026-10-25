@@ -381,6 +381,52 @@ claims_truncated}`, or an error: `invalid_claim`, `claim_conflict` (with
   `claim_conflict` doesn't answer. Claims don't deduplicate different
   messages, or the same work under different keys.
 
+## Rooms (v9)
+
+Project rooms (#153) are opt-in spaces for a group's discussion. They organise
+talk; they are not a security boundary (agents still choose their IDs on
+`hello`; isolation is a separate stack, #74).
+
+- **The Square is everyone.** A `"*"` without `room` (or with
+  `room: "square"`, normalized to none) reaches every agent, and the operator
+  for v7+ senders, exactly as before rooms. Every message from before rooms is
+  a Square message (`message_metadata.room` is NULL).
+- **Rooms.** A room ID is 1 to 64 of `a-z`, `0-9` and `-`; `square` is
+  reserved. An agent may be in several rooms; membership persists across
+  reconnects and restarts. Joining an unknown room creates it; there is no
+  deletion. Leaving affects new sends only: deliveries already accepted stay
+  deliverable, since recipients are frozen at acceptance.
+- **Joining.** A v9 `hello` may carry `rooms`, which are **added** (never
+  replacing) on registration; `welcome.rooms` lists the agent's rooms. An agent
+  joins or leaves with `room_join` / `room_leave` (`room`, `request_id`) and
+  reads its rooms with `room_list`; each answers `room_result` with `rooms`,
+  read from the broker. The operator adds or removes members with
+  `operator_room`.
+- **Posting.** An agent's `"*"` with `room: R` requires membership
+  (`room_denied` otherwise) and reaches R's connected **v9** members except
+  the sender, plus the operator inbox. Pre-v9 members are skipped, so no one
+  reads a room post as the Square. Delivered messages carry `room` to v9
+  receivers. Direct messages work between any agents, whatever their rooms.
+  A pending room post is replayed only to a v9 session: if the agent
+  reconnects below v9, the row stays pending, keeps its owner session and is
+  not reported as reclaimed, until a v9 session of the agent returns.
+- **Replies.** A `"*"` reply without `room` stays in its parent's room; one
+  naming another room (the Square included) is `invalid_reply`. The stored
+  room is part of retry identity: a retry never moves to another room.
+- **Operator.** `operator_send` with `to: "*"` and `room: R` freezes R's
+  connected eligible v9 members (others go to `excluded`); an unknown room is
+  `invalid_room`; `room` applies to `"*"` only. `operator_room` with
+  `room_op` `list`, `create` (`room`), `add` or `remove` (`room`, `agent_id`)
+  is audited and answers `operator_room_result` with
+  `room_list: {rooms: [{id, members, members_total, members_truncated}],
+  rooms_total, rooms_truncated}`. Listings are bounded: the first **64** rooms
+  by ID, each with its first **64** members by ID; the totals and flags keep
+  omissions visible, and routing always uses the full membership. The
+  operator snapshot carries the same bounded `rooms`, `rooms_total` and
+  `rooms_truncated` (frame trimming drops rooms last and sets the flag);
+  history and recent sends carry `room`; `rooms_changed` events, including
+  after a `hello` that joined rooms, refresh it.
+
 ## State
 
 SQLite retains `agents` (session lifecycle and harness/model) and `messages`

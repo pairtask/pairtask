@@ -142,7 +142,7 @@ func (m *Model) entryHeader(e *entry) []string {
 // agent's public "*" (v7), otherwise the operator.
 func receivedAudience(msg protocol.Message) string {
 	if msg.To == protocol.Broadcast {
-		return "everyone"
+		return roomAudience(msg)
 	}
 	return youStyle.Render("you")
 }
@@ -150,7 +150,7 @@ func receivedAudience(msg protocol.Message) string {
 func recipientsLabel(msg protocol.Message) string {
 	switch {
 	case msg.To == protocol.Broadcast:
-		return "everyone"
+		return roomAudience(msg)
 	case len(msg.Group) > 0:
 		ids := make([]string, len(msg.Group))
 		for i, id := range msg.Group {
@@ -247,4 +247,12 @@ func (q *queuedAck) note() string {
 		return ""
 	}
 	return " (suspended: " + q.suspended + ")"
+}
+
+// roomAudience names a "*" message's audience: a room, or everyone.
+func roomAudience(msg protocol.Message) string {
+	if msg.Room != "" {
+		return "#" + safe(msg.Room)
+	}
+	return "everyone"
 }

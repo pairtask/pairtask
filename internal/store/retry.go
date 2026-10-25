@@ -44,6 +44,9 @@ func sameRequest(a, b protocol.Message) bool {
 	if a.From != b.From || a.To != b.To {
 		return false
 	}
+	if a.Room != b.Room {
+		return false // a retry never moves to another room
+	}
 	if a.InReplyTo != b.InReplyTo {
 		return false
 	}

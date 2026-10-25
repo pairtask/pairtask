@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pairtask/pairtask/internal/bridge"
 	"github.com/pairtask/pairtask/internal/config"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 func main() {
@@ -27,10 +28,12 @@ func main() {
 	model := flag.String("model", "", "agent model name (optional)")
 	channel := flag.Bool("claude-channel", false, "advertise the experimental Claude channel; also requires Claude's explicit channel opt-in")
 	autoListen := flag.Bool("auto-listen", false, "activate after MCP initialization; requires --claude-channel and a dedicated session configuration")
+	var rooms protocol.RoomFlags
+	flag.Var(&rooms, "room", "join this room on registration (repeatable)")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: *harness, Model: *model}
+	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: *harness, Model: *model, Rooms: rooms}
 	if err := run(ctx, cfg, *channel, *autoListen); err != nil {
 		// stdout is reserved exclusively for MCP protocol frames.
 		log.Print(err)

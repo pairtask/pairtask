@@ -62,6 +62,7 @@ type ClientConfig struct {
 	AgentID    string
 	Harness    string
 	Model      string
+	Rooms      []string // v9: rooms to join on registration
 }
 
 // Dial registers the agent before returning. The caller must call Close.
@@ -77,7 +78,7 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Client, error) {
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	conn.SetDeadline(time.Now().Add(ioTimeout))
-	if err := protocol.WriteFrame(conn, protocol.Message{Type: protocol.TypeHello, AgentID: cfg.AgentID, Harness: cfg.Harness, Model: cfg.Model, ProtocolVersion: protocol.Version}); err != nil {
+	if err := protocol.WriteFrame(conn, protocol.Message{Type: protocol.TypeHello, AgentID: cfg.AgentID, Harness: cfg.Harness, Model: cfg.Model, ProtocolVersion: protocol.Version, Rooms: cfg.Rooms}); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("send hello: %w", err)
 	}
@@ -201,6 +202,9 @@ type SendResult struct {
 // through Receive; neither a successful write nor a timeout implies delivery.
 func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResult, error) {
 	if err := c.checkPublic(request); err != nil {
+		return SendResult{}, err
+	}
+	if err := c.checkRoom(request); err != nil {
 		return SendResult{}, err
 	}
 	if !request.NonDurable && c.protocolVersion < protocol.DurableVersion {

@@ -21,11 +21,11 @@ import (
 // The operator endpoint exists only in secured and serves only the operator UID.
 const defaultOperatorSocket = "/run/collab-ai-operator/operator.sock"
 
-const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all) [--message-id ID] [--in-reply-to ID] [--json] [--timeout 5s] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]"
+const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] [--timeout 5s] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]"
 
 type operatorSend struct {
 	socket, to, group, messageID string
-	inReplyTo                    string
+	inReplyTo, room              string
 	all, asJSON                  bool
 	timeout                      time.Duration
 	text                         string
@@ -40,6 +40,7 @@ var operatorCommands = map[string]operatorCommand{
 	"history": runOperatorHistory,
 	"chat":    runOperatorChat,
 	"inbox":   runOperatorInbox,
+	"room":    runOperatorRoom,
 }
 
 func runOperator(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -96,6 +97,7 @@ func parseOperatorSend(args []string, stderr io.Writer) (operatorSend, int) {
 	flags.StringVar(&cfg.to, "to", "", "one agent ID")
 	flags.StringVar(&cfg.group, "group", "", "comma-separated agent IDs")
 	flags.BoolVar(&cfg.all, "all", false, "all connected agents that can display origin")
+	flags.StringVar(&cfg.room, "room", "", "with --all: only this room's members (default: the Square, everyone)")
 	flags.StringVar(&cfg.messageID, "message-id", "", "stable message ID for retries (generated when omitted)")
 	flags.StringVar(&cfg.inReplyTo, "in-reply-to", "", "message ID this answers (a correlation claim)")
 	flags.BoolVar(&cfg.asJSON, "json", false, "emit the broker response as JSON")
@@ -176,6 +178,9 @@ func (cfg operatorSend) validateOptions() error {
 	if cfg.socket == "" {
 		return errors.New("a socket path is required")
 	}
+	if cfg.room != "" && !cfg.all {
+		return errRoomScope
+	}
 	if max(len(cfg.messageID), len(cfg.inReplyTo)) > 128 {
 		return errors.New("--message-id and --in-reply-to must be at most 128 bytes")
 	}
@@ -190,7 +195,7 @@ func (cfg operatorSend) request() protocol.Message {
 	msg := protocol.Message{Type: protocol.TypeOperatorSend, MessageID: cfg.messageID, InReplyTo: cfg.inReplyTo, Payload: payload}
 	switch {
 	case cfg.all:
-		msg.To = protocol.Broadcast
+		msg.To, msg.Room = protocol.Broadcast, cfg.room
 	case cfg.group != "":
 		msg.Group = strings.Split(cfg.group, ",")
 	default:

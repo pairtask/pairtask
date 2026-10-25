@@ -46,7 +46,7 @@ func TestMCPDiscoveryWithoutBroker(t *testing.T) {
 	c := lazyAgent(t, filepath.Join(t.TempDir(), "missing.sock"), "codex")
 	session := connectMCP(t, c)
 	listed, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(listed.Tools) != 14 {
+	if err != nil || len(listed.Tools) != 17 {
 		t.Fatalf("discovery needs a broker: %+v %v", listed, err)
 	}
 	if c.client != nil {
