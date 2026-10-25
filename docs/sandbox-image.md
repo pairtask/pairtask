@@ -110,6 +110,8 @@ path the image is built from. A `classify` job decides with
 image checks still run and report, with their steps skipped. Any other path,
 pushes, tags and manual runs always build. So does any failure to read the diff.
 Publishing also requires that explicit decision.
+See [CI checks and image builds](ci.md) for the full skip rule and measured
+pull-request timing.
 
 Successful pushes to `main` publish both architectures under a unique
 `workspace-v0.0.0-build.RUN.ATTEMPT` tag and make that release `latest`.
