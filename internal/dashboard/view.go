@@ -30,7 +30,7 @@ func (m *model) header() []string {
 	}
 	metrics := "No snapshot yet"
 	if m.haveSnapshot {
-		metrics = fmt.Sprintf("Connected %s · Pending deliveries %s · Operator inbox %s", number(m.snapshot.ConnectedSessions), pendingTotal(m.snapshot.DurablePending), operatorInbox(m.snapshot.OperatorPending))
+		metrics = fmt.Sprintf("Connected %s · Pending deliveries %s · Operator inbox %s · %s", number(m.snapshot.ConnectedSessions), pendingTotal(m.snapshot.DurablePending), operatorInbox(m.snapshot.OperatorPending), m.claimsMetric())
 	}
 	return []string{
 		m.styles.title.Render("collab-ai  /  operator console"),

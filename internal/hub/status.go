@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"time"
@@ -58,22 +59,70 @@ func (h *Hub) snapshot(ctx context.Context, clients map[string]*Client) protocol
 	out.OperatorPending = &records.OperatorPending
 	appendHistory(&out, clients, records.Sessions)
 	h.snapshotAgentStatus(ctx, clients, &out)
-	return out
+	h.snapshotClaimSets(ctx, &out)
+	return fitStatus(out)
 }
 
-// snapshotAgentStatus adds the agents' declarations, as the operator snapshot
-// has them. A failed read leaves them unavailable rather than empty.
+// fitStatus drops the oldest claimed messages, then the last declarations,
+// until the status frame fits; the totals keep the omission visible.
+func fitStatus(out protocol.StatusSnapshot) protocol.StatusSnapshot {
+	for {
+		data, err := json.Marshal(protocol.Message{Type: protocol.TypeStatus, Status: &out})
+		if err != nil || len(data)+statusReserve <= protocol.MaxFrameBytes {
+			return out
+		}
+		switch {
+		case len(out.Claims) > 0:
+			out.Claims, out.ClaimsTruncated = out.Claims[:len(out.Claims)-1], true
+		case len(out.AgentStatus) > 0:
+			out.AgentStatus, out.AgentStatusTruncated = out.AgentStatus[:len(out.AgentStatus)-1], true
+		default:
+			return out
+		}
+	}
+}
+
+// statusReserve leaves room for the frame's newline.
+const statusReserve = 16
+
+// snapshotClaimSets adds the claims, as the operator snapshot has them.
+func (h *Hub) snapshotClaimSets(ctx context.Context, out *protocol.StatusSnapshot) {
+	sets, total, ok := statusPage(h, out, "claims", func() ([]protocol.ClaimSet, int, error) { return h.snapshotClaims(ctx) })
+	if ok {
+		out.Claims, out.ClaimsTotal, out.ClaimsTruncated, out.ClaimsAvailable = sets, total, total > len(sets), true
+	}
+}
+
+// snapshotAgentStatus adds the agents' declarations, as the operator
+// snapshot has them.
 func (h *Hub) snapshotAgentStatus(ctx context.Context, clients map[string]*Client, out *protocol.StatusSnapshot) {
-	records, total, err := h.snapshotStatuses(ctx, clients)
+	records, total, ok := statusPage(h, out, "agent status", func() ([]protocol.AgentStatus, int, error) { return h.snapshotStatuses(ctx, clients) })
+	if ok {
+		out.AgentStatus, out.AgentStatusTotal, out.AgentStatusTruncated, out.AgentStatusAvailable = records, total, total > len(records), true
+	}
+}
+
+// statusPage runs one bounded read for the status snapshot. A failed read
+// degrades the snapshot and leaves its section unavailable rather than
+// empty; a successful one is never a null list.
+func statusPage[T any](h *Hub, out *protocol.StatusSnapshot, what string, read func() ([]T, int, error)) ([]T, int, bool) {
+	items, total, err := read()
 	if err != nil {
-		h.log.Error("agent status query failed", "error", err)
-		out.Health, out.Error = "degraded", "agent status unavailable"
-		return
+		h.log.Error(what+" query failed", "error", err)
+		out.Health, out.Error = "degraded", joinError(out.Error, what+" unavailable")
+		return nil, 0, false
 	}
-	if records != nil {
-		out.AgentStatus = records
+	if items == nil {
+		items = []T{}
 	}
-	out.AgentStatusTotal, out.AgentStatusTruncated, out.AgentStatusAvailable = total, total > len(records), true
+	return items, total, true
+}
+
+func joinError(prev, next string) string {
+	if prev == "" {
+		return next
+	}
+	return prev + "; " + next
 }
 
 func liveSessions(clients map[string]*Client) ([]protocol.SessionStatus, bool) {

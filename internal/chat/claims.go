@@ -114,3 +114,71 @@ func (m *Model) claimRows() []string {
 	}
 	return append(rows, mutedStyle.Render("  a claim coordinates agents; it is never an approval"))
 }
+
+// agentClaimLines are the claims an agent holds, active or done, on the
+// loaded operator messages: "◇ task (role, state) on #seq · topic", or the
+// message ID's start when the message isn't loaded.
+func (m *Model) agentClaimLines(agent string) []string {
+	held := m.heldClaims(agent)
+	lines := make([]string, 0, len(held))
+	for _, c := range held {
+		lines = append(lines, mutedStyle.Render(m.agentClaimLine(c)))
+	}
+	return lines
+}
+
+func (m *Model) agentClaimLine(c protocol.Claim) string {
+	line := "    ◇ " + safe(c.Task) + " (" + c.Role + ", " + c.State + ") on " + m.parentLabel(c.OperatorMessageID)
+	if topic := safe(c.Topic); topic != "" {
+		line += " · " + topic
+	}
+	return line
+}
+
+// heldClaims is the agent's active and done claims, by message then task.
+func (m *Model) heldClaims(agent string) []protocol.Claim {
+	var held []protocol.Claim
+	for _, page := range m.claims.byMessage {
+		held = append(held, holding(page.Claims, agent)...)
+	}
+	sort.Slice(held, func(i, j int) bool {
+		if held[i].OperatorMessageID != held[j].OperatorMessageID {
+			return held[i].OperatorMessageID < held[j].OperatorMessageID
+		}
+		return held[i].Task < held[j].Task
+	})
+	return held
+}
+
+// holding filters claims to the agent's unreleased ones.
+func holding(claims []protocol.Claim, agent string) []protocol.Claim {
+	var out []protocol.Claim
+	for _, c := range claims {
+		if c.AgentID == agent && c.State != protocol.ClaimReleased {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// parentLabel names an operator message by its #seq when loaded.
+func (m *Model) parentLabel(id string) string {
+	if e := m.timeline.entries[id]; e != nil {
+		return fmt.Sprintf("#%d", e.msg.Seq)
+	}
+	return safe(id[:min(len(id), 8)])
+}
+
+// claimsPartialNote says when the agents' claims may be incomplete: the
+// snapshot left messages out, or a message left claims out.
+func (m *Model) claimsPartialNote() string {
+	if m.claims.truncated {
+		return fmt.Sprintf("(claims are partial: shown for the newest messages, %d have claims)", m.claims.total)
+	}
+	for _, page := range m.claims.byMessage {
+		if page.Truncated {
+			return "(claims are partial: some messages have more claims than shown)"
+		}
+	}
+	return ""
+}

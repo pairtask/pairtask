@@ -141,29 +141,40 @@ func (m *Model) statusRows() []string {
 	sort.Strings(ids)
 	var rows []string
 	for _, id := range ids {
-		// A blank line ends the presence list and each agent's block, so a
-		// status reads as one unit.
-		rows = append(rows, "")
+		// A rule ends the presence list and a blank line each agent's block,
+		// so a status and its claims read as one unit.
+		rows = append(rows, m.blockSeparator(rows))
 		rows = append(rows, statusBlock(m.statuses.byAgent[id])...)
+		rows = append(rows, m.agentClaimLines(id)...)
 	}
 	if silent := m.undeclared(); len(silent) > 0 {
-		rows = append(rows, "")
+		rows = append(rows, m.blockSeparator(rows))
 		for _, id := range silent {
-			rows = append(rows, mutedStyle.Render("· "+safe(id)+"  online, no status declared"))
+			rows = append(rows, mutedStyle.Render("· "+safe(id)+"  "+m.missingStatus()))
+			rows = append(rows, m.agentClaimLines(id)...)
 		}
 	}
 	if m.statuses.truncated {
 		rows = append(rows, "", fmt.Sprintf("(status list is partial: %d agents have a status)", m.statuses.total))
 	}
+	if note := m.claimsPartialNote(); note != "" {
+		rows = append(rows, "", note)
+	}
 	return rows
 }
 
-// undeclared is the online agents without a status. Only a complete status
-// list proves absence; a partial one may have left the record out.
-func (m *Model) undeclared() []string {
-	if m.statuses.truncated {
-		return nil
+// blockSeparator is the rule under the presence list, then a blank line
+// between agents.
+func (m *Model) blockSeparator(rows []string) string {
+	if len(rows) == 0 {
+		return ruleStyle.Render(strings.Repeat("─", 24))
 	}
+	return ""
+}
+
+// undeclared is the online agents without a loaded status; see missingStatus
+// for what that absence means.
+func (m *Model) undeclared() []string {
 	var ids []string
 	for _, a := range m.agents.list {
 		if _, ok := m.statuses.byAgent[a.AgentID]; !ok {
@@ -172,6 +183,15 @@ func (m *Model) undeclared() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// missingStatus says what an online agent's absent status means: only a
+// complete status list proves none was declared.
+func (m *Model) missingStatus() string {
+	if m.statuses.truncated {
+		return "online, status not loaded (the status list is partial)"
+	}
+	return "online, no status declared"
 }
 
 // copyRef asks the terminal to copy an agent's full status ref, the value

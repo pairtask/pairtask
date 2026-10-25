@@ -14,6 +14,7 @@ import (
 	"github.com/pairtask/pairtask/internal/bridge"
 	"github.com/pairtask/pairtask/internal/budget"
 	"github.com/pairtask/pairtask/internal/host"
+	"github.com/pairtask/pairtask/internal/resume"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -180,6 +181,7 @@ func (l codexLauncher) runOperator(ctx context.Context, operator operatorIO) (re
 	p := host.NewProxy(host.NewWire(input), host.NewWire(operator.output))
 	p.Budget = l.budget
 	p.RestrictedOperator = l.restricted
+	p.OnThread = recordThread(l.client.AgentID, resume.Store{Dir: resumeStateDir()})
 	p.Listener = bridge.NewListener(ctx, client, p)
 	defer func() {
 		p.Listener.Close() // Join peer delivery before deciding that admissions are settled.

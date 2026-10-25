@@ -43,7 +43,7 @@ func TestStatusSurfacesAcceptanceCurrentAndPreviousSessionAreNotInferred(t *test
 	}})
 	operatorEqual(t, "declaration accepted", result.text("type"), "agent_status_result")
 	before := readDeclaredStatus(t, f)
-	operatorEqual(t, "new status schema", before.Schema, 2)
+	operatorEqual(t, "current status schema", before.Schema, protocol.StatusSchemaVersion)
 	operatorEqual(t, "records available", before.Available, true)
 	operatorEqual(t, "silent agent has no invented record", len(before.Records), 1)
 	record := before.Records[0]

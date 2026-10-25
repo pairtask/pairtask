@@ -89,7 +89,7 @@ returns `durable_pending: null`, never a fabricated zero.
 
 ## JSON contract
 
-The JSON schema has `schema_version: 2`, separate from the broker messaging
+The JSON schema has `schema_version: 3`, separate from the broker messaging
 `protocol_version`. New optional fields may be added; consumers should ignore
 unknown fields. Unknown metrics/timestamps are `null`, available zero counts are
 numeric zero, and empty lists are `[]`. On a failed connection `protocol_version`
@@ -97,7 +97,7 @@ is zero because no version was observed. A successful empty broker returns:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "reachable": true,
   "health": "ready",
   "snapshot_at": "2026-09-22T12:00:00Z",
@@ -118,7 +118,11 @@ is zero because no version was observed. A successful empty broker returns:
   "agent_status": [],
   "agent_status_total": 0,
   "agent_status_truncated": false,
-  "agent_status_available": true
+  "agent_status_available": true,
+  "claims": [],
+  "claims_total": 0,
+  "claims_truncated": false,
+  "claims_available": true
 }
 ```
 
@@ -154,6 +158,22 @@ shows the declaration on the session row that declared it, or as `previous:`
 on the agent's live row; other historical rows show `—`, and an agent without
 a record shows `no status`, or `unknown` when the list is truncated or
 unavailable.
+
+## Claims (schema 3)
+
+`claims` holds the task claims (#141) of the newest claimed operator messages,
+as the operator chat's snapshot has them: at most **32** messages, newest claim
+first, each a set with `operator_message_id`, `claims` (at most 16, held ones
+first), `claims_total` and `claims_truncated`. The top-level `claims_total`
+counts every claimed message, so `claims_truncated` marks omitted messages.
+`claims_available: false` means unknown, never none: a failed read (health
+`degraded`, independently of agent status) or a broker below schema 3. The
+client reads schemas 1 to 3 and clears only what an older schema lacks: a
+schema 2 broker keeps its declarations and reports claims unavailable. The text
+output adds a **Claims** table; the dashboard shows `Active claims N` (with `+`
+when either level is truncated, or `Claims unavailable`) and the selected
+agent's active and done claims in its details. A claim coordinates agents; it
+is never an approval.
 
 ## Wire and compatibility
 

@@ -104,3 +104,35 @@ func ShortRef(ref string) string {
 	}
 	return ref
 }
+
+// writeClaims lists the claims of the newest claimed operator messages.
+func writeClaims(w io.Writer, out protocol.StatusSnapshot) {
+	if !out.ClaimsAvailable {
+		fmt.Fprintln(w, "\nClaims: unavailable")
+		return
+	}
+	fmt.Fprintf(w, "\nClaims (messages shown %d of %d, truncated: %t):\n", len(out.Claims), out.ClaimsTotal, out.ClaimsTruncated)
+	now := snapshotTime(out)
+	t := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(t, "MESSAGE\tTASK\tROLE\tAGENT\tSTATE\tCLAIMED\tTOPIC")
+	for _, set := range out.Claims {
+		writeClaimRows(t, now, set)
+	}
+	t.Flush()
+	writeClaimOmissions(w, out.Claims)
+}
+
+func writeClaimRows(w io.Writer, now time.Time, set protocol.ClaimSet) {
+	for _, c := range set.Claims {
+		fmt.Fprintf(w, "%q\t%q\t%s\t%q\t%s\t%s\t%q\n", set.OperatorMessageID, c.Task, c.Role, c.AgentID, c.State, Age(now, c.ClaimedAt)+" ago", c.Topic)
+	}
+}
+
+// writeClaimOmissions notes each message whose claims were cut.
+func writeClaimOmissions(w io.Writer, sets []protocol.ClaimSet) {
+	for _, set := range sets {
+		if set.Truncated {
+			fmt.Fprintf(w, "  message %q: showing %d of %d claims\n", set.OperatorMessageID, len(set.Claims), set.Total)
+		}
+	}
+}

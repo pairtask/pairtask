@@ -27,6 +27,7 @@ func WriteText(w io.Writer, out protocol.StatusSnapshot) error {
 	}
 	writeSessions(&b, out)
 	writeAgentStatus(&b, out)
+	writeClaims(&b, out)
 	writePending(&b, out.DurablePending)
 	fmt.Fprintln(&b, "\nConnected describes transport only. Pending requires explicit agent acknowledgment.")
 	fmt.Fprintln(&b, "Last seen is registration/latest inbound frame, not a heartbeat; historical values and disconnect reasons are unavailable.")

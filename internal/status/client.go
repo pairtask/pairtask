@@ -64,17 +64,24 @@ func failed(out protocol.StatusSnapshot, err error) (protocol.StatusSnapshot, er
 	return out, err
 }
 
-// supportedSchema accepts this schema and schema 1, which lacks declarations.
-func supportedSchema(v int) bool { return v == 1 || v == protocol.StatusSchemaVersion }
+// supportedSchema accepts this schema and the older ones it extends.
+func supportedSchema(v int) bool { return v >= 1 && v <= protocol.StatusSchemaVersion }
 
-// withDeclarations normalises the declarations: a schema 1 broker reports
-// none, which means unknown, not none; the list is never null.
+// withDeclarations normalises what an older schema lacks: declarations
+// before schema 2 and claims before schema 3 are unknown, not none; lists are
+// never null.
 func withDeclarations(out protocol.StatusSnapshot) protocol.StatusSnapshot {
-	if out.SchemaVersion < protocol.StatusSchemaVersion {
+	if out.SchemaVersion < 2 {
 		out.AgentStatus, out.AgentStatusAvailable, out.AgentStatusTotal, out.AgentStatusTruncated = nil, false, 0, false
+	}
+	if out.SchemaVersion < 3 {
+		out.Claims, out.ClaimsAvailable, out.ClaimsTotal, out.ClaimsTruncated = nil, false, 0, false
 	}
 	if out.AgentStatus == nil {
 		out.AgentStatus = []protocol.AgentStatus{}
+	}
+	if out.Claims == nil {
+		out.Claims = []protocol.ClaimSet{}
 	}
 	return out
 }

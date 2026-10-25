@@ -83,3 +83,17 @@ LEVEL`, and the agent's own arguments after `--`), which passes the ID to the
 Codex launcher or writes a per-ID Claude MCP config under
 `$XDG_CONFIG_HOME/pairtask/` (default `~/.config/pairtask/`); `--dry-run`
 shows the command.
+
+**Resume Codex** with `pairtask start codex --id codex-1 --resume` (#67). The
+launcher records each agent ID's conversation and directory when a thread
+starts, resumes or forks (`$XDG_STATE_HOME/pairtask/`, default
+`~/.local/state/pairtask/`, private files named by a hash of the ID);
+`--resume` continues that conversation from that directory. It refuses while
+the ID is still connected (close the old session first), and when nothing is
+recorded it lists saved conversations with a ready command for each, never
+picking one itself. `-- resume` and `-- resume --last` mean the same as
+`--resume` here (this agent's recorded conversation, not Codex's picker or
+latest-in-directory, which don't work through the launcher). An explicit
+`-- resume ID` (or a name, `--all`, `--cd`, `fork ID`) goes to Codex
+unchanged, except that a pairtask session ID, the ID shown in pairtask
+messages, is refused with an explanation: it isn't a Codex conversation ID.

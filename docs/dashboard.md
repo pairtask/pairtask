@@ -49,6 +49,8 @@ Enter opens full details on narrow screens. Filters and selection survive refres
 | Stale session | Historical owner without a recorded disconnect |
 | **STALE** snapshot | Retained or old observations; check the timestamp/error |
 | Unavailable / truncated | Missing information; do not interpret it as zero |
+| Agent status | The declaration on the session that made it; `previous:` on the agent's live row for an earlier session's |
+| Active claims N | Active task claims in the loaded messages; `+` when the snapshot is truncated; details list the selected agent's active and done claims |
 
 Refresh defaults to two seconds after each request, with a three-second timeout.
 Override with `--interval 2s --timeout 3s` (interval 1s–1m, timeout >0–30s).

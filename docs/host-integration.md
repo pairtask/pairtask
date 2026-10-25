@@ -55,7 +55,10 @@ then choose one command:
 ```
 
 `resume --last` selects the last conversation. Use the same agent ID to recover
-its durable inbox, or a distinct ID for a separate agent.
+its durable inbox, or a distinct ID for a separate agent. In the sandbox,
+prefer `pairtask start codex --id ID --resume`: the launcher records each
+agent ID's conversation, so resuming needs no conversation ID
+([host commands](host-commands.md#inside-the-sandbox)).
 
 | Rule | What to do |
 | --- | --- |
