@@ -17,6 +17,7 @@ import (
 	"github.com/pairtask/pairtask/internal/hub"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/server"
+	"github.com/pairtask/pairtask/internal/status"
 	"github.com/pairtask/pairtask/internal/store"
 )
 
@@ -107,6 +108,7 @@ func TestDurableOfflineAndPendingReplay(t *testing.T) {
 	socket, _ := startBroker(t)
 	recipient := connectAgent(t, socket, "recipient")
 	recipient.Close()
+	awaitDurableBrokerIdle(t, socket)
 	sender := connectAgent(t, socket, "sender")
 	sendTracked(t, sender, SendRequest{To: "recipient", Text: "offline context", MessageID: "offline"})
 	assertStage(t, nextFrame(t, sender), "offline", protocol.StageAccepted)
@@ -120,6 +122,23 @@ func TestDurableOfflineAndPendingReplay(t *testing.T) {
 	assertEqual(t, "disconnect", nextFrame(t, sender).Code, protocol.ErrRecipientDisconnected)
 	again := connectAgent(t, socket, "recipient")
 	assertEqual(t, "still pending", nextFrame(t, again).MessageID, "offline")
+}
+
+// Closing the client socket does not synchronously release its broker session.
+// Establish the offline precondition before sending or reconnecting.
+func awaitDurableBrokerIdle(t *testing.T, socket string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for ctx.Err() == nil {
+		snapshot, err := status.Fetch(ctx, socket)
+		requireNoError(t, err)
+		if snapshot.ConnectedSessions != nil && *snapshot.ConnectedSessions == 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("broker did not release the closed recipient session")
 }
 
 func TestLostAcknowledgmentConfirmationDoesNotReplay(t *testing.T) {
