@@ -125,6 +125,32 @@ class PreparedLifecycleTests(unittest.TestCase):
 
 
 class PreparedStoreBoundaryTests(unittest.TestCase):
+    def test_published_recipe_alias_fits_incus_limit_and_can_be_found_and_discarded(self):
+        images = []
+        calls = []
+        project = "pairtask-operator-prepared-run-test"
+
+        def run(command, **kwargs):
+            calls.append(command)
+            records = []
+            if command[1:3] == ["project", "list"]:
+                records = [{"name": project}]
+            elif command[3] == "publish":
+                alias = command[command.index("--alias") + 1]
+                self.assertLessEqual(len(alias.encode()), 64, "Incus image alias limit")
+                images.append({"fingerprint": FINGERPRINT, "aliases": [{"name": alias}]})
+            elif command[3:5] == ["image", "list"]:
+                records = images
+            return subprocess.CompletedProcess(command, 0, json.dumps(records), "")
+
+        store = prepared.PreparedStore("local", "run-test", incus=run)
+        key = prepared.recipe_key("amd64", FINGERPRINT, b"lock", b"recipe")
+        self.assertEqual(store.publish("scratch", key), FINGERPRINT)
+        self.assertEqual(store.find(key), FINGERPRINT)
+        self.assertIsNone(store.find(key[:-1] + ("0" if key[-1] != "0" else "1")))
+        store.discard(key)
+        self.assertIn(["incus", "--project", project, "image", "delete", "local:" + FINGERPRINT], calls)
+
     def test_invalid_or_absent_tokens_do_not_touch_incus(self):
         for token in ("", "UPPER", "../foreign", "a" * 41, "valid\n", "valid token"):
             run = Mock()
