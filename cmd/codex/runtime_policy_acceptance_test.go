@@ -28,9 +28,12 @@ func TestRuntimePolicyApprovesOnlyScopedCollaborationStatusAndClaimCalls(t *test
 		"release_claim":   {"approval_mode": "approve"},
 		"finish_claim":    {"approval_mode": "approve"},
 		"read_claims":     {"approval_mode": "approve"},
+		"join_room":       {"approval_mode": "approve"},
+		"leave_room":      {"approval_mode": "approve"},
+		"list_rooms":      {"approval_mode": "approve"},
 	}
 	if !reflect.DeepEqual(policies, want) {
-		t.Fatalf("runtime tool policy = %v, want the eleven scoped approvals %v", policies, want)
+		t.Fatalf("runtime tool policy = %v, want the fourteen scoped approvals %v", policies, want)
 	}
 	// No server-wide grant, global execution policy, or sandbox override may
 	// accompany this narrowly scoped tool configuration.
