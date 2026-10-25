@@ -32,20 +32,50 @@ func managedSelector(native []string) bool {
 	return slices.Equal(native, []string{"resume"}) || slices.Equal(native, []string{"resume", "--last"})
 }
 
-// nativeLifecycle reports native arguments that start with a subcommand
-// choosing a conversation, which --resume can't be combined with. A later
-// "resume" or "fork" may be a flag value or a prompt, so it is left alone.
+// nativeLifecycle reports native arguments whose subcommand chooses a
+// conversation, which --resume can't be combined with.
 func nativeLifecycle(native []string) bool {
-	return len(native) > 0 && (native[0] == "resume" || native[0] == "fork")
+	i := subcommand(native)
+	return i >= 0 && (native[i] == "resume" || native[i] == "fork")
 }
 
 // nativeSelector is the conversation an explicit `resume X …` names, when X
 // is positively the first argument after resume; "" when ambiguous.
 func nativeSelector(native []string) string {
-	if len(native) < 2 || native[0] != "resume" || strings.HasPrefix(native[1], "-") {
+	i := subcommand(native)
+	if i < 0 || native[i] != "resume" || i+1 >= len(native) || strings.HasPrefix(native[i+1], "-") {
 		return ""
 	}
-	return native[1]
+	return native[i+1]
+}
+
+// valueOptions are the Codex global options taking a value that may come
+// before the subcommand.
+var valueOptions = []string{"--model", "-m", "--config", "-c", "--cd", "-C"}
+
+// subcommand is the index of the first native argument after the known
+// global options, or -1 when an unknown option makes the syntax Codex's to
+// interpret.
+func subcommand(native []string) int {
+	for i := 0; i < len(native); i++ {
+		arg := native[i]
+		switch {
+		case slices.Contains(valueOptions, arg):
+			i++ // its value
+		case inlineValue(arg):
+		case strings.HasPrefix(arg, "-"):
+			return -1
+		default:
+			return i
+		}
+	}
+	return -1
+}
+
+// inlineValue is a value option written as --option=value.
+func inlineValue(arg string) bool {
+	name, _, found := strings.Cut(arg, "=")
+	return found && slices.Contains(valueOptions, name)
 }
 
 // resolveResume prepares a Codex start: --resume becomes `resume <thread>`
