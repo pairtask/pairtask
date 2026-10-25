@@ -109,10 +109,11 @@ type Model struct {
 	outbox  []protocol.Message
 
 	timeline
-	inbox   inboxState
-	history historyState
-	send    sendState
-	agents  agentView
+	inbox    inboxState
+	history  historyState
+	send     sendState
+	agents   agentView
+	statuses statusView
 
 	compose    composer
 	conv       conversations
@@ -279,6 +280,8 @@ func (m *Model) connectionUpdate(msg tea.Msg) (tea.Cmd, bool) {
 		return m.retry(msg), true
 	case receiptRetryMsg:
 		return m.retryReceipts(msg), true
+	case statusTick:
+		return m.onStatusTick(), true
 	}
 	return nil, false
 }

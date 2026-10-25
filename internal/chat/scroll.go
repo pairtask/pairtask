@@ -278,7 +278,7 @@ func (m *Model) toggleHelp() {
 
 // agentRows describes every known agent: online first, then seen.
 func (m *Model) agentRows() []string {
-	rows := m.onlineRows()
+	rows := append(m.onlineRows(), m.statusRows()...)
 	for _, id := range m.conversationIDs("") {
 		rows = append(rows, "○ "+safe(id)+"  seen in this conversation")
 	}

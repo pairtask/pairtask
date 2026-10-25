@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -45,6 +46,8 @@ type Listener struct {
 	status  ListenerStatus
 	queue   []queuedMessage
 	bytes   int
+	// reporting is set while a tool-call activity report is in flight.
+	reporting atomic.Bool
 }
 
 func NewListener(ctx context.Context, client *LazyClient, host Publisher) *Listener {

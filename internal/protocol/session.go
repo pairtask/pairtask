@@ -74,6 +74,10 @@ type OperatorSnapshot struct {
 	InboxPending        int             `json:"inbox_pending"`
 	RecentSent          []SentSummary   `json:"recent_sent"`
 	RecentSentTruncated bool            `json:"recent_sent_truncated"`
+	// Agent statuses: connected agents first, then retained offline ones.
+	AgentStatus          []AgentStatus `json:"agent_status"`
+	AgentStatusTotal     int           `json:"agent_status_total"`
+	AgentStatusTruncated bool          `json:"agent_status_truncated"`
 }
 
 type StagePage struct {

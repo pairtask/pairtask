@@ -42,6 +42,8 @@ type Client struct {
 	err             error
 	sessionID       string
 	protocolVersion int
+	pending         map[string]chan protocol.Message // status requests by request_id
+	lastActivity    time.Time                        // last agent_activity written
 }
 
 type Inbox struct {
@@ -104,6 +106,9 @@ func (c *Client) readLoop(r *bufio.Reader) {
 		if err := protocol.ReadFrame(r, &msg); err != nil {
 			c.fail(fmt.Errorf("broker connection closed: %w; restart the adapter to reconnect; accepted unacknowledged durable messages replay on v3; other frames may be lost", err))
 			return
+		}
+		if c.routeResponse(msg) {
+			continue
 		}
 		if err := c.bufferMessage(protocol.WithDisplayOrigin(msg)); err != nil {
 			c.fail(err)

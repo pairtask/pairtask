@@ -139,6 +139,10 @@ func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (pr
 	}
 	snap.RecentSentTruncated = len(sent) > protocol.SnapshotRecentSent
 	snap.RecentSent = sent[:min(len(sent), protocol.SnapshotRecentSent)]
+	if snap.AgentStatus, snap.AgentStatusTotal, err = h.snapshotStatuses(ctx, clients); err != nil {
+		return snap, err
+	}
+	snap.AgentStatusTruncated = snap.AgentStatusTotal > len(snap.AgentStatus)
 	return fitSnapshot(snap)
 }
 
@@ -149,11 +153,19 @@ func fitSnapshot(snap protocol.OperatorSnapshot) (protocol.OperatorSnapshot, err
 		if err != nil {
 			return snap, err
 		}
-		if len(data)+snapshotReserve <= protocol.MaxFrameBytes || len(snap.RecentSent) == 0 {
+		if len(data)+snapshotReserve <= protocol.MaxFrameBytes {
 			return snap, nil
 		}
-		snap.RecentSent = snap.RecentSent[:len(snap.RecentSent)-1]
-		snap.RecentSentTruncated = true
+		switch {
+		case len(snap.RecentSent) > 0:
+			snap.RecentSent = snap.RecentSent[:len(snap.RecentSent)-1]
+			snap.RecentSentTruncated = true
+		case len(snap.AgentStatus) > 0:
+			snap.AgentStatus = snap.AgentStatus[:len(snap.AgentStatus)-1]
+			snap.AgentStatusTruncated = true
+		default:
+			return snap, nil
+		}
 	}
 }
 

@@ -84,6 +84,9 @@ func (m *Model) screen() string {
 	if l.bar {
 		rows = append(rows, m.barRow())
 	}
+	if l.agentStatus {
+		rows = append(rows, m.statusRow())
+	}
 	if l.divider {
 		rows = append(rows, m.rule())
 	}
@@ -109,6 +112,7 @@ const entryRows = 3
 // the transcript takes the rest.
 type frameLayout struct {
 	header, bar, divider, boxed bool
+	agentStatus                 bool // the open conversation's agent status row
 	transcript                  int
 	picker, composer            int
 }
@@ -135,6 +139,9 @@ func (m *Model) layoutTop(l *frameLayout, rest int) int {
 	}
 	if rest > 0 {
 		l.divider, rest = true, rest-1
+	}
+	if _, ok := m.selectedStatus(); ok && rest > 0 {
+		l.agentStatus, rest = true, rest-1
 	}
 	return rest
 }
@@ -182,7 +189,11 @@ func (m *Model) footer() string {
 	if reminder := m.ackReminder(); reminder != "" {
 		parts = append(parts, reminder)
 	}
-	left, used := fitParts(append(parts, bandStyle.Render(m.facts())), m.width)
+	parts = append(parts, bandStyle.Render(m.facts()))
+	if summary := m.statusSummary(); summary != "" {
+		parts = append(parts, bandStyle.Render(summary)) // lowest priority: dropped first
+	}
+	left, used := fitParts(parts, m.width)
 	right := ""
 	if gap := m.width - used - ansi.StringWidth(keyReminder); gap >= 2 && status == "" {
 		right = bandStyle.Render(strings.Repeat(" ", gap) + keyReminder)

@@ -53,6 +53,7 @@ type Hub struct {
 	epoch    string
 	revision uint64
 	gen      uint64
+	statuses statusState
 }
 
 // New creates a Hub. startSeq is the last persisted sequence number
@@ -166,8 +167,7 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 		return
 	}
 	in.From.lastSeenAt = time.Now().UTC()
-	if in.Msg.Type == protocol.TypeAck {
-		h.acknowledge(ctx, clients, in)
+	if h.routeControl(ctx, clients, in) {
 		return
 	}
 	if err := prepareMessage(&in); err != nil {
@@ -448,6 +448,7 @@ func (h *Hub) disconnect(clients map[string]*Client, c *Client) {
 		c.Disconnect()
 	}
 	close(c.Send)
+	h.statuses.forget(c)
 	h.recordDisconnect(c)
 	h.notePresence(c, "disconnected")
 	h.notifyDisconnect(clients, c)
@@ -507,4 +508,26 @@ func (h *Hub) recordDisconnect(c *Client) {
 	if err := h.store.RecordDisconnect(ctx, c.SessionID, time.Now()); err != nil {
 		h.log.Error("record disconnect failed", "agent_id", c.ID, "error", err)
 	}
+}
+
+// routeControl handles the frames that are not messages: acknowledgments and
+// agent status. It reports whether it handled the frame.
+func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in Inbound) bool {
+	switch {
+	case isStatusFrame(in.Msg.Type):
+		h.handleStatus(ctx, clients, in)
+	case in.Msg.Type == protocol.TypeAck:
+		h.acknowledge(ctx, clients, in)
+	default:
+		return false
+	}
+	return true
+}
+
+func isStatusFrame(kind string) bool {
+	switch kind {
+	case protocol.TypeAgentStatusSet, protocol.TypeAgentStatusGet, protocol.TypeAgentActivity:
+		return true
+	}
+	return false
 }

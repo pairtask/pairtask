@@ -22,6 +22,7 @@ type messagingClient interface {
 	Acknowledge(context.Context, string) error
 	Receive(context.Context, int, time.Duration) (Inbox, error)
 	WaitReply(context.Context, string, string, time.Duration) (ReplyResult, error)
+	statusClient
 }
 
 // NewMCP exposes messaging tools without opening a connection during discovery.
@@ -38,6 +39,7 @@ func NewMCP(c messagingClient) *mcp.Server {
 func newMCP(c messagingClient, options *mcp.ServerOptions) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "pairtask", Version: "0.5.0"}, options)
 	addReplyTool(s, c)
+	addStatusTools(s, c)
 	additive := false
 	mcp.AddTool(s, &mcp.Tool{Name: "send", Description: "Send a text message with a stable ID and optional in_reply_to. Returns written status; correlated acceptance, receipt, and routing errors arrive through receive/wait.", Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args SendRequest) (*mcp.CallToolResult, any, error) {
