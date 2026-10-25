@@ -39,7 +39,7 @@ func NewMCP(c messagingClient) *mcp.Server {
 // sendDescription tells the model who a "*" reaches, so a public answer is
 // never mistaken for a private one or the reverse.
 const sendDescription = "Send a text message with a stable ID and optional in_reply_to. " +
-	"to is an agent ID, \"operator\", or \"*\". With protocol version 7, \"*\" is the public conversation: every connected agent and the operator see it, and it is always durable. " +
+	"to is an agent ID, \"operator\", or \"*\". With protocol version 7, \"*\" is the public conversation: the other connected agents and the operator see it, and it is always durable. " +
 	"Against an older broker a \"*\" send is refused as an unsupported public broadcast instead of silently reaching agents only. " +
 	"A public reply must answer a public message you took part in. Returns written status; correlated acceptance, receipt, and routing errors arrive through receive/wait."
 

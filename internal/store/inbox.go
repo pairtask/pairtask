@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -102,8 +101,18 @@ func (s *Store) ValidatePublicReply(ctx context.Context, sender, inReplyTo strin
 	return nil
 }
 
-// errPublicReply keeps the invalid_reply code with a public-thread reason.
-var errPublicReply = fmt.Errorf("%w (public reply: in_reply_to must name a public message this sender received or wrote)", ErrInvalidReply)
+// publicReplyError keeps the invalid_reply mapping (errors.Is ErrInvalidReply)
+// with a reason that names the public-parent rule first.
+type publicReplyError struct{}
+
+func (*publicReplyError) Error() string {
+	return "a public reply's in_reply_to must name a public message this sender received or wrote"
+}
+
+func (*publicReplyError) Is(target error) bool { return target == ErrInvalidReply }
+
+// errPublicReply is the public-thread variant of ErrInvalidReply.
+var errPublicReply = &publicReplyError{}
 
 // ReadOperatorPage returns a bounded page of unacknowledged operator-inbox
 // messages. It changes no receipts.

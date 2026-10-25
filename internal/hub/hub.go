@@ -219,10 +219,17 @@ var agentEnvelopeChecks = []func(protocol.Message, int) *routingError{
 // checkPublicFlags requires durable delivery with acknowledgments for a v7
 // public broadcast: its operator copy has no other delivery mode.
 func checkPublicFlags(msg protocol.Message, version int) *routingError {
-	if !isPublic(msg.To, version) || (msg.Durable && msg.AckRequested) {
+	if !isPublic(msg.To, version) {
+		return nil
+	}
+	if durableWithAcks(msg) {
 		return nil
 	}
 	return &routingError{protocol.ErrMalformedFrame, "a public broadcast (to \"*\", protocol_version 7) must be durable with ack_requested"}
+}
+
+func durableWithAcks(msg protocol.Message) bool {
+	return msg.Durable && msg.AckRequested
 }
 
 // isPublic reports whether "*" from this protocol version is the shared
