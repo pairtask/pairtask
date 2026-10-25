@@ -55,7 +55,7 @@ func statusReply(out protocol.StatusSnapshot, reply protocol.Message) (protocol.
 	out = *reply.Status
 	if out.SchemaVersion < protocol.StatusSchemaVersion {
 		// Schema 1 brokers don't report declarations: unknown, not none.
-		out.AgentStatusAvailable, out.AgentStatusTotal, out.AgentStatusTruncated = false, 0, false
+		out.AgentStatus, out.AgentStatusAvailable, out.AgentStatusTotal, out.AgentStatusTruncated = nil, false, 0, false
 	}
 	if out.AgentStatus == nil {
 		out.AgentStatus = []protocol.AgentStatus{}

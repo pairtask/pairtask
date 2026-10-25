@@ -181,6 +181,8 @@ func (m *Model) copyRef(agent string) tea.Cmd {
 	switch {
 	case !ok && m.statuses.truncated:
 		m.status = "status of " + safe(agent) + " not loaded (status list truncated)"
+	case !ok && !m.known(agent):
+		m.status = "unknown agent " + safe(agent) + ": not online or seen"
 	case !ok:
 		m.status = "no status declared by " + safe(agent)
 	case st.Ref == "":
