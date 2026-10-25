@@ -105,6 +105,7 @@ class Extension {
 	private async startBridge(): Promise<void> {
 		const generation = ++this.generation;
 		await this.closeBridge();
+		if (generation !== this.generation) return; // stopped while the old bridge closed
 		const config = readConfig(this.env);
 		if (typeof config === "string") {
 			if (config !== "") this.status(config);
@@ -118,6 +119,7 @@ class Extension {
 			await this.registerTools(bridge.client);
 			if (this.stale(bridge)) return void (await bridge.client.close());
 			await this.checkListener(bridge);
+			if (this.stale(bridge)) return void (await bridge.client.close());
 		} catch (error) {
 			if (this.stale(bridge)) return;
 			this.bridge = undefined;
