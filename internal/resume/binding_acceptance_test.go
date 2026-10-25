@@ -24,10 +24,7 @@ func TestResumeBindingAcceptancePrivateRoundTripAndReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := bindingPath(dir, want.AgentID)
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("binding must exist privately at the hashed path: %v", err)
-	}
+	checkPrivateBinding(t, path)
 	want.ThreadID = "second"
 	if err := store.Save(want); err != nil {
 		t.Fatal(err)
@@ -39,6 +36,17 @@ func TestResumeBindingAcceptancePrivateRoundTripAndReplacement(t *testing.T) {
 	files, err := os.ReadDir(dir)
 	if err != nil || len(files) != 1 {
 		t.Fatalf("atomic save left extra files: %v, %v", files, err)
+	}
+}
+
+func checkPrivateBinding(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("binding missing at the hashed path: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("binding must be private: got mode %o", info.Mode().Perm())
 	}
 }
 
@@ -87,18 +95,18 @@ func TestResumeBindingAcceptanceFailedSavePreservesPreviousRecord(t *testing.T) 
 	}
 }
 
-func writeCandidate(t *testing.T, home, id, cwd string, modified time.Time) {
+func writeCandidate(t *testing.T, home string, candidate Candidate) {
 	t.Helper()
 	dir := filepath.Join(home, "sessions", "2026", "10", "25")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": id, "cwd": cwd}})
-	path := filepath.Join(dir, "rollout-2026-10-25-"+id+".jsonl")
+	data, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": candidate.ThreadID, "cwd": candidate.Cwd}})
+	path := filepath.Join(dir, "rollout-2026-10-25-"+candidate.ThreadID+".jsonl")
 	if err := os.WriteFile(path, append(data, []byte("\nnot metadata; private conversation body\n")...), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chtimes(path, modified, modified); err != nil {
+	if err := os.Chtimes(path, candidate.Modified, candidate.Modified); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -106,19 +114,32 @@ func writeCandidate(t *testing.T, home, id, cwd string, modified time.Time) {
 func TestResumeBindingAcceptanceCandidatesPreferCwdThenRecencyAndStayBounded(t *testing.T) {
 	home := t.TempDir()
 	now := time.Now()
-	writeCandidate(t, home, "outside-newest", "/elsewhere", now)
-	writeCandidate(t, home, "matching-older", "/project", now.Add(-2*time.Hour))
-	writeCandidate(t, home, "matching-newer", "/project", now.Add(-time.Hour))
+	writeCandidate(t, home, Candidate{ThreadID: "outside-newest", Cwd: "/elsewhere", Modified: now})
+	writeCandidate(t, home, Candidate{ThreadID: "matching-older", Cwd: "/project", Modified: now.Add(-2 * time.Hour)})
+	writeCandidate(t, home, Candidate{ThreadID: "matching-newer", Cwd: "/project", Modified: now.Add(-time.Hour)})
 	got, err := Candidates(home, "/project", 2)
-	if err != nil || len(got) != 2 {
-		t.Fatalf("candidate page: %+v, %v", got, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got[0].ThreadID != "matching-newer" || got[1].ThreadID != "matching-older" {
-		t.Fatalf("wrong candidate preference: %+v", got)
+	if len(got) != 2 {
+		t.Fatalf("candidate page: %+v", got)
 	}
-	for _, candidate := range got {
-		if candidate.Bytes <= 0 || candidate.Cwd != "/project" || candidate.Modified.IsZero() {
-			t.Fatalf("missing candidate metadata: %+v", candidate)
-		}
+	checkCandidate(t, got[0], "matching-newer")
+	checkCandidate(t, got[1], "matching-older")
+}
+
+func checkCandidate(t *testing.T, candidate Candidate, id string) {
+	t.Helper()
+	if candidate.ThreadID != id {
+		t.Fatalf("wrong candidate preference: got %+v, want %s", candidate, id)
+	}
+	if candidate.Bytes <= 0 {
+		t.Fatalf("missing candidate size: %+v", candidate)
+	}
+	if candidate.Cwd != "/project" {
+		t.Fatalf("wrong candidate directory: %+v", candidate)
+	}
+	if candidate.Modified.IsZero() {
+		t.Fatalf("missing candidate timestamp: %+v", candidate)
 	}
 }

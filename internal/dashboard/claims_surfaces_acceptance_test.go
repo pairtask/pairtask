@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestClaimsSurfacesAcceptanceDashboardMarksBothPartialLevels(t *testing.T) {
 			m := dashboardStatusModel(t, dashboardClaimsSnapshot(t, true, global, !global))
 			requireText(t, strings.Join(m.header(), "\n"), "Active claims 1+")
 			detail := strings.ToLower(m.details())
-			if !strings.Contains(detail, "truncat") && !strings.Contains(detail, "partial") && !strings.Contains(detail, "omitted") {
+			if !slices.ContainsFunc([]string{"truncat", "partial", "omitted"}, func(word string) bool { return strings.Contains(detail, word) }) {
 				t.Fatalf("partial claims looked complete: %s", detail)
 			}
 		})

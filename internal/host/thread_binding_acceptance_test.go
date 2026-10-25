@@ -33,7 +33,10 @@ func TestThreadBindingAcceptanceOnlySuccessfulOwnedLifecycleIsRecorded(t *testin
 			response := Frame{ID: request.ID, Result: json.RawMessage(`{"thread":{"id":"owned","cwd":"/actual"}}`)}
 			threadBindingResponse(t, p, down, response)
 			threadBindingResponse(t, p, down, response)
-			if len(captured) != 1 || captured[0].ID != "owned" || captured[0].Cwd != "/actual" {
+			if len(captured) != 1 {
+				t.Fatalf("want one binding, got %+v", captured)
+			}
+			if captured[0] != (Thread{ID: "owned", Cwd: "/actual"}) {
 				t.Fatalf("want one actual owned thread binding, got %+v", captured)
 			}
 		})

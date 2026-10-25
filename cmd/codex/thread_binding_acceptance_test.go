@@ -23,12 +23,17 @@ func TestThreadBindingAcceptanceRecordsActualDirectoryAndFallback(t *testing.T) 
 		before := time.Now().UTC()
 		recordThread("reviewer", store)(host.Thread{ID: "owned-thread", Cwd: cwd})
 		b, err := store.Load("reviewer")
+		terminalCheck(t, err)
 		wantCwd := cwd
 		if wantCwd == "" {
 			wantCwd = wd
 		}
-		if err != nil || b.ThreadID != "owned-thread" || b.Cwd != wantCwd || b.UpdatedAt.Before(before) {
-			t.Fatalf("owned thread was not recorded: %+v, %v", b, err)
+		want := resume.Binding{AgentID: "reviewer", ThreadID: "owned-thread", Cwd: wantCwd, UpdatedAt: b.UpdatedAt}
+		if b != want {
+			t.Fatalf("owned thread was not recorded: %+v", b)
+		}
+		if b.UpdatedAt.Before(before) {
+			t.Fatalf("owned thread timestamp is stale: %s", b.UpdatedAt)
 		}
 	}
 }

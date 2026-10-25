@@ -88,25 +88,15 @@ func TestAgentClaimsSurfacesAcceptanceBothPartialLevelsAreVisible(t *testing.T) 
 
 func TestAgentClaimsSurfacesAcceptanceHorizontalRuleBeforeDetails(t *testing.T) {
 	_, panel := agentClaimsPanel(t, agentClaimsSnapshot(), "task-parent")
-	lines := strings.Split(panel, "\n")
-	presence, details := -1, -1
-	for i, line := range lines {
-		if strings.Contains(line, "●") {
-			presence = i
-		}
-		if details < 0 && strings.Contains(line, "◆") {
-			details = i
-		}
+	presence := strings.LastIndex(panel, "●")
+	details := strings.Index(panel, "◆")
+	if presence < 0 {
+		t.Fatalf("presence not found: %s", panel)
 	}
-	if presence < 0 || details <= presence {
+	if details <= presence {
 		t.Fatalf("presence and details not found: %s", panel)
 	}
-	for _, line := range lines[presence+1 : details] {
-		if strings.Contains(line, "───") {
-			return
-		}
-	}
-	t.Fatal("presence/details boundary needs a horizontal rule, not just a blank line")
+	v3Contains(t, panel[presence:details], "───")
 }
 
 func TestAgentClaimsSurfacesAcceptanceRefreshAndNarrowFrames(t *testing.T) {
