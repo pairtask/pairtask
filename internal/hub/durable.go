@@ -20,6 +20,12 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "session not persisted; registration rejected"})
 		return
 	}
+	if err := h.joinHelloRooms(context.Background(), c); err != nil {
+		h.log.Error("hello rooms not joined", "agent_id", c.ID, "error", err)
+		h.recordDisconnect(c)
+		rejectRegistration(c, protocol.Message{Code: protocol.ErrInternal, Detail: "rooms not joined; registration rejected"})
+		return
+	}
 	pending, reclaimed, err := h.claimPending(c)
 	if err != nil {
 		h.log.Error("recover inbox failed", "agent_id", c.ID, "error", err)
@@ -29,7 +35,7 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 	}
 	clients[c.ID] = c
 	h.seq++
-	h.enqueue(clients, c, protocol.Message{Type: protocol.TypeWelcome, AgentID: c.ID, SessionID: c.SessionID, Seq: h.seq, ProtocolVersion: c.ProtocolVersion})
+	h.enqueue(clients, c, h.welcomeRooms(context.Background(), c, protocol.Message{Type: protocol.TypeWelcome, AgentID: c.ID, SessionID: c.SessionID, Seq: h.seq, ProtocolVersion: c.ProtocolVersion}))
 	for _, msg := range pending {
 		if !h.enqueue(clients, c, msg) {
 			return
@@ -80,7 +86,7 @@ func (h *Hub) resolveRecipients(ctx context.Context, clients map[string]*Client,
 		return h.publicBroadcast(ctx, clients, in)
 	}
 	if in.Msg.To == protocol.Broadcast {
-		recipients, err := broadcastRecipients(clients, in.From)
+		recipients, err := broadcastRecipients(clients, in.From, everyone)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +155,11 @@ func (h *Hub) publicBroadcast(ctx context.Context, clients map[string]*Client, i
 	if rerr := h.validReply(ctx, h.store.ValidatePublicReply, in); rerr != nil {
 		return nil, rerr
 	}
-	peers, rerr := broadcastRecipients(clients, in.From)
+	admit, rerr := h.roomAudience(ctx, in.Msg.Room)
+	if rerr != nil {
+		return nil, rerr
+	}
+	peers, rerr := broadcastRecipients(clients, in.From, admit)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -217,3 +227,6 @@ func mapCopy[T any](in []T, f func(T) T) []T {
 	}
 	return out
 }
+
+// everyone admits every connected agent: the Square.
+func everyone(*Client) bool { return true }

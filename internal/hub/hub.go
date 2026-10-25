@@ -23,6 +23,7 @@ type Client struct {
 	Harness         string
 	Model           string
 	ProtocolVersion int
+	JoinRooms       []string              // v9 hello: rooms to join on registration
 	Send            chan protocol.Message // buffered; sent to and closed only by the hub
 	Disconnect      func()                // closes the transport; must return promptly
 	connectedAt     time.Time
@@ -174,6 +175,10 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
 		return
 	}
+	if err := h.scopeAgentSend(ctx, &in); err != nil {
+		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
+		return
+	}
 	if h.reportRetry(ctx, clients, in) {
 		return
 	}
@@ -288,10 +293,12 @@ func checkOperatorAddress(msg protocol.Message, version int) *routingError {
 	return nil
 }
 
-func broadcastRecipients(clients map[string]*Client, sender *Client) ([]protocol.Recipient, *routingError) {
+// broadcastRecipients is every connected agent the audience admits, except
+// the sender.
+func broadcastRecipients(clients map[string]*Client, sender *Client, admit func(*Client) bool) ([]protocol.Recipient, *routingError) {
 	var recipients []protocol.Recipient
 	for _, c := range clients {
-		if c != sender {
+		if c != sender && admit(c) {
 			recipients = append(recipients, c.identity())
 		}
 	}
@@ -542,6 +549,8 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 		h.handleStatus(ctx, clients, in)
 	case claimFrames[in.Msg.Type]:
 		h.handleClaim(ctx, clients, in)
+	case roomFrames[in.Msg.Type]:
+		h.handleRoom(ctx, clients, in)
 	case in.Msg.Type == protocol.TypeAck:
 		h.acknowledge(ctx, clients, in)
 	default:

@@ -246,7 +246,7 @@ func (l *Listener) observeToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
 
 // isStatusAnswer reports a status result or an error correlated by request_id.
 func isStatusAnswer(msg protocol.Message) bool {
-	if msg.Type == protocol.TypeAgentStatusResult || msg.Type == protocol.TypeClaimResult {
+	if msg.Type == protocol.TypeAgentStatusResult || msg.Type == protocol.TypeClaimResult || msg.Type == protocol.TypeRoomResult {
 		return true
 	}
 	return msg.Type == protocol.TypeError && msg.RequestID != ""

@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = ClaimVersion
+	Version                = RoomVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -43,6 +43,7 @@ const (
 	AgentStatusVersion     = 6 // agent_status_set/get/result and agent_activity
 	PublicBroadcastVersion = 7 // an agent's "*" also reaches the operator inbox
 	ClaimVersion           = 8 // claim_set/release/done/get and claim_result
+	RoomVersion            = 9 // project rooms: room on msg, rooms on hello and welcome
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -160,6 +161,10 @@ type Message struct {
 	Origin            string            `json:"origin,omitempty"`              // msg (broker -> client): operator, agent or unknown
 	Group             []string          `json:"group,omitempty"`               // operator_send: explicit recipient set
 	Excluded          []string          `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
+	Room              string            `json:"room,omitempty"`                // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
+	Rooms             []string          `json:"rooms,omitempty"`               // v9 hello: rooms to join; welcome, room_result: the agent's rooms
+	RoomOp            string            `json:"room_op,omitempty"`             // operator_room: what to do
+	RoomList          *RoomList         `json:"room_list,omitempty"`           // operator_room_result
 	PageRequest       *PageRequest      `json:"page_request,omitempty"`        // operator_receive
 	Page              *OperatorPage     `json:"page,omitempty"`                // operator_page
 	MessageIDs        []string          `json:"message_ids,omitempty"`         // operator_received

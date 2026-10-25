@@ -14,6 +14,7 @@ import (
 	"github.com/pairtask/pairtask/internal/bridge"
 	"github.com/pairtask/pairtask/internal/budget"
 	"github.com/pairtask/pairtask/internal/host"
+	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/resume"
 	"golang.org/x/sync/errgroup"
 )
@@ -28,6 +29,8 @@ func main() {
 	budgetFile := flag.String("budget-file", "", "persistent token budget file (one launcher at a time)")
 	budgetName := flag.String("budget", "", "named budget created by collab budget create; cannot combine with inline cap flags")
 	statusSocket := flag.String("budget-status-socket", "", "publish read-only named-budget status at this absolute Unix socket path")
+	var rooms protocol.RoomFlags
+	flag.Var(&rooms, "room", "join this room on registration (repeatable)")
 	restricted := flag.Bool("restricted-operator", false, "experimental text-only stdio ingress; requires --budget; blocks configuration, resume and terminal mode")
 	flag.Parse()
 	mode := restrictedMode{enabled: *restricted, budgetName: *budgetName}
@@ -37,7 +40,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: "codex-app-server"}
+	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: "codex-app-server", Rooms: rooms}
 	selection := budgetSelection{name: *budgetName, path: *budgetFile, limit: *tokenCap}
 	cap, err := selection.open(*mcpSocket)
 	if err != nil {

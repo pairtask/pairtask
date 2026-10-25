@@ -22,7 +22,8 @@ import (
 type startOptions struct {
 	Agent, ID, Model, Effort, Socket string
 	DryRun, Resume                   bool
-	Native                           []string // everything after --, for the agent itself
+	Native                           []string           // everything after --, for the agent itself
+	Rooms                            protocol.RoomFlags // --room, repeatable: rooms to join on registration
 }
 
 // startLayout is where the launchers and configs live; tests point it elsewhere.
@@ -63,7 +64,7 @@ type startPlan struct {
 	Config     []byte
 }
 
-const startUsage = "usage: pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--resume] [--dry-run] [-- agent arguments]"
+const startUsage = "usage: pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--room ROOM]... [--resume] [--dry-run] [-- agent arguments]"
 
 var startToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -103,6 +104,7 @@ func startFlags(opts *startOptions) *flag.FlagSet {
 	flags.StringVar(&opts.Socket, "socket", "", "broker Unix socket path")
 	flags.BoolVar(&opts.DryRun, "dry-run", false, "print the command and the config path; run nothing")
 	flags.BoolVar(&opts.Resume, "resume", false, "codex: continue the conversation this ID last owned")
+	flags.Var(&opts.Rooms, "room", "join this room on start (repeatable)")
 	return flags
 }
 
@@ -184,7 +186,7 @@ func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, 
 	if opts.Agent == "codex" {
 		return codexPlan(opts, layout), nil
 	}
-	config, err := claudeConfig(base, serverIdentity{ID: opts.ID, Socket: opts.Socket})
+	config, err := claudeConfig(base, serverIdentity{ID: opts.ID, Socket: opts.Socket, Rooms: opts.Rooms})
 	if err != nil {
 		return startPlan{}, err
 	}
@@ -204,7 +206,8 @@ func codexPlan(opts startOptions, layout startLayout) startPlan {
 	if socket == "" {
 		socket = brokerSocketDefault
 	}
-	argv := []string{layout.CodexLauncher, "--codex", layout.CodexBinary, "--agent-id", opts.ID, "--socket", socket, "--terminal", "--"}
+	argv := []string{layout.CodexLauncher, "--codex", layout.CodexBinary, "--agent-id", opts.ID, "--socket", socket}
+	argv = append(append(argv, roomArgs(opts.Rooms)...), "--terminal", "--")
 	if opts.Model != "" {
 		argv = append(argv, "--model", opts.Model)
 	}
@@ -218,6 +221,16 @@ func codexPlan(opts startOptions, layout startLayout) startPlan {
 // empty Socket keeps the installed one.
 type serverIdentity struct {
 	ID, Socket string
+	Rooms      []string // added as --room flags
+}
+
+// roomArgs are --room flags for the bridge or the launcher.
+func roomArgs(rooms []string) []string {
+	var out []string
+	for _, r := range rooms {
+		out = append(out, "--room", r)
+	}
+	return out
 }
 
 // claudeConfig is the installed config with only the pairtask server's
@@ -271,10 +284,10 @@ func rewriteArgs(args []string, want serverIdentity) ([]string, error) {
 		}
 	}
 	args, err := flagEdit{Name: "--agent-id", Value: want.ID}.apply(args)
-	if err != nil || want.Socket == "" {
-		return args, err
+	if err == nil && want.Socket != "" {
+		args, err = flagEdit{Name: "--socket", Value: want.Socket, AppendMissing: true}.apply(args)
 	}
-	return flagEdit{Name: "--socket", Value: want.Socket, AppendMissing: true}.apply(args)
+	return append(args, roomArgs(want.Rooms)...), err
 }
 
 // check rejects a malformed occurrence of the flag in args: at the end with

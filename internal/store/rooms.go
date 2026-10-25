@@ -1,0 +1,139 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"time"
+
+	"github.com/pairtask/pairtask/internal/protocol"
+)
+
+// roomsSchema records project rooms (#153) and who is in them. A message's
+// room is in message_metadata.room; NULL is the Square (everyone), so every
+// message from before rooms is already correct.
+const roomsSchema = `
+CREATE TABLE IF NOT EXISTS rooms (
+    id         TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS room_members (
+    room_id   TEXT NOT NULL,
+    agent_id  TEXT NOT NULL,
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (room_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS room_members_by_agent ON room_members(agent_id, room_id);
+`
+
+// CreateRoom adds an empty room; it reports whether the room is new.
+func (s *Store) CreateRoom(ctx context.Context, room string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO rooms (id, created_at) VALUES (?, ?)`, room, stamp(time.Now()))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n != 0, err
+}
+
+// JoinRooms adds the agent to each room, creating rooms that don't exist.
+// Joining is additive: existing memberships stay.
+func (s *Store) JoinRooms(ctx context.Context, agent string, rooms []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := stamp(time.Now())
+	for _, room := range rooms {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO rooms (id, created_at) VALUES (?, ?)`, room, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO room_members (room_id, agent_id, joined_at) VALUES (?, ?, ?)`, room, agent, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// LeaveRoom removes the membership. Deliveries already accepted stay.
+func (s *Store) LeaveRoom(ctx context.Context, agent, room string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM room_members WHERE room_id = ? AND agent_id = ?`, room, agent)
+	return err
+}
+
+// AgentRooms is the agent's rooms, sorted.
+func (s *Store) AgentRooms(ctx context.Context, agent string) ([]string, error) {
+	return s.column(ctx, `SELECT room_id FROM room_members WHERE agent_id = ? ORDER BY room_id`, agent)
+}
+
+// RoomExists reports whether a room was created.
+func (s *Store) RoomExists(ctx context.Context, room string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rooms WHERE id = ?`, room).Scan(&n)
+	return n != 0, err
+}
+
+// Rooms lists every room, empty ones included, with its members.
+func (s *Store) Rooms(ctx context.Context) (protocol.RoomList, error) {
+	list := protocol.RoomList{Rooms: []protocol.RoomInfo{}}
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id, m.agent_id FROM rooms r LEFT JOIN room_members m ON m.room_id = r.id ORDER BY r.id, m.agent_id`)
+	if err != nil {
+		return list, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var room string
+		var agent sql.NullString
+		if err := rows.Scan(&room, &agent); err != nil {
+			return list, err
+		}
+		list.Rooms = addMember(list.Rooms, room, agent)
+	}
+	return list, rows.Err()
+}
+
+// addMember appends a row of the ordered room listing.
+func addMember(rooms []protocol.RoomInfo, room string, agent sql.NullString) []protocol.RoomInfo {
+	if n := len(rooms); n == 0 || rooms[n-1].ID != room {
+		rooms = append(rooms, protocol.RoomInfo{ID: room, Members: []string{}})
+	}
+	if agent.Valid {
+		last := &rooms[len(rooms)-1]
+		last.Members = append(last.Members, agent.String)
+	}
+	return rooms
+}
+
+// MessageRoom is the room a stored message was sent to: "" for the Square
+// or an unknown message.
+func (s *Store) MessageRoom(ctx context.Context, messageID string) (string, error) {
+	var room sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT room FROM message_metadata WHERE message_id = ?`, messageID).Scan(&room)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return room.String, err
+}
+
+// column reads one text column.
+func (s *Store) column(ctx context.Context, query string, args ...any) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// RoomMembers is the room's members.
+func (s *Store) RoomMembers(ctx context.Context, room string) ([]string, error) {
+	return s.column(ctx, `SELECT agent_id FROM room_members WHERE room_id = ? ORDER BY agent_id`, room)
+}

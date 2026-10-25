@@ -147,6 +147,11 @@ func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (pr
 		return snap, err
 	}
 	snap.ClaimsTruncated = snap.ClaimsTotal > len(snap.Claims)
+	rooms, err := h.store.Rooms(ctx)
+	if err != nil {
+		return snap, err
+	}
+	snap.Rooms = rooms.Rooms
 	return fitSnapshot(snap)
 }
 

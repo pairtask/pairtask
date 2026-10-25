@@ -192,8 +192,14 @@ func (s *Server) handshake(ctx context.Context, conn net.Conn, r *bufio.Reader) 
 	if err := protocol.ValidateAgentID(msg.AgentID); err != nil {
 		return nil, err
 	}
+	for _, room := range msg.Rooms {
+		if err := protocol.ValidateRoomID(room); err != nil {
+			return nil, err
+		}
+	}
 
 	return &hub.Client{
+		JoinRooms:       msg.Rooms,
 		ID:              msg.AgentID,
 		SessionID:       uuid.NewString(),
 		Harness:         msg.Harness,

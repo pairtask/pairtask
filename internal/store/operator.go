@@ -166,11 +166,13 @@ type storedMessage struct {
 	origin    sql.NullString
 	inReplyTo string
 	payload   string
+	room      sql.NullString
 }
 
-// matches holds only for a trusted operator message with the same correlation and content.
+// matches holds only for a trusted operator message with the same
+// correlation, room and content; a retry never moves to another room.
 func (m storedMessage) matches(request protocol.Message) bool {
-	return m.origin.String == protocol.OriginOperator && m.inReplyTo == request.InReplyTo &&
+	return m.origin.String == protocol.OriginOperator && m.inReplyTo == request.InReplyTo && m.room.String == request.Room &&
 		bytes.Equal(compactPayload(json.RawMessage(m.payload)), compactPayload(request.Payload))
 }
 
@@ -179,7 +181,7 @@ func (m storedMessage) matches(request protocol.Message) bool {
 // anything else, including legacy rows claiming the operator sender, is a duplicate.
 func (s *Store) LookupOperatorRetry(ctx context.Context, request protocol.Message, scope OperatorScope) (*OperatorRetry, error) {
 	var stored storedMessage
-	err := s.db.QueryRowContext(ctx, `SELECT m.seq, mm.origin, mm.in_reply_to, m.payload FROM message_metadata mm JOIN messages m USING(seq) WHERE mm.message_id = ?`, request.MessageID).Scan(&stored.seq, &stored.origin, &stored.inReplyTo, &stored.payload)
+	err := s.db.QueryRowContext(ctx, `SELECT m.seq, mm.origin, mm.in_reply_to, m.payload, mm.room FROM message_metadata mm JOIN messages m USING(seq) WHERE mm.message_id = ?`, request.MessageID).Scan(&stored.seq, &stored.origin, &stored.inReplyTo, &stored.payload, &stored.room)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
