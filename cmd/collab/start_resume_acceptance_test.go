@@ -170,7 +170,13 @@ func TestStartResumeAcceptanceBrokerSessionIDIsNotAConversationID(t *testing.T) 
 }
 
 func TestStartResumeAcceptanceConflictingResumeOptionsAreUsageErrors(t *testing.T) {
-	for _, native := range [][]string{{"resume", "explicit"}, {"fork", "parent"}} {
+	for _, native := range [][]string{
+		{"resume", "explicit"}, {"fork", "parent"},
+		{"--model", "chosen", "resume", "explicit"},
+		{"--model=chosen", "fork", "parent"},
+		{"-c", "model=\"chosen\"", "resume", "explicit"},
+		{"--cd", "/project", "fork", "parent"},
+	} {
 		f := newResumeStartFixture(t, true)
 		assertStartEqual(t, "conflicting resume", f.run(append([]string{"--resume", "--"}, native...)...), 2)
 		assertStartEqual(t, "conflict never launches", len(f.argv), 0)
