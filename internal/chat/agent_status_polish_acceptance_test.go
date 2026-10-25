@@ -111,15 +111,18 @@ func TestStatusPolishAcceptanceCopyRefKeepsFullValue(t *testing.T) {
 func TestStatusPolishAcceptanceCopyRefMissingAndTruncatedRemainDistinct(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
+		agent     string
 		truncated bool
 		want      string
 	}{
-		{"known absent", false, "no status declared"},
-		{"not loaded", true, "truncated"},
+		{"known absent", "silent", false, "no status declared"},
+		{"not loaded", "silent", true, "truncated"},
+		{"unknown agent", "never-seen", false, "unknown agent never-seen: not online or seen"},
+		{"unknown with partial list", "never-seen", true, "truncated"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := polishedStatusHarness(t, tc.truncated)
-			cmd := requestStatusRefCopy(h, "silent")
+			cmd := requestStatusRefCopy(h, tc.agent)
 			if cmd != nil {
 				t.Fatal("missing ref produced a command")
 			}
