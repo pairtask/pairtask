@@ -49,16 +49,16 @@ if test "$(cat /proc/1/comm)" = systemd; then
     systemctl start incus.socket
 else
     # A container runner without systemd as PID 1, accepted above only as an
-    # ephemeral Namespace profile: start the daemon the way its unit would,
-    # with the unit's own environment and command, and wait until it serves.
+    # ephemeral Namespace profile. Start Zabbly's packaged daemon wrapper
+    # directly with explicit flags; it sets its own library paths and
+    # environment. No unit file is parsed.
     test "${PAIRTASK_EPHEMERAL_RUNNER:-}" = namespace
-    unit=/usr/lib/systemd/system/incus.service
-    mapfile -t unit_env < <(sed -n 's/^Environment=//p' "$unit" | tr -d '"')
-    read -r -a unit_exec < <(sed -n 's/^ExecStart=//p' "$unit" | head -n 1)
+    incusd=/opt/incus/lib/systemd/incusd
+    test -x "$incusd"
     mkdir -p /var/log/incus
-    env "${unit_env[@]}" "${unit_exec[@]}" >/var/log/incus/incusd.log 2>&1 &
-    if ! incus admin waitready --timeout=120; then
-        cat /var/log/incus/incusd.log >&2
+    "$incusd" --group incus-admin --logfile /var/log/incus/incusd.log &
+    if ! "$incusd" waitready --timeout=120; then
+        cat /var/log/incus/incusd.log >&2 || true
         exit 1
     fi
 fi
