@@ -90,7 +90,7 @@ func TestStatusJSONUnavailableUsesNullCounts(t *testing.T) {
 	for _, key := range []string{"connected_sessions", "durable_pending", "legacy_unacknowledged", "snapshot_at"} {
 		assertJSONField(t, out, key, nil)
 	}
-	assertJSONField(t, out, "schema_version", float64(1))
+	assertJSONField(t, out, "schema_version", float64(protocol.StatusSchemaVersion))
 }
 
 func TestStatusJSONUsesReadOnlyRequestAndSocketEnvironment(t *testing.T) {
