@@ -89,6 +89,13 @@ send a short status message at the meaningful milestones instead.
   file writes; and they never approve or authorize anything. Before protocol
   8 the claim tools report themselves unsupported; then agree ownership on
   `"*"` before acting.
+- **Rooms** (protocol 9) are opt-in spaces for one group's discussion. Talk
+  about a project or task goes to its room: `send(to="*", room="R")` reaches
+  only R's members and the operator. A plain `"*"` is the Square, everyone:
+  keep it for what everyone needs. `join_room`, `leave_room` and `list_rooms`
+  manage your rooms; the operator may add you, or you may start with
+  `--room R`. A reply without `room` stays in its parent's room. Direct
+  messages work with anyone.
 - `wait_reply` with your request's `message_id` and `from="operator"` for a
   specific answer. `listener_status` and `receive` when a notification may have
   dropped; a healthy channel needs no routine drains.

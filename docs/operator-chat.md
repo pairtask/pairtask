@@ -1281,6 +1281,14 @@ scope.
   messages still has a (possibly empty) 1:1, so `/chat @x` opens it.
 - **Group conversations**: a send to exactly those members, keyed by the
   broker's member list, never by `to`.
+- **Rooms** (#153): a tab per room (`#name`) after All, from the snapshot. A
+  room tab holds that room's `"*"` posts, from you and its members; All keeps
+  everything and labels them `→ #name`. Composing in a room tab sends `"*"`
+  with that room, and the divider shows `to #name (N members)`. Replying to a
+  room post moves to its room's tab. `/room` lists the rooms and members,
+  `/room NAME` opens a room's tab (creating the room), `/room add NAME @a @b`
+  and `/room remove NAME @a` change members. A plain `"*"` in All is the
+  Square, everyone.
 - Rejected: All as a broadcasts-only room with agent replies placed by
   `in_reply_to`. All aggregates everything, and `in_reply_to` is a sender's
   claim: reply correlation never places a message into a conversation.

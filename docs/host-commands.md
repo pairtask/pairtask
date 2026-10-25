@@ -84,6 +84,11 @@ Codex launcher or writes a per-ID Claude MCP config under
 `$XDG_CONFIG_HOME/pairtask/` (default `~/.config/pairtask/`); `--dry-run`
 shows the command.
 
+**Rooms** (#153): `pairtask start codex --id x --room pairtask` (repeatable)
+joins rooms on registration, in addition to any the agent already has. From
+`secured`, `pairtask operator room list|create R|add R AGENT|remove R AGENT`
+manages rooms and `pairtask operator send --all --room R TEXT` posts to one.
+
 **Resume Codex** with `pairtask start codex --id codex-1 --resume` (#67). The
 launcher records each agent ID's conversation and directory when a thread
 starts, resumes or forks (`$XDG_STATE_HOME/pairtask/`, default
