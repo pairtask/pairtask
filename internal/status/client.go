@@ -52,14 +52,7 @@ func statusReply(out protocol.StatusSnapshot, reply protocol.Message) (protocol.
 		out.Health = "unsupported"
 		return failed(out, errors.New("unsupported broker status schema"))
 	}
-	out = *reply.Status
-	if out.SchemaVersion < protocol.StatusSchemaVersion {
-		// Schema 1 brokers don't report declarations: unknown, not none.
-		out.AgentStatus, out.AgentStatusAvailable, out.AgentStatusTotal, out.AgentStatusTruncated = nil, false, 0, false
-	}
-	if out.AgentStatus == nil {
-		out.AgentStatus = []protocol.AgentStatus{}
-	}
+	out = withDeclarations(*reply.Status)
 	if out.Health != "ready" {
 		return failed(out, errors.New("broker status is "+out.Health+": "+out.Error))
 	}
@@ -73,3 +66,15 @@ func failed(out protocol.StatusSnapshot, err error) (protocol.StatusSnapshot, er
 
 // supportedSchema accepts this schema and schema 1, which lacks declarations.
 func supportedSchema(v int) bool { return v == 1 || v == protocol.StatusSchemaVersion }
+
+// withDeclarations normalises the declarations: a schema 1 broker reports
+// none, which means unknown, not none; the list is never null.
+func withDeclarations(out protocol.StatusSnapshot) protocol.StatusSnapshot {
+	if out.SchemaVersion < protocol.StatusSchemaVersion {
+		out.AgentStatus, out.AgentStatusAvailable, out.AgentStatusTotal, out.AgentStatusTruncated = nil, false, 0, false
+	}
+	if out.AgentStatus == nil {
+		out.AgentStatus = []protocol.AgentStatus{}
+	}
+	return out
+}

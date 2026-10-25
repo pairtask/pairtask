@@ -186,20 +186,35 @@ func (m *Model) liveViews() keySet {
 	live := keySet{has: map[viewKey]bool{}}
 	for _, e := range m.timeline.order {
 		live.addAll(entryViews(e))
-		if e.direction == "received" {
-			live.add(agentKey(e.msg.From)) // a public sender stays reachable for a 1:1
-		}
+		live.addAll(senderView(e))
 	}
 	for _, a := range m.agents.list {
 		live.add(agentKey(a.AgentID))
 	}
 	live.add(m.conv.selected)
+	live.addAll(m.protectedViews())
+	return live
+}
+
+// protectedViews are the saved views holding a draft or a reply binding.
+func (m *Model) protectedViews() []viewKey {
+	var keys []viewKey
 	for key, v := range m.conv.saved {
 		if v.protected() {
-			live.add(key)
+			keys = append(keys, key)
 		}
 	}
-	return live
+	slices.SortFunc(keys, func(a, b viewKey) int { return strings.Compare(a.agentID+"\x00"+a.members, b.agentID+"\x00"+b.members) })
+	return keys
+}
+
+// senderView is a received entry's sender's 1:1, which stays reachable even
+// when the entry itself is public and so belongs to All alone.
+func senderView(e *entry) []viewKey {
+	if e.direction != "received" {
+		return nil
+	}
+	return []viewKey{agentKey(e.msg.From)}
 }
 
 // entryViews lists the conversation an entry belongs to besides All. Only

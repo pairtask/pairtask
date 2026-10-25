@@ -68,8 +68,8 @@ func copyArg(a argument) error {
 
 // refAgent reads "ref AGENT"; ok is false when the argument isn't a ref copy.
 func (a argument) refAgent() (agent string, ok bool) {
-	rest, found := strings.CutPrefix(string(a), "ref")
-	if !found || (rest != "" && rest[0] != ' ') {
+	head, rest, _ := strings.Cut(string(a), " ")
+	if head != "ref" {
 		return "", false
 	}
 	return strings.TrimPrefix(strings.TrimSpace(rest), "@"), true

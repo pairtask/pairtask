@@ -58,6 +58,18 @@ func (m *model) freshness() string {
 }
 
 func (m *model) notices() string {
+	notes := append(m.snapshotNotes(), m.agentStatusNotes()...)
+	if m.latest.Error != "" {
+		notes = append(notes, "Error: "+safe(m.latest.Error))
+	}
+	if len(notes) == 0 {
+		return m.styles.muted.Render("Snapshots only · refresh " + m.cfg.Interval.String() + " after each response")
+	}
+	return strings.Join(notes, " · ")
+}
+
+// snapshotNotes are the session and inbox gaps of the snapshot.
+func (m *model) snapshotNotes() []string {
 	var notes []string
 	if m.haveSnapshot && !m.snapshot.HistoryAvailable {
 		notes = append(notes, "history unavailable")
@@ -68,19 +80,18 @@ func (m *model) notices() string {
 	if p := m.snapshot.DurablePending; p != nil && p.RecipientsTruncated {
 		notes = append(notes, "inbox list truncated")
 	}
-	if m.snapshot.AgentStatusTruncated {
-		notes = append(notes, "agent status truncated")
+	return notes
+}
+
+// agentStatusNotes are the gaps in the agents' declarations.
+func (m *model) agentStatusNotes() []string {
+	switch {
+	case m.snapshot.AgentStatusTruncated:
+		return []string{"agent status truncated"}
+	case m.haveSnapshot && !m.snapshot.AgentStatusAvailable:
+		return []string{"agent status unavailable"}
 	}
-	if m.haveSnapshot && !m.snapshot.AgentStatusAvailable {
-		notes = append(notes, "agent status unavailable")
-	}
-	if m.latest.Error != "" {
-		notes = append(notes, "Error: "+safe(m.latest.Error))
-	}
-	if len(notes) == 0 {
-		return m.styles.muted.Render("Snapshots only · refresh " + m.cfg.Interval.String() + " after each response")
-	}
-	return strings.Join(notes, " · ")
+	return nil
 }
 
 func (m *model) body(area viewport) []string {
