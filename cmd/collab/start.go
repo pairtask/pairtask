@@ -117,11 +117,8 @@ func splitNative(args []string) (ours, native []string) {
 // normalizeResume turns a managed selector into --resume and refuses
 // --resume next to arguments that already choose a conversation.
 func (o *startOptions) normalizeResume() error {
-	if o.Agent == "codex" && !o.Resume && managedSelector(o.Native) {
-		o.Resume, o.Native = true, nil
-		return nil
-	}
 	if !o.Resume {
+		o.adoptManagedSelector()
 		return nil
 	}
 	if o.Agent != "codex" {
@@ -131,6 +128,17 @@ func (o *startOptions) normalizeResume() error {
 		return errors.New("--resume already chooses the conversation; drop the resume or fork arguments after --")
 	}
 	return nil
+}
+
+// adoptManagedSelector turns Codex's `resume` or `resume --last` into
+// --resume.
+func (o *startOptions) adoptManagedSelector() {
+	if o.Agent != "codex" {
+		return
+	}
+	if managedSelector(o.Native) {
+		o.Resume, o.Native = true, nil
+	}
 }
 
 func (o *startOptions) validate() error {
@@ -394,6 +402,11 @@ func runStart(args []string, rt startRuntime) int {
 		printDir(dir, rt.Stdout)
 		return 0
 	}
+	return launchIn(dir, plan, rt)
+}
+
+// launchIn changes to dir, when one was chosen, and launches.
+func launchIn(dir string, plan startPlan, rt startRuntime) int {
 	if dir != "" && rt.Chdir != nil {
 		if err := rt.Chdir(dir); err != nil {
 			fmt.Fprintln(rt.Stderr, err)

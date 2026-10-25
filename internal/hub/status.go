@@ -85,19 +85,37 @@ func fitStatus(out protocol.StatusSnapshot) protocol.StatusSnapshot {
 // statusReserve leaves room for the frame's newline.
 const statusReserve = 16
 
-// snapshotClaimSets adds the claims, as the operator snapshot has them. A
-// failed read leaves them unavailable rather than empty.
+// snapshotClaimSets adds the claims, as the operator snapshot has them.
 func (h *Hub) snapshotClaimSets(ctx context.Context, out *protocol.StatusSnapshot) {
-	sets, total, err := h.snapshotClaims(ctx)
+	sets, total, ok := statusPage(h, out, "claims", func() ([]protocol.ClaimSet, int, error) { return h.snapshotClaims(ctx) })
+	if ok {
+		out.Claims, out.ClaimsTotal, out.ClaimsTruncated, out.ClaimsAvailable = sets, total, total > len(sets), true
+	}
+}
+
+// snapshotAgentStatus adds the agents' declarations, as the operator
+// snapshot has them.
+func (h *Hub) snapshotAgentStatus(ctx context.Context, clients map[string]*Client, out *protocol.StatusSnapshot) {
+	records, total, ok := statusPage(h, out, "agent status", func() ([]protocol.AgentStatus, int, error) { return h.snapshotStatuses(ctx, clients) })
+	if ok {
+		out.AgentStatus, out.AgentStatusTotal, out.AgentStatusTruncated, out.AgentStatusAvailable = records, total, total > len(records), true
+	}
+}
+
+// statusPage runs one bounded read for the status snapshot. A failed read
+// degrades the snapshot and leaves its section unavailable rather than
+// empty; a successful one is never a null list.
+func statusPage[T any](h *Hub, out *protocol.StatusSnapshot, what string, read func() ([]T, int, error)) ([]T, int, bool) {
+	items, total, err := read()
 	if err != nil {
-		h.log.Error("claims query failed", "error", err)
-		out.Health, out.Error = "degraded", joinError(out.Error, "claims unavailable")
-		return
+		h.log.Error(what+" query failed", "error", err)
+		out.Health, out.Error = "degraded", joinError(out.Error, what+" unavailable")
+		return nil, 0, false
 	}
-	if sets != nil {
-		out.Claims = sets
+	if items == nil {
+		items = []T{}
 	}
-	out.ClaimsTotal, out.ClaimsTruncated, out.ClaimsAvailable = total, total > len(sets), true
+	return items, total, true
 }
 
 func joinError(prev, next string) string {
@@ -105,21 +123,6 @@ func joinError(prev, next string) string {
 		return next
 	}
 	return prev + "; " + next
-}
-
-// snapshotAgentStatus adds the agents' declarations, as the operator snapshot
-// has them. A failed read leaves them unavailable rather than empty.
-func (h *Hub) snapshotAgentStatus(ctx context.Context, clients map[string]*Client, out *protocol.StatusSnapshot) {
-	records, total, err := h.snapshotStatuses(ctx, clients)
-	if err != nil {
-		h.log.Error("agent status query failed", "error", err)
-		out.Health, out.Error = "degraded", joinError(out.Error, "agent status unavailable")
-		return
-	}
-	if records != nil {
-		out.AgentStatus = records
-	}
-	out.AgentStatusTotal, out.AgentStatusTruncated, out.AgentStatusAvailable = total, total > len(records), true
 }
 
 func liveSessions(clients map[string]*Client) ([]protocol.SessionStatus, bool) {

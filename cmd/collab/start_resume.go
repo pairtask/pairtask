@@ -35,18 +35,33 @@ func managedSelector(native []string) bool {
 // nativeLifecycle reports native arguments whose subcommand chooses a
 // conversation, which --resume can't be combined with.
 func nativeLifecycle(native []string) bool {
-	i := subcommand(native)
-	return i >= 0 && (native[i] == "resume" || native[i] == "fork")
+	switch at(native, subcommand(native)) {
+	case "resume", "fork":
+		return true
+	}
+	return false
 }
 
 // nativeSelector is the conversation an explicit `resume X …` names, when X
 // is positively the first argument after resume; "" when ambiguous.
 func nativeSelector(native []string) string {
 	i := subcommand(native)
-	if i < 0 || native[i] != "resume" || i+1 >= len(native) || strings.HasPrefix(native[i+1], "-") {
+	if at(native, i) != "resume" {
 		return ""
 	}
-	return native[i+1]
+	next := at(native, i+1)
+	if strings.HasPrefix(next, "-") {
+		return ""
+	}
+	return next
+}
+
+// at is native[i], or "" outside the arguments.
+func at(native []string, i int) string {
+	if i < 0 || i >= len(native) {
+		return ""
+	}
+	return native[i]
 }
 
 // valueOptions are the Codex global options taking a value that may come

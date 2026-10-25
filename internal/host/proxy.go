@@ -170,10 +170,7 @@ func (p *Proxy) FromHost(ctx context.Context, frame Frame) error {
 		if p.Calls.Resolve(frame) {
 			return nil
 		}
-		ready = p.captureThread(&frame)
-	}
-	if ready {
-		p.notifyThread()
+		ready = p.captureOwned(&frame)
 	}
 	if p.ownsToolCall(frame) {
 		select {
@@ -255,6 +252,15 @@ func (p *Proxy) captureThread(frame *Frame) bool {
 // cwd, else the lifecycle request's, else empty.
 type Thread struct {
 	ID, Cwd string
+}
+
+// captureOwned captures the owned thread and tells OnThread about it.
+func (p *Proxy) captureOwned(frame *Frame) bool {
+	if !p.captureThread(frame) {
+		return false
+	}
+	p.notifyThread()
+	return true
 }
 
 // notifyThread tells OnThread about the owned thread, outside the lock.

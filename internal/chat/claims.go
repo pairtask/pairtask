@@ -119,13 +119,27 @@ func (m *Model) claimRows() []string {
 // loaded operator messages: "◇ task (role, state) on #seq · topic", or the
 // message ID's start when the message isn't loaded.
 func (m *Model) agentClaimLines(agent string) []string {
+	held := m.heldClaims(agent)
+	lines := make([]string, 0, len(held))
+	for _, c := range held {
+		lines = append(lines, mutedStyle.Render(m.agentClaimLine(c)))
+	}
+	return lines
+}
+
+func (m *Model) agentClaimLine(c protocol.Claim) string {
+	line := "    ◇ " + safe(c.Task) + " (" + c.Role + ", " + c.State + ") on " + m.parentLabel(c.OperatorMessageID)
+	if topic := safe(c.Topic); topic != "" {
+		line += " · " + topic
+	}
+	return line
+}
+
+// heldClaims is the agent's active and done claims, by message then task.
+func (m *Model) heldClaims(agent string) []protocol.Claim {
 	var held []protocol.Claim
 	for _, page := range m.claims.byMessage {
-		for _, c := range page.Claims {
-			if c.AgentID == agent && c.State != protocol.ClaimReleased {
-				held = append(held, c)
-			}
-		}
+		held = append(held, holding(page.Claims, agent)...)
 	}
 	sort.Slice(held, func(i, j int) bool {
 		if held[i].OperatorMessageID != held[j].OperatorMessageID {
@@ -133,15 +147,18 @@ func (m *Model) agentClaimLines(agent string) []string {
 		}
 		return held[i].Task < held[j].Task
 	})
-	lines := make([]string, 0, len(held))
-	for _, c := range held {
-		line := "    ◇ " + safe(c.Task) + " (" + c.Role + ", " + c.State + ") on " + m.parentLabel(c.OperatorMessageID)
-		if topic := safe(c.Topic); topic != "" {
-			line += " · " + topic
+	return held
+}
+
+// holding filters claims to the agent's unreleased ones.
+func holding(claims []protocol.Claim, agent string) []protocol.Claim {
+	var out []protocol.Claim
+	for _, c := range claims {
+		if c.AgentID == agent && c.State != protocol.ClaimReleased {
+			out = append(out, c)
 		}
-		lines = append(lines, mutedStyle.Render(line))
 	}
-	return lines
+	return out
 }
 
 // parentLabel names an operator message by its #seq when loaded.

@@ -116,12 +116,21 @@ func writeClaims(w io.Writer, out protocol.StatusSnapshot) {
 	t := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(t, "MESSAGE\tTASK\tROLE\tAGENT\tSTATE\tCLAIMED\tTOPIC")
 	for _, set := range out.Claims {
-		for _, c := range set.Claims {
-			fmt.Fprintf(t, "%q\t%q\t%s\t%q\t%s\t%s\t%q\n", set.OperatorMessageID, c.Task, c.Role, c.AgentID, c.State, Age(now, c.ClaimedAt)+" ago", c.Topic)
-		}
+		writeClaimRows(t, now, set)
 	}
 	t.Flush()
-	for _, set := range out.Claims {
+	writeClaimOmissions(w, out.Claims)
+}
+
+func writeClaimRows(w io.Writer, now time.Time, set protocol.ClaimSet) {
+	for _, c := range set.Claims {
+		fmt.Fprintf(w, "%q\t%q\t%s\t%q\t%s\t%s\t%q\n", set.OperatorMessageID, c.Task, c.Role, c.AgentID, c.State, Age(now, c.ClaimedAt)+" ago", c.Topic)
+	}
+}
+
+// writeClaimOmissions notes each message whose claims were cut.
+func writeClaimOmissions(w io.Writer, sets []protocol.ClaimSet) {
+	for _, set := range sets {
 		if set.Truncated {
 			fmt.Fprintf(w, "  message %q: showing %d of %d claims\n", set.OperatorMessageID, len(set.Claims), set.Total)
 		}

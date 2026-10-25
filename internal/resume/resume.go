@@ -146,10 +146,17 @@ func candidate(path string) (Candidate, bool) {
 	if err != nil {
 		return Candidate{}, false
 	}
-	line, err := bufio.NewReaderSize(f, metaLineMax).ReadSlice('\n')
-	if err != nil && len(line) == 0 {
+	line, _ := bufio.NewReaderSize(f, metaLineMax).ReadSlice('\n')
+	id, cwd := sessionMeta(line)
+	if id == "" {
 		return Candidate{}, false
 	}
+	return Candidate{ThreadID: id, Cwd: cwd, Modified: info.ModTime(), Bytes: info.Size()}, true
+}
+
+// sessionMeta reads a rollout's first line; an empty ID means it isn't the
+// session metadata.
+func sessionMeta(line []byte) (id, cwd string) {
 	var meta struct {
 		Type    string `json:"type"`
 		Payload struct {
@@ -157,10 +164,13 @@ func candidate(path string) (Candidate, bool) {
 			Cwd string `json:"cwd"`
 		} `json:"payload"`
 	}
-	if json.Unmarshal(line, &meta) != nil || meta.Type != "session_meta" || meta.Payload.ID == "" {
-		return Candidate{}, false
+	if err := json.Unmarshal(line, &meta); err != nil {
+		return "", ""
 	}
-	return Candidate{ThreadID: meta.Payload.ID, Cwd: meta.Payload.Cwd, Modified: info.ModTime(), Bytes: info.Size()}, true
+	if meta.Type != "session_meta" {
+		return "", ""
+	}
+	return meta.Payload.ID, meta.Payload.Cwd
 }
 
 // metaLineMax bounds the metadata line read from a rollout; real ones are
