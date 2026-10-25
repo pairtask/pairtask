@@ -49,18 +49,9 @@ if test "$(cat /proc/1/comm)" = systemd; then
     systemctl start incus.socket
 else
     # A container runner without systemd as PID 1, accepted above only as an
-    # ephemeral Namespace profile. Start Zabbly's packaged daemon wrapper
-    # directly with explicit flags; it sets its own library paths and
-    # environment. No unit file is parsed.
-    test "${PAIRTASK_EPHEMERAL_RUNNER:-}" = namespace
-    incusd=/opt/incus/lib/systemd/incusd
-    test -x "$incusd"
-    mkdir -p /var/log/incus
-    "$incusd" --group incus-admin --logfile /var/log/incus/incusd.log &
-    if ! "$incusd" waitready --timeout=120; then
-        cat /var/log/incus/incusd.log >&2 || true
-        exit 1
-    fi
+    # ephemeral Namespace profile: start the packaged daemon directly.
+    . "$(dirname "$0")/ci-incus-start.sh"
+    start_namespace_incus /opt/incus/lib/systemd/incusd /var/log/incus/incusd.log
 fi
 incus admin init --preseed <infra/image/ci-host.json
 # GitHub runners also run Docker, whose forwarding policy can block Incus.
