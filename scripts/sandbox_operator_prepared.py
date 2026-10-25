@@ -252,7 +252,11 @@ class PreparedStore:
         self.project = "pairtask-operator-prepared-" + token
 
     def alias(self, key):
-        return "operator-" + key
+        # Incus aliases are at most 64 characters; the 64-hex key fits exactly,
+        # and this run's dedicated project already namespaces it.
+        if not re.fullmatch(r"[0-9a-f]{64}", key):
+            raise ValueError("invalid prepared-image key")
+        return key
 
     def run(self, *args, **kwargs):
         return self.incus(["incus", "--project", self.project, *args], check=True, **kwargs)
