@@ -1273,17 +1273,14 @@ scope.
 
 - **All**, the common chat: every entry, exactly the v2 transcript.
   Broadcasts are composed here.
-- **1:1 with agent X**: what you received from X, and what X received from
-  you. A sent entry belongs to X's view only when the broker-accepted
-  recipients include X: `to` is X, `group` includes X, or X appears in the
-  entry's recipient stages. Presence never implies membership, and a past
-  broadcast never appears in a newly discovered agent's view. A truncated
-  stage list means "not yet known", never exclusion: when `/stages #n` later
-  reveals X, the entry appears in X's view at its sequence position with no
-  unread flag and no arrival notice. The row keeps its real audience label
-  ("you → everyone").
-- **Group messages** land in All and in each member's 1:1. There are no
-  group conversations in this step.
+- **1:1 with agent X**: only the direct traffic between you and X: what X
+  sent to you directly, and what you sent to X alone (`to` is X, or a group of
+  just X). Public `"*"` messages, yours and the agents', are only in All, and
+  your group sends are only in their group's conversation. Neither counts as
+  unread in a 1:1 or reopens a closed one. An agent known only from public
+  messages still has a (possibly empty) 1:1, so `/chat @x` opens it.
+- **Group conversations**: a send to exactly those members, keyed by the
+  broker's member list, never by `to`.
 - Rejected: All as a broadcasts-only room with agent replies placed by
   `in_reply_to`. Agents' messages are always direct to the operator and
   `in_reply_to` is a sender's claim, so that view would be empty or wrong.
@@ -1554,9 +1551,9 @@ An agent's `"*"` from v7 reaches the operator inbox as well as the other
 agents ([protocol](protocol.md#public-broadcast-v7)). Before this, a group
 discussion was one-way: the operator could speak to everyone with `@all` but
 never saw the agents' answers.
-- **Where it shows:** in All, with the author, like any received message. It
-  also appears in the author's 1:1, since that view holds what the agent
-  sent. History and the live inbox deliver the same message once.
+- **Where it shows:** in All, with the author, like any received message;
+  never in the author's 1:1, which holds direct traffic only. History and the
+  live inbox deliver the same message once.
 - **Receipts:** adopting it records `adapter_received` as for any inbox
   message. It still needs the operator's explicit acknowledgment.
 - **Replying:** `/reply #n` on a public message composes in All and sends to

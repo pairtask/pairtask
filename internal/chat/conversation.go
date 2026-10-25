@@ -179,13 +179,16 @@ func reservedID(id string) bool {
 }
 
 // liveViews are the conversations the directory lists: in the loaded
-// timeline, in presence, selected, or holding a protected view, in that order
+// timeline (a sender of public messages too, with an empty 1:1), in presence, selected, or holding a protected view, in that order
 // of first appearance. A view with an unsent draft or a reply binding stays
 // reachable even when nothing else lists it.
 func (m *Model) liveViews() keySet {
 	live := keySet{has: map[viewKey]bool{}}
 	for _, e := range m.timeline.order {
 		live.addAll(entryViews(e))
+		if e.direction == "received" {
+			live.add(agentKey(e.msg.From)) // a public sender stays reachable for a 1:1
+		}
 	}
 	for _, a := range m.agents.list {
 		live.add(agentKey(a.AgentID))
@@ -199,66 +202,31 @@ func (m *Model) liveViews() keySet {
 	return live
 }
 
-// entryViews lists the conversations an entry belongs to besides All: its
-// sender's 1:1, or for a sent message its group's conversation and each
-// accepted recipient's 1:1. A group is known only from the broker's member
-// list, never from the to field.
+// entryViews lists the conversation an entry belongs to besides All. Only
+// private traffic has one: a direct message is in the agent's 1:1, a group
+// send in its group's conversation. Public "*" traffic, either way, is in All
+// alone. A group is known only from the broker's member list, never from the
+// to field.
 func entryViews(e *entry) []viewKey {
-	if e.direction == "received" {
+	switch {
+	case e.msg.To == protocol.Broadcast:
+		return nil
+	case e.direction == "received":
 		return []viewKey{agentKey(e.msg.From)}
+	case len(canonicalGroup(e.msg.Group)) == 1:
+		return []viewKey{agentKey(e.msg.Group[0])} // a group of one is a direct message
+	case len(e.msg.Group) > 0:
+		return []viewKey{groupKey(e.msg.Group)}
+	case e.msg.To != "":
+		return []viewKey{agentKey(e.msg.To)}
 	}
-	var keys []viewKey
-	if len(e.msg.Group) > 0 {
-		keys = append(keys, groupKey(e.msg.Group))
-		for _, id := range e.msg.Group {
-			keys = append(keys, agentKey(id))
-		}
-	} else if e.msg.To != "" && e.msg.To != protocol.Broadcast {
-		keys = append(keys, agentKey(e.msg.To))
-	}
-	for id := range e.stages {
-		keys = append(keys, agentKey(id))
-	}
-	return keys
+	return nil
 }
 
 // inView reports whether an entry belongs to a conversation: All holds
-// everything; a 1:1 with X holds what X sent and what X is an accepted
-// recipient of. Presence never implies membership; a truncated stage list
-// means "not yet known".
+// everything; any other conversation holds only its own private traffic.
 func (m *Model) inView(e *entry, key viewKey) bool {
-	switch {
-	case key.common():
-		return true
-	case key.isGroup():
-		return inGroupView(e, key)
-	}
-	return inAgentView(e, key.agent())
-}
-
-// inGroupView: a group holds the messages sent to exactly its members.
-func inGroupView(e *entry, key viewKey) bool {
-	if e.direction != "sent" || len(e.msg.Group) == 0 {
-		return false
-	}
-	return groupKey(e.msg.Group) == key
-}
-
-// inAgentView: a 1:1 holds what the agent sent and what it is a recipient of.
-func inAgentView(e *entry, id string) bool {
-	if e.direction == "received" {
-		return e.msg.From == id
-	}
-	if sentDirectlyTo(e, id) || slices.Contains(e.msg.Group, id) {
-		return true
-	}
-	_, ok := e.stages[id]
-	return ok
-}
-
-// sentDirectlyTo reports a direct send to id; a group's to is a transport ID.
-func sentDirectlyTo(e *entry, id string) bool {
-	return len(e.msg.Group) == 0 && e.msg.To == id
+	return key.common() || slices.Contains(entryViews(e), key)
 }
 
 // selectView switches to a conversation, saving the current one. A new view
