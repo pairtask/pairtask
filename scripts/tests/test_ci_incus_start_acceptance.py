@@ -1,4 +1,4 @@
-"""Exercise Namespace daemon startup with a stub, without starting any service."""
+"""Exercise Namespace setup without starting services or creating device nodes."""
 
 import json
 import os
@@ -35,6 +35,23 @@ sys.exit(int(os.environ["TEST_LAUNCH_EXIT"]))
 '''
 
 
+MKNOD_STUB = r'''
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["TEST_CALLS"], "a") as output:
+    output.write(json.dumps(args) + "\n")
+target = Path(args[2])
+if target.name == os.environ.get("TEST_REFUSE_NODE"):
+    print("fixture: operation not permitted", file=sys.stderr)
+    sys.exit(1)
+target.write_text("fixture node")
+'''
+
+
 class NamespaceIncusStartupAcceptanceTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="incus-start-")
@@ -52,13 +69,25 @@ class NamespaceIncusStartupAcceptanceTests(unittest.TestCase):
                                 TEST_READY_EXIT="0", TEST_LAUNCH_EXIT="0")
 
     def invoke(self, **changes):
+        return self.invoke_command('start_namespace_incus "$2" "$3"',
+                                   self.wrapper, self.log, **changes)
+
+    def invoke_command(self, command, *arguments, **changes):
         return subprocess.run(
-            ["bash", "-euo", "pipefail", "-c",
-             'source "$1"; start_namespace_incus "$2" "$3"',
-             "acceptance", str(HELPER), str(self.wrapper), str(self.log)],
+            ["bash", "-euo", "pipefail", "-c", 'source "$1"; ' + command,
+             "acceptance", str(HELPER), *map(str, arguments)],
             env=dict(self.environment, **changes), capture_output=True,
             text=True, timeout=5,
         )
+
+    def loop_fixture(self):
+        devices = self.directory / "dev"
+        devices.mkdir()
+        mknod = self.directory / "mknod"
+        mknod.write_text("#!" + sys.executable + "\n" + MKNOD_STUB)
+        mknod.chmod(0o755)
+        self.environment["PATH"] = str(self.directory) + os.pathsep + os.environ["PATH"]
+        return devices
 
     def recorded_calls(self):
         if not self.calls.exists():
@@ -98,3 +127,38 @@ class NamespaceIncusStartupAcceptanceTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("fixture daemon startup diagnostic", result.stderr)
+
+    def test_missing_loop_nodes_use_exact_device_numbers(self):
+        devices = self.loop_fixture()
+        result = self.invoke_command('ensure_loop_devices "$2"', devices)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = [["-m", "0660", str(devices / "loop-control"), "c", "10", "237"]]
+        expected += [["-m", "0660", str(devices / ("loop" + str(i))), "b", "7", str(i)]
+                     for i in range(8)]
+        self.assertEqual(self.recorded_calls(), expected)
+
+    def test_existing_loop_paths_are_preserved(self):
+        devices = self.loop_fixture()
+        for name in ("loop-control", "loop0", "loop4"):
+            target = devices / name
+            target.write_text("original")
+            target.chmod(0o640)
+        result = self.invoke_command('ensure_loop_devices "$2"', devices)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([Path(call[2]).name for call in self.recorded_calls()],
+                         ["loop1", "loop2", "loop3", "loop5", "loop6", "loop7"])
+        for name in ("loop-control", "loop0", "loop4"):
+            self.assertEqual((devices / name).read_text(), "original")
+            self.assertEqual((devices / name).stat().st_mode & 0o777, 0o640)
+
+    def test_refused_loop_creation_stops_with_diagnostic(self):
+        devices = self.loop_fixture()
+        for refused in ("loop-control", "loop3"):
+            with self.subTest(refused=refused):
+                result = self.invoke_command('ensure_loop_devices "$2"', devices,
+                                             TEST_REFUSE_NODE=refused)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("runner forbids creating loop devices", result.stderr)
+                self.assertEqual(Path(self.recorded_calls()[-1][2]).name, refused)
+                self.assertFalse((devices / refused).exists())
+                self.assertFalse((devices / "loop4").exists())
