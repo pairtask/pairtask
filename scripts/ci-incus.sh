@@ -39,7 +39,12 @@ apt-get install -y incus btrfs-progs
 # newuidmap/newgidmap also require this host-level allowance, independently of
 # the restricted Incus project's UID/GID allowlist.
 usermod --add-subuids 60000-60000 --add-subgids 60000-60000 root
-modprobe btrfs
+# btrfs may be built into the runner's kernel (some providers ship no module
+# tree); load the module only when the filesystem isn't already available.
+uname -r
+if ! grep -qw btrfs /proc/filesystems; then
+    modprobe btrfs || { echo "btrfs is neither built in nor loadable on $(uname -r); this runner can't host the CI Incus pool" >&2; exit 1; }
+fi
 systemctl start incus.socket
 incus admin init --preseed <infra/image/ci-host.json
 # GitHub runners also run Docker, whose forwarding policy can block Incus.
