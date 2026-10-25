@@ -31,30 +31,44 @@ func TestPiJoinProcessHelper(t *testing.T) {
 		os.Exit(91)
 	}
 	args := os.Args[sep+1:]
-	if len(args) > 0 && args[0] == "harness" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			os.Exit(92)
-		}
-		report := joinReport{Args: args[2:], Cwd: cwd, PID: os.Getpid(), Env: map[string]string{}}
-		for _, key := range []string{"PAIRTASK_AGENT_ID", "PAIRTASK_SOCKET", "PAIRTASK_ROOMS", "PAIRTASK_MCP", "PAIRTASK_JOIN_UNRELATED"} {
-			report.Env[key] = os.Getenv(key)
-		}
-		if json.NewEncoder(os.Stdout).Encode(report) != nil {
-			os.Exit(93)
-		}
-		if args[1] == "signal" {
-			for {
-				time.Sleep(time.Hour)
-			}
-		}
-		code, err := strconv.Atoi(args[1])
-		if err != nil {
-			os.Exit(94)
-		}
-		os.Exit(code)
+	if len(args) == 0 {
+		os.Exit(91)
+	}
+	if args[0] == "harness" {
+		os.Exit(runJoinHarness(args[1:]))
 	}
 	os.Exit(run(context.Background(), args, os.Stdout, os.Stderr))
+}
+
+func runJoinHarness(args []string) int {
+	if code := writeJoinReport(args[1:]); code != 0 {
+		return code
+	}
+	if args[0] == "signal" {
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	code, err := strconv.Atoi(args[0])
+	if err != nil {
+		return 94
+	}
+	return code
+}
+
+func writeJoinReport(args []string) int {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return 92
+	}
+	report := joinReport{Args: args, Cwd: cwd, PID: os.Getpid(), Env: map[string]string{}}
+	for _, key := range []string{"PAIRTASK_AGENT_ID", "PAIRTASK_SOCKET", "PAIRTASK_ROOMS", "PAIRTASK_MCP", "PAIRTASK_JOIN_UNRELATED"} {
+		report.Env[key] = os.Getenv(key)
+	}
+	if json.NewEncoder(os.Stdout).Encode(report) != nil {
+		return 93
+	}
+	return 0
 }
 
 func joinHelper(t *testing.T, mode string) *exec.Cmd {

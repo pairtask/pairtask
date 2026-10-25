@@ -36,10 +36,10 @@ func TestPiStartAcceptanceLiteralArgumentsAndAdapterEnvironment(t *testing.T) {
 	calls := 0
 	rt := startRuntime{Stdout: &out, Stderr: &stderr, Layout: defaultStartLayout(), Exec: func(path string, argv, env []string) error {
 		calls++
-		if len(argv) < 3 || argv[0] != path || argv[1] != "-e" {
+		if len(argv) < 3 {
 			t.Fatalf("Pi extension not loaded: %q", argv)
 		}
-		assertStartEqual(t, "extension override", argv[2], "/tmp/extension with spaces/index.ts")
+		assertStartEqual(t, "extension invocation", argv[:3], []string{path, "-e", "/tmp/extension with spaces/index.ts"})
 		want := []string{"--model", "provider/model with spaces", "--mode", "rpc", "literal $value; $(nothing)", "--room", "native-room"}
 		assertStartEqual(t, "exact native tail", argv[3:], want)
 		assertStartEqual(t, "agent identity", piEnvValue(t, env, "PAIRTASK_AGENT_ID"), "pi-worker")
