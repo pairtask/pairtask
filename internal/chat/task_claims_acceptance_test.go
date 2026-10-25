@@ -2,6 +2,7 @@ package chat_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -74,25 +75,32 @@ func TestTaskClaimsChatAcceptanceShowsOwnersUnderRequestAndRefreshes(t *testing.
 }
 
 func TestTaskClaimsChatAcceptanceMissingSnapshotEntryDoesNotInventApproval(t *testing.T) {
-	snapshot := claimChatSnapshot(t, 1, "active")
-	snapshot.Snapshot.ClaimsTotal = 33
-	snapshot.Snapshot.ClaimsTruncated = true
-	h := claimChatHarness(t, snapshot, "older-parent", 3)
-	v2Command(h, "/claims #3")
-	plain := strings.ToLower(ansi.Strip(h.m.View().Content))
+	h, plain := partialClaimsPanel(t, true)
 	requirePartialClaimNotice(t, plain, []string{"truncat", "partial", "not loaded"})
 	chatEqual(t, "read-only claims panel never sends", h.m.State().Intent, nil)
 }
 
 func TestTaskClaimsChatAcceptanceReportsTruncatedClaimHistoryForLoadedParent(t *testing.T) {
-	snapshot := claimChatSnapshot(t, 1, "active")
-	snapshot.Snapshot.Claims[0].Total = 20
-	snapshot.Snapshot.Claims[0].Truncated = true
-	h := claimChatHarness(t, snapshot, "task-parent", 7)
-	v2Command(h, "/claims #7")
-	plain := strings.ToLower(ansi.Strip(h.m.View().Content))
+	_, plain := partialClaimsPanel(t, false)
 	requirePartialClaimNotice(t, plain, []string{"truncat", "partial", "of 20"})
 	v3Contains(t, plain, "alpha")
+}
+
+func partialClaimsPanel(t *testing.T, missingParent bool) (*chatHarness, string) {
+	t.Helper()
+	snapshot := claimChatSnapshot(t, 1, "active")
+	parent, seq := "task-parent", uint64(7)
+	if missingParent {
+		snapshot.Snapshot.ClaimsTotal = 33
+		snapshot.Snapshot.ClaimsTruncated = true
+		parent, seq = "older-parent", 3
+	} else {
+		snapshot.Snapshot.Claims[0].Total = 20
+		snapshot.Snapshot.Claims[0].Truncated = true
+	}
+	h := claimChatHarness(t, snapshot, parent, seq)
+	v2Command(h, fmt.Sprintf("/claims #%d", seq))
+	return h, strings.ToLower(ansi.Strip(h.m.View().Content))
 }
 
 func requirePartialClaimNotice(t *testing.T, plain string, notices []string) {
