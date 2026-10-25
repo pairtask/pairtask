@@ -45,7 +45,23 @@ uname -r
 if ! grep -qw btrfs /proc/filesystems; then
     modprobe btrfs || { echo "btrfs is neither built in nor loadable on $(uname -r); this runner can't host the CI Incus pool" >&2; exit 1; }
 fi
-systemctl start incus.socket
+if test "$(cat /proc/1/comm)" = systemd; then
+    systemctl start incus.socket
+else
+    # A container runner without systemd as PID 1, accepted above only as an
+    # ephemeral Namespace profile: start the daemon the way its unit would,
+    # with the unit's own environment and command, and wait until it serves.
+    test "${PAIRTASK_EPHEMERAL_RUNNER:-}" = namespace
+    unit=/usr/lib/systemd/system/incus.service
+    mapfile -t unit_env < <(sed -n 's/^Environment=//p' "$unit" | tr -d '"')
+    read -r -a unit_exec < <(sed -n 's/^ExecStart=//p' "$unit" | head -n 1)
+    mkdir -p /var/log/incus
+    env "${unit_env[@]}" "${unit_exec[@]}" >/var/log/incus/incusd.log 2>&1 &
+    if ! incus admin waitready --timeout=120; then
+        cat /var/log/incus/incusd.log >&2
+        exit 1
+    fi
+fi
 incus admin init --preseed <infra/image/ci-host.json
 # GitHub runners also run Docker, whose forwarding policy can block Incus.
 # Scope the exception to the disposable builder bridge; do not change the
