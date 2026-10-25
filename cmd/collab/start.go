@@ -29,6 +29,7 @@ type startOptions struct {
 // startLayout is where the launchers and configs live; tests point it elsewhere.
 type startLayout struct {
 	CodexLauncher, CodexBinary, ClaudeBinary, BaseConfig, ConfigDir string
+	PiBinary, PiExtension, MCPBinary                                string // pi and its extension; the bridge it runs
 	StateDir, CodexHome                                             string // resume bindings; Codex's saved conversations
 }
 
@@ -44,6 +45,9 @@ func defaultStartLayout() startLayout {
 		BaseConfig:    "/etc/pairtask/claude-mcp.json",
 		ConfigDir:     filepath.Join(dir, "pairtask"),
 		StateDir:      stateDir(),
+		PiBinary:      "/usr/local/bin/pi",
+		PiExtension:   cmp.Or(os.Getenv("PAIRTASK_PI_EXTENSION"), "/usr/local/lib/pairtask/pi-extension"),
+		MCPBinary:     "/usr/local/lib/pairtask/pairtask-mcp",
 		CodexHome:     cmp.Or(os.Getenv("CODEX_HOME"), filepath.Join(os.Getenv("HOME"), ".codex")),
 	}
 }
@@ -60,11 +64,12 @@ func stateDir() string {
 // the MCP config it needs written first.
 type startPlan struct {
 	Argv       []string
+	Env        []string // added to the environment, for harnesses that read it
 	ConfigPath string
 	Config     []byte
 }
 
-const startUsage = "usage: pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--room ROOM]... [--resume] [--dry-run] [-- agent arguments]"
+const startUsage = "usage: pairtask start (claude|codex|pi) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--room ROOM]... [--resume] [--dry-run] [-- agent arguments]"
 
 var startToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -155,10 +160,10 @@ func (o *startOptions) validate() error {
 
 func (o *startOptions) validateAgent() error {
 	switch o.Agent {
-	case "claude", "codex":
+	case "claude", "codex", "pi":
 		return nil
 	}
-	return fmt.Errorf("unknown agent %q: use claude or codex", o.Agent)
+	return fmt.Errorf("unknown agent %q: use claude, codex or pi", o.Agent)
 }
 
 func (o *startOptions) validateID() error {
@@ -174,6 +179,9 @@ func (o *startOptions) validateValues() error {
 	if strings.ContainsRune(o.Model, 0) || strings.ContainsRune(o.Socket, 0) {
 		return errors.New("arguments cannot contain NUL")
 	}
+	if o.Effort != "" && o.Agent == "pi" {
+		return errors.New("--effort is for claude and codex; pass pi's own options after --")
+	}
 	if o.Effort != "" && !startToken.MatchString(o.Effort) {
 		return fmt.Errorf("--effort %q: letters, digits, '.', '_' and '-' only", o.Effort)
 	}
@@ -183,8 +191,11 @@ func (o *startOptions) validateValues() error {
 // buildStart turns the options into the launcher command. base is the
 // installed Claude MCP config (unused for Codex).
 func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, error) {
-	if opts.Agent == "codex" {
+	switch opts.Agent {
+	case "codex":
 		return codexPlan(opts, layout), nil
+	case "pi":
+		return piPlan(opts, layout), nil
 	}
 	config, err := claudeConfig(base, serverIdentity{ID: opts.ID, Socket: opts.Socket, Rooms: opts.Rooms})
 	if err != nil {
@@ -454,6 +465,9 @@ func printPlan(plan startPlan, stdout io.Writer) {
 	if plan.ConfigPath != "" {
 		fmt.Fprintln(stdout, "config: "+plan.ConfigPath)
 	}
+	for _, kv := range plan.Env {
+		fmt.Fprintln(stdout, "env: "+kv)
+	}
 }
 
 // launch writes the config, then hands the process to the launcher.
@@ -462,7 +476,7 @@ func launch(plan startPlan, rt startRuntime) int {
 		fmt.Fprintln(rt.Stderr, err)
 		return 1
 	}
-	if err := rt.Exec(plan.Argv[0], plan.Argv, os.Environ()); err != nil {
+	if err := rt.Exec(plan.Argv[0], plan.Argv, append(os.Environ(), plan.Env...)); err != nil {
 		fmt.Fprintln(rt.Stderr, "exec "+plan.Argv[0]+": "+err.Error())
 		return 1
 	}
