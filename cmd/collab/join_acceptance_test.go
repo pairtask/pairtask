@@ -122,6 +122,24 @@ func TestPiJoinAcceptancePreservesArgumentsEnvironmentCwdAndExit(t *testing.T) {
 
 func TestPiJoinAcceptanceSignalReachesTheExecutedHarness(t *testing.T) {
 	cmd := joinHelper(t, "signal")
+	report := startJoinHarness(t, cmd)
+	checkJoinReport(t, cmd, report)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("signal did not terminate harness")
+	}
+	state, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok {
+		t.Fatalf("signal status unavailable: %v", cmd.ProcessState)
+	}
+	assertStartEqual(t, "harness terminated by signal", state.Signaled(), true)
+	assertStartEqual(t, "original signal preserved", state.Signal(), syscall.SIGTERM)
+}
+
+func startJoinHarness(t *testing.T, cmd *exec.Cmd) joinReport {
+	t.Helper()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.StdoutPipe()
@@ -137,17 +155,7 @@ func TestPiJoinAcceptanceSignalReachesTheExecutedHarness(t *testing.T) {
 		_ = cmd.Wait()
 		t.Fatalf("harness not ready: %v (%s)", err, stderr.String())
 	}
-	checkJoinReport(t, cmd, report)
-	if err = cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatal(err)
-	}
-	if err = cmd.Wait(); err == nil {
-		t.Fatal("signal did not terminate harness")
-	}
-	state, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
-	if !ok || !state.Signaled() || state.Signal() != syscall.SIGTERM {
-		t.Fatalf("signal status not preserved: %v", cmd.ProcessState)
-	}
+	return report
 }
 
 func TestPiJoinAcceptanceRejectsIncompleteOrInvalidContract(t *testing.T) {
