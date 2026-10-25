@@ -42,6 +42,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "start":
 		return runStart(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec,
 			Status: status.Fetch, Chdir: os.Chdir})
+	case "join":
+		return runJoin(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec})
 	}
 	return runStatus(ctx, args, stdout, stderr)
 }
@@ -80,7 +82,7 @@ type options struct {
 func parseOptions(args []string, stderr io.Writer) (options, int) {
 	var cfg options
 	if len(args) == 0 || args[0] != "status" {
-		fmt.Fprintln(stderr, "usage: pairtask status [--socket PATH] [--json] [--timeout 3s]\n       pairtask dashboard [--socket PATH] [--interval 2s] [--timeout 3s]\n       pairtask budget create NAME --tokens N [--json]\n       pairtask budget status NAME [--socket PATH] [--json]\n       pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask start (claude|codex) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--room ROOM]... [--resume] [--dry-run] [-- agent arguments]")
+		fmt.Fprintln(stderr, "usage: pairtask status [--socket PATH] [--json] [--timeout 3s]\n       pairtask dashboard [--socket PATH] [--interval 2s] [--timeout 3s]\n       pairtask budget create NAME --tokens N [--json]\n       pairtask budget status NAME [--socket PATH] [--json]\n       pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask start (claude|codex|pi) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--room ROOM]... [--resume] [--dry-run] [-- agent arguments]\n       pairtask join --id ID [--socket PATH] [--room ROOM]... [--dry-run] -- COMMAND [ARG]...")
 		return cfg, 2
 	}
 	socketDefault, ok := defaultSocket(stderr)

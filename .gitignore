@@ -21,3 +21,6 @@ __pycache__/
 /infra/incus/operator-*.json
 /infra/incus/operator.auto.tfvars.json
 /infra/incus/.operator.lock
+
+# The Pi extension's dependencies (installed by npm ci).
+/integrations/pi/node_modules/
