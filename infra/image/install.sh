@@ -56,7 +56,8 @@ for name in go gofmt codex claude node npm npx cs-mcp rtk starship; do
     ln -s ../lib/pairtask/pairtask-tool "/usr/local/bin/$name"
 done
 cp infra/image/pairtask-tools-setup.service infra/image/pairtask-tools-ready.service /etc/systemd/system/
-bash infra/image/install-skill.sh docs/skills/collab-ai /usr/local/share/pairtask
+bash infra/image/install-skill.sh docs/skills/collab-ai /usr/local/share/pairtask \
+    /etc/codex/skills /etc/claude-code/.claude/skills
 cp infra/image/claude-mcp.json /etc/pairtask/claude-mcp.json
 # The activator writes the agents' MCP configuration and the tool markers from
 # the tool selection at rollout; these are its base files.

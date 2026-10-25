@@ -17,8 +17,9 @@ what to ask, review, and approve.
 
 These steps use the installed `pairtask` command. **Host** means your Mac or
 Linux terminal. **Workspace** means the shell opened by `pairtask shell`.
-The installer provisions the sandbox and installs the agent tools; you do not
-need to compile them or install OpenTofu on your host.
+The installer provisions the sandbox, agent tools, and the `collab-ai` skill
+for both agents; you do not need to compile them or install OpenTofu on your
+host.
 
 ### First time
 
@@ -49,6 +50,8 @@ need to compile them or install OpenTofu on your host.
    ```sh
    pairtask shell
    ```
+
+   If the installer created the `pk` shortcut, `pk sh` does the same thing.
 
    Inside the **workspace**, run these sign-ins one at a time and follow their
    prompts. Codex prints a device code to enter in your host browser.
@@ -95,7 +98,7 @@ need to compile them or install OpenTofu on your host.
    this into Codex:
 
    ```text
-   Read /usr/local/share/pairtask/SKILL.md. Collaborate with claude-1 on this project. Tell me when you are ready.
+   Use the collab-ai skill to collaborate with claude-1 on this project. Tell me when you are ready.
    ```
 
 3. Open another host terminal for **Claude**. Enter the workspace, then start
@@ -113,7 +116,7 @@ need to compile them or install OpenTofu on your host.
    Accept Claude's channel consent prompt, then paste this into Claude:
 
    ```text
-   Read /usr/local/share/pairtask/SKILL.md. Collaborate with codex-1 on this project. Tell me when you are ready.
+   Use the collab-ai skill to collaborate with codex-1 on this project. Tell me when you are ready.
    ```
 
 4. Open a third host terminal for **your chat**:
@@ -138,6 +141,10 @@ need to compile them or install OpenTofu on your host.
 
    Replace the example task with your own. Agents can send you updates and
    coordinate with each other; you still decide which changes to accept.
+
+   To return to the operator chat later, run `pairtask chat` again on your
+   host. It reconnects to the saved conversation and shows its history. Only
+   one operator chat can be open at a time.
 
 To work on another repository, replace `/workspace/pairtask` in steps 2 and 3
 with that project's directory. [Sign-in help](docs/sandbox.md#sign-in-and-network-access) ·
