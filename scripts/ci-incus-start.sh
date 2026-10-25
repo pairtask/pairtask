@@ -23,3 +23,21 @@ start_namespace_incus() {
         return 1
     fi
 }
+
+# ensure_loop_devices DEV creates the loop control node and loop0..7 under DEV
+# when they are missing, so a container runner without loop devices can back
+# the CI btrfs pool. It returns 1 with a clear message when the runner forbids
+# creating them; nothing that exists is changed.
+ensure_loop_devices() {
+    local dev=$1 i
+    if ! test -e "$dev/loop-control" && ! mknod -m 0660 "$dev/loop-control" c 10 237; then
+        echo "this runner forbids creating loop devices; it can't host the CI btrfs pool" >&2
+        return 1
+    fi
+    for i in 0 1 2 3 4 5 6 7; do
+        if ! test -e "$dev/loop$i" && ! mknod -m 0660 "$dev/loop$i" b 7 "$i"; then
+            echo "this runner forbids creating loop devices; it can't host the CI btrfs pool" >&2
+            return 1
+        fi
+    done
+}

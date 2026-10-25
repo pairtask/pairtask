@@ -52,6 +52,7 @@ else
     # ephemeral Namespace profile: start the packaged daemon directly.
     . "$(dirname "$0")/ci-incus-start.sh"
     start_namespace_incus /opt/incus/lib/systemd/incusd /var/log/incus/incusd.log
+    ensure_loop_devices /dev
 fi
 incus admin init --preseed <infra/image/ci-host.json
 # GitHub runners also run Docker, whose forwarding policy can block Incus.
