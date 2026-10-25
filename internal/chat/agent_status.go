@@ -97,6 +97,8 @@ func (m *Model) statusRefreshed(_ pendingRequest, resp protocol.Message) tea.Cmd
 	}
 	m.statuses.set(resp.Snapshot)
 	m.claims.set(resp.Snapshot)
+	m.rooms = resp.Snapshot.Rooms
+	m.refreshDirectory()
 	if m.statuses.dirty {
 		m.statuses.dirty = false
 		return tea.Batch(m.refreshStatuses(), m.statusTicker())

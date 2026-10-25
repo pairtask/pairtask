@@ -212,6 +212,8 @@ func (m *Model) panelRows(height int) []string {
 		rows = m.stageRows()
 	case panelClaims:
 		rows = m.claimRows()
+	case panelRooms:
+		rows = m.roomRows()
 	}
 	var out []string
 	for _, row := range rows {

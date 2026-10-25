@@ -114,7 +114,7 @@ func (m *Model) replyCommand(arg argument) {
 	if !m.moveTo(replyView(e)) {
 		return
 	}
-	m.compose.reply = &replyTarget{messageID: e.msg.MessageID, sender: e.msg.From, seq: e.msg.Seq, public: isPublic(e)}
+	m.compose.reply = &replyTarget{messageID: e.msg.MessageID, sender: e.msg.From, seq: e.msg.Seq, public: isPublic(e), room: e.msg.Room}
 	m.status = ""
 }
 
@@ -146,6 +146,9 @@ func isPublic(e *entry) bool {
 // replyView is where a reply is composed: All for a public message, otherwise
 // the sender's 1:1.
 func replyView(e *entry) viewKey {
+	if isPublic(e) && e.msg.Room != "" {
+		return roomKey(e.msg.Room) // a reply stays in its parent's room
+	}
 	if isPublic(e) {
 		return allKey
 	}

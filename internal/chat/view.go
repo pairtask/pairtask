@@ -429,6 +429,8 @@ func (m *Model) audienceText(a audience) string {
 	case a.source == SourceReply:
 		r := m.compose.reply
 		return fmt.Sprintf("reply to #%d → %s", r.seq, safe(r.sender))
+	case a.room != "":
+		return fmt.Sprintf("to #%s (%d members)", safe(a.room), len(m.roomMembers(a.room)))
 	case a.everyone:
 		return fmt.Sprintf("to everyone (%d online%s)", len(m.agents.list), m.partialNote())
 	}

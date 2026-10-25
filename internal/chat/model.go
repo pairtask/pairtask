@@ -115,6 +115,7 @@ type Model struct {
 	agents   agentView
 	statuses statusView
 	claims   claimView
+	rooms    []protocol.RoomInfo // every room and its members, from the snapshot
 
 	compose    composer
 	conv       conversations

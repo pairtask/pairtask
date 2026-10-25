@@ -128,6 +128,7 @@ var commands = []command{
 	{name: "ack", usage: "[#n|all|from id]", help: "acknowledge: pick one, #n, all, or from one agent (received, not approval)", check: ackArg, run: (*Model).ackCommand, available: (*Model).hasReceived},
 	{name: "history", help: "load older messages", check: noArgs, run: (*Model).historyCommand},
 	{name: "chat", usage: `all|id|@a @b|"id"|["a","b"]`, help: "switch conversation: all, an agent, a group of agents, or JSON for any IDs", check: chatArg, run: (*Model).chatCommand},
+	{name: "room", aliases: []string{"rooms"}, usage: "[NAME | add NAME @a | remove NAME @a]", help: "rooms: list, open (creating) a room's tab, add or remove members", check: roomArg, run: (*Model).roomsCommand},
 	{name: "close", help: "hide this conversation from the bar (nothing is deleted; new messages reopen it)", check: noArgs, run: (*Model).closeCommand},
 	{name: "stages", usage: "#n", help: "delivery stages of a sent message", check: targetArg, run: (*Model).stagesCommand, available: (*Model).hasSent},
 	{name: "claims", usage: "#n", help: "which agents claimed which tasks of a sent message (never an approval)", check: targetArg, run: (*Model).claimsCommand, available: (*Model).hasSent},

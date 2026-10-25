@@ -68,8 +68,8 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		m.statuses.presence(ev)
 	case protocol.EventSendRefused:
 		return m.sendRefused(ev)
-	case protocol.EventStatusChanged, protocol.EventClaimsChanged:
-		return m.refreshStatuses() // the snapshot carries both statuses and claims
+	case protocol.EventStatusChanged, protocol.EventClaimsChanged, protocol.EventRoomsChanged:
+		return m.refreshStatuses() // the snapshot carries statuses, claims and rooms
 	}
 	return nil
 }
@@ -131,6 +131,7 @@ var responseHandlers = map[string]responseHandler{
 	kindSend:        (*Model).sendResult,
 	kindInboxStatus: (*Model).inboxStatusResponse,
 	kindAckMany:     (*Model).ackManyResponse,
+	kindRoom:        (*Model).roomResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
@@ -181,6 +182,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 	m.agents = agentView{list: snap.Agents, total: snap.AgentsTotal, partial: snap.AgentsTruncated}
 	m.statuses.set(snap)
 	m.claims.set(snap)
+	m.rooms = snap.Rooms
 	m.statuses.inFlight, m.statuses.dirty = false, false // a new baseline supersedes any refresh
 	m.inbox.pending, m.inbox.headSeq = snap.InboxPending, snap.InboxHeadSeq
 	m.timeline.resetStages()
