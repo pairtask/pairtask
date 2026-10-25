@@ -10,7 +10,7 @@ import (
 )
 
 type SendRequest struct {
-	To         string `json:"to" jsonschema:"Recipient agent ID, or * to broadcast to other connected agents"`
+	To         string `json:"to" jsonschema:"Recipient agent ID, operator, or * for the public conversation (the other connected agents and the operator, protocol version 7)"`
 	Text       string `json:"text" jsonschema:"Message text for the other agent"`
 	MessageID  string `json:"message_id,omitempty" jsonschema:"Stable ID, maximum 128 bytes; generated when omitted. Retry durable sends with the same ID and identical content to inspect persisted outcome without rerouting"`
 	InReplyTo  string `json:"in_reply_to,omitempty" jsonschema:"Message ID this message replies to"`

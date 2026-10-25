@@ -199,7 +199,7 @@ func TestDurableBroadcastRetryDoesNotExpandMembership(t *testing.T) {
 	sendTracked(t, b.sender, SendRequest{To: "*", Text: "review", MessageID: b.id})
 	retry := nextFrame(t, b.sender)
 	assertEqual(t, "broadcast retry", retry.Repeated, true)
-	assertEqual(t, "original scope", len(retry.Recipients), 2)
+	assertEqual(t, "original scope (two peers and the operator)", len(retry.Recipients), 3)
 	assertInboxTimeout(t, late)
 	assertInboxTimeout(t, b.recipients[1])
 	recovered := connectAgent(t, b.path, "codex")

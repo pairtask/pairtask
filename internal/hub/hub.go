@@ -187,7 +187,7 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
 		return
 	}
-	h.noteRouted(ctx, out)
+	h.noteRouted(ctx, out, recipients)
 	if out.AckRequested {
 		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: publicRecipients(recipients), Durable: out.Durable})
 	}
@@ -213,6 +213,30 @@ var agentEnvelopeChecks = []func(protocol.Message, int) *routingError{
 	checkIDLengths,
 	checkAckCapability,
 	checkAgentAddress,
+	checkPublicFlags,
+}
+
+// checkPublicFlags requires durable delivery with acknowledgments for a v7
+// public broadcast: its operator copy has no other delivery mode.
+func checkPublicFlags(msg protocol.Message, version int) *routingError {
+	if !isPublic(msg.To, version) {
+		return nil
+	}
+	if durableWithAcks(msg) {
+		return nil
+	}
+	return &routingError{protocol.ErrMalformedFrame, "a public broadcast (to \"*\", protocol_version 7) must be durable with ack_requested"}
+}
+
+func durableWithAcks(msg protocol.Message) bool {
+	return msg.Durable && msg.AckRequested
+}
+
+// isPublic reports whether "*" from this protocol version is the shared
+// conversation (connected peers and the operator inbox). Older versions keep
+// the agent-only broadcast.
+func isPublic(to string, version int) bool {
+	return to == protocol.Broadcast && version >= protocol.PublicBroadcastVersion
 }
 
 func checkMsgType(msg protocol.Message, _ int) *routingError {

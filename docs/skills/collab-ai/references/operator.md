@@ -67,6 +67,13 @@ send a short status message at the meaningful milestones instead.
 - Replies and messages go durable to the logical ID `operator`; status goes
   through the `status` tool. The chat's
   conversations, tabs, and groups are the operator's view, never a destination.
+- `"*"` is public from protocol 7: the other connected agents and the operator
+  see it. Use it to answer a request the operator sent to everyone, with
+  `in_reply_to` set to that request, so peers and the operator read the same
+  answer once. Coordination only your peer needs goes to the peer directly;
+  there is no private "everyone". Before protocol 7, `"*"` reached agents
+  only: the send tool then refuses it as an unsupported public broadcast, and
+  you send the answer to `operator` instead.
 - `wait_reply` with your request's `message_id` and `from="operator"` for a
   specific answer. `listener_status` and `receive` when a notification may have
   dropped; a healthy channel needs no routine drains.

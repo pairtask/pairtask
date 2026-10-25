@@ -117,7 +117,8 @@ func startBroadcastReview(t *testing.T) broadcastReview {
 	b.id = sendTracked(t, b.sender, SendRequest{To: "*", Text: "review", MessageID: "broadcast-review"}).MessageID
 	accepted := nextFrame(t, b.sender)
 	assertStage(t, accepted, b.id, protocol.StageAccepted)
-	want := []protocol.Recipient{{AgentID: "codex", SessionID: b.recipients[0].sessionID}, {AgentID: "reviewer", SessionID: b.recipients[1].sessionID}}
+	// v7: the public broadcast also freezes the operator inbox (no session shown).
+	want := []protocol.Recipient{{AgentID: "codex", SessionID: b.recipients[0].sessionID}, {AgentID: "operator"}, {AgentID: "reviewer", SessionID: b.recipients[1].sessionID}}
 	if !reflect.DeepEqual(accepted.Recipients, want) {
 		t.Fatalf("broadcast scope = %+v, want %+v", accepted.Recipients, want)
 	}

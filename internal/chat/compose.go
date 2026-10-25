@@ -35,6 +35,7 @@ type replyTarget struct {
 	messageID string
 	sender    string
 	seq       uint64
+	public    bool // a reply to a public "*" goes to everyone
 }
 
 // commandLine is the separate input for commands; it never touches the draft.
