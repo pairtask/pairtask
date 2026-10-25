@@ -285,10 +285,16 @@ func inboxAscending(after uint64, page *protocol.OperatorPage) (uint64, bool) {
 	return last, true
 }
 
-// validInboxMessage requires a complete message addressed to the operator;
-// the broker sends a payload-less message as JSON null.
+// validInboxMessage requires a complete message that reached the operator
+// inbox; the broker sends a payload-less message as JSON null.
 func validInboxMessage(msg protocol.Message) bool {
-	return msg.Type == protocol.TypeMsg && msg.To == protocol.OperatorID && msg.MessageID != "" && len(msg.Payload) > 0
+	return msg.Type == protocol.TypeMsg && reachesOperator(msg) && msg.MessageID != "" && len(msg.Payload) > 0
+}
+
+// reachesOperator: a message to the operator, or an agent's public "*" (v7),
+// whose frozen recipients include the operator inbox.
+func reachesOperator(msg protocol.Message) bool {
+	return msg.To == protocol.OperatorID || (msg.To == protocol.Broadcast && msg.Origin == protocol.OriginAgent)
 }
 
 // validateHistory checks a whole history page before anything is inserted.
@@ -343,7 +349,7 @@ func validHistoryEntry(h protocol.HistoryEntry) bool {
 	case "sent":
 		return h.Message.Origin == protocol.OriginOperator && validStages(h.Recipients)
 	case "received":
-		return h.Message.To == protocol.OperatorID && validStage(h.OperatorStage)
+		return reachesOperator(h.Message) && validStage(h.OperatorStage)
 	}
 	return false
 }

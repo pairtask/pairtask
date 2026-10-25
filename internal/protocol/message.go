@@ -35,12 +35,13 @@ const (
 )
 
 const (
-	Version                = AgentStatusVersion
+	Version                = PublicBroadcastVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
 	OperatorInboxVersion   = 5
 	AgentStatusVersion     = 6 // agent_status_set/get/result and agent_activity
+	PublicBroadcastVersion = 7 // an agent's "*" also reaches the operator inbox
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"

@@ -36,12 +36,19 @@ func NewMCP(c messagingClient) *mcp.Server {
 	return s
 }
 
+// sendDescription tells the model who a "*" reaches, so a public answer is
+// never mistaken for a private one or the reverse.
+const sendDescription = "Send a text message with a stable ID and optional in_reply_to. " +
+	"to is an agent ID, \"operator\", or \"*\". With protocol version 7, \"*\" is the public conversation: every connected agent and the operator see it, and it is always durable. " +
+	"Against an older broker a \"*\" send is refused as an unsupported public broadcast instead of silently reaching agents only. " +
+	"A public reply must answer a public message you took part in. Returns written status; correlated acceptance, receipt, and routing errors arrive through receive/wait."
+
 func newMCP(c messagingClient, options *mcp.ServerOptions) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "pairtask", Version: "0.5.0"}, options)
 	addReplyTool(s, c)
 	addStatusTools(s, c)
 	additive := false
-	mcp.AddTool(s, &mcp.Tool{Name: "send", Description: "Send a text message with a stable ID and optional in_reply_to. Returns written status; correlated acceptance, receipt, and routing errors arrive through receive/wait.", Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
+	mcp.AddTool(s, &mcp.Tool{Name: "send", Description: sendDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args SendRequest) (*mcp.CallToolResult, any, error) {
 			out, err := c.SendMessage(ctx, args)
 			if err != nil {

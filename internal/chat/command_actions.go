@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // target resolves "#n" to a loaded current-epoch entry, or fallback's entry
@@ -108,10 +110,10 @@ func (m *Model) replyCommand(arg argument) {
 		m.status = reason
 		return
 	}
-	if !m.moveToSender(e.msg.From) {
+	if !m.moveTo(replyView(e)) {
 		return
 	}
-	m.compose.reply = &replyTarget{messageID: e.msg.MessageID, sender: e.msg.From, seq: e.msg.Seq}
+	m.compose.reply = &replyTarget{messageID: e.msg.MessageID, sender: e.msg.From, seq: e.msg.Seq, public: isPublic(e)}
 	m.status = ""
 }
 
@@ -128,28 +130,51 @@ func (m *Model) replyRefusal(e *entry) string {
 	if m.compose.addressed() {
 		return "draft is already addressed; remove the mentions or /to first"
 	}
-	if m.conv.selected.agent() == e.msg.From {
+	if m.conv.selected == replyView(e) {
 		return "" // the reply stays in this view
 	}
-	return m.switchRefusal(e.msg.From)
+	return m.switchRefusal(replyView(e))
 }
 
-// switchRefusal is why a reply can't move into the sender's view: a draft
-// addressed to the current 1:1, or an unsent draft waiting there.
-func (m *Model) switchRefusal(sender string) string {
+// isPublic reports an agent's public "*" message (v7): everyone saw it, so a
+// reply to it goes to everyone too.
+func isPublic(e *entry) bool {
+	return e.direction == "received" && e.msg.To == protocol.Broadcast
+}
+
+// replyView is where a reply is composed: All for a public message, otherwise
+// the sender's 1:1.
+func replyView(e *entry) viewKey {
+	if isPublic(e) {
+		return allKey
+	}
+	return viewKey(e.msg.From)
+}
+
+// switchRefusal is why a reply can't move into its view: a draft addressed
+// to the current 1:1, or an unsent draft waiting there.
+func (m *Model) switchRefusal(key viewKey) string {
 	if !m.conv.selected.common() && !m.compose.draftEmpty() {
 		return "draft is already addressed; send or clear it first"
 	}
-	if m.savedDraft(viewKey(sender)) {
-		return safe(sender) + " has an unsent draft: switch to it to send or clear it first"
+	if m.savedDraft(key) {
+		return viewName(key) + " has an unsent draft: switch to it to send or clear it first"
 	}
 	return ""
 }
 
-// moveToSender switches a reply into the sender's 1:1; an unaddressed draft
-// typed in All moves with it and All's draft becomes empty.
-func (m *Model) moveToSender(sender string) bool {
-	if m.conv.selected.agent() == sender {
+// viewName is a conversation's name in a status line.
+func viewName(key viewKey) string {
+	if key.common() {
+		return "All"
+	}
+	return safe(key.agent())
+}
+
+// moveTo switches a reply into its view; an unaddressed draft typed in All
+// moves with it and All's draft becomes empty.
+func (m *Model) moveTo(key viewKey) bool {
+	if m.conv.selected == key {
 		return true
 	}
 	m.refreshDirectory()
@@ -157,7 +182,7 @@ func (m *Model) moveToSender(sender string) bool {
 	if m.conv.selected.common() {
 		m.compose.resetDraft()
 	}
-	if !m.selectView(viewKey(sender)) {
+	if !m.selectView(key) {
 		if m.conv.selected.common() {
 			m.compose.setDraft(text, pasted)
 		}

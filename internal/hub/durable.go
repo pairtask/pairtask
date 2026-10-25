@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -75,6 +76,9 @@ func (h *Hub) resolveRecipients(ctx context.Context, clients map[string]*Client,
 	if in.Msg.To == protocol.OperatorID {
 		return h.operatorInbox(ctx, in)
 	}
+	if isPublic(in.Msg.To, in.From.ProtocolVersion) {
+		return h.publicBroadcast(ctx, clients, in)
+	}
 	if in.Msg.To == protocol.Broadcast {
 		recipients, err := broadcastRecipients(clients, in.From)
 		if err != nil {
@@ -138,15 +142,47 @@ func disconnectDetail(durable bool) string {
 	return "recipient session disconnected before agent acknowledgment; this non-durable message has no replay"
 }
 
-// operatorInbox validates a reply's correlation before quota and persistence.
-func (h *Hub) operatorInbox(ctx context.Context, in Inbound) ([]protocol.Recipient, *routingError) {
-	err := h.store.ValidateOperatorReply(ctx, in.From.ID, in.Msg.InReplyTo)
+// publicBroadcast freezes the connected peers plus the operator inbox. The
+// operator counts toward the recipient limit, and a reply must belong to a
+// public thread the sender took part in.
+func (h *Hub) publicBroadcast(ctx context.Context, clients map[string]*Client, in Inbound) ([]protocol.Recipient, *routingError) {
+	if rerr := h.validReply(ctx, h.store.ValidatePublicReply, in); rerr != nil {
+		return nil, rerr
+	}
+	peers, rerr := broadcastRecipients(clients, in.From)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if len(peers)+1 > protocol.MaxRecipients {
+		return nil, &routingError{protocol.ErrRecipientUnavailable, "public broadcast exceeds 256 recipients including the operator; send to smaller groups directly"}
+	}
+	if rerr := checkRecipientVersions(clients, in.Msg, peers); rerr != nil {
+		return nil, rerr
+	}
+	recipients := make([]protocol.Recipient, 0, len(peers)+1)
+	recipients = append(recipients, peers...)
+	recipients = append(recipients, protocol.Recipient{AgentID: protocol.OperatorID, SessionID: store.OperatorInboxSession})
+	sort.Slice(recipients, func(i, j int) bool { return recipients[i].AgentID < recipients[j].AgentID })
+	return recipients, nil
+}
+
+// validReply maps a correlation check to a routing error.
+func (h *Hub) validReply(ctx context.Context, check func(context.Context, string, string) error, in Inbound) *routingError {
+	err := check(ctx, in.From.ID, in.Msg.InReplyTo)
 	if errors.Is(err, store.ErrInvalidReply) {
-		return nil, &routingError{protocol.ErrInvalidReply, err.Error()}
+		return &routingError{protocol.ErrInvalidReply, err.Error()}
 	}
 	if err != nil {
-		h.log.Error("operator reply validation failed", "message_id", in.Msg.MessageID, "error", err)
-		return nil, &routingError{protocol.ErrInternal, "cannot validate reply; message not accepted"}
+		h.log.Error("reply validation failed", "message_id", in.Msg.MessageID, "error", err)
+		return &routingError{protocol.ErrInternal, "cannot validate reply; message not accepted"}
+	}
+	return nil
+}
+
+// operatorInbox validates a reply's correlation before quota and persistence.
+func (h *Hub) operatorInbox(ctx context.Context, in Inbound) ([]protocol.Recipient, *routingError) {
+	if rerr := h.validReply(ctx, h.store.ValidateOperatorReply, in); rerr != nil {
+		return nil, rerr
 	}
 	return []protocol.Recipient{{AgentID: protocol.OperatorID, SessionID: store.OperatorInboxSession}}, nil
 }

@@ -19,7 +19,9 @@ receive a welcome without that field:
 {"type":"welcome","protocol_version":3,"seq":1,"agent_id":"claude-1","session_id":"<unique-session-ID>"}
 ```
 
-Send a broadcast (`to: "*"`) or a direct message (`to: "<agent_id>"`):
+Send a broadcast (`to: "*"`) or a direct message (`to: "<agent_id>"`). From
+v7, an agent's `"*"` is the public conversation and also reaches the operator
+inbox; see [Public broadcast (v7)](#public-broadcast-v7):
 
 ```json
 {"type":"msg","message_id":"request-1","ack_requested":true,"durable":true,"to":"*","payload":{"text":"hello everyone"}}
@@ -57,7 +59,7 @@ agent acknowledgment before adapter receipt is rejected with `invalid_ack`.
 Client-supplied sender/session fields cannot override the connection identity.
 
 Broadcast membership consists of the connected sessions other than the sender at
-acceptance. Each member acknowledges independently; late arrivals are excluded.
+acceptance, plus the operator inbox for a v7 sender (below). Each member acknowledges independently; late arrivals are excluded.
 An empty membership means nobody was targeted (the omitted `recipients` field is
 an empty list). Broadcasts above 256 recipients are rejected before persistence.
 Queue failures affect only the corresponding member; healthy members still get
@@ -288,6 +290,40 @@ not an acknowledgment, not evidence of completion and never an authorization.
   `agent_status_total` and `agent_status_truncated`. Viewers render ages from
   `declared_at` and `activity.at`; no activity for a while is shown as an age,
   never turned into `blocked`.
+
+## Public broadcast (v7)
+
+From protocol version 7, an agent's `to: "*"` is the public conversation. The
+broker freezes the other connected agents **and the operator inbox** as its
+recipients, sorted by agent ID. The operator sees the message in the chat's
+All conversation, with the author and `origin: "agent"`.
+- **Delivery:** it must be `durable` with `ack_requested`; otherwise
+  `malformed_frame`. The operator copy follows the [operator inbox](#operator-inbox-v5)
+  rules: it waits in the inbox while no chat is open, reading it is not a
+  receipt, and an operator acknowledgment means received, not approval.
+- **All or nothing:** the operator counts toward the 256-recipient limit
+  (`recipient_unavailable` above it). If the operator inbox is over quota, the
+  whole broadcast is refused with `inbox_full` and a detail naming the
+  operator bound (for example `operator sender messages: 16/16 unacknowledged
+  messages`); no peer gets it either. A storage failure likewise stores
+  nothing.
+- **Retries** keep the membership frozen at first acceptance. A broadcast
+  first accepted from v6 stays agent-only even when retried after an upgrade.
+- **Replies:** a public `in_reply_to` must name a public message the sender
+  received or wrote: an operator `"*"`, or an agent's v7 `"*"` that reached the
+  operator. A private message, a v6 agent-only broadcast, or a message the
+  sender never saw is rejected with `invalid_reply`, so a public reply can't
+  reveal or promote a private thread. A reply to the operator with
+  `to: "operator"` keeps the v5 rule: it must answer an operator message.
+- **No private "all":** a v7 agent has no agent-only way to reach every peer.
+  Direct messages stay private and never reach the operator.
+- **Mixed versions:** a v6 or older client's `"*"` keeps the old agent-only
+  meaning. The chat's `/agents` marks such agents ("its broadcasts don't reach
+  you"). An upgraded bridge on a broker that negotiated below v7 refuses a
+  `"*"` send with "unsupported public broadcast" before writing anything, so
+  a public answer is never silently narrowed; direct sends still work.
+- **The operator's own `@all`** is unchanged: it reaches the agents, never the
+  operator's own inbox.
 
 ## State
 

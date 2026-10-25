@@ -243,8 +243,8 @@ func (h *Hub) forceResync() {
 }
 
 // noteRouted reports agent messages that reached the operator inbox.
-func (h *Hub) noteRouted(ctx context.Context, out protocol.Message) {
-	if out.To != protocol.OperatorID {
+func (h *Hub) noteRouted(ctx context.Context, out protocol.Message, recipients []protocol.Recipient) {
+	if !addressesOperator(recipients) {
 		return
 	}
 	h.emit(protocol.SessionEvent{Kind: protocol.EventConversationChanged, Seq: out.Seq, MessageID: out.MessageID, Direction: "received"})

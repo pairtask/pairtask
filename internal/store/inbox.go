@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -42,19 +43,19 @@ func checkOperatorInboxCapacity(ctx context.Context, tx *sql.Tx, size durableSiz
 		return err
 	}
 	if count >= OperatorSenderMessages {
-		return inboxFull("sender messages", count, OperatorSenderMessages, "unacknowledged messages")
+		return inboxFull("operator sender messages", count, OperatorSenderMessages, "unacknowledged messages")
 	}
 	if bytes+size.bytes > OperatorSenderBytes {
-		return inboxFull("sender bytes", bytes+size.bytes, OperatorSenderBytes, "unacknowledged bytes")
+		return inboxFull("operator sender bytes", bytes+size.bytes, OperatorSenderBytes, "unacknowledged bytes")
 	}
 	if err := tx.QueryRowContext(ctx, pending, protocol.OperatorID).Scan(&count, &bytes); err != nil {
 		return err
 	}
 	if count >= OperatorInboxMessages {
-		return inboxFull("inbox messages", count, OperatorInboxMessages, "unacknowledged messages")
+		return inboxFull("operator inbox messages", count, OperatorInboxMessages, "unacknowledged messages")
 	}
 	if bytes+size.bytes > OperatorInboxBytes {
-		return inboxFull("inbox bytes", bytes+size.bytes, OperatorInboxBytes, "unacknowledged bytes")
+		return inboxFull("operator inbox bytes", bytes+size.bytes, OperatorInboxBytes, "unacknowledged bytes")
 	}
 	return nil
 }
@@ -75,6 +76,34 @@ func (s *Store) ValidateOperatorReply(ctx context.Context, sender, inReplyTo str
 	}
 	return nil
 }
+
+// publicParent matches a public message: an operator "*", or an agent "*"
+// whose frozen recipients kept the operator inbox (a legacy agent-only
+// broadcast never qualifies). The sender must have been a recipient, or be
+// the author of an agent's public message.
+const publicParent = `SELECT COUNT(*) FROM message_metadata mm JOIN messages m USING(seq) WHERE mm.message_id = ? AND m.recipient = '*' AND (
+	(mm.origin = 'operator' AND EXISTS (SELECT 1 FROM message_receipts r WHERE r.message_id = mm.message_id AND r.agent_id = ?))
+	OR (mm.origin = 'agent' AND EXISTS (SELECT 1 FROM durable_inbox o WHERE o.message_id = mm.message_id AND o.agent_id = 'operator')
+		AND (m.sender = ? OR EXISTS (SELECT 1 FROM message_receipts r WHERE r.message_id = mm.message_id AND r.agent_id = ?))))`
+
+// ValidatePublicReply accepts no correlation, or a reply to a public message
+// the sender took part in. Private parents are never revealed or promoted.
+func (s *Store) ValidatePublicReply(ctx context.Context, sender, inReplyTo string) error {
+	if inReplyTo == "" {
+		return nil
+	}
+	var found int
+	if err := s.db.QueryRowContext(ctx, publicParent, inReplyTo, sender, sender, sender).Scan(&found); err != nil {
+		return err
+	}
+	if found == 0 {
+		return errPublicReply
+	}
+	return nil
+}
+
+// errPublicReply keeps the invalid_reply code with a public-thread reason.
+var errPublicReply = fmt.Errorf("%w (public reply: in_reply_to must name a public message this sender received or wrote)", ErrInvalidReply)
 
 // ReadOperatorPage returns a bounded page of unacknowledged operator-inbox
 // messages. It changes no receipts.

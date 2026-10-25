@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // viewport is the transcript's scroll position. While following, the newest
@@ -294,8 +296,17 @@ func (m *Model) agentRows() []string {
 func (m *Model) onlineRows() []string {
 	var rows []string
 	for _, a := range m.agents.list {
-		rows = append(rows, fmt.Sprintf("● %s  online · protocol v%d", safe(a.AgentID), a.ProtocolVersion))
+		rows = append(rows, fmt.Sprintf("● %s  online · protocol v%d%s", safe(a.AgentID), a.ProtocolVersion, privateBroadcastNote(a.ProtocolVersion)))
 	}
 	sort.Strings(rows)
 	return rows
+}
+
+// privateBroadcastNote warns that an agent below v7 still broadcasts to
+// agents only: its "*" messages never reach the operator.
+func privateBroadcastNote(version int) string {
+	if version >= protocol.PublicBroadcastVersion {
+		return ""
+	}
+	return " · its broadcasts don't reach you (below v7)"
 }

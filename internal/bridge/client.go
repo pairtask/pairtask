@@ -200,6 +200,9 @@ type SendResult struct {
 // SendMessage assigns an ID before writing. Acceptance and receipt events arrive
 // through Receive; neither a successful write nor a timeout implies delivery.
 func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResult, error) {
+	if err := c.checkPublic(request); err != nil {
+		return SendResult{}, err
+	}
 	if !request.NonDurable && c.protocolVersion < protocol.DurableVersion {
 		return SendResult{}, errors.New("durable delivery requires protocol version 3; upgrade the broker or explicitly set non_durable")
 	}
@@ -216,6 +219,21 @@ func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResu
 		return out, fmt.Errorf("message %s: %w; broker acceptance is unconfirmed", msg.MessageID, err)
 	}
 	return out, nil
+}
+
+// checkPublic refuses a "*" this bridge would send as agent-only: on a broker
+// below v7 the operator would never see it. Direct sends are unaffected.
+func (c *Client) checkPublic(request SendRequest) error {
+	if request.To != protocol.Broadcast {
+		return nil
+	}
+	if c.protocolVersion < protocol.PublicBroadcastVersion {
+		return fmt.Errorf("unsupported public broadcast: the broker negotiated protocol version %d, and \"*\" reaches the operator only from version %d; upgrade the broker, or send to operator and to agents directly", c.protocolVersion, protocol.PublicBroadcastVersion)
+	}
+	if request.NonDurable {
+		return errors.New("a public broadcast is always durable; remove non_durable")
+	}
+	return nil
 }
 
 func (c *Client) Acknowledge(ctx context.Context, id string) error {

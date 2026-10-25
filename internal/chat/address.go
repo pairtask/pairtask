@@ -106,6 +106,8 @@ func (m *Model) ownMentions(tokens []string, key string) audience {
 func (m *Model) explicitAudience() audience {
 	c := &m.compose
 	switch {
+	case c.reply != nil && c.reply.public:
+		return audience{everyone: true, source: SourceReply}
 	case c.reply != nil:
 		return audience{ids: []string{c.reply.sender}, source: SourceReply, notSeen: m.unseen([]string{c.reply.sender})}
 	case c.to != nil:

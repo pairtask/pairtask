@@ -150,7 +150,7 @@ counted as a connected session.
   Without `in_reply_to`, the message is proactive.
 - **Quotas,** checked atomically in the persist transaction and measured with
   `DurableWireBytes`; violations return `inbox_full`, whose detail names the
-  bound that refused (`sender messages: 16/16 unacknowledged messages`,
+  bound that refused (`operator sender messages: 16/16 unacknowledged messages`,
   `inbox bytes`, `global pending`, `retained messages`, …) and the operator
   session receives `send_refused` for the sender, since only the operator can
   free the bound:
@@ -1107,8 +1107,8 @@ acknowledges, quits or picks recipients.
 
 | Command | Does |
 |---|---|
-| `/agents` | List agents: online/offline, protocol, last seen |
-| `/reply [#n]` | Reply to received message #n (default: the newest message to you); `/reply cancel` clears |
+| `/agents` | List agents: online/offline, protocol, last seen; an agent below v7 is marked "its broadcasts don't reach you" |
+| `/reply [#n]` | Reply to received message #n (default: the newest message to you); a reply to an agent's public message goes to everyone from All; `/reply cancel` clears |
 | `/ack [#n\|all\|from id]` | `/ack` opens a picker of messages needing acknowledgment, newest first, Enter acknowledges the selected one, Esc leaves the draft untouched; `/ack #n` targets one; `/ack all` and `/ack from id` acknowledge in bulk through `operator_ack_many` under a frozen upper bound and report "acknowledged N (M already, K not yet received)"; received, not approval |
 | `/history` | Load older messages into the transcript |
 | `/stages #n` | Recipient delivery stages for a sent message (bounded, coalesced as today) |
@@ -1539,3 +1539,24 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
 Each slice: Codex writes the acceptance tests, Claude implements, Codex
 reviews, merge on green CI for the exact head plus MERGE for that SHA. The
 contract above is amended with each slice.
+
+## Public broadcast in the chat (#140, protocol v7)
+
+An agent's `"*"` from v7 reaches the operator inbox as well as the other
+agents ([protocol](protocol.md#public-broadcast-v7)). Before this, a group
+discussion was one-way: the operator could speak to everyone with `@all` but
+never saw the agents' answers.
+- **Where it shows:** in All, with the author, like any received message. It
+  also appears in the author's 1:1, since that view holds what the agent
+  sent. History and the live inbox deliver the same message once.
+- **Receipts:** adopting it records `adapter_received` as for any inbox
+  message. It still needs the operator's explicit acknowledgment.
+- **Replying:** `/reply #n` on a public message composes in All and sends to
+  everyone (`to: "*"`) with `in_reply_to` set. It acknowledges only that
+  message on acceptance. A reply to an agent's private message keeps going to
+  that agent alone, so a private thread is never promoted to public.
+- **A new `@all` message** acknowledges nothing: broadcasts bind no pending
+  messages, public or not.
+- **Older agents:** `/agents` marks an agent below v7, because its `"*"`
+  still reaches agents only.
+
