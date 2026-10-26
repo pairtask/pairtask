@@ -54,7 +54,7 @@ func TestCommandCompleteAcceptancePositionsAndEligibleMembers(t *testing.T) {
 		line string
 		want []string
 	}{
-		{"room ", []string{"add", "remove", "alpha", "beta"}},
+		{"room ", []string{"add", "remove", "delete", "alpha", "beta"}},
 		{"room a", []string{"add", "alpha"}},
 		{"rooms remove al", []string{"alpha"}},
 		{"room add ", []string{"alpha", "beta"}},
@@ -140,7 +140,7 @@ func TestCommandCompleteAcceptanceNameCompletionOpensArgumentsAndUnknownRoomStil
 	commandCompleteLine(h, "ro")
 	h.input(chatKey(tea.KeyTab, 0))
 	chatEqual(t, "command name completed", h.m.State().CommandLine.Text, "room ")
-	commandCompleteItems(t, h, []string{"add", "remove", "alpha", "beta"})
+	commandCompleteItems(t, h, []string{"add", "remove", "delete", "alpha", "beta"})
 	h.input(chatKey(tea.KeyEscape, 0))
 	h.input(chatKey(tea.KeyEscape, 0))
 	commandCompleteLine(h, "room unlisted")
