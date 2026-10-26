@@ -63,10 +63,43 @@ span. Fenced code wraps across screen lines instead of scrolling sideways.
 ## Diagrams
 
 A fenced block whose language is `mermaid` or `plantuml` (any case) is a
-diagram. It displays as code under a label such as
-`◇ mermaid · /diagram #12`; with several diagrams in one message the label
-adds the number, `/diagram #12 2`. An unclosed block stays plain code, and
-only the first 16 diagrams in a message get a label.
+diagram. It shows under a label such as `◇ mermaid · /diagram #12`; with
+several diagrams in one message the label adds the number, `/diagram #12 2`.
+An unclosed block stays plain code, and only the first 16 diagrams in a
+message get a label.
+
+The chat draws a small Mermaid subset as text in the transcript (the label
+then ends in `· rendered`); everything else shows its source as code:
+
+- `sequenceDiagram` with `participant ID` or `participant ID as Label` and
+  messages `A->>B: text`, `A-->>B: text`, `A->B: text`, `A-->B: text`
+  (a message to oneself loops back). Up to 8 participants and 60 messages.
+- `flowchart TD`, `flowchart LR` (or `graph`) whose nodes `A`, `A[label]` or
+  `A(label)` form trees: each node has at most one incoming edge, and there
+  are no cycles. Edges are `A --> B`, `A -->|label| B`, `A --- B`, and chains
+  such as `A --> B --> C`. Up to 30 nodes and 8 children per node.
+
+IDs are letters, digits and `_`; labels are at most 40 columns and can't
+contain brackets, parentheses, `|`, quotes, `<`, `>`, braces or backticks.
+Blank lines and `%%` comments are ignored. Any other line — notes, loops,
+subgraphs, styles, directives — or a source over 4 KiB or 200 lines shows the
+whole diagram as source. A drawing wider than the transcript also shows the
+source; widen the window to see it drawn.
+
+````text
+```mermaid
+flowchart TD
+  A[Request] --> B[Review]
+  B -->|yes| C[Merge]
+  B -->|no| D[Fix]
+```
+
+```mermaid
+sequenceDiagram
+  Operator->>Codex: review the PR
+  Codex-->>Operator: MERGE
+```
+````
 
 `/diagram #n [K]` saves diagram K of message `#n` (K may be left out when
 there is only one) and shows where:
@@ -78,5 +111,5 @@ there is only one) and shows where:
   so copy the file to your host with
   `incus --project pairtask file pull colima-pairtask:secured/root/.local/state/pairtask/diagrams/FILE .`
   (on Linux, `local:secured/…`).
-- Nothing is rendered, run, or sent anywhere: open the file with your own
-  Mermaid or PlantUML tool. Sources over 256 KiB aren't saved.
+- The chat runs nothing and sends nothing anywhere; open the file with your
+  own Mermaid or PlantUML tool. Sources over 256 KiB aren't saved.
