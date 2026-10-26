@@ -17,19 +17,20 @@ type liveConns struct {
 }
 
 // serve accepts from ln and runs handle for each admitted connection until
-// ctx ends or the listener fails; it returns after every worker has ended.
+// ctx ends or the listener fails. On any exit it closes every live
+// connection, so workers end promptly, and returns after they have ended.
 func (l *liveConns) serve(ctx context.Context, ln net.Listener, maxConns int, handle func(context.Context, net.Conn)) error {
 	stop := make(chan struct{})
 	go func() {
 		select {
 		case <-ctx.Done():
 			ln.Close()
-			l.closeAll()
 		case <-stop:
 		}
 	}()
 	defer func() {
 		close(stop)
+		l.closeAll()
 		l.wg.Wait()
 	}()
 	for {
