@@ -186,7 +186,7 @@ func (m *Model) afterEdit() {
 func (m *Model) paste(msg tea.PasteMsg) tea.Cmd {
 	c := &m.compose
 	if c.cmd != nil {
-		c.cmd.pasted = true
+		c.cmd.pasted, c.picker = true, nil // pasted text is inert: nothing completes it
 		var cmd tea.Cmd
 		c.cmd.input, cmd = c.cmd.input.Update(msg)
 		return cmd

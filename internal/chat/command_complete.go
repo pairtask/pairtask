@@ -164,7 +164,7 @@ func (m *Model) completingArgument() bool {
 func (m *Model) completeArgument() {
 	c := &m.compose
 	p := c.openPicker(PickerArgument)
-	if p == nil {
+	if p == nil || c.cmd.pasted {
 		return
 	}
 	value := c.cmd.input.Value()
