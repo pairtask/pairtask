@@ -126,6 +126,7 @@ func TestDiagramRenderSupportedSubset(t *testing.T) {
 		{"self message", "sequenceDiagram\nA->>A: thinking", []string{"A", "thinking"}},
 		{"comments", "\n%% overview\nflowchart TD\n\nA[Start] --> B[End]\n%% finish", []string{"Start", "End"}},
 		{"wide labels", "flowchart TD\nA[入口] --> B[出口]", []string{"入口", "出口"}},
+		{"header whitespace", "flowchart\tTD\nA[Start] --> B[End]", []string{"Start", "End"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
