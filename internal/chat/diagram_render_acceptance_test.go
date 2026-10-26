@@ -385,8 +385,11 @@ func TestDiagramRenderBranchChildrenStayBelowParent(t *testing.T) {
 	rootY, rootX := v.labelPosition(t, "Root")
 	leftY, leftX := v.labelPosition(t, "Left")
 	rightY, rightX := v.labelPosition(t, "Right")
-	if rootY >= leftY || leftY != rightY || leftX >= rootX || rootX >= rightX {
-		t.Errorf("tree topology lost: root(%d,%d) left(%d,%d) right(%d,%d)", rootY, rootX, leftY, leftX, rightY, rightX)
+	if rootY >= leftY || leftY != rightY {
+		t.Errorf("tree levels lost: root row %d, child rows %d and %d", rootY, leftY, rightY)
+	}
+	if leftX >= rootX || rootX >= rightX {
+		t.Errorf("parent no longer between children: root column %d, child columns %d and %d", rootX, leftX, rightX)
 	}
 	if strings.Count(v.text(), "▼") != 2 {
 		t.Error("branch must retain both directed edges")
