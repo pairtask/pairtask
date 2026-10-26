@@ -30,18 +30,18 @@ var (
 // formatBody lays out a message's text as wrapped, styled lines.
 func (b *lineBuilder) formatBody(text string, width int) {
 	lines := messageText(text).lines()
-	f := formatter{b: b, width: width, labels: b.diagramLabels(lines.diagrams())}
+	f := formatter{b: b, width: width, diagrams: b.diagramViews(lines.diagrams())}
 	for i := 0; i < len(lines); i++ {
 		i = f.line(lines, i)
 	}
 }
 
 type formatter struct {
-	b      *lineBuilder
-	width  int
-	fenced bool           // inside ``` … ```
-	blank  bool           // the previous rendered row was blank
-	labels map[int]string // diagram labels by opening fence line
+	b        *lineBuilder
+	width    int
+	fenced   bool                // inside ``` … ```
+	blank    bool                // the previous rendered row was blank
+	diagrams map[int]diagramView // by opening fence line
 }
 
 // line renders lines[i] (and, for a table, the rows that follow it) and
@@ -50,7 +50,7 @@ func (f *formatter) line(lines []string, i int) int {
 	line := lines[i]
 	switch {
 	case sourceLine(line).isFence():
-		f.fence(i)
+		return f.fence(i)
 	case f.fenced:
 		f.code(line)
 	case strings.TrimSpace(line) == "":
@@ -65,18 +65,25 @@ func (f *formatter) line(lines []string, i int) int {
 	return i
 }
 
-// fence toggles code; a diagram's opening fence keeps its source slot for a
-// one-row label, cut to the width.
-func (f *formatter) fence(i int) {
-	f.fenced = !f.fenced
-	label, ok := f.labels[i]
+// fence toggles code and returns the last line consumed. A diagram's opening
+// fence keeps its source slot for a one-row label, cut to the width; a
+// diagram drawn as text then takes the rest of the block.
+func (f *formatter) fence(i int) int {
+	view, ok := f.diagrams[i]
 	if !ok {
+		f.fenced = !f.fenced
 		f.b.skip()
-		return
+		return i
 	}
 	f.blank = false
-	in := f.codeIndent()
-	f.b.add([]string{mutedStyle.Render(ansi.Truncate(label, max(1, f.width-len(in)), ""))}, in)
+	if d, ok := f.b.renders.renderable(view.d); ok && d.cells <= f.width-len(body) {
+		f.label(view, true)
+		f.drawing(view.d, d)
+		return view.d.close
+	}
+	f.fenced = true
+	f.label(view, false)
+	return i
 }
 
 // codeIndent is the body indent, narrowed so a code or label row keeps at

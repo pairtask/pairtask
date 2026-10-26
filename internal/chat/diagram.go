@@ -28,9 +28,9 @@ const (
 var diagramExt = map[string]string{"mermaid": "mmd", "plantuml": "puml"}
 
 type diagram struct {
-	open   int // line index of the opening fence
-	lang   string
-	source string
+	open, close int // line indexes of the fences
+	lang        string
+	source      string
 }
 
 // messageText is a message's text; its lines are the source lines every
@@ -69,7 +69,7 @@ func (ls sourceLines) diagrams() []diagram {
 			open = i
 		default:
 			if lang := sourceLine(ls[open]).fenceLang(); diagramExt[lang] != "" && len(out) < maxDiagrams {
-				out = append(out, diagram{open: open, lang: lang, source: strings.Join(ls[open+1:i], "\n")})
+				out = append(out, diagram{open: open, close: i, lang: lang, source: strings.Join(ls[open+1:i], "\n")})
 			}
 			open = -1
 		}
@@ -95,14 +95,20 @@ func (r diagramRef) command(n int) string {
 	return fmt.Sprintf(" · /diagram #%d", r.seq)
 }
 
-// diagramLabels maps each diagram's opening fence line to the row shown in
-// its place.
-func (b *lineBuilder) diagramLabels(ds []diagram) map[int]string {
-	labels := make(map[int]string, len(ds))
+// diagramView is a diagram and the label row shown in place of its opening
+// fence.
+type diagramView struct {
+	d     diagram
+	label string
+}
+
+// diagramViews maps each diagram's opening fence line to its view.
+func (b *lineBuilder) diagramViews(ds []diagram) map[int]diagramView {
+	views := make(map[int]diagramView, len(ds))
 	for i, d := range ds {
-		labels[d.open] = "◇ " + d.lang + diagramRef{seq: b.seq, k: i + 1}.command(len(ds))
+		views[d.open] = diagramView{d: d, label: "◇ " + d.lang + diagramRef{seq: b.seq, k: i + 1}.command(len(ds))}
 	}
-	return labels
+	return views
 }
 
 // diagramArg is "#n" with an optional diagram number K.

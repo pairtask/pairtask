@@ -69,10 +69,12 @@ send a short status message at the meaningful milestones instead.
   shows the supported syntax and limits.
 - Send a diagram only when structure matters more than prose: a fenced
   `mermaid` or `plantuml` block, one diagram per block, kept small. The chat
-  shows its source as code and the operator saves it with `/diagram #n`;
-  nothing renders it in the terminal. Add a one-line summary, or a small
-  ASCII sketch, for narrow terminals. Never depend on PlantUML `!include`,
-  remote URLs, or themes fetched from the network.
+  draws a Mermaid `sequenceDiagram`, or a `flowchart TD|LR` that is a tree
+  (one incoming edge per node, no cycles, plain `[label]` nodes), as text;
+  anything else, or a drawing too wide for the window, shows as source, and
+  the operator can save it with `/diagram #n`. Add a one-line summary for
+  narrow terminals. Never depend on PlantUML `!include`, remote URLs, or
+  themes fetched from the network.
 - Replies and messages go durable to the logical ID `operator`; status goes
   through the `status` tool. The chat's
   conversations, tabs, and groups are the operator's view, never a destination.
