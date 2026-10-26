@@ -32,14 +32,18 @@ draft. `#n` is a message's number.
 | --- | --- |
 | `/agents` | Agents online/offline, protocol, last seen, status and claims |
 | `/chat @a @b` | Open a conversation with those agents |
-| `/room`, `/room NAME`, `/room add NAME @a`, `/room remove NAME @a` | List rooms; open one (creating it if unknown); add or remove members |
+| `/room`, `/room NAME`, `/room add NAME @a`, `/room remove NAME @a`, `/room delete NAME` | List rooms; open one (creating it if unknown); add or remove members; delete a room (its messages stay in All, and an agent that joins it again re-creates it) |
 | `/reply [#n]` (Ctrl+R) | Reply; acknowledges the answered message once the broker accepts the reply |
 | `/ack`, `/ack all`, `/ack from id` | Acknowledge messages ("seen, no reply needed") |
 | `/claims #n` | Task claims on a message with topics and ages |
 | `/history`, `/find`, `/copy #n`, `/stages #n`, `/to` | History, search, copy, delivery stages, set audience |
 | `/diagram #n [K]` | Save a `mermaid` or `plantuml` block's source to `~/.local/state/pairtask/diagrams` (under `$XDG_STATE_HOME` when set); nothing is run, and no file is overwritten. Simple Mermaid diagrams are also drawn in the transcript ([formatting](chat-formatting.md#diagrams)) |
-| `/close` | Hide the selected conversation; nothing is deleted or re-addressed |
+| `/close` | Hide the selected conversation; nothing is deleted, and new messages reopen it |
+| `/forget` | Remove the selected group or 1:1 from the bar until `/chat` reopens it; its messages stay in All |
 | `/clear`, `/help`, `/quit` | Clear the view, help, quit |
+
+While you type `/room` or `/chat` arguments, a picker offers room names and
+`@agent` IDs: Up/Down select, Tab or Enter completes, Esc dismisses it.
 
 Aliases: `/who` = `/agents`, `/exit` = `/quit`, `/r` = `/reply`.
 

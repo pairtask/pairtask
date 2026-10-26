@@ -86,7 +86,7 @@ shows the command.
 
 **Rooms** (#153): `pairtask start codex --id x --room pairtask` (repeatable)
 joins rooms on registration, in addition to any the agent already has. From
-`secured`, `pairtask operator room list|create R|add R AGENT|remove R AGENT`
+`secured`, `pairtask operator room list|create R|add R AGENT|remove R AGENT|delete R`
 manages rooms and `pairtask operator send --all --room R TEXT` posts to one.
 
 **Pi** (#155): `pairtask start pi --id pi-1 [--room R] [--max-tokens N]`
