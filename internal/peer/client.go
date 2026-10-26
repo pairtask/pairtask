@@ -97,8 +97,23 @@ func (c *Client) Send(ctx context.Context, rec Record) (Reply, error) {
 	if err := json.Unmarshal(line, &reply); err != nil {
 		return Reply{}, fmt.Errorf("malformed reply: %w", err)
 	}
-	return reply, nil
+	return reply, reply.matches(rec)
 }
+
+// matches checks that a reply answers the record that was sent.
+func (r Reply) matches(rec Record) error {
+	switch {
+	case r.Version != SchemaVersion:
+		return fmt.Errorf("reply version %d is not %d", r.Version, SchemaVersion)
+	case r.RequestID != rec.RequestID:
+		return errors.New("the reply answers a different request")
+	case !knownStatus[r.Status]:
+		return fmt.Errorf("unknown reply status %q", r.Status)
+	}
+	return nil
+}
+
+var knownStatus = map[string]bool{StatusPending: true, StatusAccepted: true, StatusIgnored: true, StatusDuplicate: true, StatusRefused: true}
 
 // ServerFingerprint is the gate's certificate fingerprint as seen at the
 // handshake.

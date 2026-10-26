@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -16,8 +15,7 @@ import (
 type Relay struct {
 	cfg RelayConfig
 
-	mu    sync.Mutex
-	conns int
+	live liveConns
 }
 
 // RelayConfig is what a relay needs: how to reach the gate, and bounds.
@@ -52,49 +50,15 @@ func NewRelay(cfg RelayConfig) *Relay {
 	return &Relay{cfg: cfg}
 }
 
-// Serve accepts until the context ends or the listener fails.
+// Serve accepts until the context ends or the listener fails. Ending the
+// context closes the listener and every live connection, and Serve returns
+// once their workers have finished.
 func (r *Relay) Serve(ctx context.Context, ln net.Listener) error {
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-		if !r.admit() {
-			conn.Close()
-			continue
-		}
-		go func() {
-			defer r.release()
-			r.forward(ctx, conn)
-		}()
-	}
-}
-
-func (r *Relay) admit() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.conns >= r.cfg.MaxConns {
-		return false
-	}
-	r.conns++
-	return true
-}
-
-func (r *Relay) release() {
-	r.mu.Lock()
-	r.conns--
-	r.mu.Unlock()
+	return r.live.serve(ctx, ln, r.cfg.MaxConns, r.forward)
 }
 
 // forward copies bytes both ways until either side closes, a direction hits
-// its byte bound, or the idle timeout passes.
+// its byte bound, or no bytes move for the idle timeout.
 func (r *Relay) forward(ctx context.Context, outside net.Conn) {
 	defer outside.Close()
 	inside, err := r.cfg.Dial(ctx)
@@ -102,18 +66,44 @@ func (r *Relay) forward(ctx context.Context, outside net.Conn) {
 		return
 	}
 	defer inside.Close()
-	deadline := time.Now().Add(r.cfg.IdleTimeout)
-	_ = outside.SetDeadline(deadline)
-	_ = inside.SetDeadline(deadline)
+	r.live.add(inside) // so cancellation closes the inner side too
+	defer r.live.remove(inside)
+	idle := &idlePair{a: outside, b: inside, timeout: r.cfg.IdleTimeout}
+	idle.touch()
 	done := make(chan struct{}, 2)
-	copyBounded := func(dst, src net.Conn) {
-		_, _ = io.CopyN(dst, src, r.cfg.MaxBytes)
-		done <- struct{}{}
+	go func() { copyBounded(inside, outside, r.cfg.MaxBytes, idle); done <- struct{}{} }()
+	go func() { copyBounded(outside, inside, r.cfg.MaxBytes, idle); done <- struct{}{} }()
+	<-done
+}
+
+// copyBounded copies up to limit bytes, extending the pair's idle deadline
+// after every read, so the timeout measures inactivity.
+func copyBounded(dst io.Writer, src io.Reader, limit int64, idle *idlePair) {
+	buf := make([]byte, 32<<10)
+	var total int64
+	for total < limit {
+		n, err := src.Read(buf[:min(int64(len(buf)), limit-total)])
+		if n > 0 {
+			idle.touch()
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return
+			}
+			total += int64(n)
+		}
+		if err != nil {
+			return
+		}
 	}
-	go copyBounded(inside, outside)
-	go copyBounded(outside, inside)
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+}
+
+// idlePair keeps two connections on one inactivity deadline.
+type idlePair struct {
+	a, b    net.Conn
+	timeout time.Duration
+}
+
+func (p *idlePair) touch() {
+	deadline := time.Now().Add(p.timeout)
+	_ = p.a.SetDeadline(deadline)
+	_ = p.b.SetDeadline(deadline)
 }

@@ -21,9 +21,7 @@ type Gate struct {
 	cfg    GateConfig
 	tls    *tls.Config
 	limits Limits
-
-	mu    sync.Mutex
-	conns int
+	live   liveConns
 
 	admitMu sync.Mutex // serialises the pending-count check and the save, so the bound can't overshoot
 }
@@ -109,44 +107,11 @@ func NewGate(cfg GateConfig) (*Gate, error) {
 }
 
 // Serve accepts connections until the context ends or the listener fails.
+// Ending the context closes the listener and every live connection, and
+// Serve returns once their workers have finished. Over the connection
+// bound, a connection is closed before any handshake.
 func (g *Gate) Serve(ctx context.Context, ln net.Listener) error {
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-		if !g.admit() {
-			conn.Close() // over the connection bound: refused before any handshake
-			continue
-		}
-		go func() {
-			defer g.release()
-			g.serve(ctx, conn)
-		}()
-	}
-}
-
-func (g *Gate) admit() bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.conns >= g.limits.MaxConns {
-		return false
-	}
-	g.conns++
-	return true
-}
-
-func (g *Gate) release() {
-	g.mu.Lock()
-	g.conns--
-	g.mu.Unlock()
+	return g.live.serve(ctx, ln, g.limits.MaxConns, g.serve)
 }
 
 // serve handles one connection: the handshake, then one record and one
