@@ -143,6 +143,19 @@ resource "incus_profile" "secured" {
       path   = "/var/lib/collab-ai-tools"
     }
   }
+  # Validation only (#178): the peer gate's socket volume, read-write here.
+  dynamic "device" {
+    for_each = var.peer_connector_probe ? [incus_storage_volume.peer_ipc[0].name] : []
+    content {
+      name = "peer-ipc"
+      type = "disk"
+      properties = {
+        source = device.value
+        pool   = var.storage_pool
+        path   = "/mnt/collab-peer"
+      }
+    }
+  }
 }
 
 resource "incus_instance" "secured" {
