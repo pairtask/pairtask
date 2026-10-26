@@ -96,8 +96,9 @@ func addressedNote(ids []string) string {
 func (m *Model) namedBefore() []string {
 	value := m.compose.editor.Value()
 	tokens := parsePrefix(value).tokens
-	if len(tokens) > 0 && openToken(value) {
-		tokens = tokens[:len(tokens)-1]
+	fields := strings.Fields(value)
+	if len(tokens) > 0 && openToken(value) && fields[len(fields)-1] == "@"+tokens[len(tokens)-1] {
+		tokens = tokens[:len(tokens)-1] // still being typed
 	}
 	return tokens
 }
