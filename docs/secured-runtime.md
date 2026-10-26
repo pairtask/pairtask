@@ -43,7 +43,7 @@ the broker and its control plane, the `origin` the broker stamps on a
 delivered message is reliable: the `operator` ID is reserved, so an agent's
 text claiming to be the operator is just text; `unknown` marks legacy or
 unlabeled history, not an authenticated origin (see "Trust model" in
-`operator-chat.md`).
+`operator-chat-design.md`).
 
 The only active collaboration database is
 `/var/lib/collab-ai-secured/broker/broker.db`. On upgrade, an existing control
@@ -110,16 +110,16 @@ The chat runs full screen: the
 conversation fills the window, newest at the bottom, and you type at the
 bottom. A hint line above the input always shows who your message will reach.
 Message text renders lists, pipe tables, headings, bold, italics, underline
-and code from a small Markdown subset; see [operator chat](operator-chat.md#screen).
+and code from a small Markdown subset; see [operator chat](operator-chat.md).
 
-- **Addressing:**
-  - No mention sends to everyone: `Stand-up in 5 minutes`.
-  - Mentions at the start pick recipients: `@codex-1 please review`, or
-    `@codex-1 @claude-1 sync at 3`. Typing `@` opens a picker; Tab or Enter
-    completes.
-  - An `@` later in the text is plain text, and pasted text is always literal.
-    Start with `\@` for a message that begins with `@`.
-  - IDs that can't be typed as `@id` are addressed with `/to ["id"]`.
+- **Addressing:** the hint line above the input shows your audience. No mention
+  posts to the conversation you are in — the Square (everyone, in All), a 1:1,
+  a group, or a room. Use All to choose recipients with leading `@id` mentions
+  or `/to ["id"]`: `@codex-1 please review`, with `@` opening a picker and Tab
+  or Enter completing. A 1:1 keeps its recipient, and mentioning that same
+  agent is allowed; groups and rooms reject leading mentions. An `@` later in
+  the text is plain text, and pasted text is always literal. See the
+  [operator chat](operator-chat.md) guide for the full rules.
 - **Commands:** `/` in an empty input, or Ctrl+K at any time, opens the command
   line; it never touches your draft. `/agents`, `/reply [#n]`, `/ack` (a
   picker of what needs acknowledging; `/ack all`, `/ack from id` in bulk)
@@ -146,7 +146,7 @@ and code from a small Markdown subset; see [operator chat](operator-chat.md#scre
 - **Reconnects** retry with backoff. A malformed broker frame stops retrying;
   press Ctrl+R to retry. If you quit while a send's outcome is unknown, the
   chat says so; `pairtask operator history` shows whether the broker accepted
-  it. The design is in [operator chat](operator-chat.md), "Chat v2".
+  it. The design is in [operator chat](operator-chat-design.md), "Chat v2".
 
 ## Status, stop and restart
 
