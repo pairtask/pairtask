@@ -177,6 +177,7 @@ host.
 | Resume the conversation Codex last had under that ID | `pairtask start codex --id codex-1 --resume` (close the old session first) |
 | See the command without running it | add `--dry-run` |
 
+Put pairtask flags before `--`; arguments after `--` go to the agent itself.
 `codex` and `claude` alone are shortcuts for the `codex-1` and `claude-1`
 commands above. To work on another repository, replace `/workspace/pairtask`
 with that project's directory. [Sign-in help](docs/sandbox.md#sign-in-and-network-access) ·
