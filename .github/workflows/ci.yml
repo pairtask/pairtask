@@ -193,6 +193,9 @@ jobs:
       - name: Prove offline controller and dev boundaries
         if: needs.classify.outputs.images != 'false'
         run: sudo env "PATH=$PATH" python3 scripts/sandbox-boundary.py --remote local --image-dir dist/installed
+      - name: Probe the peer gate topology (#178, disposable)
+        if: needs.classify.outputs.images != 'false'
+        run: sudo env "PATH=$PATH" "GOCACHE=$RUNNER_TEMP/go-build" python3 scripts/sandbox-peer-probe.py --remote local --image-dir dist/installed
       - name: Prove containerized provisioning and host-state recovery
         if: needs.classify.outputs.images != 'false'
         env:
