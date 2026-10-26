@@ -29,8 +29,8 @@ var (
 
 // formatBody lays out a message's text as wrapped, styled lines.
 func (b *lineBuilder) formatBody(text string, width int) {
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	f := formatter{b: b, width: width}
+	lines := bodyLines(text)
+	f := formatter{b: b, width: width, labels: b.diagramLabels(lines)}
 	for i := 0; i < len(lines); i++ {
 		i = f.line(lines, i)
 	}
@@ -39,8 +39,9 @@ func (b *lineBuilder) formatBody(text string, width int) {
 type formatter struct {
 	b      *lineBuilder
 	width  int
-	fenced bool // inside ``` … ```
-	blank  bool // the previous rendered row was blank
+	fenced bool           // inside ``` … ```
+	blank  bool           // the previous rendered row was blank
+	labels map[int]string // diagram labels by opening fence line
 }
 
 // line renders lines[i] (and, for a table, the rows that follow it) and
@@ -48,9 +49,8 @@ type formatter struct {
 func (f *formatter) line(lines []string, i int) int {
 	line := lines[i]
 	switch {
-	case strings.HasPrefix(strings.TrimSpace(line), "```"):
-		f.fenced = !f.fenced
-		f.b.skip()
+	case isFence(line):
+		f.fence(i)
 	case f.fenced:
 		f.code(line)
 	case strings.TrimSpace(line) == "":
@@ -63,6 +63,19 @@ func (f *formatter) line(lines []string, i int) int {
 		f.text(line)
 	}
 	return i
+}
+
+// fence toggles code; a diagram's opening fence keeps its source slot for a
+// one-row label, cut to the width.
+func (f *formatter) fence(i int) {
+	f.fenced = !f.fenced
+	label, ok := f.labels[i]
+	if !ok {
+		f.b.skip()
+		return
+	}
+	f.blank = false
+	f.b.add([]string{mutedStyle.Render(ansi.Truncate(label, max(1, f.width-len(body)), ""))}, body)
 }
 
 func (f *formatter) blankRow() {
