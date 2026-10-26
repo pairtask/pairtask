@@ -73,8 +73,9 @@ func Client(raw net.Conn, own tls.Certificate) *Endpoint {
 func Server(raw net.Conn, own tls.Certificate) *Endpoint {
 	e := &Endpoint{role: Inviter}
 	e.Conn = tls.Server(raw, &tls.Config{
-		MinVersion:            tls.VersionTLS13,
-		ClientAuth:            tls.RequireAnyClientCert,
+		MinVersion:             tls.VersionTLS13,
+		SessionTicketsDisabled: true, // one fresh pairing connection, never resumed
+		ClientAuth:             tls.RequireAnyClientCert,
 		VerifyPeerCertificate: singleLeaf,
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return e.present(own)

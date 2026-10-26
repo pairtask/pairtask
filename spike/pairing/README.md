@@ -7,7 +7,7 @@ It isn't wired into the broker, it decides nothing about adoption, and **none of
 ## What it does
 
 - **Library:** [`github.com/the-sarge/cpace`](https://github.com/the-sarge/cpace) **v0.1.3**, commit `b4174c6bf4bae78f4081c3d6d6baebff5f1cbbf1`. It implements CPace, `draft-irtf-cfrg-cpace-21`, on ristretto255 with explicit mutual key confirmation. Its README says it has had **no independent cryptographic review and is not production-ready**. Its security write-ups are project-side self-assessments. It needs Go 1.26, hence this nested module; the repository root stays on 1.25.
-- **First-contact TLS 1.3** (`Client`/`Server` → `Endpoint`): at first contact, neither side can trust the other's certificate yet. The endpoint configures TLS itself and records the leaf it actually presented. It accepts exactly one parsable leaf from the peer, and `Binding` refuses before the handshake has completed.
+- **First-contact TLS 1.3** (`Client`/`Server` → `Endpoint`): at first contact, neither side can trust the other's certificate yet. The endpoint configures TLS itself, without session tickets, so every pairing connection is fresh and never resumed. It records the leaf it actually presented. It accepts exactly one parsable leaf from the peer, and `Binding` refuses before the handshake has completed.
 - **Binding** (`Endpoint.Binding`): the CPace exchange is bound to that exact connection. Each side builds its inputs from its own view:
 
   | CPace input | Value |
@@ -24,7 +24,7 @@ It isn't wired into the broker, it decides nothing about adoption, and **none of
   3. The joiner verifies B and sends C.
   4. The inviter verifies C, then sends one final `confirmed` frame over the now-bound connection.
 
-  `Result.InviterConfirmed` acknowledges the **pairing** only. Contact acceptance remains a separate, explicit operator step (#178 acceptance 3). If the final frame is lost, the joiner gets `ErrOutcomeUnknown`. `ErrUnconfirmed` means nothing may be trusted or recorded.
+  `Result.InviterConfirmed` acknowledges the **pairing** only. Contact acceptance remains a separate, explicit operator step (#178 acceptance 3, pairing criterion 2). If the final frame is lost, the joiner gets `ErrOutcomeUnknown`. `ErrUnconfirmed` means nothing may be trusted or recorded.
 - **After pairing:** the pairing connection is meant to close. Later traffic uses a fresh connection, strictly pinned to the verified certificates, as #179's exact-certificate client does. That part isn't in the spike.
 
 ## Tests, all unrun
@@ -55,7 +55,7 @@ cd spike/pairing && GOTOOLCHAIN=go1.26.5 go test -race -v ./...
 
 ## Before anything here could be adopted
 
-- Run all tests, and check them against `mendsec/cpace` (836a13c) on the draft's vectors only, since the two packages frame their messages differently.
+- Run all tests. Separately, compare core draft-vector conformance with `mendsec/cpace` (836a13c). The transport tests aren't cross-library, because the two packages frame their messages differently.
 - An independent cryptographic review of the library, or of whichever one we choose. CPace is still an IRTF draft.
 - An invitation state layer for criteria 1, 3, 5 and 6, with persistence.
 - Move the repository to Go 1.26 or later, as its own change.
