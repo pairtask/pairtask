@@ -93,6 +93,8 @@ function assertProviderTools(input) {
 
 async function respondToPrompt(input, response, fixture) {
   fixture.requests.push(input);
+  assert.equal(input.max_tokens ?? input.max_completion_tokens, 32768,
+    'installed Pi caps the serialized provider request despite huge model metadata');
   const last = input.messages.at(-1);
   if (last.role === 'tool') return completion(response);
   const content = typeof last.content === 'string' ? last.content : last.content.map(block => block.text || '').join('\n');
@@ -142,7 +144,7 @@ test('installed Pi wakes on idle push and queues busy push, with real tools and 
   await once(server, 'listening');
   await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: {
     'pairtask-fixture': { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, api: 'openai-completions', apiKey: 'local-fixture-only',
-      models: [{ id: 'fixture', name: 'Local fixture', reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 1024,
+      models: [{ id: 'fixture', name: 'Local fixture', reasoning: false, input: ['text'], contextWindow: 1048576, maxTokens: 943718,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
   } }));
   await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ compaction: { enabled: false }, retry: { enabled: false } }));
@@ -164,7 +166,8 @@ test('installed Pi wakes on idle push and queues busy push, with real tools and 
     '--no-context-files', '--no-mcp', '--no-builtin-tools', '-e', extensionPath,
     '--provider', 'pairtask-fixture', '--model', 'fixture', '--thinking', 'off'],
   { cwd: work, env: { ...systemEnv, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1',
-    PAIRTASK_AGENT_ID: 'pi-host', PAIRTASK_SOCKET: socket, PAIRTASK_ROOMS: '["alpha"]', PAIRTASK_MCP: mcpPath },
+    PAIRTASK_AGENT_ID: 'pi-host', PAIRTASK_SOCKET: socket, PAIRTASK_ROOMS: '["alpha"]', PAIRTASK_MCP: mcpPath,
+    PAIRTASK_PI_MAX_TOKENS: '32768' },
     stdio: ['pipe', 'pipe', 'pipe'] });
   pi.on('error', error => failures.push(error));
   pi.stderr.on('data', bytes => { stderr = (stderr + bytes).slice(-20000); });
