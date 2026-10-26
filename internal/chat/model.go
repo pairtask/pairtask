@@ -93,6 +93,7 @@ type Model struct {
 	gen       uint64
 	transport Transport
 	session   protocol.SessionInfo
+	renders   diagramRenders // drawn diagrams by source
 	epoch     string
 	revision  uint64
 	baseline  bool

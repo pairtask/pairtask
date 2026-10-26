@@ -30,18 +30,18 @@ var (
 // formatBody lays out a message's text as wrapped, styled lines.
 func (b *lineBuilder) formatBody(text string, width int) {
 	lines := messageText(text).lines()
-	f := formatter{b: b, width: width, labels: b.diagramLabels(lines.diagrams())}
+	f := formatter{b: b, width: width, diagrams: b.diagramViews(lines.diagrams())}
 	for i := 0; i < len(lines); i++ {
 		i = f.line(lines, i)
 	}
 }
 
 type formatter struct {
-	b      *lineBuilder
-	width  int
-	fenced bool           // inside ``` … ```
-	blank  bool           // the previous rendered row was blank
-	labels map[int]string // diagram labels by opening fence line
+	b        *lineBuilder
+	width    int
+	fenced   bool                // inside ``` … ```
+	blank    bool                // the previous rendered row was blank
+	diagrams map[int]diagramView // by opening fence line
 }
 
 // line renders lines[i] (and, for a table, the rows that follow it) and
@@ -50,7 +50,7 @@ func (f *formatter) line(lines []string, i int) int {
 	line := lines[i]
 	switch {
 	case sourceLine(line).isFence():
-		f.fence(i)
+		return f.fence(i)
 	case f.fenced:
 		f.code(line)
 	case strings.TrimSpace(line) == "":
@@ -65,18 +65,43 @@ func (f *formatter) line(lines []string, i int) int {
 	return i
 }
 
-// fence toggles code; a diagram's opening fence keeps its source slot for a
-// one-row label, cut to the width.
-func (f *formatter) fence(i int) {
-	f.fenced = !f.fenced
-	label, ok := f.labels[i]
+// fence toggles code and returns the last line consumed. A diagram's opening
+// fence keeps its source slot for a one-row label, cut to the width; a
+// diagram drawn as text then takes the rest of the block.
+func (f *formatter) fence(i int) int {
+	view, ok := f.diagrams[i]
 	if !ok {
+		f.fenced = !f.fenced
 		f.b.skip()
-		return
+		return i
 	}
 	f.blank = false
+	if d, ok := f.b.renders.renderable(view.d); ok && d.cells <= f.width-len(body) {
+		f.label(view.label + " · rendered")
+		f.drawing(view.d, d)
+		return view.d.close
+	}
+	f.fenced = true
+	f.label(view.label)
+	return i
+}
+
+func (f *formatter) label(text string) {
 	in := f.codeIndent()
-	f.b.add([]string{mutedStyle.Render(ansi.Truncate(label, max(1, f.width-len(in)), ""))}, in)
+	f.b.add([]string{mutedStyle.Render(ansi.Truncate(text, max(1, f.width-len(in)), ""))}, in)
+}
+
+// drawing lays a rendered diagram over its source slots: row r takes slot
+// min(r, S-1) with column max(0, r-(S-1)), so every row has its own anchor
+// in source order; slots past the last row stay empty, and the closing
+// fence's slot is consumed.
+func (f *formatter) drawing(d diagram, drawn drawing) {
+	slots := d.close - d.open - 1
+	first := f.b.src
+	for r, row := range drawn.rows {
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: first + min(r, slots-1), col: max(0, r-(slots-1)), text: string(body) + row})
+	}
+	f.b.src = first + slots + 1
 }
 
 // codeIndent is the body indent, narrowed so a code or label row keeps at

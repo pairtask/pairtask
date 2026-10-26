@@ -42,7 +42,9 @@ func (m *Model) anchorIndex(lines []renderLine) int {
 		if found < 0 {
 			found = i
 		}
-		if l.src == m.view.anchorSrc && l.col <= m.view.anchorCol {
+		// the last row at or before the anchor: a slot a drawn diagram
+		// left empty resolves to the row above it, never the message start
+		if l.src < m.view.anchorSrc || (l.src == m.view.anchorSrc && l.col <= m.view.anchorCol) {
 			found = i
 		}
 	}
