@@ -105,3 +105,26 @@ func (d diagram) drawable() bool {
 	}
 	return len(d.source) <= maxRenderSource && strings.TrimSpace(d.source) != ""
 }
+
+// label is a diagram's label row, marked when the diagram is drawn.
+func (f *formatter) label(view diagramView, drawn bool) {
+	text := view.label
+	if drawn {
+		text += " · rendered"
+	}
+	in := f.codeIndent()
+	f.b.add([]string{mutedStyle.Render(ansi.Truncate(text, max(1, f.width-len(in)), ""))}, in)
+}
+
+// drawing lays a rendered diagram over its source slots: row r takes slot
+// min(r, S-1) with column max(0, r-(S-1)), so every row has its own anchor
+// in source order; slots past the last row stay empty, and the closing
+// fence's slot is consumed.
+func (f *formatter) drawing(d diagram, drawn drawing) {
+	slots := d.close - d.open - 1
+	first := f.b.src
+	for r, row := range drawn.rows {
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: first + min(r, slots-1), col: max(0, r-(slots-1)), text: string(body) + row})
+	}
+	f.b.src = first + slots + 1
+}
