@@ -117,7 +117,8 @@ and code from a small Markdown subset; see [operator chat](operator-chat.md).
   a group, or a room. Use All to choose recipients with leading `@id` mentions
   or `/to ["id"]`: `@codex-1 please review`, with `@` opening a picker and Tab
   or Enter completing. A 1:1 keeps its recipient, and mentioning that same
-  agent is allowed; groups and rooms reject leading mentions. An `@` later in
+  agent is allowed; in a room or group, leading mentions mark the named members
+as addressed while the message still reaches the whole room or group. An `@` later in
   the text is plain text, and pasted text is always literal. See the
   [operator chat](operator-chat.md) guide for the full rules.
 - **Commands:** `/` in an empty input, or Ctrl+K at any time, opens the command

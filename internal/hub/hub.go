@@ -239,6 +239,15 @@ var agentEnvelopeChecks = []func(protocol.Message, int) *routingError{
 	checkAckCapability,
 	checkAgentAddress,
 	checkPublicFlags,
+	func(msg protocol.Message, _ int) *routingError { return checkNoMentions(msg) },
+}
+
+// checkNoMentions: mentions are the operator's for now (#164).
+func checkNoMentions(msg protocol.Message) *routingError {
+	if len(msg.Mentions) != 0 {
+		return &routingError{protocol.ErrMalformedFrame, "mentions are operator-only"}
+	}
+	return nil
 }
 
 // checkPublicFlags requires durable delivery with acknowledgments for a v7

@@ -67,6 +67,11 @@ send a short status message at the meaningful milestones instead.
   boundaries. One question per message. The
   [formatting guide](https://github.com/pairtask/pairtask/blob/main/docs/chat-formatting.md)
   shows the supported syntax and limits.
+- An operator message to a room or group may carry `mentions`: the members
+  it addresses. If your ID is in it, the operator expects your answer; if not,
+  read along and don't duplicate the named agents' reply. Mentions change
+  nothing else: acknowledge every `ack_requested` message as usual, and claim
+  `reply` before answering a message sent to everyone, as before.
 - Send a diagram only when structure matters more than prose: a fenced
   `mermaid` or `plantuml` block, one diagram per block, kept small. The chat
   draws a Mermaid `sequenceDiagram`, or a `flowchart TD|LR` that is a tree

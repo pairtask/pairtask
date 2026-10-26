@@ -313,6 +313,7 @@ export interface PushedMessage {
 	from: string;
 	to: string;
 	room: string;
+	mentions: string; // a JSON array of agent IDs, or ""
 	messageId: string;
 	inReplyTo: string;
 	ackRequested: boolean;
@@ -337,6 +338,7 @@ export function pushedMessage(params: unknown): PushedMessage {
 		from: str(frame.from),
 		to: str(frame.to),
 		room: str(frame.room),
+		mentions: mentionList(frame.mentions),
 		messageId: str(frame.message_id),
 		inReplyTo: str(frame.in_reply_to),
 		ackRequested: frame.ack_requested === true,
@@ -353,6 +355,7 @@ export function envelope(m: PushedMessage): string {
 		["from", m.from],
 		["to", m.to],
 		["room", m.room],
+		["mentions", m.mentions],
 		["message_id", m.messageId],
 		["in_reply_to", m.inReplyTo],
 		["ack_requested", String(m.ackRequested)],
@@ -366,6 +369,15 @@ export function envelope(m: PushedMessage): string {
 
 export function escape(text: string): string {
 	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// mentionList is the operator's mentions (#164) as a JSON array, kept only
+// when it is one of strings; IDs may hold spaces or quotes, which the
+// envelope escapes.
+function mentionList(v: unknown): string {
+	if (!Array.isArray(v)) return "";
+	const ids = v.filter((id) => typeof id === "string");
+	return ids.length > 0 && ids.length === v.length ? JSON.stringify(ids) : "";
 }
 
 function str(v: unknown): string {

@@ -28,9 +28,13 @@ const (
 	RoomOpRemove = "remove"
 	RoomOpDelete = "delete" // operator only: the room and its memberships go; messages keep their room (#164)
 
-	ErrRoomDenied  = "room_denied"  // posting to a room the agent isn't in
-	ErrInvalidRoom = "invalid_room" // malformed, reserved or unknown room
+	ErrRoomDenied     = "room_denied"     // posting to a room the agent isn't in
+	ErrInvalidRoom    = "invalid_room"    // malformed, reserved or unknown room
+	ErrInvalidMention = "invalid_mention" // a mention outside the room or group, or too many
 )
+
+// MaxMentions bounds the members one operator message addresses.
+const MaxMentions = 16
 
 // Bounds on a room listing: rooms in ID order, members in ID order per room.
 // Totals and truncation flags keep every omission visible.
