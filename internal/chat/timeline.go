@@ -34,6 +34,12 @@ type entry struct {
 	epoch           string // the broker epoch this entry was last read in
 	unread          bool   // arrived and not yet shown while following the bottom
 	drawings        *diagramRenders
+	// The entry's last layouts, for one width each, so a redraw or scroll
+	// reformats only what changed (#180). They live and are evicted with the
+	// entry, and like the drawings they aren't counted in the timeline's bytes.
+	body   *bodyLayout   // see bodyAt
+	header *headerLayout // see headerAt
+	status *statusLayout // see statusAt
 }
 
 // stageState is a current delivery state with the watermark it was read at.
