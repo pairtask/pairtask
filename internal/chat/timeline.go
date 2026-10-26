@@ -33,6 +33,7 @@ type entry struct {
 	size            int
 	epoch           string // the broker epoch this entry was last read in
 	unread          bool   // arrived and not yet shown while following the bottom
+	drawings        *diagramRenders
 }
 
 // stageState is a current delivery state with the watermark it was read at.

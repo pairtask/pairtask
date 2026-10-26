@@ -59,11 +59,12 @@ func drawMermaid(src diagramSource) ([]string, error) {
 	return drawTree(g)
 }
 
-// diagramRenders caches drawings by source, so layout and View never draw
-// the same diagram twice; it holds a bounded number, dropping the oldest.
+// diagramRenders holds one entry's drawings by diagram, for the body hash
+// they were drawn from; a message has at most maxDiagrams, and the cache
+// goes with its entry.
 type diagramRenders struct {
-	byKey map[diagramSource]renderResult
-	order []diagramSource
+	hash   string
+	byOpen map[int]renderResult
 }
 
 type renderResult struct {
@@ -71,33 +72,27 @@ type renderResult struct {
 	ok      bool
 }
 
-const maxCachedRenders = 64
-
-// render draws src through the cache; a nil cache draws directly.
-func (r *diagramRenders) render(src diagramSource) (drawing, bool) {
-	if r == nil {
-		return renderMermaid(src)
+// drawingsFor is e's cache, renewed when its body changes.
+func (e *entry) drawingsFor() *diagramRenders {
+	if e.drawings == nil || e.drawings.hash != e.hash {
+		e.drawings = &diagramRenders{hash: e.hash, byOpen: map[int]renderResult{}}
 	}
-	if hit, ok := r.byKey[src]; ok {
-		return hit.drawing, hit.ok
-	}
-	d, ok := renderMermaid(src)
-	if r.byKey == nil {
-		r.byKey = map[diagramSource]renderResult{}
-	}
-	if len(r.order) == maxCachedRenders {
-		delete(r.byKey, r.order[0])
-		r.order = r.order[1:]
-	}
-	r.byKey[src] = renderResult{drawing: d, ok: ok}
-	r.order = append(r.order, src)
-	return d, ok
+	return e.drawings
 }
 
-// renderable is the drawing of a closed mermaid diagram, if it has one.
+// renderable is the drawing of a closed mermaid diagram, if it has one,
+// drawn at most once per cache; a nil cache draws directly.
 func (r *diagramRenders) renderable(d diagram) (drawing, bool) {
 	if d.lang != "mermaid" || len(d.source) > maxRenderSource || strings.TrimSpace(d.source) == "" {
 		return drawing{}, false
 	}
-	return r.render(diagramSource(d.source))
+	if r == nil {
+		return renderMermaid(diagramSource(d.source))
+	}
+	if hit, ok := r.byOpen[d.open]; ok {
+		return hit.drawing, hit.ok
+	}
+	drawn, ok := renderMermaid(diagramSource(d.source))
+	r.byOpen[d.open] = renderResult{drawing: drawn, ok: ok}
+	return drawn, ok
 }
