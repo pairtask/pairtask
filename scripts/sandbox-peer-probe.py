@@ -72,6 +72,7 @@ def enable_probe(directory):
 class Deployment:
     def __init__(self, remote, project):
         self.remote = remote.rstrip(":") + ":"
+        self.project = project
         self.base = ["incus", "--project", project]
         self.processes = []
 
@@ -118,17 +119,20 @@ class Deployment:
         """The instance's bridge IPv4 address, waiting for its DHCP lease."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            data = json.loads(run(self.base + ["list", self.remote, "--format", "json"],
-                                  capture_output=True, text=True).stdout)
-            for instance in data:
-                if instance["name"] != role:
-                    continue
-                network = (instance.get("state") or {}).get("network") or {}
-                for entry in (network.get("eth0") or {}).get("addresses", []):
-                    if entry["family"] == "inet" and entry["scope"] == "global":
-                        return entry["address"]
+            address = self.lease(role)
+            if address:
+                return address
             time.sleep(2)
         raise ValueError(f"{role} got no IPv4 address on its bridge within {timeout}s")
+
+    def lease(self, role):
+        """The instance's global IPv4 address on eth0 now, or None."""
+        data = json.loads(run(self.base + ["list", self.remote, "--format", "json"],
+                              capture_output=True, text=True).stdout)
+        instance = next((i for i in data if i["name"] == role), {})
+        network = (instance.get("state") or {}).get("network") or {}
+        addresses = (network.get("eth0") or {}).get("addresses", [])
+        return next((a["address"] for a in addresses if a["family"] == "inet" and a["scope"] == "global"), None)
 
 
 def await_event(lines, name, process, timeout=30):
@@ -163,16 +167,27 @@ useradd --system --uid {CONNECTOR_UID} --gid collab-peer --no-create-home --shel
 """)
 
 
-def send(binary, address, fingerprint, state, request_id):
-    result = subprocess.run([str(binary), "send", "--addr", f"{address}:{RELAY_PORT}", "--pin", fingerprint,
-                             "--state", str(state), "--request-id", request_id, "--note", "probe"],
-                            capture_output=True, text=True, timeout=30)
-    if result.returncode not in (0, 2):
-        raise ValueError(f"send failed ({result.returncode}): {result.stderr}")
-    return json.loads(result.stdout.strip().splitlines()[-1])
+class Client:
+    """The asking side, on this host: one identity kept under its state
+    directory, and the gate's exact certificate as its only trust."""
+
+    def __init__(self, binary, workdir, gate_cert_pem):
+        self.binary = binary
+        self.state = workdir / "client"
+        self.server_cert = workdir / "gate.crt"
+        self.server_cert.write_text(gate_cert_pem)
+
+    def send(self, address, request_id):
+        result = subprocess.run([str(self.binary), "send", "--addr", f"{address}:{RELAY_PORT}",
+                                 "--server-cert", str(self.server_cert), "--state", str(self.state),
+                                 "--request-id", request_id, "--note", "probe"],
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode not in (0, 2):
+            raise ValueError(f"send failed ({result.returncode}): {result.stderr}")
+        return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def exercise(args, deployment, binary, workdir, project):
+def exercise(args, deployment, binary, workdir):
     prepare_users(deployment)
     for role in ("secured", "connector"):
         deployment.push(binary, role)
@@ -183,19 +198,19 @@ def exercise(args, deployment, binary, workdir, project):
                                           "--dial", PEER_SOCKET, uid=CONNECTOR_UID, gid=PEER_GID)
     await_event(relay_lines, "relay_ready", relay)
     address = deployment.address("connector")
-    client_state = workdir / "client"
-    first = send(binary, address, ready["fingerprint"], client_state, "probe-1")
+    client = Client(binary, workdir, ready["cert_pem"])
+    first = client.send(address, "probe-1")
     if first["status"] != "pending":
         raise ValueError(f"first contact request not pending: {first}")
-    again = send(binary, address, ready["fingerprint"], client_state, "probe-1")
+    again = client.send(address, "probe-1")
     if again["status"] != "duplicate":
         raise ValueError(f"a retry with the same identity was not recognised: {again}")
     print("PASS: contact request through bridge → connector relay → peer socket → TLS gate in secured; retry recognised.",
           flush=True)
     peer_probe_checks.check_uid(await_event(gate_lines, "peer_credentials", gate))
-    peer_probe_checks.check_topology(args.remote, project)
-    peer_probe_checks.check_mounts(args.remote, project)
-    peer_probe_checks.check_connect(args.remote, project)
+    peer_probe_checks.check_topology(args.remote, deployment.project)
+    peer_probe_checks.check_mounts(args.remote, deployment.project)
+    peer_probe_checks.check_connect(args.remote, deployment.project)
 
 
 def parse_args():
@@ -224,7 +239,7 @@ def main():
         run(tofu + ["init", "-input=false", "-lockfile=readonly"])
         initialized = True
         run(tofu + ["apply", "-auto-approve", "-input=false"])
-        exercise(args, deployment, binary, workdir, project)
+        exercise(args, deployment, binary, workdir)
         print("PASS: peer probe topology checks.", flush=True)
     finally:
         deployment.stop_all()

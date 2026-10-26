@@ -209,30 +209,26 @@ func (f *Faults) afterReply() func(Record) error {
 // stored pending; a peer's contact_accept or contact_ignore can only settle
 // a request we sent to that peer.
 func (g *Gate) apply(ctx context.Context, peer peerInfo, rec Record) (Reply, error) {
-	switch rec.Kind {
-	case KindRequest:
-		return g.applyRequest(ctx, peer, rec)
-	case KindAccept:
-		return g.applySettle(ctx, peer, rec, StatusAccepted)
-	case KindIgnore:
-		return g.applySettle(ctx, peer, rec, StatusIgnored)
+	ref := ContactRef{Fingerprint: peer.fingerprint, RequestID: rec.RequestID}
+	if rec.Kind == KindRequest {
+		return g.persist(rec, func() (Outcome, *Reply) { return g.saveAdmitted(ctx, peer, rec) })
 	}
-	return refused(rec, "unsupported kind"), nil
+	return g.persist(rec, func() (Outcome, *Reply) {
+		out, err := g.cfg.Store.Settle(ctx, ref, rec.Kind)
+		return out, settleRefusal(rec, out, err)
+	})
 }
 
-func (g *Gate) applyRequest(ctx context.Context, peer peerInfo, rec Record) (Reply, error) {
+// persist runs one store change between the persistence fault hooks and
+// turns its outcome into the reply; a fault hook's error ends the
+// connection without a reply.
+func (g *Gate) persist(rec Record, change func() (Outcome, *Reply)) (Reply, error) {
 	if err := g.cfg.Faults.at(faultHook(g.cfg.Faults, 0), rec); err != nil {
 		return Reply{}, err
 	}
-	out, err := g.saveAdmitted(ctx, peer, rec)
-	if reply, refusedNow := out.refusal(); refusedNow {
-		return reply, nil
-	}
-	if errors.Is(err, ErrConflict) {
-		return refused(rec, "request_id already used with different content"), nil
-	}
-	if err != nil {
-		return refused(rec, "not stored"), nil
+	out, refusal := change()
+	if refusal != nil {
+		return *refusal, nil
 	}
 	if err := g.cfg.Faults.at(faultHook(g.cfg.Faults, 1), rec); err != nil {
 		return Reply{}, err
@@ -240,20 +236,24 @@ func (g *Gate) applyRequest(ctx context.Context, peer peerInfo, rec Record) (Rep
 	if out.Existing {
 		return Reply{Version: SchemaVersion, RequestID: rec.RequestID, Status: StatusDuplicate, Reason: out.Status}, nil
 	}
-	return Reply{Version: SchemaVersion, RequestID: rec.RequestID, Status: StatusPending}, nil
+	return Reply{Version: SchemaVersion, RequestID: rec.RequestID, Status: out.Status}, nil
 }
 
-// admitted is a save's result, or a refusal decided before saving.
-type admitted struct {
-	Outcome
-	refusedReply *Reply
-}
-
-func (a admitted) refusal() (Reply, bool) {
-	if a.refusedReply == nil {
-		return Reply{}, false
+// settleRefusal is the refusal for a failed settlement, or nil.
+func settleRefusal(rec Record, out Outcome, err error) *Reply {
+	var reason string
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrUnknown):
+		reason = "no such outbound request"
+	case errors.Is(err, ErrDecided):
+		reason = "already settled as " + out.Status
+	default:
+		reason = "not stored"
 	}
-	return *a.refusedReply, true
+	r := refused(rec, reason)
+	return &r
 }
 
 // saveAdmitted admits and saves under one lock, so two connections can't
@@ -261,16 +261,30 @@ func (a admitted) refusal() (Reply, bool) {
 // identical retry gets its outcome even while discovery is off, so a lost
 // reply can always be recovered, and changed content is a conflict. Only a
 // new request needs discovery on and room under the pending bounds.
-func (g *Gate) saveAdmitted(ctx context.Context, peer peerInfo, rec Record) (admitted, error) {
+func (g *Gate) saveAdmitted(ctx context.Context, peer peerInfo, rec Record) (Outcome, *Reply) {
 	g.admitMu.Lock()
 	defer g.admitMu.Unlock()
-	if _, known, _ := g.cfg.Store.Get(ctx, peer.fingerprint, rec.RequestID); !known {
+	req := Request{Fingerprint: peer.fingerprint, Cert: peer.cert.Raw, Record: rec, ReceivedAt: time.Now()}
+	if _, known, _ := g.cfg.Store.Get(ctx, req.Ref()); !known {
 		if reply := g.admitNew(ctx, peer, rec); reply != nil {
-			return admitted{refusedReply: reply}, nil
+			return Outcome{}, reply
 		}
 	}
-	out, err := g.cfg.Store.SaveRequest(ctx, Request{Fingerprint: peer.fingerprint, Cert: peer.cert.Raw, Record: rec, ReceivedAt: time.Now()})
-	return admitted{Outcome: out}, err
+	out, err := g.cfg.Store.SaveRequest(ctx, req)
+	return out, saveRefusal(rec, err)
+}
+
+// saveRefusal is the refusal for a failed save, or nil.
+func saveRefusal(rec Record, err error) *Reply {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrConflict):
+		r := refused(rec, "request_id already used with different content")
+		return &r
+	}
+	r := refused(rec, "not stored")
+	return &r
 }
 
 // admitNew is the refusal for a new request, or nil: discovery must be on,
@@ -300,28 +314,6 @@ func (g *Gate) pendingBound(ctx context.Context, peer peerInfo, rec Record) *Rep
 	}
 	r := refused(rec, reason)
 	return &r
-}
-
-func (g *Gate) applySettle(ctx context.Context, peer peerInfo, rec Record, status string) (Reply, error) {
-	if err := g.cfg.Faults.at(faultHook(g.cfg.Faults, 0), rec); err != nil {
-		return Reply{}, err
-	}
-	out, err := g.cfg.Store.Settle(ctx, peer.fingerprint, rec.RequestID, status)
-	switch {
-	case errors.Is(err, ErrUnknown):
-		return refused(rec, "no such outbound request"), nil
-	case errors.Is(err, ErrDecided):
-		return refused(rec, "already settled as "+out.Status), nil
-	case err != nil:
-		return refused(rec, "not stored"), nil
-	}
-	if err := g.cfg.Faults.at(faultHook(g.cfg.Faults, 1), rec); err != nil {
-		return Reply{}, err
-	}
-	if out.Existing {
-		return Reply{Version: SchemaVersion, RequestID: rec.RequestID, Status: StatusDuplicate, Reason: out.Status}, nil
-	}
-	return Reply{Version: SchemaVersion, RequestID: rec.RequestID, Status: out.Status}, nil
 }
 
 // faultHook is the persistence hook before (0) or after (1) the store call.

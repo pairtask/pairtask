@@ -7,15 +7,15 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -24,33 +24,32 @@ import (
 
 const usage = "usage: peerprobe gate|relay|send|connect [flags]"
 
+// command is one subcommand: it returns an exit code and an error to print.
+type command func(ctx context.Context, args []string) (int, error)
+
+var commands = map[string]command{
+	"gate":    wrap(runGate),
+	"relay":   wrap(runRelay),
+	"send":    runSend,
+	"connect": func(_ context.Context, args []string) (int, error) { return runConnect(args) },
+}
+
+// wrap adapts a command that only fails to the exit-code form.
+func wrap(run func(context.Context, []string) error) command {
+	return func(ctx context.Context, args []string) (int, error) { return 0, run(ctx, args) }
+}
+
 func main() {
-	if len(os.Args) < 2 {
+	if len(os.Args) < 2 || commands[os.Args[1]] == nil {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	var code int
-	var err error
-	switch os.Args[1] {
-	case "gate":
-		err = runGate(ctx, os.Args[2:])
-	case "relay":
-		err = runRelay(ctx, os.Args[2:])
-	case "send":
-		code, err = runSend(ctx, os.Args[2:])
-	case "connect":
-		code, err = runConnect(os.Args[2:])
-	default:
-		fmt.Fprintln(os.Stderr, usage)
-		os.Exit(2)
-	}
+	code, err := commands[os.Args[1]](ctx, os.Args[2:])
+	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		if code == 0 {
-			code = 1
-		}
+		code = max(code, 1)
 	}
 	os.Exit(code)
 }
@@ -62,50 +61,80 @@ func event(name string, fields map[string]any) {
 	fmt.Println(string(encoded))
 }
 
+// gateFlags are the gate's settings.
+type gateFlags struct {
+	socket, state string
+	discoverable  bool
+}
+
+func parseGate(args []string) (gateFlags, error) {
+	var f gateFlags
+	flags := flag.NewFlagSet("gate", flag.ContinueOnError)
+	flags.StringVar(&f.socket, "socket", "", "Unix socket to listen on (required)")
+	flags.StringVar(&f.state, "state", "", "private directory for the gate's identity (required)")
+	flags.BoolVar(&f.discoverable, "discoverable", true, "answer contact requests; false refuses them")
+	if err := flags.Parse(args); err != nil {
+		return f, err
+	}
+	if f.socket == "" || f.state == "" {
+		return f, errors.New("gate needs --socket and --state")
+	}
+	return f, nil
+}
+
 // runGate serves the TLS gate on a Unix socket, with a self-signed identity
 // kept under --state, a private directory outside the shared IPC volume.
 func runGate(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("gate", flag.ContinueOnError)
-	socket := flags.String("socket", "", "Unix socket to listen on (required)")
-	state := flags.String("state", "", "private directory for the gate's identity (required)")
-	discoverable := flags.Bool("discoverable", true, "answer contact requests; false refuses them")
-	if err := flags.Parse(args); err != nil {
+	f, err := parseGate(args)
+	if err != nil {
 		return err
 	}
-	if *socket == "" || *state == "" {
-		return errors.New("gate needs --socket and --state")
-	}
-	cert, err := identity(*state, "gate")
+	cert, err := loadIdentity(identityPaths{dir: f.state, name: "gate"})
 	if err != nil {
 		return err
 	}
 	gate, err := peer.NewGate(peer.GateConfig{
 		Cert:         cert,
 		Store:        peer.NewMemStore(),
-		Discoverable: func() bool { return *discoverable },
-		OnConnection: func(info peer.ConnInfo) {
-			fields := map[string]any{"fingerprint": info.Fingerprint, "uid": -1, "gid": -1}
-			if info.HasCreds {
-				fields["uid"], fields["gid"] = info.UID, info.GID
-			}
-			event("peer_credentials", fields)
-		},
+		Discoverable: func() bool { return f.discoverable },
+		OnConnection: logConnection,
 	})
 	if err != nil {
 		return err
 	}
-	if err := removeStaleSocket(*socket); err != nil {
-		return err
-	}
-	ln, err := net.Listen("unix", *socket)
+	ln, err := listenSocket(f.socket)
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(*socket, 0o660); err != nil {
-		return err
-	}
-	event("gate_ready", map[string]any{"socket": *socket, "fingerprint": peer.Fingerprint(cert.Leaf)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Leaf.Raw})
+	event("gate_ready", map[string]any{"socket": f.socket, "fingerprint": peer.Fingerprint(cert.Leaf), "cert_pem": string(certPEM)})
 	return gate.Serve(ctx, ln)
+}
+
+// logConnection records what the kernel says connected, never assuming it.
+func logConnection(info peer.ConnInfo) {
+	fields := map[string]any{"fingerprint": info.Fingerprint, "uid": -1, "gid": -1}
+	if info.HasCreds {
+		fields["uid"], fields["gid"] = info.UID, info.GID
+	}
+	event("peer_credentials", fields)
+}
+
+// listenSocket listens on a Unix socket at path, replacing only a stale
+// socket, and makes it group-connectable.
+func listenSocket(path string) (net.Listener, error) {
+	if err := removeStaleSocket(path); err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
 }
 
 // runRelay forwards a TCP listener to the gate's Unix socket, opaquely.
@@ -130,45 +159,86 @@ func runRelay(ctx context.Context, args []string) error {
 	return relay.Serve(ctx, ln)
 }
 
-// runSend sends one contact request through a relay and prints the reply.
-// Exit 0 for pending or duplicate, 2 for refused, 1 for a transport or pin
-// failure.
-func runSend(ctx context.Context, args []string) (int, error) {
+// sendFlags are the client's settings.
+type sendFlags struct {
+	addr, serverCert, state, id, note, name string
+}
+
+func parseSend(args []string) (sendFlags, error) {
+	var f sendFlags
 	flags := flag.NewFlagSet("send", flag.ContinueOnError)
-	addr := flags.String("addr", "", "the relay's host:port (required)")
-	pin := flags.String("pin", "", "the gate's expected fingerprint (required)")
-	state := flags.String("state", "", "private directory for this side's identity (required)")
-	id := flags.String("request-id", "", "request id (required)")
-	note := flags.String("note", "", "note to send")
-	name := flags.String("name", "probe", "display name")
+	flags.StringVar(&f.addr, "addr", "", "the relay's host:port (required)")
+	flags.StringVar(&f.serverCert, "server-cert", "", "PEM file with the gate's exact certificate (required)")
+	flags.StringVar(&f.state, "state", "", "private directory for this side's identity (required)")
+	flags.StringVar(&f.id, "request-id", "", "request id (required)")
+	flags.StringVar(&f.note, "note", "", "note to send")
+	flags.StringVar(&f.name, "name", "probe", "display name")
 	if err := flags.Parse(args); err != nil {
-		return 1, err
+		return f, err
 	}
-	if *addr == "" || *pin == "" || *state == "" || *id == "" {
-		return 1, errors.New("send needs --addr, --pin, --state and --request-id")
+	for _, required := range []string{f.addr, f.serverCert, f.state, f.id} {
+		if required == "" {
+			return f, errors.New("send needs --addr, --server-cert, --state and --request-id")
+		}
 	}
-	cert, err := identity(*state, "client")
+	return f, nil
+}
+
+// runSend sends one contact request through a relay and prints the reply.
+// Exit 0 for pending or duplicate, 2 for refused, 1 for a transport or
+// verification failure.
+func runSend(ctx context.Context, args []string) (int, error) {
+	f, err := parseSend(args)
 	if err != nil {
 		return 1, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	client, err := peer.Dial(ctx, *addr, peer.ClientConfig{Cert: cert, ServerPin: *pin})
-	if err != nil {
-		return 1, err
-	}
-	defer client.Close()
-	reply, err := client.Send(ctx, peer.Record{Version: peer.SchemaVersion, Kind: peer.KindRequest, RequestID: *id,
-		From: peer.Identity{Name: *name, Workspace: "probe"}, Note: *note})
+	reply, client, err := sendOnce(ctx, f)
 	if err != nil {
 		return 1, err
 	}
 	event("reply", map[string]any{"request_id": reply.RequestID, "status": reply.Status, "reason": reply.Reason,
-		"gate_fingerprint": client.ServerFingerprint(), "client_fingerprint": peer.Fingerprint(cert.Leaf)})
+		"gate_fingerprint": client.gate, "client_fingerprint": client.self})
 	if reply.Status == peer.StatusRefused {
 		return 2, nil
 	}
 	return 0, nil
+}
+
+// sentBy names the two sides of a send for the log.
+type sentBy struct{ gate, self string }
+
+func sendOnce(ctx context.Context, f sendFlags) (peer.Reply, sentBy, error) {
+	cert, err := loadIdentity(identityPaths{dir: f.state, name: "client"})
+	if err != nil {
+		return peer.Reply{}, sentBy{}, err
+	}
+	server, err := readCertificate(f.serverCert)
+	if err != nil {
+		return peer.Reply{}, sentBy{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	client, err := peer.Dial(ctx, f.addr, peer.ClientConfig{Cert: cert, Server: server})
+	if err != nil {
+		return peer.Reply{}, sentBy{}, err
+	}
+	defer client.Close()
+	reply, err := client.Send(ctx, peer.Record{Version: peer.SchemaVersion, Kind: peer.KindRequest, RequestID: f.id,
+		From: peer.Identity{Name: f.name, Workspace: "probe"}, Note: f.note})
+	return reply, sentBy{gate: client.ServerFingerprint(), self: peer.Fingerprint(cert.Leaf)}, err
+}
+
+// readCertificate reads one PEM certificate.
+func readCertificate(path string) (*x509.Certificate, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("%s holds no PEM certificate", path)
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 // runConnect tries only to open the Unix socket, for the isolation checks:
@@ -188,79 +258,16 @@ func runConnect(args []string) (int, error) {
 		event("connect", map[string]any{"ok": true, "socket": *socket})
 		return 0, nil
 	}
-	name := "other"
-	switch {
-	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
-		name = "EACCES"
-	case errors.Is(err, syscall.ENOENT):
-		name = "ENOENT"
-	}
-	event("connect", map[string]any{"ok": false, "socket": *socket, "errno": name, "error": err.Error()})
+	event("connect", map[string]any{"ok": false, "socket": *socket, "errno": errnoName(err), "error": err.Error()})
 	return 3, nil
 }
 
-// removeStaleSocket unlinks a leftover Unix socket at path, and refuses to
-// touch anything else there: a regular file, directory or link stays.
-func removeStaleSocket(path string) error {
-	info, err := os.Lstat(path)
+func errnoName(err error) string {
 	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil
-	case err != nil:
-		return err
-	case info.Mode()&os.ModeSocket == 0:
-		return fmt.Errorf("%s exists and is not a socket; refusing to replace it", path)
+	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return "EACCES"
+	case errors.Is(err, syscall.ENOENT):
+		return "ENOENT"
 	}
-	return os.Remove(path)
-}
-
-// identity loads the self-signed certificate under dir, or creates one when
-// neither file exists. A half-present or unreadable identity is an error,
-// never silently replaced, so a restart can't mask a lost key.
-func identity(dir, name string) (tls.Certificate, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return tls.Certificate{}, err
-	}
-	certPath, keyPath := filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key")
-	certExists, keyExists := exists(certPath), exists(keyPath)
-	if certExists || keyExists {
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-		if err != nil {
-			return tls.Certificate{}, fmt.Errorf("existing identity in %s can't be loaded: %w", dir, err)
-		}
-		return cert, nil
-	}
-	cert, err := peer.SelfSigned(name)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	certPEM, keyPEM, err := peer.EncodePEM(cert)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	if err := writeNew(keyPath, keyPEM); err != nil {
-		return tls.Certificate{}, err
-	}
-	if err := writeNew(certPath, certPEM); err != nil {
-		return tls.Certificate{}, err
-	}
-	return tls.LoadX509KeyPair(certPath, keyPath)
-}
-
-func exists(path string) bool {
-	_, err := os.Lstat(path)
-	return err == nil
-}
-
-// writeNew creates a private file that must not exist yet.
-func writeNew(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return "other"
 }

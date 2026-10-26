@@ -23,20 +23,27 @@ type Store interface {
 	SaveRequest(ctx context.Context, req Request) (Outcome, error)
 	// Accept and Ignore are the local operator's decisions on an inbound
 	// request; both are idempotent, and a decision never flips once made.
-	Accept(ctx context.Context, fingerprint, requestID string) (Outcome, error)
-	Ignore(ctx context.Context, fingerprint, requestID string) (Outcome, error)
+	Accept(ctx context.Context, ref ContactRef) (Outcome, error)
+	Ignore(ctx context.Context, ref ContactRef) (Outcome, error)
 	// Get reads an inbound request's outcome; ok is false when it was never
 	// stored.
-	Get(ctx context.Context, fingerprint, requestID string) (Outcome, bool, error)
-	// SaveOutbound records a request we sent to the peer with that
-	// fingerprint, pending until the peer settles it.
-	SaveOutbound(ctx context.Context, fingerprint, requestID string) (Outcome, error)
-	// Settle applies the peer's answer to our outbound request: status is
-	// StatusAccepted or StatusIgnored. ErrUnknown when we never asked.
-	Settle(ctx context.Context, fingerprint, requestID, status string) (Outcome, error)
-	// Pending counts the requests still waiting for a decision, in total and
-	// for one peer, so the gate can refuse past a bound.
+	Get(ctx context.Context, ref ContactRef) (Outcome, bool, error)
+	// SaveOutbound records a request we sent to the peer, pending until the
+	// peer settles it.
+	SaveOutbound(ctx context.Context, ref ContactRef) (Outcome, error)
+	// Settle applies the peer's answer to our outbound request: KindAccept
+	// or KindIgnore. ErrUnknown when we never asked.
+	Settle(ctx context.Context, ref ContactRef, answer Kind) (Outcome, error)
+	// Pending counts the inbound requests still waiting for a decision, in
+	// total and for one peer, so the gate can refuse past a bound.
 	Pending(ctx context.Context, fingerprint string) (total, forPeer int, err error)
+}
+
+// ContactRef names one request: the peer's certificate fingerprint and the
+// request ID it chose.
+type ContactRef struct {
+	Fingerprint string
+	RequestID   string
 }
 
 // Request is a contact request as the gate received it.
@@ -45,6 +52,11 @@ type Request struct {
 	Cert        []byte // the peer's leaf certificate, DER
 	Record      Record
 	ReceivedAt  time.Time
+}
+
+// Ref is the request's reference.
+func (r Request) Ref() ContactRef {
+	return ContactRef{Fingerprint: r.Fingerprint, RequestID: r.Record.RequestID}
 }
 
 // Outcome is a request's current state.
@@ -67,8 +79,8 @@ type MemStore struct {
 }
 
 type storeKey struct {
-	fingerprint, id string
-	outbound        bool
+	ref      ContactRef
+	outbound bool
 }
 
 type stored struct {
@@ -81,7 +93,7 @@ func NewMemStore() *MemStore { return &MemStore{reqs: map[storeKey]*stored{}} }
 func (s *MemStore) SaveRequest(_ context.Context, req Request) (Outcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := storeKey{fingerprint: req.Fingerprint, id: req.Record.RequestID}
+	key := storeKey{ref: req.Ref()}
 	if have, ok := s.reqs[key]; ok {
 		if have.req.Record != req.Record {
 			return Outcome{}, ErrConflict
@@ -92,22 +104,18 @@ func (s *MemStore) SaveRequest(_ context.Context, req Request) (Outcome, error) 
 	return Outcome{Status: StatusPending}, nil
 }
 
-func (s *MemStore) Accept(ctx context.Context, fingerprint, id string) (Outcome, error) {
-	return s.decide(fingerprint, id, StatusAccepted)
+func (s *MemStore) Accept(_ context.Context, ref ContactRef) (Outcome, error) {
+	return s.settle(storeKey{ref: ref}, StatusAccepted)
 }
 
-func (s *MemStore) Ignore(ctx context.Context, fingerprint, id string) (Outcome, error) {
-	return s.decide(fingerprint, id, StatusIgnored)
+func (s *MemStore) Ignore(_ context.Context, ref ContactRef) (Outcome, error) {
+	return s.settle(storeKey{ref: ref}, StatusIgnored)
 }
 
-func (s *MemStore) decide(fingerprint, id, status string) (Outcome, error) {
-	return s.settle(storeKey{fingerprint: fingerprint, id: id}, status)
-}
-
-func (s *MemStore) SaveOutbound(_ context.Context, fingerprint, id string) (Outcome, error) {
+func (s *MemStore) SaveOutbound(_ context.Context, ref ContactRef) (Outcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := storeKey{fingerprint: fingerprint, id: id, outbound: true}
+	key := storeKey{ref: ref, outbound: true}
 	if have, ok := s.reqs[key]; ok {
 		return Outcome{Status: have.status, Existing: true}, nil
 	}
@@ -115,12 +123,16 @@ func (s *MemStore) SaveOutbound(_ context.Context, fingerprint, id string) (Outc
 	return Outcome{Status: StatusPending}, nil
 }
 
-func (s *MemStore) Settle(_ context.Context, fingerprint, id, status string) (Outcome, error) {
-	if status != StatusAccepted && status != StatusIgnored {
-		return Outcome{}, errors.New("a settlement is accepted or ignored")
+func (s *MemStore) Settle(_ context.Context, ref ContactRef, answer Kind) (Outcome, error) {
+	status, ok := settlement[answer]
+	if !ok {
+		return Outcome{}, errors.New("a settlement is contact_accept or contact_ignore")
 	}
-	return s.settle(storeKey{fingerprint: fingerprint, id: id, outbound: true}, status)
+	return s.settle(storeKey{ref: ref, outbound: true}, status)
 }
+
+// settlement is the status a peer's answer gives our outbound request.
+var settlement = map[Kind]string{KindAccept: StatusAccepted, KindIgnore: StatusIgnored}
 
 // settle moves a pending request to its decision, once.
 func (s *MemStore) settle(key storeKey, status string) (Outcome, error) {
@@ -139,10 +151,10 @@ func (s *MemStore) settle(key storeKey, status string) (Outcome, error) {
 	return Outcome{Status: status}, nil
 }
 
-func (s *MemStore) Get(_ context.Context, fingerprint, id string) (Outcome, bool, error) {
+func (s *MemStore) Get(_ context.Context, ref ContactRef) (Outcome, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	have, ok := s.reqs[storeKey{fingerprint: fingerprint, id: id}]
+	have, ok := s.reqs[storeKey{ref: ref}]
 	if !ok {
 		return Outcome{}, false, nil
 	}
@@ -157,7 +169,7 @@ func (s *MemStore) Pending(_ context.Context, fingerprint string) (total, forPee
 			continue
 		}
 		total++
-		if key.fingerprint == fingerprint {
+		if key.ref.Fingerprint == fingerprint {
 			forPeer++
 		}
 	}
@@ -176,7 +188,7 @@ func (s *MemStore) Snapshot() map[string]string {
 		if key.outbound {
 			dir = "out"
 		}
-		out[dir+"/"+key.fingerprint+"/"+key.id] = have.status
+		out[dir+"/"+key.ref.Fingerprint+"/"+key.ref.RequestID] = have.status
 	}
 	return out
 }

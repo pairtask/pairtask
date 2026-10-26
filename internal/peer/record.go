@@ -81,21 +81,53 @@ func (e *validationError) Error() string { return e.msg }
 
 // Validate checks a record's shape and bounds, not its meaning.
 func (r Record) Validate() error {
-	switch {
-	case r.Version != SchemaVersion:
-		return &validationError{fmt.Sprintf("unsupported record version %d", r.Version)}
-	case r.Kind != KindRequest && r.Kind != KindAccept && r.Kind != KindIgnore:
-		return &validationError{"unsupported kind"}
-	case r.RequestID == "" || len(r.RequestID) > MaxRequestIDBytes || !utf8.ValidString(r.RequestID):
-		return &validationError{"request_id must be 1 to 128 bytes of UTF-8"}
-	case len(r.From.Name) > MaxNameBytes || len(r.From.Workspace) > MaxNameBytes:
-		return &validationError{"name and workspace must be at most 64 bytes"}
-	case !utf8.ValidString(r.From.Name) || !utf8.ValidString(r.From.Workspace) || !utf8.ValidString(r.Note):
-		return &validationError{"text must be UTF-8"}
-	case len(r.Note) > MaxNoteBytes:
-		return &validationError{"note must be at most 512 bytes"}
+	for _, rule := range recordRules {
+		if msg := rule(r); msg != "" {
+			return &validationError{msg}
+		}
 	}
 	return nil
+}
+
+// recordRules each name what's wrong, or return "".
+var recordRules = []func(Record) string{
+	func(r Record) string {
+		if r.Version != SchemaVersion {
+			return fmt.Sprintf("unsupported record version %d", r.Version)
+		}
+		return ""
+	},
+	func(r Record) string {
+		if !knownKind[r.Kind] {
+			return "unsupported kind"
+		}
+		return ""
+	},
+	func(r Record) string {
+		if !boundedText(r.RequestID, MaxRequestIDBytes) || r.RequestID == "" {
+			return "request_id must be 1 to 128 bytes of UTF-8"
+		}
+		return ""
+	},
+	func(r Record) string {
+		if !boundedText(r.From.Name, MaxNameBytes) || !boundedText(r.From.Workspace, MaxNameBytes) {
+			return "name and workspace must be at most 64 bytes of UTF-8"
+		}
+		return ""
+	},
+	func(r Record) string {
+		if !boundedText(r.Note, MaxNoteBytes) {
+			return "note must be at most 512 bytes of UTF-8"
+		}
+		return ""
+	},
+}
+
+var knownKind = map[Kind]bool{KindRequest: true, KindAccept: true, KindIgnore: true}
+
+// boundedText is valid UTF-8 of at most limit bytes.
+func boundedText(s string, limit int) bool {
+	return len(s) <= limit && utf8.ValidString(s)
 }
 
 // ReadRecord reads one line and decodes it strictly: unknown fields and
@@ -119,7 +151,8 @@ func ReadRecord(r *bufio.Reader) (Record, error) {
 }
 
 // readBoundedLine reads up to and including a newline, failing once the
-// line would exceed limit, so an endless line can't grow memory.
+// line would exceed limit, so an endless line can't grow memory. A final
+// line without a newline is still returned.
 func readBoundedLine(r *bufio.Reader, limit int) ([]byte, error) {
 	var line []byte
 	for {
@@ -129,15 +162,20 @@ func readBoundedLine(r *bufio.Reader, limit int) ([]byte, error) {
 		}
 		line = append(line, fragment...)
 		if err != nil {
-			if errors.Is(err, io.EOF) && len(line) > 0 {
-				return line, nil
-			}
-			return nil, err
+			return lastLine(line, err)
 		}
 		if !isPrefix {
 			return line, nil
 		}
 	}
+}
+
+// lastLine keeps an unterminated last line at EOF, and passes other errors.
+func lastLine(line []byte, err error) ([]byte, error) {
+	if errors.Is(err, io.EOF) && len(line) > 0 {
+		return line, nil
+	}
+	return nil, err
 }
 
 // WriteJSON writes one value as one line.

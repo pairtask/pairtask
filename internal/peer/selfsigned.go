@@ -29,6 +29,7 @@ func SelfSigned(name string) (tls.Certificate, error) {
 	template := &x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: name},
+		DNSNames:              []string{name},
 		NotBefore:             now.Add(-time.Minute),
 		NotAfter:              now.Add(24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
