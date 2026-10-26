@@ -74,7 +74,9 @@ func (m *Model) mentionCandidates(fragment string) []string {
 	}
 	members, _ := m.eligibleMembers()
 	typed := m.namedBefore()
-	members = slices.DeleteFunc(slices.Clone(members), func(id string) bool { return slices.Contains(typed, id) })
+	members = slices.DeleteFunc(slices.Clone(members), func(id string) bool {
+		return slices.Contains(typed, id) || id == "all" || !mentionID.MatchString(id) // the inline grammar can't carry it
+	})
 	slices.Sort(members)
 	return withPrefix(members, fragment)
 }
