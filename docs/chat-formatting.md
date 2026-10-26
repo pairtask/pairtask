@@ -59,3 +59,24 @@ indent, but nested list meaning is not parsed. Unmatched style marks remain
 visible. A line over 4096 bytes displays inline marks as typed. A literal
 pipe cannot be escaped inside a table cell, even with a backslash or code
 span. Fenced code wraps across screen lines instead of scrolling sideways.
+
+## Diagrams
+
+A fenced block whose language is `mermaid` or `plantuml` (any case) is a
+diagram. It displays as code under a label such as
+`◇ mermaid · /diagram #12`; with several diagrams in one message the label
+adds the number, `/diagram #12 2`. An unclosed block stays plain code, and
+only the first 16 diagrams in a message get a label.
+
+`/diagram #n [K]` saves diagram K of message `#n` (K may be left out when
+there is only one) and shows where:
+
+- The file is `<n>-<K>-<hash>.mmd` or `.puml` in `$XDG_STATE_HOME/pairtask/diagrams`
+  (by default `~/.local/state/pairtask/diagrams`) of the machine running the
+  chat. Saving the same diagram again reuses the file; nothing is overwritten.
+- With the sandbox's `pairtask chat`, the chat runs in the secured container,
+  so copy the file to your host with
+  `incus --project pairtask file pull colima-pairtask:secured/root/.local/state/pairtask/diagrams/FILE .`
+  (on Linux, `local:secured/…`).
+- Nothing is rendered, run, or sent anywhere: open the file with your own
+  Mermaid or PlantUML tool. Sources over 256 KiB aren't saved.
