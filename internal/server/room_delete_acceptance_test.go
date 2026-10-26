@@ -102,9 +102,13 @@ func TestRoomDeleteAcceptanceLiveOperatorNotifiedAndHelloCanRecreate(t *testing.
 	observer.Close()
 	_, welcome := roomPeer(f, "replacement", 9, "alpha")
 	roomMembership(t, welcome, "alpha")
-	listed := roomCommand(f, "list", "", "")
+	roomDeleteRecreatedMembership(t, roomCommand(f, "list", "", ""))
+}
+
+func roomDeleteRecreatedMembership(t *testing.T, listed sessionWire) {
+	t.Helper()
 	rooms := sessionDecode[protocol.RoomList](t, listed, "room_list")
-	found = false
+	found := false
 	for _, room := range rooms.Rooms {
 		if room.ID == "alpha" {
 			found = true
