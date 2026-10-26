@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -103,18 +104,37 @@ func (m *Model) forgetCommand(argument) tea.Cmd {
 		m.status = "use /close, or /room delete " + key.room
 		return nil
 	}
+	if len(m.conv.forgot) >= maxForgotten && !m.conv.forgot[key] {
+		m.status = fmt.Sprintf("at most %d conversations can be forgotten; reopen one with /chat first", maxForgotten)
+		return nil
+	}
 	m.selectView(allKey)
 	m.conv.hidden[key], m.conv.forgot[key] = true, true
 	m.status = "forgot " + key.label() + "; its messages stay in All; " + reopenHint(key) + " reopens it" + m.draftNote(key)
 	return nil
 }
 
-// reopenHint is the /chat command that reopens a conversation.
+// maxForgotten bounds the forgotten set; a forgotten conversation stays
+// forgotten for the session unless /chat reopens it.
+const maxForgotten = 64
+
+// reopenHint is the /chat command that reopens a conversation: mentions
+// when every ID can be one, JSON otherwise.
 func reopenHint(key viewKey) string {
+	ids := []string{key.agent()}
 	if key.isGroup() {
-		return "/chat @" + strings.Join(key.group(), " @")
+		ids = key.group()
 	}
-	return "/chat @" + key.agent()
+	if slices.IndexFunc(ids, func(id string) bool { return id == "all" || !mentionID.MatchString(id) }) < 0 {
+		return "/chat @" + strings.Join(ids, " @")
+	}
+	var encoded []byte
+	if len(ids) == 1 {
+		encoded, _ = json.Marshal(ids[0])
+	} else {
+		encoded, _ = json.Marshal(ids)
+	}
+	return "/chat " + safe(string(encoded))
 }
 
 // reopenFor shows hidden conversations an entry belongs to; forgotten ones

@@ -124,11 +124,7 @@ func (m *Model) refreshDirectory() {
 	live := m.liveViews()
 	m.conv.order = pruneOrder(m.conv.order, live)
 	m.conv.order = appendUnseen(m.conv.order, live)
-	for key := range m.conv.forgot {
-		if !live.has[key] {
-			delete(m.conv.forgot, key) // bounded by the directory
-		}
-	}
+
 }
 
 // pruneOrder keeps the directory entries that are still live.
