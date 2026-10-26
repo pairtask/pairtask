@@ -98,9 +98,17 @@ func addressedNote(ids []string) string {
 func (m *Model) namedBefore() []string {
 	value := m.compose.editor.Value()
 	tokens := parsePrefix(value).tokens
-	fields := strings.Fields(value)
-	if len(tokens) > 0 && openToken(value) && fields[len(fields)-1] == "@"+tokens[len(tokens)-1] {
-		tokens = tokens[:len(tokens)-1] // still being typed
+	if typingLast(value, tokens) {
+		tokens = tokens[:len(tokens)-1]
 	}
 	return tokens
+}
+
+// typingLast reports that the cursor is still inside the last mention.
+func typingLast(value string, tokens []string) bool {
+	if len(tokens) == 0 || !openToken(value) {
+		return false
+	}
+	fields := strings.Fields(value)
+	return fields[len(fields)-1] == "@"+tokens[len(tokens)-1]
 }

@@ -375,8 +375,9 @@ export function escape(text: string): string {
 // when it is one of strings; IDs may hold spaces or quotes, which the
 // envelope escapes.
 function mentionList(v: unknown): string {
-	if (!Array.isArray(v) || v.length === 0 || !v.every((id) => typeof id === "string")) return "";
-	return JSON.stringify(v);
+	if (!Array.isArray(v)) return "";
+	const ids = v.filter((id) => typeof id === "string");
+	return ids.length > 0 && ids.length === v.length ? JSON.stringify(ids) : "";
 }
 
 function str(v: unknown): string {
