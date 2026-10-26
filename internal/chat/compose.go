@@ -208,7 +208,7 @@ func (m *Model) refreshAgentPicker() {
 		c.closePicker(PickerAgent)
 		return
 	}
-	items := m.agentCandidates(fragment)
+	items := m.mentionCandidates(fragment)
 	if len(items) == 0 {
 		c.picker = nil
 		return

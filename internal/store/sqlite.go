@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -82,7 +83,8 @@ func Open(path string) (*Store, error) {
 var addedColumns = []struct{ table, column, decl string }{
 	{"message_metadata", "origin", "TEXT"},
 	{"durable_agents", "protocol_version", "INTEGER"},
-	{"message_metadata", "room", "TEXT"}, // NULL is the Square
+	{"message_metadata", "room", "TEXT"},     // NULL is the Square
+	{"message_metadata", "mentions", "TEXT"}, // a JSON array; NULL is none (#164)
 }
 
 func migrate(db *sql.DB) error {
@@ -99,6 +101,15 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// nullList stores a list as a JSON array, or NULL when it is empty.
+func nullList(items []string) sql.NullString {
+	if len(items) == 0 {
+		return sql.NullString{}
+	}
+	encoded, _ := json.Marshal(items) // a []string always encodes
+	return sql.NullString{String: string(encoded), Valid: true}
 }
 
 func nullString(s string) sql.NullString {
@@ -194,7 +205,7 @@ func persistMessage(ctx context.Context, tx *sql.Tx, routed routedMessage) error
 	if _, err := tx.ExecContext(ctx, `INSERT INTO messages (seq, ts, sender, recipient, payload) VALUES (?, ?, ?, ?, ?)`, msg.Seq, msg.TS.UTC(), msg.From, msg.To, string(msg.Payload)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO message_metadata (message_id, seq, sender_session, in_reply_to, ack_requested, origin, room) VALUES (?, ?, ?, ?, ?, ?, ?)`, msg.MessageID, msg.Seq, routed.senderSession, msg.InReplyTo, msg.AckRequested, nullString(msg.Origin), nullString(msg.Room)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO message_metadata (message_id, seq, sender_session, in_reply_to, ack_requested, origin, room, mentions) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, msg.MessageID, msg.Seq, routed.senderSession, msg.InReplyTo, msg.AckRequested, nullString(msg.Origin), nullString(msg.Room), nullList(msg.Mentions)); err != nil {
 		return err
 	}
 	if err := insertRecipients(ctx, tx, msg.MessageID, recipients); err != nil {

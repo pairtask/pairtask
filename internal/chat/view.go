@@ -434,7 +434,7 @@ func (m *Model) audienceText(a audience) string {
 		r := m.compose.reply
 		return fmt.Sprintf("reply to #%d → %s", r.seq, safe(r.sender))
 	case a.room != "":
-		return fmt.Sprintf("to #%s (%d members)", safe(a.room), len(m.roomMembers(a.room)))
+		return fmt.Sprintf("to #%s (%d members)", safe(a.room), len(m.roomMembers(a.room))) + addressedNote(a.mentions)
 	case a.everyone:
 		return fmt.Sprintf("to everyone (%d online%s)", len(m.agents.list), m.partialNote())
 	}
@@ -442,7 +442,7 @@ func (m *Model) audienceText(a audience) string {
 	for i, id := range a.ids {
 		ids[i] = safe(id)
 	}
-	return "to " + strings.Join(ids, ", ")
+	return "to " + strings.Join(ids, ", ") + addressedNote(a.mentions)
 }
 
 func (m *Model) partialNote() string {

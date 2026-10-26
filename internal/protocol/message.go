@@ -162,6 +162,7 @@ type Message struct {
 	Group             []string          `json:"group,omitempty"`               // operator_send: explicit recipient set
 	Excluded          []string          `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
 	Room              string            `json:"room,omitempty"`                // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
+	Mentions          []string          `json:"mentions,omitempty"`            // operator msg to a room or group: the members it addresses (#164); attention, not routing
 	Rooms             []string          `json:"rooms,omitempty"`               // v9 hello: rooms to join; welcome, room_result: the agent's rooms
 	RoomOp            string            `json:"room_op,omitempty"`             // operator_room: what to do
 	RoomList          *RoomList         `json:"room_list,omitempty"`           // operator_room_result

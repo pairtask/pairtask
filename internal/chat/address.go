@@ -25,6 +25,7 @@ type audience struct {
 	everyone bool
 	room     string // with everyone: a room's members instead of the Square
 	ids      []string
+	mentions []string // members of the room or group it addresses (#164)
 	notSeen  []string
 	source   string
 	err      string
@@ -89,12 +90,13 @@ func (m *Model) resolveAudience() audience {
 }
 
 // viewMentions resolves leading mentions in the selected conversation: any
-// agents in All, only its own agent in a 1:1, none in a group.
+// agents in All, only its own agent in a 1:1, and in a room or group the
+// members it addresses, its audience unchanged.
 func (m *Model) viewMentions(tokens []string) audience {
 	key := m.conv.selected
 	switch {
 	case key.isGroup() || key.isRoom():
-		return audience{err: "mentions address other agents only in All (Tab)"}
+		return m.attentionMentions(tokens)
 	case !key.common():
 		return m.ownMentions(tokens, key.agent())
 	}
@@ -170,9 +172,11 @@ func (m *Model) known(id string) bool {
 // scope is the operator_send addressing for a sendable audience.
 func (a audience) scope() (protocol.Message, error) {
 	if a.everyone {
-		return protocol.Message{To: protocol.Broadcast, Room: a.room}, nil
+		return protocol.Message{To: protocol.Broadcast, Room: a.room, Mentions: a.mentions}, nil
 	}
-	return scopeFor(a.ids)
+	scope, err := scopeFor(a.ids)
+	scope.Mentions = a.mentions
+	return scope, err
 }
 
 // outgoingText is the text that is sent: the draft as typed, except that a

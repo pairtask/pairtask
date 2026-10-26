@@ -136,6 +136,9 @@ func (h *Hub) admitOperator(ctx context.Context, clients map[string]*Client, sen
 	if rerr := h.requireRoom(ctx, send.msg.Room); rerr != nil {
 		return protocol.Message{}, rerr
 	}
+	if rerr := h.requireMentionedMembers(ctx, send.msg); rerr != nil {
+		return protocol.Message{}, rerr
+	}
 	return h.commitOperator(ctx, clients, send)
 }
 
@@ -182,7 +185,7 @@ func operatorFrame(send operatorSend, seq uint64) protocol.Message {
 	return protocol.Message{
 		Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: protocol.OperatorID, To: operatorTo(send.msg, send.scope),
 		Origin: protocol.OriginOperator, Payload: send.msg.Payload, MessageID: send.msg.MessageID, InReplyTo: send.msg.InReplyTo,
-		AckRequested: true, Durable: true, Group: groupMembers(send.scope), Room: send.msg.Room,
+		AckRequested: true, Durable: true, Group: groupMembers(send.scope), Room: send.msg.Room, Mentions: send.msg.Mentions,
 	}
 }
 

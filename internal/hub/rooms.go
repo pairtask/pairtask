@@ -155,6 +155,14 @@ func (h *Hub) changeOwnRoom(ctx context.Context, agent string, msg protocol.Mess
 // scopeOperatorSend checks an operator message's room: only a "*" names one,
 // and it must exist.
 func (h *Hub) scopeOperatorSend(ctx context.Context, msg *protocol.Message, scope store.OperatorScope) *routingError {
+	if rerr := h.scopeOperatorRoom(ctx, msg, scope); rerr != nil {
+		return rerr
+	}
+	return canonicalMentions(msg, scope)
+}
+
+// scopeOperatorRoom decides a "*" send's room; other sends have none.
+func (h *Hub) scopeOperatorRoom(ctx context.Context, msg *protocol.Message, scope store.OperatorScope) *routingError {
 	if scope.Kind != store.ScopeAll {
 		if protocol.RoomScope(msg.Room) != "" {
 			return &routingError{protocol.ErrMalformedFrame, "room applies to \"*\" only"}

@@ -24,7 +24,12 @@ const (
 )
 
 // SessionCapabilities are advertised in the operator_session response.
-var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history"}
+var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions}
+
+// CapabilityMentions: operator_send to a room or group may carry mentions
+// (#164); a broker without it would drop them, so the chat refuses such a
+// send instead.
+const CapabilityMentions = "mentions"
 
 // Watermark orders session state: Revision increases by one per event within
 // an Epoch, which is new on every broker start.
@@ -38,6 +43,16 @@ type SessionInfo struct {
 	Epoch        string    `json:"epoch,omitempty"`
 	Capabilities []string  `json:"capabilities,omitempty"`
 	OpenedAt     time.Time `json:"opened_at"`
+}
+
+// HasCapability reports whether the operator session advertises a feature.
+func (s SessionInfo) HasCapability(name string) bool {
+	for _, c := range s.Capabilities {
+		if c == name {
+			return true
+		}
+	}
+	return false
 }
 
 // RecipientStage is a current delivery state; it can move back to accepted
@@ -54,7 +69,8 @@ type SentSummary struct {
 	Seq               uint64           `json:"seq"`
 	TS                time.Time        `json:"ts"`
 	To                string           `json:"to"`
-	Room              string           `json:"room,omitempty"` // v9: a "*" to a room
+	Room              string           `json:"room,omitempty"`     // v9: a "*" to a room
+	Mentions          []string         `json:"mentions,omitempty"` // the members it addressed (#164)
 	Recipients        []RecipientStage `json:"recipients"`
 	ReceiptsTruncated bool             `json:"receipts_truncated"`
 }

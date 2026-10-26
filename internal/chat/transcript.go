@@ -125,10 +125,10 @@ func (m *Model) entryHeader(e *entry) []string {
 	}
 	var who string
 	if e.direction == "sent" {
-		who = youStyle.Render("you") + " → " + recipientsLabel(e.msg)
+		who = youStyle.Render("you") + " → " + recipientsLabel(e.msg) + mutedStyle.Render(addressedNote(e.msg.Mentions))
 	} else {
 		who = agentStyle(e.msg.From).Render(safe(e.msg.From)) + " → " + receivedAudience(e.msg) +
-			mutedStyle.Render(" ["+protocol.DisplayOrigin(e.msg.Origin)+"]")
+			mutedStyle.Render(addressedNote(e.msg.Mentions)+" ["+protocol.DisplayOrigin(e.msg.Origin)+"]")
 	}
 	left := mutedStyle.Render(stamp) + who
 	seq := mutedStyle.Render(fmt.Sprintf("#%d", e.msg.Seq))
