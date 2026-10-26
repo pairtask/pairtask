@@ -85,15 +85,23 @@ class Deployment:
         run(self.base + ["file", "push", str(binary), self.remote + role + PROBE_BIN, "--mode", "0755"])
 
     def start(self, role, *command, uid, gid):
-        """Start a long-running process and stream its JSON lines."""
+        """Start a long-running process; stdout lines go to a queue, stderr is
+        drained continuously so a chatty process can't block on its pipe."""
         process = subprocess.Popen(self.execute(role, *command, uid=uid, gid=gid),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         lines = queue.Queue()
+        process.stderr_lines = []
 
-        def pump():
+        def pump_out():
             for line in process.stdout:
                 lines.put(line)
-        threading.Thread(target=pump, daemon=True).start()
+
+        def pump_err():
+            for line in process.stderr:
+                process.stderr_lines.append(line)
+                del process.stderr_lines[:-200]  # keep the tail for error reports
+        threading.Thread(target=pump_out, daemon=True).start()
+        threading.Thread(target=pump_err, daemon=True).start()
         self.processes.append(process)
         return process, lines
 
@@ -106,23 +114,28 @@ class Deployment:
                 except subprocess.TimeoutExpired:
                     process.kill()
 
-    def address(self, role):
-        data = json.loads(run(self.base + ["list", self.remote, "--format", "json"],
-                              capture_output=True, text=True).stdout)
-        for instance in data:
-            if instance["name"] != role:
-                continue
-            for entry in instance["state"]["network"]["eth0"]["addresses"]:
-                if entry["family"] == "inet" and entry["scope"] == "global":
-                    return entry["address"]
-        raise ValueError(f"{role} has no IPv4 address on its bridge")
+    def address(self, role, timeout=60):
+        """The instance's bridge IPv4 address, waiting for its DHCP lease."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            data = json.loads(run(self.base + ["list", self.remote, "--format", "json"],
+                                  capture_output=True, text=True).stdout)
+            for instance in data:
+                if instance["name"] != role:
+                    continue
+                network = (instance.get("state") or {}).get("network") or {}
+                for entry in (network.get("eth0") or {}).get("addresses", []):
+                    if entry["family"] == "inet" and entry["scope"] == "global":
+                        return entry["address"]
+            time.sleep(2)
+        raise ValueError(f"{role} got no IPv4 address on its bridge within {timeout}s")
 
 
 def await_event(lines, name, process, timeout=30):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise ValueError(f"process exited before {name}: {process.stderr.read()}")
+            raise ValueError(f"process exited before {name}: {''.join(process.stderr_lines)}")
         try:
             line = lines.get(timeout=1)
         except queue.Empty:
@@ -133,7 +146,7 @@ def await_event(lines, name, process, timeout=30):
             continue
         if record.get("event") == name:
             return record
-    raise ValueError(f"timed out waiting for {name}")
+    raise ValueError(f"timed out waiting for {name}: {''.join(process.stderr_lines[-20:])}")
 
 
 def prepare_users(deployment):
@@ -197,23 +210,29 @@ def main():
     args = parse_args()
     smoke = load_smoke()
     project = "pairtask-smoke-" + uuid.uuid4().hex[:12]
-    directory = Path(tempfile.mkdtemp(prefix="pairtask-smoke-"))
     workdir = Path(tempfile.mkdtemp(prefix="pairtask-peer-probe-"))
-    args.network_check = True  # a disposable bridge owned by this state
-    smoke.prepare_state(directory, args, project)
-    enable_probe(directory)
-    tofu = [args.tofu, f"-chdir={directory}"]
+    directory = None
+    initialized = False
     deployment = Deployment(args.remote, project)
-    run(tofu + ["init", "-input=false", "-lockfile=readonly"])
     try:
-        binary = build_probe(workdir)
+        binary = build_probe(workdir)  # before any Incus state exists
+        directory = Path(tempfile.mkdtemp(prefix="pairtask-smoke-"))
+        args.network_check = True  # a disposable bridge owned by this state
+        smoke.prepare_state(directory, args, project)
+        enable_probe(directory)
+        tofu = [args.tofu, f"-chdir={directory}"]
+        run(tofu + ["init", "-input=false", "-lockfile=readonly"])
+        initialized = True
         run(tofu + ["apply", "-auto-approve", "-input=false"])
         exercise(args, deployment, binary, workdir, project)
         print("PASS: peer probe topology checks.", flush=True)
     finally:
         deployment.stop_all()
         shutil.rmtree(workdir, ignore_errors=True)
-        smoke.destroy_deployment(tofu, directory, project)
+        if initialized:
+            smoke.destroy_deployment(tofu, directory, project)
+        elif directory is not None:
+            shutil.rmtree(directory, ignore_errors=True)  # nothing was provisioned
 
 
 if __name__ == "__main__":
