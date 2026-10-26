@@ -41,8 +41,9 @@ type replyTarget struct {
 
 // commandLine is the separate input for commands; it never touches the draft.
 type commandLine struct {
-	input  textinput.Model
-	pasted bool // pasted text is inert: Enter refuses it
+	input     textinput.Model
+	pasted    bool    // pasted text is inert: Enter refuses it
+	dismissed *string // the text an argument picker was closed on with Esc
 }
 
 // Picker kinds.
@@ -185,7 +186,7 @@ func (m *Model) afterEdit() {
 func (m *Model) paste(msg tea.PasteMsg) tea.Cmd {
 	c := &m.compose
 	if c.cmd != nil {
-		c.cmd.pasted = true
+		c.cmd.pasted, c.picker = true, nil // pasted text is inert: nothing completes it
 		var cmd tea.Cmd
 		c.cmd.input, cmd = c.cmd.input.Update(msg)
 		return cmd
@@ -306,6 +307,39 @@ func (m *Model) openCommandLine() {
 	m.refreshCommandPicker()
 }
 
+// tabCommandLine completes the picked command name or argument.
+func (m *Model) tabCommandLine() {
+	if m.compose.openPicker(PickerArgument) != nil {
+		m.completeArgument()
+		return
+	}
+	m.completeCommand()
+}
+
+// escCommandLine closes an argument picker first, then the line.
+func (m *Model) escCommandLine() {
+	c := &m.compose
+	if c.openPicker(PickerArgument) != nil {
+		value := c.cmd.input.Value()
+		c.picker, c.cmd.dismissed = nil, &value
+		return
+	}
+	m.closeCommandLine()
+}
+
+// enterCommandLine completes an argument, completes and runs a picked
+// command, or runs the line.
+func (m *Model) enterCommandLine() tea.Cmd {
+	switch {
+	case m.completingArgument():
+		m.completeArgument()
+		return nil
+	case m.compose.openPicker(PickerCommand) != nil:
+		return m.runPicked()
+	}
+	return m.runCommandLine()
+}
+
 func (m *Model) closeCommandLine() {
 	m.compose.cmd = nil
 	m.compose.picker = nil
@@ -330,14 +364,11 @@ func (m *Model) commandKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *Model) commandControl(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "esc":
-		m.closeCommandLine()
+		m.escCommandLine()
 	case "enter":
-		if m.compose.picker != nil {
-			return m.runPicked(), true
-		}
-		return m.runCommandLine(), true
+		return m.enterCommandLine(), true
 	case "tab":
-		m.completeCommand()
+		m.tabCommandLine()
 	case "up", "down":
 		if m.compose.picker != nil {
 			m.pickerKey(msg)
@@ -361,12 +392,11 @@ func (m *Model) slashDraft() {
 
 func (m *Model) refreshCommandPicker() {
 	c := &m.compose
-	name, _, hasArgs := strings.Cut(c.cmd.input.Value(), " ")
-	if hasArgs {
-		c.picker = nil
+	if l, hasArgs := splitArgLine(c.cmd.input.Value()); hasArgs {
+		m.refreshArgumentPicker(l)
 		return
 	}
-	items := m.commandCandidates(argument(name))
+	items := m.commandCandidates(argument(c.cmd.input.Value()))
 	if len(items) == 0 {
 		c.picker = nil
 		return
@@ -383,6 +413,7 @@ func (m *Model) completeCommand() {
 	c.cmd.input.SetValue(c.picker.items[c.picker.selected] + " ")
 	c.cmd.input.CursorEnd()
 	c.picker = nil
+	m.refreshCommandPicker() // a command's first argument may complete too
 }
 
 // runPicked completes the highlighted command and runs it when it runs
