@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func TestMentionsMigrationAcceptanceExistingMetadataSurvivesReopen(t *testing.T)
 	roomStoreCheck(t, s.db.QueryRow("SELECT mentions FROM message_metadata WHERE message_id='legacy-parent'").Scan(&raw))
 	var ids []string
 	roomStoreCheck(t, json.Unmarshal([]byte(raw), &ids))
-	if len(ids) != 2 || ids[0] != "worker with spaces" || ids[1] != "worker-two" {
+	if !slices.Equal(ids, []string{"worker with spaces", "worker-two"}) {
 		t.Fatalf("metadata changed: %s", raw)
 	}
 }

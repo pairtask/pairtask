@@ -3,7 +3,7 @@ package host
 import (
 	"context"
 	"encoding/json"
-	"slices"
+	"reflect"
 	"testing"
 	"time"
 
@@ -32,7 +32,7 @@ func TestMentionsAcceptanceCodexTurnCarriesAttention(t *testing.T) {
 	check(t, json.Unmarshal(request.Params, &params))
 	var delivered protocol.Message
 	check(t, json.Unmarshal([]byte(params.ToolOutput.Output), &delivered))
-	if !slices.Equal(delivered.Mentions, input.Mentions) || delivered.Room != input.Room || delivered.Origin != input.Origin || !delivered.AckRequested {
+	if !reflect.DeepEqual(delivered, input) {
 		t.Fatalf("Codex turn lost attention or authority: %+v", delivered)
 	}
 	check(t, p.FromHost(ctx, Frame{ID: request.ID, Result: json.RawMessage(`{"turn":{"id":"attention-turn"}}`)}))

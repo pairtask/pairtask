@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestMentionsAcceptanceClaudeChannelPreservesAttentionAndOrigin(t *testing.T
 	requireNoError(t, json.Unmarshal(request.Params, &params))
 	var delivered protocol.Message
 	requireNoError(t, json.Unmarshal([]byte(params.Content), &delivered))
-	if !slices.Equal(delivered.Mentions, input.Mentions) || delivered.Room != input.Room || delivered.Origin != input.Origin || !delivered.AckRequested {
+	if !reflect.DeepEqual(delivered, input) {
 		t.Fatalf("channel lost attention or provenance: %+v", delivered)
 	}
 }
