@@ -69,52 +69,60 @@ func bodyLines(text string) []string {
 	return strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 }
 
-// diagramLabel is the row shown in place of a diagram's opening fence.
-func diagramLabel(d diagram, k, n int, seq uint64) string {
-	label := "◇ " + d.lang
-	if seq != 0 {
-		label += " · /diagram #" + strconv.FormatUint(seq, 10)
-		if n > 1 {
-			label += " " + strconv.Itoa(k)
-		}
-	}
-	return label
+// diagramRef names diagram k (1-based; 0 for "the only one") of message seq.
+type diagramRef struct {
+	seq uint64
+	k   int
 }
 
-// diagramLabels maps each diagram's opening fence line to its label.
+// command is the /diagram call shown in a label; a message without a number
+// can't be targeted, so it gets none.
+func (r diagramRef) command(n int) string {
+	switch {
+	case r.seq == 0:
+		return ""
+	case n > 1:
+		return fmt.Sprintf(" · /diagram #%d %d", r.seq, r.k)
+	}
+	return fmt.Sprintf(" · /diagram #%d", r.seq)
+}
+
+// diagramLabels maps each diagram's opening fence line to the row shown in
+// its place.
 func (b *lineBuilder) diagramLabels(lines []string) map[int]string {
 	ds := findDiagrams(lines)
 	labels := make(map[int]string, len(ds))
-	for k, d := range ds {
-		labels[d.open] = diagramLabel(d, k+1, len(ds), b.seq)
+	for i, d := range ds {
+		labels[d.open] = "◇ " + d.lang + diagramRef{seq: b.seq, k: i + 1}.command(len(ds))
 	}
 	return labels
 }
 
 // diagramArg is "#n" with an optional diagram number K.
 func diagramArg(a argument) error {
-	_, _, err := a.diagramTarget()
+	_, err := a.diagramTarget()
 	return err
 }
 
-func (a argument) diagramTarget() (seq uint64, k int, err error) {
+func (a argument) diagramTarget() (diagramRef, error) {
 	head, rest, _ := strings.Cut(strings.TrimSpace(string(a)), " ")
-	if seq, err = argument(head).target(); err != nil {
-		return 0, 0, err
+	seq, err := argument(head).target()
+	if err != nil {
+		return diagramRef{}, err
 	}
 	if rest = strings.TrimSpace(rest); rest == "" {
-		return seq, 0, nil
+		return diagramRef{seq: seq}, nil
 	}
-	k, convErr := strconv.Atoi(rest)
-	if convErr != nil || k < 1 {
-		return 0, 0, errors.New("usage: /diagram #n [K]")
+	k, err := strconv.Atoi(rest)
+	if err != nil || k < 1 {
+		return diagramRef{}, errors.New("usage: /diagram #n [K]")
 	}
-	return seq, k, nil
+	return diagramRef{seq: seq, k: k}, nil
 }
 
 func (m *Model) diagramCommand(arg argument) tea.Cmd {
-	seq, k, _ := arg.diagramTarget() // diagramArg already checked it
-	e, reason := m.entryForSeq(seq)
+	ref, _ := arg.diagramTarget() // diagramArg already checked it
+	e, reason := m.entryForSeq(ref.seq)
 	if e != nil && e.omitted {
 		e, reason = nil, "that message's text isn't available"
 	}
@@ -122,15 +130,15 @@ func (m *Model) diagramCommand(arg argument) tea.Cmd {
 		m.status = reason
 		return nil
 	}
-	d, reason := pickDiagram(findDiagrams(bodyLines(payloadText(e.msg.Payload))), seq, k)
+	d, reason := ref.pick(findDiagrams(bodyLines(payloadText(e.msg.Payload))))
 	if reason != "" {
 		m.status = reason
 		return nil
 	}
-	m.status = fmt.Sprintf("saving the diagram of #%d…", seq)
-	dir := diagramDir()
+	m.status = fmt.Sprintf("saving the diagram of #%d…", ref.seq)
+	x := diagramExport{dir: diagramDir(), ref: ref, d: d}
 	return func() tea.Msg {
-		path, err := exportDiagram(dir, seq, k, d)
+		path, err := x.save()
 		return diagramSavedMsg{path: path, err: err}
 	}
 }
@@ -150,8 +158,9 @@ func (m *Model) diagramSaved(msg diagramSavedMsg) {
 	m.status = "diagram saved: " + safe(msg.path)
 }
 
-// pickDiagram selects diagram k (1-based); k 0 means the only one.
-func pickDiagram(ds []diagram, seq uint64, k int) (diagram, string) {
+// pick selects diagram k of ds; k 0 means the only one.
+func (r diagramRef) pick(ds []diagram) (diagram, string) {
+	seq, k := r.seq, r.k
 	switch {
 	case len(ds) == 0:
 		return diagram{}, fmt.Sprintf("#%d has no diagram", seq)
@@ -179,70 +188,84 @@ func diagramDir() string {
 	return filepath.Join(base, "pairtask", "diagrams")
 }
 
-// exportDiagram writes the source plus one newline to a file named only from
-// the seq, the number and the source hash; it never replaces or follows
-// anything. An identical existing file is reused.
-func exportDiagram(dir string, seq uint64, k int, d diagram) (string, error) {
-	if len(d.source) > maxDiagramBytes {
+// diagramExport is one diagram to save as dir/<seq>-<k>-<hash>.<ext>; no
+// byte of the name comes from the message text itself.
+type diagramExport struct {
+	dir string
+	ref diagramRef
+	d   diagram
+}
+
+func (x diagramExport) name() string {
+	sum := sha256.Sum256([]byte(x.d.source))
+	return fmt.Sprintf("%d-%d-%s.%s", x.ref.seq, max(1, x.ref.k), hex.EncodeToString(sum[:])[:12], diagramExt[x.d.lang])
+}
+
+// save writes the source plus one newline; it never replaces or follows
+// anything, and an identical existing file is reused.
+func (x diagramExport) save() (string, error) {
+	if len(x.d.source) > maxDiagramBytes {
 		return "", fmt.Errorf("diagram too large (over %d KiB)", maxDiagramBytes>>10)
 	}
-	if k == 0 {
-		k = 1
-	}
-	sum := sha256.Sum256([]byte(d.source))
-	name := fmt.Sprintf("%d-%d-%s.%s", seq, k, hex.EncodeToString(sum[:])[:12], diagramExt[d.lang])
-	fd, err := openDiagramDir(dir)
+	dir, err := openDiagramDir(x.dir)
 	if err != nil {
 		return "", err
 	}
-	defer unix.Close(fd)
-	path := filepath.Join(dir, name)
-	return path, writeOnce(fd, name, []byte(d.source+"\n"))
+	defer dir.close()
+	name := x.name()
+	return filepath.Join(x.dir, name), dir.writeOnce(name, []byte(x.d.source+"\n"))
 }
+
+// dirFD is an open directory; everything below it is reached relative to it.
+type dirFD int
+
+func (d dirFD) close() { _ = unix.Close(int(d)) }
 
 // openDiagramDir creates the base as needed, then opens its pairtask and
 // diagrams components relative to their parent without following links, so
 // a component can't be swapped for a link between the check and the use.
-func openDiagramDir(dir string) (int, error) {
-	parent, rest := filepath.Dir(filepath.Dir(dir)), []string{filepath.Base(filepath.Dir(dir)), filepath.Base(dir)}
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+func openDiagramDir(path string) (dirFD, error) {
+	base := filepath.Dir(filepath.Dir(path))
+	if err := os.MkdirAll(base, 0o700); err != nil {
 		return -1, err
 	}
-	fd, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return -1, &os.PathError{Op: "open", Path: parent, Err: err}
+		return -1, &os.PathError{Op: "open", Path: base, Err: err}
 	}
-	for _, name := range rest {
-		next, err := openChildDir(fd, name)
-		unix.Close(fd)
+	dir := dirFD(fd)
+	for _, name := range []string{filepath.Base(filepath.Dir(path)), filepath.Base(path)} {
+		next, err := dir.child(name)
+		dir.close()
 		if err != nil {
 			return -1, err
 		}
-		fd = next
+		dir = next
 	}
-	return fd, nil
+	return dir, nil
 }
 
-func openChildDir(parent int, name string) (int, error) {
-	if err := unix.Mkdirat(parent, name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+// child creates (0700) and opens a subdirectory, refusing a link.
+func (d dirFD) child(name string) (dirFD, error) {
+	if err := unix.Mkdirat(int(d), name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
 		return -1, fmt.Errorf("create %s: %w", name, err)
 	}
-	fd, err := unix.Openat(parent, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(int(d), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
 		return -1, fmt.Errorf("unsafe directory: %s is a link or not a directory", name)
 	}
 	if err != nil {
 		return -1, fmt.Errorf("open %s: %w", name, err)
 	}
-	return fd, nil
+	return dirFD(fd), nil
 }
 
 // writeOnce creates name exclusively; when it exists, it must be a regular
 // file holding exactly content, and it is left untouched either way.
-func writeOnce(dir int, name string, content []byte) error {
-	fd, err := unix.Openat(dir, name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+func (d dirFD) writeOnce(name string, content []byte) error {
+	fd, err := unix.Openat(int(d), name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if errors.Is(err, unix.EEXIST) {
-		return sameFile(dir, name, content)
+		return d.sameFile(name, content)
 	}
 	if err != nil {
 		return fmt.Errorf("create %s: %w", name, err)
@@ -253,7 +276,7 @@ func writeOnce(dir int, name string, content []byte) error {
 		err = closeErr
 	}
 	if err != nil {
-		_ = unix.Unlinkat(dir, name, 0)
+		_ = unix.Unlinkat(int(d), name, 0)
 		return fmt.Errorf("write %s: %w", name, err)
 	}
 	return nil
@@ -261,8 +284,8 @@ func writeOnce(dir int, name string, content []byte) error {
 
 // sameFile compares an existing file without following a link or blocking
 // on a FIFO, reading at most one byte past content.
-func sameFile(dir int, name string, content []byte) error {
-	fd, err := unix.Openat(dir, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+func (d dirFD) sameFile(name string, content []byte) error {
+	fd, err := unix.Openat(int(d), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("unsafe file: %s exists and can't be read safely", name)
 	}
