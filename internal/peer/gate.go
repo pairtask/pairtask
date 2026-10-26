@@ -221,9 +221,6 @@ func (g *Gate) apply(ctx context.Context, peer peerInfo, rec Record) (Reply, err
 }
 
 func (g *Gate) applyRequest(ctx context.Context, peer peerInfo, rec Record) (Reply, error) {
-	if !g.cfg.Discoverable() {
-		return refused(rec, "not discoverable"), nil
-	}
 	if err := g.cfg.Faults.at(faultHook(g.cfg.Faults, 0), rec); err != nil {
 		return Reply{}, err
 	}
@@ -259,19 +256,31 @@ func (a admitted) refusal() (Reply, bool) {
 	return *a.refusedReply, true
 }
 
-// saveAdmitted checks the pending bounds and saves under one lock, so two
-// connections can't both pass the check; a repeat of a stored request still
-// gets its outcome.
+// saveAdmitted admits and saves under one lock, so two connections can't
+// both pass the checks. A request already stored is recognised first: an
+// identical retry gets its outcome even while discovery is off, so a lost
+// reply can always be recovered, and changed content is a conflict. Only a
+// new request needs discovery on and room under the pending bounds.
 func (g *Gate) saveAdmitted(ctx context.Context, peer peerInfo, rec Record) (admitted, error) {
 	g.admitMu.Lock()
 	defer g.admitMu.Unlock()
 	if _, known, _ := g.cfg.Store.Get(ctx, peer.fingerprint, rec.RequestID); !known {
-		if reply := g.pendingBound(ctx, peer, rec); reply != nil {
+		if reply := g.admitNew(ctx, peer, rec); reply != nil {
 			return admitted{refusedReply: reply}, nil
 		}
 	}
 	out, err := g.cfg.Store.SaveRequest(ctx, Request{Fingerprint: peer.fingerprint, Cert: peer.cert.Raw, Record: rec, ReceivedAt: time.Now()})
 	return admitted{Outcome: out}, err
+}
+
+// admitNew is the refusal for a new request, or nil: discovery must be on,
+// read now rather than from any cache, and the pending bounds must allow it.
+func (g *Gate) admitNew(ctx context.Context, peer peerInfo, rec Record) *Reply {
+	if !g.cfg.Discoverable() {
+		r := refused(rec, "not discoverable")
+		return &r
+	}
+	return g.pendingBound(ctx, peer, rec)
 }
 
 // pendingBound is the refusal for a new request past the pending limits,
