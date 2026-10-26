@@ -65,6 +65,29 @@ func (s *Store) LeaveRoom(ctx context.Context, m RoomMember) error {
 	return err
 }
 
+// DeleteRoom removes a room and its memberships, and reports whether it
+// existed. Messages keep their recorded room, and deliveries already
+// accepted stay; a later join creates the room afresh.
+func (s *Store) DeleteRoom(ctx context.Context, room string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM room_members WHERE room_id = ?`, room); err != nil {
+		return false, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM rooms WHERE id = ?`, room)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n != 0, tx.Commit()
+}
+
 // AgentRooms is the agent's rooms, sorted.
 func (s *Store) AgentRooms(ctx context.Context, agent string) ([]string, error) {
 	return s.column(ctx, `SELECT room_id FROM room_members WHERE agent_id = ? ORDER BY room_id`, agent)

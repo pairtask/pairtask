@@ -90,9 +90,43 @@ func (m *Model) closeCommand(argument) tea.Cmd {
 	return nil
 }
 
-// reopenFor shows hidden conversations an entry belongs to.
+// forgetCommand is /forget: the selected group or 1:1 leaves the bar and
+// stays out as traffic arrives, until /chat reopens it. Its messages stay
+// in All, and an unsent draft stays with it.
+func (m *Model) forgetCommand(argument) tea.Cmd {
+	key := m.conv.selected
+	switch {
+	case key.common():
+		m.status = "All can't be forgotten"
+		return nil
+	case key.isRoom():
+		m.status = "use /close, or /room delete " + key.room
+		return nil
+	}
+	m.selectView(allKey)
+	m.conv.hidden[key], m.conv.forgot[key] = true, true
+	m.status = "forgot " + key.label() + "; its messages stay in All; " + reopenHint(key) + " reopens it" + m.draftNote(key)
+	return nil
+}
+
+// reopenHint is the /chat command that reopens a conversation.
+func reopenHint(key viewKey) string {
+	if key.isGroup() {
+		return "/chat @" + strings.Join(key.group(), " @")
+	}
+	return "/chat @" + key.agent()
+}
+
+// reopenFor shows hidden conversations an entry belongs to; forgotten ones
+// stay out until /chat.
 func (m *Model) reopenFor(e *entry) {
 	for _, key := range entryViews(e) {
+		m.reopen(key)
+	}
+}
+
+func (m *Model) reopen(key viewKey) {
+	if !m.conv.forgot[key] {
 		delete(m.conv.hidden, key)
 	}
 }
@@ -101,11 +135,11 @@ func (m *Model) reopenFor(e *entry) {
 func (m *Model) reopenScope(scope protocol.Message) {
 	switch {
 	case len(scope.Group) > 1:
-		delete(m.conv.hidden, groupKey(scope.Group))
+		m.reopen(groupKey(scope.Group))
 	case len(scope.Group) == 1:
-		delete(m.conv.hidden, agentKey(scope.Group[0]))
+		m.reopen(agentKey(scope.Group[0]))
 	case scope.To != "" && scope.To != protocol.Broadcast:
-		delete(m.conv.hidden, agentKey(scope.To))
+		m.reopen(agentKey(scope.To))
 	}
 }
 

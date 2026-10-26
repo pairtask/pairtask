@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -166,21 +167,28 @@ func (h *Hub) scopeOperatorSend(ctx context.Context, msg *protocol.Message, scop
 		return rerr
 	}
 	msg.Room = room
+	return nil
+}
+
+// requireRoom refuses a new post to a room that doesn't exist. It runs after
+// the retry lookup, so a retry of a post accepted before its room was
+// deleted still gets the recorded outcome.
+func (h *Hub) requireRoom(ctx context.Context, room string) *routingError {
 	if room == "" {
 		return nil
 	}
-	exists, err := h.store.RoomExists(ctx, msg.Room)
+	exists, err := h.store.RoomExists(ctx, room)
 	if err != nil {
 		return &routingError{protocol.ErrInternal, "rooms unavailable"}
 	}
 	if !exists {
-		return &routingError{protocol.ErrInvalidRoom, "no room " + msg.Room}
+		return &routingError{protocol.ErrInvalidRoom, "no room " + room}
 	}
 	return nil
 }
 
-// operatorRoom serves operator_room: list, create, add and remove, each
-// audited; the answer is every room afterwards.
+// operatorRoom serves operator_room: list, create, add, remove and delete,
+// each audited; the answer is every room afterwards.
 func (h *Hub) operatorRoom(ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
 	msg := req.msg
 	auditID, err := h.store.RecordOperatorAudit(ctx, store.OperatorAudit{Action: "room " + msg.RoomOp, PrincipalUID: req.uid, MessageID: msg.MessageID, Scope: msg.Room, Result: store.AuditPending})
@@ -203,12 +211,16 @@ func (h *Hub) operatorRoom(ctx context.Context, _ map[string]*Client, req operat
 func (h *Hub) changeRooms(ctx context.Context, msg protocol.Message) *routingError {
 	op, ok := roomOps[msg.RoomOp]
 	if !ok {
-		return &routingError{protocol.ErrMalformedFrame, "room_op must be list, create, add or remove"}
+		return &routingError{protocol.ErrMalformedFrame, "room_op must be list, create, add, remove or delete"}
 	}
 	if rerr := op.check(msg); rerr != nil {
 		return rerr
 	}
 	if err := op.apply(h, ctx, msg); err != nil {
+		var rerr *routingError
+		if errors.As(err, &rerr) {
+			return rerr
+		}
 		return &routingError{protocol.ErrInternal, "room change not stored"}
 	}
 	if msg.RoomOp != protocol.RoomOpList {
@@ -234,6 +246,25 @@ var roomOps = map[string]roomOp{
 	protocol.RoomOpRemove: {memberArgs, func(h *Hub, ctx context.Context, msg protocol.Message) error {
 		return h.store.LeaveRoom(ctx, store.RoomMember{Room: msg.Room, Agent: msg.AgentID})
 	}},
+	protocol.RoomOpDelete: {roomOnly, deleteRoom},
+}
+
+// deleteRoom refuses an unknown room, so a typo is reported rather than
+// accepted as already gone.
+func deleteRoom(h *Hub, ctx context.Context, msg protocol.Message) error {
+	existed, err := h.store.DeleteRoom(ctx, msg.Room)
+	if err == nil && !existed {
+		return &routingError{protocol.ErrInvalidRoom, "no such room"}
+	}
+	return err
+}
+
+// roomOnly is a room and no agent.
+func roomOnly(msg protocol.Message) *routingError {
+	if msg.AgentID != "" {
+		return &routingError{protocol.ErrMalformedFrame, "delete takes a room, not an agent_id"}
+	}
+	return roomArg(msg)
 }
 
 func noRoomArgs(msg protocol.Message) *routingError {

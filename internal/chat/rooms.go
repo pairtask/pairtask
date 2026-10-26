@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -15,8 +16,9 @@ import (
 // else. All keeps everything; the Square is "*" without a room.
 
 const (
-	kindRoom   = "room"
-	panelRooms = "rooms"
+	kindRoom       = "room"
+	kindRoomDelete = "room delete"
+	panelRooms     = "rooms"
 )
 
 // roomKey is a room's conversation.
@@ -43,6 +45,8 @@ func (m *Model) roomsCommand(arg argument) tea.Cmd {
 		return nil
 	case fields[0] == "add" || fields[0] == "remove":
 		return m.roomMembersCommand(fields)
+	case fields[0] == "delete":
+		return m.deleteRoom(fields[1])
 	}
 	return m.openRoom(fields[0])
 }
@@ -74,6 +78,41 @@ func (m *Model) roomMembersCommand(fields []string) tea.Cmd {
 	}
 	m.status = fmt.Sprintf("%s %d in #%s…", op, len(fields)-2, fields[1])
 	return tea.Batch(cmds...)
+}
+
+// deleteRoom asks the broker to delete a room; the tab is hidden once it
+// confirms.
+func (m *Model) deleteRoom(room string) tea.Cmd {
+	m.status = "deleting #" + room + "…"
+	return m.request(kindRoomDelete, protocol.Message{Type: protocol.TypeOperatorRoom, RoomOp: protocol.RoomOpDelete, Room: room}, room)
+}
+
+// roomDeleted installs the rooms and hides the deleted room's tab like
+// /close: its messages stay in All, and an unsent draft stays with the
+// tab, which /room NAME reopens.
+func (m *Model) roomDeleted(req pendingRequest, resp protocol.Message) tea.Cmd {
+	if resp.Type != protocol.TypeOperatorRoomResult || resp.RoomList == nil {
+		m.status = "room delete refused: " + brokerReason(resp)
+		return nil
+	}
+	m.rooms, m.roomsCut = resp.RoomList.Rooms, resp.RoomList.Truncated
+	room := req.ids[0]
+	key := roomKey(room)
+	if m.conv.selected == key {
+		m.selectView(allKey)
+	}
+	m.conv.hidden[key] = true
+	m.refreshDirectory()
+	m.status = "deleted #" + room + "; its messages stay in All" + m.draftNote(key)
+	return nil
+}
+
+// draftNote tells that a closed conversation still holds an unsent draft.
+func (m *Model) draftNote(key viewKey) string {
+	if v := m.conv.saved[key]; v != nil && v.protected() {
+		return "; your draft is kept"
+	}
+	return ""
 }
 
 // roomResult installs the rooms and, after a create, opens the new tab.
@@ -134,14 +173,28 @@ func roomArg(a argument) error {
 	if len(fields) == 0 {
 		return nil
 	}
-	name := fields[0]
-	if name == "add" || name == "remove" {
-		if len(fields) < 3 {
-			return fmt.Errorf("usage: /room %s ROOM @agent …", name)
-		}
-		name = fields[1]
-	} else if len(fields) > 1 {
-		return fmt.Errorf("usage: /room NAME, /room add NAME @a, /room remove NAME @a")
+	if want, ok := roomVerbArgs[fields[0]]; ok {
+		return roomVerbArg(fields, want)
 	}
-	return protocol.ValidateRoomID(name)
+	if len(fields) > 1 {
+		return errors.New(roomUsage)
+	}
+	return protocol.ValidateRoomID(fields[0])
+}
+
+const roomUsage = "usage: /room NAME, /room add NAME @a, /room remove NAME @a, /room delete NAME"
+
+// roomVerbArgs is how many words each /room verb needs, itself included;
+// add and remove take any number of members after the room.
+var roomVerbArgs = map[string]int{"add": 3, "remove": 3, "delete": 2}
+
+func roomVerbArg(fields []string, want int) error {
+	verb := fields[0]
+	switch {
+	case verb == "delete" && len(fields) != want:
+		return errors.New("usage: /room delete NAME")
+	case len(fields) < want:
+		return fmt.Errorf("usage: /room %s ROOM @agent …", verb)
+	}
+	return protocol.ValidateRoomID(fields[1])
 }
