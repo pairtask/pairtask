@@ -75,7 +75,14 @@ func (f *formatter) fence(i int) {
 		return
 	}
 	f.blank = false
-	f.b.add([]string{mutedStyle.Render(ansi.Truncate(label, max(1, f.width-len(body)), ""))}, body)
+	in := f.codeIndent()
+	f.b.add([]string{mutedStyle.Render(ansi.Truncate(label, max(1, f.width-len(in)), ""))}, in)
+}
+
+// codeIndent is the body indent, narrowed so a code or label row keeps at
+// least one column at any width.
+func (f *formatter) codeIndent() indent {
+	return body[:min(len(body), max(0, f.width-1))]
 }
 
 func (f *formatter) blankRow() {
@@ -92,13 +99,14 @@ func (f *formatter) blankRow() {
 func (f *formatter) code(line string) {
 	f.blank = false
 	plain := safeText(line)
-	parts := strings.Split(ansi.Hardwrap(plain, max(1, f.width-len(body)), true), "\n")
+	in := f.codeIndent()
+	parts := strings.Split(ansi.Hardwrap(plain, max(1, f.width-len(in)), true), "\n")
 	pos := 0
 	for _, part := range parts {
 		if at := strings.Index(plain[pos:], part); at >= 0 {
 			pos += at
 		}
-		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: pos, text: string(body) + fenceStyle.Render(part)})
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: pos, text: string(in) + fenceStyle.Render(part)})
 		pos += len(part)
 	}
 	f.b.src++

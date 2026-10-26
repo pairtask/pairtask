@@ -166,12 +166,15 @@ func pickDiagram(ds []diagram, seq uint64, k int) (diagram, string) {
 }
 
 // diagramDir is $XDG_STATE_HOME/pairtask/diagrams, by default under
-// ~/.local/state.
+// ~/.local/state; it is made absolute so the reported path stays usable.
 func diagramDir() string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".local", "state")
+	}
+	if abs, err := filepath.Abs(base); err == nil {
+		base = abs
 	}
 	return filepath.Join(base, "pairtask", "diagrams")
 }
