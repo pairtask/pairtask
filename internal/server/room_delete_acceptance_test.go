@@ -102,7 +102,15 @@ func TestRoomDeleteAcceptanceLiveOperatorNotifiedAndHelloCanRecreate(t *testing.
 	observer.Close()
 	_, welcome := roomPeer(f, "replacement", 9, "alpha")
 	roomMembership(t, welcome, "alpha")
-	var count int
-	operatorNoError(t, f.db.QueryRow("SELECT COUNT(*) FROM room_members WHERE room_id='alpha'").Scan(&count))
-	operatorEqual(t, "hello recreates fresh membership only", count, 1)
+	listed := roomCommand(f, "list", "", "")
+	rooms := sessionDecode[protocol.RoomList](t, listed, "room_list")
+	found := false
+	for _, room := range rooms.Rooms {
+		if room.ID == "alpha" {
+			found = true
+			operatorEqual(t, "hello recreates fresh membership only", room.MembersTotal, 1)
+			operatorEqual(t, "recreated room contains new agent", room.Members[0], "replacement")
+		}
+	}
+	operatorEqual(t, "recreated room visible through broker", found, true)
 }
