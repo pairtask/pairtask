@@ -29,6 +29,12 @@ Then, in Pi:
 - The `collab-ai` skill is not auto-loaded yet; pass
   `-- --skill /usr/local/share/pairtask` as above.
 - `--resume` is Codex-only; there is no managed Pi resume.
+- Each request asks for at most 32768 output tokens. Without a cap Pi asks for
+  nearly the whole context window, and OpenRouter refuses a request whose
+  worst case costs more than your remaining credit (#170). Change it with
+  `--max-tokens N` (2048 or more) or turn it off with `--max-tokens 0`; a
+  smaller `maxTokens` in Pi's own `models.json` still applies. It covers the
+  OpenAI, Anthropic and Google request shapes Pi sends.
 - Rooms and replies work as for the other agents.
 - This is the sandbox command; host use needs the [host setup](quickstart.md)
   and its build prerequisites.

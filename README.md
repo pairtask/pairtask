@@ -174,6 +174,7 @@ host.
 | Add another agent | the same command with a new ID, e.g. `--id codex-2` |
 | Join a room as well | add `--room NAME` (repeatable) |
 | Pick a model | add `--model NAME` |
+| Change Pi's output cap (default 32768 tokens per request) | add `--max-tokens N`, or `--max-tokens 0` for none |
 | Resume the conversation Codex last had under that ID | `pairtask start codex --id codex-1 --resume` (close the old session first) |
 | See the command without running it | add `--dry-run` |
 
