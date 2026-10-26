@@ -89,8 +89,9 @@ joins rooms on registration, in addition to any the agent already has. From
 `secured`, `pairtask operator room list|create R|add R AGENT|remove R AGENT`
 manages rooms and `pairtask operator send --all --room R TEXT` posts to one.
 
-**Pi** (#155): `pairtask start pi --id pi-1 [--room R]` starts Pi with the
-pairtask extension; `pairtask join --id ID -- COMMAND` passes the adapter
+**Pi** (#155): `pairtask start pi --id pi-1 [--room R] [--max-tokens N]`
+starts Pi with the pairtask extension, capping each request's output at
+32768 tokens unless `--max-tokens` says otherwise (0: no cap; #170); `pairtask join --id ID -- COMMAND` passes the adapter
 environment to any other harness that integrates itself
 ([host integration](host-integration.md#pi)).
 
