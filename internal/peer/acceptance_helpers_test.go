@@ -69,15 +69,19 @@ func acceptanceCertificate(t *testing.T, name string) tls.Certificate {
 }
 
 func acceptanceFingerprint(t *testing.T, cert tls.Certificate) string {
+	return Fingerprint(acceptanceLeaf(t, cert))
+}
+
+func acceptanceLeaf(t *testing.T, cert tls.Certificate) *x509.Certificate {
 	t.Helper()
 	c, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Fingerprint(c)
+	return c
 }
 
-func acceptanceStart(t *testing.T, config GateConfig) *acceptanceProbe {
+func acceptanceDefaults(t *testing.T, config GateConfig) GateConfig {
 	t.Helper()
 	if len(config.Cert.Certificate) == 0 {
 		config.Cert = acceptanceCertificate(t, "gate")
@@ -88,25 +92,41 @@ func acceptanceStart(t *testing.T, config GateConfig) *acceptanceProbe {
 	if config.Discoverable == nil {
 		config.Discoverable = func() bool { return true }
 	}
+	return config
+}
+
+func acceptanceNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func acceptanceEqual[T comparable](t *testing.T, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func acceptanceListen(t *testing.T, network, address string) net.Listener {
+	t.Helper()
+	ln, err := net.Listen(network, address)
+	acceptanceNoError(t, err)
+	t.Cleanup(func() { ln.Close() })
+	return ln
+}
+
+func acceptanceStart(t *testing.T, config GateConfig) *acceptanceProbe {
+	t.Helper()
+	config = acceptanceDefaults(t, config)
 	dir, err := os.MkdirTemp("", "ptls-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	unix, err := net.Listen("unix", filepath.Join(dir, "peer.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { unix.Close() })
+	unix := acceptanceListen(t, "unix", filepath.Join(dir, "peer.sock"))
 	gate, err := NewGate(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tcp, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { tcp.Close() })
+	acceptanceNoError(t, err)
+	tcp := acceptanceListen(t, "tcp", "127.0.0.1:0")
 	wire := &acceptanceWire{}
 	relay := NewRelay(RelayConfig{Dial: func(ctx context.Context) (net.Conn, error) {
 		c, err := (&net.Dialer{}).DialContext(ctx, "unix", unix.Addr().String())
@@ -146,12 +166,15 @@ func (p *acceptanceProbe) connect(t *testing.T, cert tls.Certificate) *tls.Conn 
 	}
 	t.Cleanup(func() { raw.Close() })
 	pin := acceptanceFingerprint(t, p.serverCert)
+	server := acceptanceLeaf(t, p.serverCert)
+	roots := x509.NewCertPool()
+	roots.AddCert(server)
 	c := tls.Client(raw, &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
-		// Fixture certificates have no public CA. Exact certificate pinning below
-		// is the authentication check, not a production enrollment policy.
-		InsecureSkipVerify: true,
+		// This fixture pretrusts the gate certificate; real enrollment is open.
+		RootCAs:    roots,
+		ServerName: server.DNSNames[0],
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if len(state.PeerCertificates) != 1 || Fingerprint(state.PeerCertificates[0]) != pin {
 				return fmt.Errorf("server pin mismatch")

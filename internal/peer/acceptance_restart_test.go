@@ -23,19 +23,16 @@ type acceptanceJournal struct {
 }
 
 type acceptanceJournalEntry struct {
-	Operation   string
-	Request     Request
-	Fingerprint string
-	ID          string
-	Status      string
+	Operation string
+	Request   Request
+	Contact   ContactRef
+	Decision  Kind
 }
 
 func acceptanceOpenJournal(t *testing.T, path string) *acceptanceJournal {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	t.Cleanup(func() { f.Close() })
 	s := &acceptanceJournal{MemStore: NewMemStore(), file: f}
 	decoder := json.NewDecoder(f)
@@ -45,9 +42,7 @@ func acceptanceOpenJournal(t *testing.T, path string) *acceptanceJournal {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		acceptanceNoError(t, err)
 		if _, err := s.applyEntry(context.Background(), entry); err != nil {
 			t.Fatal(err)
 		}
@@ -59,17 +54,17 @@ func (s *acceptanceJournal) SaveRequest(ctx context.Context, req Request) (Outco
 	return s.mutate(ctx, acceptanceJournalEntry{Operation: "request", Request: req})
 }
 
-func (s *acceptanceJournal) Accept(ctx context.Context, fp, id string) (Outcome, error) {
-	return s.mutate(ctx, acceptanceJournalEntry{Operation: "accept", Fingerprint: fp, ID: id})
+func (s *acceptanceJournal) Accept(ctx context.Context, ref ContactRef) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "accept", Contact: ref})
 }
-func (s *acceptanceJournal) Ignore(ctx context.Context, fp, id string) (Outcome, error) {
-	return s.mutate(ctx, acceptanceJournalEntry{Operation: "ignore", Fingerprint: fp, ID: id})
+func (s *acceptanceJournal) Ignore(ctx context.Context, ref ContactRef) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "ignore", Contact: ref})
 }
-func (s *acceptanceJournal) SaveOutbound(ctx context.Context, fp, id string) (Outcome, error) {
-	return s.mutate(ctx, acceptanceJournalEntry{Operation: "outbound", Fingerprint: fp, ID: id})
+func (s *acceptanceJournal) SaveOutbound(ctx context.Context, ref ContactRef) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "outbound", Contact: ref})
 }
-func (s *acceptanceJournal) Settle(ctx context.Context, fp, id, status string) (Outcome, error) {
-	return s.mutate(ctx, acceptanceJournalEntry{Operation: "settle", Fingerprint: fp, ID: id, Status: status})
+func (s *acceptanceJournal) Settle(ctx context.Context, ref ContactRef, decision Kind) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "settle", Contact: ref, Decision: decision})
 }
 
 func (s *acceptanceJournal) applyEntry(ctx context.Context, entry acceptanceJournalEntry) (Outcome, error) {
@@ -77,13 +72,13 @@ func (s *acceptanceJournal) applyEntry(ctx context.Context, entry acceptanceJour
 	case "request":
 		return s.MemStore.SaveRequest(ctx, entry.Request)
 	case "accept":
-		return s.MemStore.Accept(ctx, entry.Fingerprint, entry.ID)
+		return s.MemStore.Accept(ctx, entry.Contact)
 	case "ignore":
-		return s.MemStore.Ignore(ctx, entry.Fingerprint, entry.ID)
+		return s.MemStore.Ignore(ctx, entry.Contact)
 	case "outbound":
-		return s.MemStore.SaveOutbound(ctx, entry.Fingerprint, entry.ID)
+		return s.MemStore.SaveOutbound(ctx, entry.Contact)
 	case "settle":
-		return s.MemStore.Settle(ctx, entry.Fingerprint, entry.ID, entry.Status)
+		return s.MemStore.Settle(ctx, entry.Contact, entry.Decision)
 	default:
 		return Outcome{}, errors.New("unknown fixture journal operation")
 	}
@@ -117,20 +112,18 @@ func TestAcceptanceLocalDecisionSurvivesRestart(t *testing.T) {
 			fp := acceptanceFingerprint(t, cert)
 			var err error
 			if decision == StatusAccepted {
-				_, err = store.Accept(context.Background(), fp, record.RequestID)
+				_, err = store.Accept(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID})
 			} else {
-				_, err = store.Ignore(context.Background(), fp, record.RequestID)
+				_, err = store.Ignore(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID})
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			acceptanceNoError(t, err)
 			p.stop()
 			store.file.Close()
 			reopened := acceptanceOpenJournal(t, path)
-			state, ok, err := reopened.Get(context.Background(), fp, record.RequestID)
-			if err != nil || !ok || state.Status != decision {
-				t.Fatalf("decision lost: %+v,%v,%v", state, ok, err)
-			}
+			state, ok, err := reopened.Get(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID})
+			acceptanceNoError(t, err)
+			acceptanceEqual(t, ok, true)
+			acceptanceEqual(t, state.Status, decision)
 			resumed := acceptanceStart(t, GateConfig{Cert: p.serverCert, Store: reopened})
 			reply := acceptanceSend(t, resumed.connect(t, cert), record)
 			acceptanceStatus(t, reply, StatusDuplicate)
@@ -151,22 +144,10 @@ func TestAcceptanceOutboundSettlementSurvivesFaultAndRestart(t *testing.T) {
 			store := acceptanceOpenJournal(t, path)
 			cert := acceptanceCertificate(t, "alice")
 			fp := acceptanceFingerprint(t, cert)
-			if _, err := store.SaveOutbound(context.Background(), fp, "outbound-restart"); err != nil {
+			if _, err := store.SaveOutbound(context.Background(), ContactRef{Fingerprint: fp, RequestID: "outbound-restart"}); err != nil {
 				t.Fatal(err)
 			}
-			var hit atomic.Bool
-			fault := func(Record) error { hit.Store(true); return errors.New("injected settlement disconnect") }
-			hooks := &Faults{}
-			switch point {
-			case "before-persist":
-				hooks.BeforePersist = fault
-			case "after-persist":
-				hooks.AfterPersist = fault
-			case "before-reply":
-				hooks.BeforeReply = fault
-			case "after-reply":
-				hooks.AfterReply = fault
-			}
+			hooks, hit := acceptanceFaultAt(t, point)
 			p := acceptanceStart(t, GateConfig{Store: store, Faults: hooks})
 			c := p.connect(t, cert)
 			record := acceptanceRecord("outbound-restart")
@@ -211,19 +192,7 @@ func TestAcceptanceRestartAcrossPersistenceAndReplyFaults(t *testing.T) {
 		t.Run(point, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "requests.jsonl")
 			store := acceptanceOpenJournal(t, path)
-			var hit atomic.Bool
-			fault := func(Record) error { hit.Store(true); return errors.New("injected disconnect") }
-			faults := &Faults{}
-			switch point {
-			case "before-persist":
-				faults.BeforePersist = fault
-			case "after-persist":
-				faults.AfterPersist = fault
-			case "before-reply":
-				faults.BeforeReply = fault
-			case "after-reply":
-				faults.AfterReply = fault
-			}
+			faults, hit := acceptanceFaultAt(t, point)
 			server, client := acceptanceCertificate(t, "gate"), acceptanceCertificate(t, "alice")
 			p := acceptanceStart(t, GateConfig{Cert: server, Store: store, Faults: faults})
 			c := p.connect(t, client)
@@ -246,10 +215,8 @@ func TestAcceptanceRestartAcrossPersistenceAndReplyFaults(t *testing.T) {
 			}
 			reopened := acceptanceOpenJournal(t, path)
 			fp := acceptanceFingerprint(t, client)
-			_, exists, err := reopened.Get(context.Background(), fp, record.RequestID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			_, exists, err := reopened.Get(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID})
+			acceptanceNoError(t, err)
 			wantPersisted := point != "before-persist"
 			if exists != wantPersisted {
 				t.Fatalf("durable request exists=%v, want %v at %s", exists, wantPersisted, point)
@@ -267,4 +234,24 @@ func TestAcceptanceRestartAcrossPersistenceAndReplyFaults(t *testing.T) {
 			acceptanceStatus(t, acceptanceSend(t, resumed.connect(t, client), record), StatusRefused)
 		})
 	}
+}
+
+func acceptanceFaultAt(t *testing.T, point string) (*Faults, *atomic.Bool) {
+	t.Helper()
+	hit := &atomic.Bool{}
+	fault := func(Record) error { hit.Store(true); return errors.New("injected disconnect") }
+	hooks := &Faults{}
+	switch point {
+	case "before-persist":
+		hooks.BeforePersist = fault
+	case "after-persist":
+		hooks.AfterPersist = fault
+	case "before-reply":
+		hooks.BeforeReply = fault
+	case "after-reply":
+		hooks.AfterReply = fault
+	default:
+		t.Fatalf("unknown fault point %s", point)
+	}
+	return hooks, hit
 }

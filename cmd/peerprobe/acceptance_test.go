@@ -12,11 +12,11 @@ import (
 
 func TestAcceptanceIdentitySurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
-	first, err := identity(dir, "gate")
+	first, err := loadIdentity(identityPaths{dir: dir, name: "gate"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := identity(dir, "gate")
+	second, err := loadIdentity(identityPaths{dir: dir, name: "gate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestAcceptanceBrokenIdentityIsNotSilentlyReplaced(t *testing.T) {
 	for _, damage := range []string{"missing-key", "missing-cert", "corrupt-key", "corrupt-cert"} {
 		t.Run(damage, func(t *testing.T) {
 			dir := t.TempDir()
-			if _, err := identity(dir, "gate"); err != nil {
+			if _, err := loadIdentity(identityPaths{dir: dir, name: "gate"}); err != nil {
 				t.Fatal(err)
 			}
 			certPath, keyPath := filepath.Join(dir, "gate.crt"), filepath.Join(dir, "gate.key")
@@ -60,7 +60,7 @@ func TestAcceptanceBrokenIdentityIsNotSilentlyReplaced(t *testing.T) {
 			}
 			beforeCert, certErr := os.ReadFile(certPath)
 			beforeKey, keyErr := os.ReadFile(keyPath)
-			if _, err := identity(dir, "gate"); err == nil {
+			if _, err := loadIdentity(identityPaths{dir: dir, name: "gate"}); err == nil {
 				t.Fatal("broken identity silently replaced")
 			}
 			afterCert, afterCertErr := os.ReadFile(certPath)

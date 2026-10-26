@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"net"
@@ -14,31 +15,28 @@ import (
 func TestAcceptanceClientRequiresExpectedServerIdentity(t *testing.T) {
 	p := acceptanceStart(t, GateConfig{})
 	cert := acceptanceCertificate(t, "alice")
-	for _, pin := range []string{"", strings.Repeat("0", 64)} {
-		client, err := Dial(context.Background(), p.addr, ClientConfig{Cert: cert, ServerPin: pin, Timeout: time.Second})
+	wrong := acceptanceLeaf(t, acceptanceCertificate(t, "other-gate"))
+	for _, server := range []*x509.Certificate{nil, wrong} {
+		client, err := Dial(context.Background(), p.addr, ClientConfig{Cert: cert, Server: server, Timeout: time.Second})
 		if err == nil {
 			client.Close()
-			t.Fatalf("untrusted server accepted with pin %q", pin)
+			t.Fatal("untrusted server accepted")
 		}
 	}
-	client, err := Dial(context.Background(), p.addr, ClientConfig{Cert: cert, ServerPin: acceptanceFingerprint(t, p.serverCert), Timeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, err := Dial(context.Background(), p.addr, ClientConfig{Cert: cert, Server: acceptanceLeaf(t, p.serverCert), Timeout: time.Second})
+	acceptanceNoError(t, err)
 	defer client.Close()
 	if client.ServerFingerprint() != acceptanceFingerprint(t, p.serverCert) {
 		t.Fatal("client recorded wrong server identity")
 	}
 	reply, err := client.Send(context.Background(), acceptanceRecord("pinned"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	acceptanceStatus(t, reply, StatusPending)
 }
 
 func TestAcceptanceMissingClientCertificateCannotCreateRequest(t *testing.T) {
 	p := acceptanceStart(t, GateConfig{})
-	client, err := Dial(context.Background(), p.addr, ClientConfig{ServerPin: acceptanceFingerprint(t, p.serverCert), Timeout: time.Second})
+	client, err := Dial(context.Background(), p.addr, ClientConfig{Server: acceptanceLeaf(t, p.serverCert), Timeout: time.Second})
 	if err == nil {
 		defer client.Close()
 		if reply, err := client.Send(context.Background(), acceptanceRecord("anonymous")); err == nil && reply.Status != StatusRefused {
@@ -61,7 +59,7 @@ func TestAcceptanceBlockedCertificateCannotCreateRequest(t *testing.T) {
 	if err := json.NewDecoder(c).Decode(&reply); err == nil && reply.Status != StatusRefused {
 		t.Fatalf("blocked peer admitted: %+v", reply)
 	}
-	if _, ok, err := p.store.Get(context.Background(), fp, "blocked"); err != nil || ok {
+	if _, ok, err := p.store.Get(context.Background(), ContactRef{Fingerprint: fp, RequestID: "blocked"}); err != nil || ok {
 		t.Fatalf("blocked request stored: %v,%v", ok, err)
 	}
 }
@@ -97,7 +95,7 @@ func TestAcceptanceRelayCannotModifyAuthenticatedRequest(t *testing.T) {
 	if p.wire.tamperNext.Load() {
 		t.Fatal("tampering was not exercised")
 	}
-	if _, ok, err := p.store.Get(context.Background(), acceptanceFingerprint(t, cert), "tampered"); err != nil || ok {
+	if _, ok, err := p.store.Get(context.Background(), ContactRef{Fingerprint: acceptanceFingerprint(t, cert), RequestID: "tampered"}); err != nil || ok {
 		t.Fatalf("tampered request stored: %v,%v", ok, err)
 	}
 }
@@ -105,9 +103,7 @@ func TestAcceptanceRelayCannotModifyAuthenticatedRequest(t *testing.T) {
 func TestAcceptanceIncompleteHandshakeReleasesCapacity(t *testing.T) {
 	p := acceptanceStart(t, GateConfig{Limits: Limits{MaxConns: 1, IdleTimeout: 100 * time.Millisecond}})
 	raw, err := net.DialTimeout("tcp", p.addr, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	defer raw.Close()
 	raw.SetDeadline(time.Now().Add(time.Second))
 	raw.Write([]byte{0x16}) // Incomplete TLS handshake header.
@@ -117,10 +113,15 @@ func TestAcceptanceIncompleteHandshakeReleasesCapacity(t *testing.T) {
 	} else if e, ok := err.(net.Error); ok && e.Timeout() {
 		t.Fatal("gate did not enforce handshake timeout")
 	}
+	acceptanceRetryAfterIdle(t, p)
+}
+
+func acceptanceRetryAfterIdle(t *testing.T, p *acceptanceProbe) {
+	t.Helper()
 	cert := acceptanceCertificate(t, "alice")
 	deadline := time.Now().Add(time.Second)
 	for {
-		client, err := Dial(context.Background(), p.addr, ClientConfig{Cert: cert, ServerPin: acceptanceFingerprint(t, p.serverCert), Timeout: time.Second})
+		client, err := Dial(context.Background(), p.addr, ClientConfig{Cert: cert, Server: acceptanceLeaf(t, p.serverCert), Timeout: time.Second})
 		if err == nil {
 			reply, sendErr := client.Send(context.Background(), acceptanceRecord("after-idle"))
 			client.Close()
@@ -145,9 +146,7 @@ func acceptanceEchoRelay(t *testing.T, config RelayConfig) net.Conn {
 		return a, nil
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- NewRelay(config).Serve(ctx, ln) }()
@@ -161,9 +160,7 @@ func acceptanceEchoRelay(t *testing.T, config RelayConfig) net.Conn {
 		}
 	})
 	c, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	t.Cleanup(func() { c.Close() })
 	c.SetDeadline(time.Now().Add(2 * time.Second))
 	return c
@@ -220,41 +217,9 @@ func TestAcceptanceRelayIdleTimeoutTracksActivity(t *testing.T) {
 func TestAcceptanceClientValidatesReplyEnvelope(t *testing.T) {
 	for _, field := range []string{"version", "request-id", "status"} {
 		t.Run(field, func(t *testing.T) {
-			cert := acceptanceCertificate(t, "fake-gate")
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer ln.Close()
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				raw, err := ln.Accept()
-				if err != nil {
-					return
-				}
-				defer raw.Close()
-				conn := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})
-				conn.SetDeadline(time.Now().Add(time.Second))
-				var rec Record
-				if json.NewDecoder(conn).Decode(&rec) != nil {
-					return
-				}
-				reply := Reply{Version: SchemaVersion, RequestID: rec.RequestID, Status: StatusPending}
-				switch field {
-				case "version":
-					reply.Version++
-				case "request-id":
-					reply.RequestID = "different"
-				case "status":
-					reply.Status = "made-up"
-				}
-				json.NewEncoder(conn).Encode(reply)
-			}()
-			client, err := Dial(context.Background(), ln.Addr().String(), ClientConfig{Cert: acceptanceCertificate(t, "alice"), ServerPin: acceptanceFingerprint(t, cert), Timeout: time.Second})
-			if err != nil {
-				t.Fatal(err)
-			}
+			addr, cert, done := acceptanceBadReplyServer(t, field)
+			client, err := Dial(context.Background(), addr, ClientConfig{Cert: acceptanceCertificate(t, "alice"), Server: acceptanceLeaf(t, cert), Timeout: time.Second})
+			acceptanceNoError(t, err)
 			defer client.Close()
 			if reply, err := client.Send(context.Background(), acceptanceRecord("actual-request")); err == nil {
 				t.Fatalf("invalid %s accepted: %+v", field, reply)
@@ -262,4 +227,36 @@ func TestAcceptanceClientValidatesReplyEnvelope(t *testing.T) {
 			<-done
 		})
 	}
+}
+
+func acceptanceBadReplyServer(t *testing.T, field string) (string, tls.Certificate, <-chan struct{}) {
+	t.Helper()
+	cert := acceptanceCertificate(t, "fake-gate")
+	ln := acceptanceListen(t, "tcp", "127.0.0.1:0")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		raw, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer raw.Close()
+		conn := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})
+		conn.SetDeadline(time.Now().Add(time.Second))
+		var rec Record
+		if json.NewDecoder(conn).Decode(&rec) != nil {
+			return
+		}
+		reply := Reply{Version: SchemaVersion, RequestID: rec.RequestID, Status: StatusPending}
+		switch field {
+		case "version":
+			reply.Version++
+		case "request-id":
+			reply.RequestID = "different"
+		case "status":
+			reply.Status = "made-up"
+		}
+		json.NewEncoder(conn).Encode(reply)
+	}()
+	return ln.Addr().String(), cert, done
 }

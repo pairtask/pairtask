@@ -25,40 +25,41 @@ func TestAcceptanceLocalDecisionCannotBeForgedByPeer(t *testing.T) {
 		acceptanceStatus(t, acceptanceSend(t, c, forged), StatusRefused)
 	}
 	fp := acceptanceFingerprint(t, cert)
-	state, ok, err := p.store.Get(context.Background(), fp, record.RequestID)
-	if err != nil || !ok || state.Status != StatusPending {
-		t.Fatalf("remote changed local request: %+v, %v, %v", state, ok, err)
-	}
+	state, ok, err := p.store.Get(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID})
+	acceptanceNoError(t, err)
+	acceptanceEqual(t, ok, true)
+	acceptanceEqual(t, state.Status, StatusPending)
 	decided := make(chan error, 1)
-	go func() { _, err := p.store.Accept(context.Background(), fp, record.RequestID); decided <- err }()
+	go func() {
+		_, err := p.store.Accept(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID})
+		decided <- err
+	}()
 	select {
 	case err := <-decided:
-		if err != nil {
-			t.Fatal(err)
-		}
+		acceptanceNoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("local acceptance deadlocked")
 	}
-	state, ok, err = p.store.Get(context.Background(), fp, record.RequestID)
-	if err != nil || !ok || state.Status != StatusAccepted {
-		t.Fatalf("local decision missing: %+v, %v, %v", state, ok, err)
-	}
+	state, ok, err = p.store.Get(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID})
+	acceptanceNoError(t, err)
+	acceptanceEqual(t, ok, true)
+	acceptanceEqual(t, state.Status, StatusAccepted)
 }
 
 func TestAcceptancePeerSettlementRequiresMatchingOutboundRequest(t *testing.T) {
 	p := acceptanceStart(t, GateConfig{})
 	alice, mallory := acceptanceCertificate(t, "alice"), acceptanceCertificate(t, "mallory")
 	fp := acceptanceFingerprint(t, alice)
-	if _, err := p.store.SaveOutbound(context.Background(), fp, "outbound"); err != nil {
+	if _, err := p.store.SaveOutbound(context.Background(), ContactRef{Fingerprint: fp, RequestID: "outbound"}); err != nil {
 		t.Fatal(err)
 	}
 	record := acceptanceRecord("outbound")
 	record.Kind = KindAccept
 	acceptanceStatus(t, acceptanceSend(t, p.connect(t, mallory), record), StatusRefused)
 	acceptanceStatus(t, acceptanceSend(t, p.connect(t, alice), record), StatusAccepted)
-	if state, err := p.store.Settle(context.Background(), fp, "outbound", StatusAccepted); err != nil || state.Status != StatusAccepted || !state.Existing {
-		t.Fatalf("settlement not persisted: %+v, %v", state, err)
-	}
+	state, err := p.store.Settle(context.Background(), ContactRef{Fingerprint: fp, RequestID: "outbound"}, KindAccept)
+	acceptanceNoError(t, err)
+	acceptanceEqual(t, state, Outcome{Status: StatusAccepted, Existing: true})
 	record.Kind = KindIgnore
 	acceptanceStatus(t, acceptanceSend(t, p.connect(t, alice), record), StatusRefused)
 }
@@ -74,9 +75,9 @@ func TestAcceptancePendingLimitsDoNotBreakRetries(t *testing.T) {
 	acceptanceStatus(t, acceptanceSend(t, p.connect(t, bob), record), StatusPending)
 	acceptanceStatus(t, acceptanceSend(t, p.connect(t, acceptanceCertificate(t, "charlie")), record), StatusRefused)
 	total, perPeer, err := p.store.Pending(context.Background(), acceptanceFingerprint(t, alice))
-	if err != nil || total != 2 || perPeer != 1 {
-		t.Fatalf("pending counts = %d,%d,%v", total, perPeer, err)
-	}
+	acceptanceNoError(t, err)
+	acceptanceEqual(t, total, 2)
+	acceptanceEqual(t, perPeer, 1)
 }
 
 func TestAcceptanceConcurrentQuotaAdmission(t *testing.T) {
@@ -125,15 +126,13 @@ func TestAcceptanceStrictEnvelopeRejectsExtraData(t *testing.T) {
 			cert := acceptanceCertificate(t, "alice")
 			c := p.connect(t, cert)
 			encoded, err := json.Marshal(acceptanceRecord("extra-data"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			acceptanceNoError(t, err)
 			c.Write(append(append(encoded[:len(encoded)-1], []byte(suffix)...), '\n'))
 			var reply Reply
 			if err := json.NewDecoder(c).Decode(&reply); err == nil && reply.Status != StatusRefused {
 				t.Fatalf("invalid record accepted: %+v", reply)
 			}
-			if _, ok, err := p.store.Get(context.Background(), acceptanceFingerprint(t, cert), "extra-data"); err != nil || ok {
+			if _, ok, err := p.store.Get(context.Background(), ContactRef{Fingerprint: acceptanceFingerprint(t, cert), RequestID: "extra-data"}); err != nil || ok {
 				t.Fatalf("invalid record stored: %v, %v", ok, err)
 			}
 		})
@@ -180,7 +179,7 @@ func TestAcceptanceHiddenGateRecoversPersistedRequestOutcome(t *testing.T) {
 	record := acceptanceRecord("persisted-before-hidden")
 	acceptanceStatus(t, acceptanceSend(t, c, record), StatusPending)
 	fp := acceptanceFingerprint(t, cert)
-	if _, err := p.store.Accept(context.Background(), fp, record.RequestID); err != nil {
+	if _, err := p.store.Accept(context.Background(), ContactRef{Fingerprint: fp, RequestID: record.RequestID}); err != nil {
 		t.Fatal(err)
 	}
 	visible.Store(false)
@@ -192,10 +191,10 @@ func TestAcceptanceHiddenGateRecoversPersistedRequestOutcome(t *testing.T) {
 	record.Note = "changed content"
 	acceptanceStatus(t, acceptanceSend(t, c, record), StatusRefused)
 	acceptanceStatus(t, acceptanceSend(t, c, acceptanceRecord("new-while-hidden")), StatusRefused)
-	state, ok, err := p.store.Get(context.Background(), fp, "persisted-before-hidden")
-	if err != nil || !ok || state.Status != StatusAccepted {
-		t.Fatalf("accepted state changed: %+v,%v,%v", state, ok, err)
-	}
+	state, ok, err := p.store.Get(context.Background(), ContactRef{Fingerprint: fp, RequestID: "persisted-before-hidden"})
+	acceptanceNoError(t, err)
+	acceptanceEqual(t, ok, true)
+	acceptanceEqual(t, state.Status, StatusAccepted)
 }
 
 func TestAcceptanceDuplicateAndChangedContent(t *testing.T) {
@@ -255,9 +254,7 @@ func TestAcceptanceFragmentedFrame(t *testing.T) {
 	p := acceptanceStart(t, GateConfig{})
 	c := p.connect(t, acceptanceCertificate(t, "alice"))
 	encoded, err := json.Marshal(acceptanceRecord("fragmented"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	encoded = append(encoded, '\n')
 	for _, b := range encoded {
 		if _, err := c.Write([]byte{b}); err != nil {
@@ -287,9 +284,7 @@ func TestAcceptanceRejectsOversizedFrameAndRecovers(t *testing.T) {
 func TestAcceptancePlaintextCannotBecomePeerRequest(t *testing.T) {
 	p := acceptanceStart(t, GateConfig{})
 	c, err := net.DialTimeout("tcp", p.addr, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	acceptanceNoError(t, err)
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(time.Second))
 	json.NewEncoder(c).Encode(acceptanceRecord("plaintext"))
