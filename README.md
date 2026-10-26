@@ -98,7 +98,7 @@ host.
 
    ```sh
    cd /workspace/pairtask
-   codex
+   pairtask start codex --id codex-1
    ```
 
    Complete Codex's folder trust prompt, then start a conversation by pasting
@@ -117,7 +117,7 @@ host.
 
    ```sh
    cd /workspace/pairtask
-   claude
+   pairtask start claude --id claude-1
    ```
 
    Accept Claude's channel consent prompt, then paste this into Claude:
@@ -126,10 +126,20 @@ host.
    Use the collab-ai skill to collaborate with codex-1 on this project. Tell me when you are ready.
    ```
 
-   Optional: inside the workspace SSH session, add a Pi agent with
-   `pairtask start pi --id pi-1` ([first-run steps](docs/pi.md)).
+4. Optional: open another host terminal for **Pi**. Enter the workspace, then
+   start Pi with the collaboration skill; on first run, `/login` and `/model`
+   inside Pi set its provider and model ([Pi guide](docs/pi.md)):
 
-4. Open a third host terminal for **your chat**:
+   ```sh
+   pairtask shell
+   ```
+
+   ```sh
+   cd /workspace/pairtask
+   pairtask start pi --id pi-1 -- --skill /usr/local/share/pairtask
+   ```
+
+5. Open another host terminal for **your chat**:
 
    ```sh
    pairtask chat
@@ -156,7 +166,19 @@ host.
    host. It reconnects to the saved conversation and shows its history. Only
    one operator chat can be open at a time.
 
-To work on another repository, replace `/workspace/pairtask` in steps 2 and 3
+**Agent commands**, all run inside the workspace from the project directory:
+
+| To | Run |
+| --- | --- |
+| Start Codex, Claude or Pi | `pairtask start codex --id codex-1`, `pairtask start claude --id claude-1`, `pairtask start pi --id pi-1 -- --skill /usr/local/share/pairtask` |
+| Add another agent | the same command with a new ID, e.g. `--id codex-2` |
+| Join a room as well | add `--room NAME` (repeatable) |
+| Pick a model | add `--model NAME` |
+| Resume the conversation Codex last had under that ID | `pairtask start codex --id codex-1 --resume` (close the old session first) |
+| See the command without running it | add `--dry-run` |
+
+`codex` and `claude` alone are shortcuts for the `codex-1` and `claude-1`
+commands above. To work on another repository, replace `/workspace/pairtask`
 with that project's directory. [Sign-in help](docs/sandbox.md#sign-in-and-network-access) ·
 [Host commands](docs/host-commands.md) · [Operator chat](docs/secured-runtime.md#interactive-chat) ·
 [Mount host directories](docs/sandbox-mounts.md) · [Resume an agent](docs/host-integration.md#codex-terminal).
