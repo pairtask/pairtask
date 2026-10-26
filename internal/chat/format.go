@@ -77,16 +77,21 @@ func (f *formatter) fence(i int) int {
 	}
 	f.blank = false
 	if d, ok := f.b.renders.renderable(view.d); ok && d.cells <= f.width-len(body) {
-		f.label(view.label + " · rendered")
+		f.label(view, true)
 		f.drawing(view.d, d)
 		return view.d.close
 	}
 	f.fenced = true
-	f.label(view.label)
+	f.label(view, false)
 	return i
 }
 
-func (f *formatter) label(text string) {
+// label is a diagram's label row, marked when the diagram is drawn.
+func (f *formatter) label(view diagramView, drawn bool) {
+	text := view.label
+	if drawn {
+		text += " · rendered"
+	}
 	in := f.codeIndent()
 	f.b.add([]string{mutedStyle.Render(ansi.Truncate(text, max(1, f.width-len(in)), ""))}, in)
 }

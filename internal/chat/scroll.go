@@ -42,9 +42,7 @@ func (m *Model) anchorIndex(lines []renderLine) int {
 		if found < 0 {
 			found = i
 		}
-		// the last row at or before the anchor: a slot a drawn diagram
-		// left empty resolves to the row above it, never the message start
-		if l.src < m.view.anchorSrc || (l.src == m.view.anchorSrc && l.col <= m.view.anchorCol) {
+		if m.view.reaches(l) {
 			found = i
 		}
 	}
@@ -317,4 +315,14 @@ func privateBroadcastNote(version int) string {
 		return ""
 	}
 	return " · its broadcasts don't reach you (below v7)"
+}
+
+// reaches is a row at or before the anchor: the last such row is the
+// anchor's, so a slot a drawn diagram left empty resolves to the row above
+// it, never the message start.
+func (v viewport) reaches(l renderLine) bool {
+	if l.src != v.anchorSrc {
+		return l.src < v.anchorSrc
+	}
+	return l.col <= v.anchorCol
 }

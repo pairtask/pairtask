@@ -83,7 +83,7 @@ func (e *entry) drawingsFor() *diagramRenders {
 // renderable is the drawing of a closed mermaid diagram, if it has one,
 // drawn at most once per cache; a nil cache draws directly.
 func (r *diagramRenders) renderable(d diagram) (drawing, bool) {
-	if d.lang != "mermaid" || len(d.source) > maxRenderSource || strings.TrimSpace(d.source) == "" {
+	if !d.drawable() {
 		return drawing{}, false
 	}
 	if r == nil {
@@ -95,4 +95,13 @@ func (r *diagramRenders) renderable(d diagram) (drawing, bool) {
 	drawn, ok := renderMermaid(diagramSource(d.source))
 	r.byOpen[d.open] = renderResult{drawing: drawn, ok: ok}
 	return drawn, ok
+}
+
+// drawable is a non-empty mermaid diagram within the source cap; the rest
+// of the subset is checked while parsing.
+func (d diagram) drawable() bool {
+	if d.lang != "mermaid" {
+		return false
+	}
+	return len(d.source) <= maxRenderSource && strings.TrimSpace(d.source) != ""
 }

@@ -7,46 +7,49 @@ import "strings"
 type flowGraph struct {
 	lr    bool
 	nodes []flowNode
-	index map[string]int
+	index map[string]nodeID
 	edges map[flowEdgeKey]bool
 }
+
+// nodeID is a node's place in flowGraph.nodes.
+type nodeID int
 
 type flowNode struct {
 	id       string
 	label    diagramLabel
-	declared bool // the label was given, not implied by the ID
-	parent   int  // -1 for a root
+	declared bool   // the label was given, not implied by the ID
+	parent   nodeID // -1 for a root
 	in       diagramLabel
 	children []flowEdge
 }
 
 type flowEdge struct {
-	to    int
+	to    nodeID
 	arrow bool
 }
 
 type flowEdgeKey struct {
-	from, to int
+	from, to nodeID
 	label    string
 }
 
 // flowHeader reads "flowchart LR|TD" or "graph LR|TD".
 func flowHeader(line string) (lr, ok bool) {
-	f := strings.Fields(line)
-	if len(f) != 2 || (f[0] != "flowchart" && f[0] != "graph") {
+	kind, dir, found := strings.Cut(line, " ")
+	if !found || !flowKinds[kind] {
 		return false, false
 	}
-	switch f[1] {
-	case "LR":
-		return true, true
-	case "TD":
-		return false, true
-	}
-	return false, false
+	lr, ok = flowDirections[strings.TrimSpace(dir)]
+	return lr, ok
 }
 
+var (
+	flowKinds      = map[string]bool{"flowchart": true, "graph": true}
+	flowDirections = map[string]bool{"LR": true, "TD": false} // true for LR
+)
+
 func parseFlow(lr bool, statements []string) (*flowGraph, error) {
-	g := &flowGraph{lr: lr, index: map[string]int{}, edges: map[flowEdgeKey]bool{}}
+	g := &flowGraph{lr: lr, index: map[string]nodeID{}, edges: map[flowEdgeKey]bool{}}
 	for _, st := range statements {
 		if err := g.statement(st); err != nil {
 			return nil, err
@@ -84,7 +87,7 @@ func (g *flowGraph) statement(st string) error {
 }
 
 // node reads one node reference or declaration and returns the rest.
-func (g *flowGraph) node(s string) (int, string, error) {
+func (g *flowGraph) node(s string) (nodeID, string, error) {
 	m := nodeRe.FindStringSubmatchIndex(s)
 	if m == nil {
 		return 0, "", errUnsupported
@@ -102,13 +105,13 @@ func (g *flowGraph) node(s string) (int, string, error) {
 }
 
 // declare finds or adds a node; a second, different label is a conflict.
-func (g *flowGraph) declare(id string, label diagramLabel, declared bool) (int, error) {
+func (g *flowGraph) declare(id string, label diagramLabel, declared bool) (nodeID, error) {
 	n, ok := g.index[id]
 	if !ok {
 		if len(g.nodes) == maxNodes {
 			return 0, errUnsupported
 		}
-		n = len(g.nodes)
+		n = nodeID(len(g.nodes))
 		g.index[id] = n
 		g.nodes = append(g.nodes, flowNode{id: id, label: diagramLabel{text: id, cells: len(id)}, parent: -1})
 	}
@@ -128,15 +131,27 @@ func (g *flowGraph) declare(id string, label diagramLabel, declared bool) (int, 
 
 // edge links from to its child; a node has one parent, and an edge is
 // never repeated.
-func (g *flowGraph) edge(from, to int, e flowEdge, label diagramLabel) error {
+func (g *flowGraph) edge(from, to nodeID, e flowEdge, label diagramLabel) error {
 	key := flowEdgeKey{from: from, to: to, label: label.text}
-	if g.edges[key] || g.nodes[to].parent >= 0 || from == to || len(g.nodes[from].children) == maxChildren {
+	if !g.canLink(key) {
 		return errUnsupported
 	}
 	g.edges[key] = true
 	g.nodes[to].parent, g.nodes[to].in = from, label
 	g.nodes[from].children = append(g.nodes[from].children, e)
 	return nil
+}
+
+// canLink allows a new edge to a node without a parent, under the
+// children cap.
+func (g *flowGraph) canLink(key flowEdgeKey) bool {
+	switch {
+	case g.edges[key], key.from == key.to:
+		return false
+	case g.nodes[key.to].parent >= 0:
+		return false
+	}
+	return len(g.nodes[key.from].children) < maxChildren
 }
 
 // checkForest refuses a cycle: every node must be reachable from a root.
@@ -151,11 +166,11 @@ func (g *flowGraph) checkForest() error {
 	return nil
 }
 
-func (g *flowGraph) roots() []int {
-	var out []int
+func (g *flowGraph) roots() []nodeID {
+	var out []nodeID
 	for i, n := range g.nodes {
 		if n.parent < 0 {
-			out = append(out, i)
+			out = append(out, nodeID(i))
 		}
 	}
 	return out
@@ -163,7 +178,7 @@ func (g *flowGraph) roots() []int {
 
 // count is the size of n's subtree; one parent per node bounds it by the
 // node count.
-func (g *flowGraph) count(n int) int {
+func (g *flowGraph) count(n nodeID) int {
 	total := 1
 	for _, e := range g.nodes[n].children {
 		total += g.count(e.to)

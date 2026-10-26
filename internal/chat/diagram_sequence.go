@@ -110,26 +110,37 @@ const (
 
 func newSeqLayout(s *seqDiagram) *seqLayout {
 	l := &seqLayout{s: s, center: make([]int, len(s.people))}
-	ending := make([][]seqMessage, len(s.people)) // messages by the lifeline they constrain
-	for _, m := range s.msgs {
-		hi := max(m.from, m.to)
-		if m.from == m.to {
-			hi++ // a loop pushes the next lifeline
-		}
-		if hi < len(s.people) {
-			ending[hi] = append(ending[hi], m)
-		}
-	}
+	ending := s.byLifeline()
 	for i := range s.people {
 		l.center[i] = l.least(i, ending[i])
 		l.width = max(l.width, l.center[i]+boxRight(s.people[i].label))
 	}
 	for _, m := range s.msgs {
-		if m.from == m.to {
-			l.width = max(l.width, l.center[m.from]+selfLoop+2+m.label.cells)
-		}
+		l.width = max(l.width, l.loopEnd(m))
 	}
 	return l
+}
+
+// byLifeline groups the messages by the lifeline whose position they
+// constrain: the right end of a message, or the one after a loop.
+func (s *seqDiagram) byLifeline() [][]seqMessage {
+	ending := make([][]seqMessage, len(s.people)+1)
+	for _, m := range s.msgs {
+		hi := max(m.from, m.to)
+		if m.from == m.to {
+			hi++
+		}
+		ending[hi] = append(ending[hi], m)
+	}
+	return ending
+}
+
+// loopEnd is how far right a message to oneself reaches, label included.
+func (l *seqLayout) loopEnd(m seqMessage) int {
+	if m.from != m.to {
+		return 0
+	}
+	return l.center[m.from] + selfLoop + 2 + m.label.cells
 }
 
 // boxLeft and boxRight are a box's extent either side of its centre.
@@ -145,25 +156,28 @@ func (l *seqLayout) least(i int, ending []seqMessage) int {
 	}
 	c := l.center[i-1] + boxRight(l.s.people[i-1].label) + lifelineGap + boxLeft(p)
 	for _, m := range ending {
-		lo := min(m.from, m.to)
-		if m.from == m.to {
-			c = max(c, l.center[lo]+selfLoop+3+m.label.cells)
-		} else {
-			c = max(c, l.center[lo]+m.label.cells+4)
-		}
+		c = max(c, l.center[min(m.from, m.to)]+m.label.cells+l.labelRoom(m))
 	}
 	return c
 }
 
+// labelRoom is the space a message needs beside its label.
+func (l *seqLayout) labelRoom(m seqMessage) int {
+	if m.from == m.to {
+		return selfLoop + 3
+	}
+	return 4
+}
+
 func drawSequence(s *seqDiagram) ([]string, error) {
 	l := newSeqLayout(s)
-	c, err := newCanvas(l.width, 4+2*len(s.msgs))
+	c, err := newCanvas(gridPos{l.width, 4 + 2*len(s.msgs)})
 	if err != nil {
 		return nil, err
 	}
 	for i, p := range s.people {
-		c.box(l.center[i]-boxLeft(p.label), 0, p.label)
-		c.vline(l.center[i], 2, c.h-1)
+		c.box(gridPos{l.center[i] - boxLeft(p.label), 0}, p.label)
+		c.line(gridPos{l.center[i], 2}, gridPos{l.center[i], c.size.y - 1})
 	}
 	for i, m := range s.msgs {
 		l.message(c, m, 3+2*i)
@@ -178,39 +192,52 @@ func (l *seqLayout) message(c *canvas, m seqMessage, y int) {
 		return
 	}
 	from, to := l.center[m.from], l.center[m.to]
-	lo, hi := min(from, to), max(from, to)
-	c.put(lo+2, y, m.label)
-	end := to // an arrowhead stops short of the target's lifeline
+	c.put(gridPos{min(from, to) + 2, y}, m.label)
+	head := gridPos{to + sign(from-to), y + 1} // an arrowhead stops short of the lifeline
+	end := gridPos{to, y + 1}
 	if m.arrow {
-		end = to + sign(from-to)
+		end = head
 	}
-	c.hline(from, end, y+1)
+	c.line(gridPos{from, y + 1}, end)
 	if m.dashed {
-		for x := lo + 1; x < hi; x++ {
-			if c.joint[y+1][x]&(up|down) == 0 {
-				c.mark(x, y+1, "┄")
-			}
-		}
+		dash(c, gridPos{min(from, to), y + 1}, max(from, to))
 	}
-	if !m.arrow {
-		return
+	if m.arrow {
+		c.mark(head, arrowhead(to > from))
 	}
-	if to > from {
-		c.mark(to-1, y+1, "►")
-	} else {
-		c.mark(to+1, y+1, "◄")
+}
+
+func arrowhead(rightward bool) string {
+	if rightward {
+		return "►"
 	}
+	return "◄"
 }
 
 // self draws a message to oneself as a loop to the right.
 func (l *seqLayout) self(c *canvas, m seqMessage, y int) {
-	x := l.center[m.from]
-	c.hline(x, x+selfLoop, y)
-	c.vline(x+selfLoop, y, y+1)
-	c.hline(x, x+selfLoop, y+1)
-	c.put(x+selfLoop+2, y, m.label)
+	at := gridPos{l.center[m.from], y}
+	turn := at.right(selfLoop)
+	c.line(at, turn)
+	c.line(turn, turn.down(1))
+	c.line(at.down(1), turn.down(1))
+	c.put(turn.right(2), m.label)
+	if m.dashed {
+		dash(c, at, turn.x)
+		dash(c, at.down(1), turn.x)
+	}
 	if m.arrow {
-		c.mark(x+1, y+1, "◄")
+		c.mark(at.right(1).down(1), arrowhead(false))
+	}
+}
+
+// dash marks the line cells after from and before column to as dashed,
+// leaving the lifelines it crosses joined.
+func dash(c *canvas, from gridPos, to int) {
+	for p := from.right(1); p.x < to; p = p.right(1) {
+		if !c.vertical(p) {
+			c.mark(p, "┄")
+		}
 	}
 }
 
