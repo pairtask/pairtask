@@ -24,7 +24,7 @@ test('Pi preserves addressed IDs as an escaped JSON array distinct from payload 
 
 test('Pi attention never changes provenance or invents legacy metadata', () => {
   assert.match(envelope(message(['worker'], 'agent')), /origin="agent"/);
-  for (const mentions of [undefined, null, 'worker', { worker: true }, []]) {
+  for (const mentions of [undefined, null, 'worker', { worker: true }, [], ['worker', 7], [null]]) {
     const text = envelope(message(mentions));
     assert.ok(!/\bmentions=/.test(text), `unsupported or empty mentions: ${JSON.stringify(mentions)}`);
     assert.match(text, /@worker please review/);
