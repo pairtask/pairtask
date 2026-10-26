@@ -24,6 +24,7 @@ type startOptions struct {
 	DryRun, Resume                   bool
 	Native                           []string           // everything after --, for the agent itself
 	Rooms                            protocol.RoomFlags // --room, repeatable: rooms to join on registration
+	MaxTokens                        outputCap          // pi: the ceiling on each request's output tokens
 }
 
 // startLayout is where the launchers and configs live; tests point it elsewhere.
@@ -69,7 +70,7 @@ type startPlan struct {
 	Config     []byte
 }
 
-const startUsage = "usage: pairtask start (claude|codex|pi) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--room ROOM]... [--resume] [--dry-run] [-- agent arguments]"
+const startUsage = "usage: pairtask start (claude|codex|pi) [--id ID] [--model NAME] [--effort LEVEL] [--socket PATH] [--room ROOM]... [--resume] [--max-tokens N] [--dry-run] [-- agent arguments]"
 
 var startToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -110,6 +111,7 @@ func startFlags(opts *startOptions) *flag.FlagSet {
 	flags.BoolVar(&opts.DryRun, "dry-run", false, "print the command and the config path; run nothing")
 	flags.BoolVar(&opts.Resume, "resume", false, "codex: continue the conversation this ID last owned")
 	flags.Var(&opts.Rooms, "room", "join this room on start (repeatable)")
+	flags.Var(&opts.MaxTokens, "max-tokens", "pi: output tokens per request at most (0: no cap; default 32768)")
 	return flags
 }
 
@@ -181,6 +183,9 @@ func (o *startOptions) validateValues() error {
 	}
 	if o.Effort != "" && o.Agent == "pi" {
 		return errors.New("--effort is for claude and codex; pass pi's own options after --")
+	}
+	if o.MaxTokens.set && o.Agent != "pi" {
+		return errors.New("--max-tokens is for pi")
 	}
 	if o.Effort != "" && !startToken.MatchString(o.Effort) {
 		return fmt.Errorf("--effort %q: letters, digits, '.', '_' and '-' only", o.Effort)

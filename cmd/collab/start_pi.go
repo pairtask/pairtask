@@ -3,7 +3,9 @@ package main
 import (
 	"cmp"
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -14,7 +16,40 @@ func piPlan(opts startOptions, layout startLayout) startPlan {
 	if opts.Model != "" {
 		argv = append(argv, "--model", opts.Model)
 	}
-	return startPlan{Argv: append(argv, opts.Native...), Env: agentEnv(opts.ID, opts.Socket, opts.Rooms, layout.MCPBinary)}
+	env := append(agentEnv(opts.ID, opts.Socket, opts.Rooms, layout.MCPBinary), "PAIRTASK_PI_MAX_TOKENS="+opts.MaxTokens.String())
+	return startPlan{Argv: append(argv, opts.Native...), Env: env}
+}
+
+// defaultOutputCap bounds what one request may ask for. Providers that
+// reserve the worst case up front (OpenRouter) refuse a request whose
+// maximum output would cost more than the remaining credit, and Pi otherwise
+// asks for nearly the whole context window (#170).
+const (
+	defaultOutputCap = 32768
+	minOutputCap     = 2048      // room for the smallest thinking budget plus an answer
+	maxOutputCap     = 1<<53 - 1 // the extension reads it as a JavaScript safe integer
+)
+
+// outputCap is --max-tokens: unset means the default, 0 no cap.
+type outputCap struct {
+	n   int
+	set bool
+}
+
+func (c *outputCap) String() string {
+	if !c.set {
+		return strconv.Itoa(defaultOutputCap)
+	}
+	return strconv.Itoa(c.n)
+}
+
+func (c *outputCap) Set(v string) error {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 || n > maxOutputCap || (n > 0 && n < minOutputCap) {
+		return fmt.Errorf("--max-tokens %q: 0 for no cap, or from %d to %d", v, minOutputCap, maxOutputCap)
+	}
+	c.n, c.set = n, true
+	return nil
 }
 
 // agentEnv is the adapter contract a harness reads to join pairtask: its

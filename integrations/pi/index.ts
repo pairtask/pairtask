@@ -12,6 +12,8 @@
 //   PAIRTASK_SOCKET    the broker socket
 //   PAIRTASK_ROOMS     rooms to join, as a JSON array
 //   PAIRTASK_MCP       the pairtask-mcp binary
+//   PAIRTASK_PI_MAX_TOKENS  the ceiling on each request's output tokens; 0 for
+//                      none, absent for none (#170)
 
 import { McpClient, StdioTransport } from "@earendil-works/pi-mcp";
 
@@ -56,8 +58,14 @@ const listenerWaitMs = 3000;
 // process.env. Tests inject their own environment.
 export function pairtaskExtension(options: ExtensionOptions = {}): (pi: PiApi) => void {
 	return (pi: PiApi) => {
-		const ext = new Extension(pi, options.env ?? process.env);
-		pi.on("session_start", () => ext.start());
+		const env = options.env ?? process.env;
+		const ext = new Extension(pi, env);
+		const cap = readOutputCap(env);
+		if (cap.limit > 0) pi.on("before_provider_request", (event) => capOutput(event, cap.limit));
+		pi.on("session_start", () => {
+			if (cap.warning) ext.warn(cap.warning);
+			return ext.start();
+		});
 		pi.on("session_shutdown", () => ext.stop());
 	};
 }
@@ -255,6 +263,10 @@ class Extension {
 		);
 	}
 
+	warn(text: string): void {
+		this.status(text);
+	}
+
 	private status(text: string): void {
 		this.pi.sendMessage({ customType: "pairtask-status", content: text, display: true }, { triggerTurn: false });
 	}
@@ -369,4 +381,72 @@ function contentText(content: unknown[]): string {
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+// The output cap (#170). Pi asks for as many output tokens as the context
+// window leaves; providers that reserve the worst case up front (OpenRouter)
+// then refuse the request when that worst case costs more than the remaining
+// credit. The cap lowers the output fields of each serialized request and
+// never raises or adds one.
+
+const defaultOutputCap = 32768;
+const minOutputCap = 2048;
+const answerRoom = 1024; // left for the answer when a thinking budget shares the cap
+
+export interface OutputCap {
+	limit: number; // 0: no cap
+	warning?: string;
+}
+
+// readOutputCap reads PAIRTASK_PI_MAX_TOKENS: absent or 0 is no cap; any
+// other value that isn't a whole number from 2048 up, empty included, falls
+// back to the default rather than running uncapped.
+export function readOutputCap(env: Record<string, string | undefined>): OutputCap {
+	const raw = env.PAIRTASK_PI_MAX_TOKENS;
+	if (raw === undefined || raw === "0") return { limit: 0 };
+	const n = /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+	if (Number.isSafeInteger(n) && n >= minOutputCap) return { limit: n };
+	return {
+		limit: defaultOutputCap,
+		warning: `PAIRTASK_PI_MAX_TOKENS must be 0 or at least ${minOutputCap}; capping output at ${defaultOutputCap}`,
+	};
+}
+
+// The fields capped, as paths in the request shapes that carry them: OpenAI
+// chat completions (max_tokens, max_completion_tokens), OpenAI responses
+// (max_output_tokens), Anthropic messages (max_tokens, with its thinking
+// budget kept under the cap) and Google (config.maxOutputTokens and its
+// thinking budget, as Pi's Google API builds it; generationConfig too).
+const outputPaths = [["max_tokens"], ["max_completion_tokens"], ["max_output_tokens"],
+	["config", "maxOutputTokens"], ["generationConfig", "maxOutputTokens"]];
+const budgetPaths = [["thinking", "budget_tokens"], ["config", "thinkingConfig", "thinkingBudget"]];
+
+// capOutput returns the payload with its output fields lowered to limit and
+// its thinking budgets kept under it; objects on a changed path are copied,
+// never mutated, and anything else is returned as is.
+export function capOutput(event: unknown, limit: number): unknown {
+	const payload = (event as { payload?: unknown } | undefined)?.payload;
+	if (!isRecord(payload)) return payload;
+	let out: Record<string, unknown> = payload;
+	for (const path of outputPaths) out = lowered(out, path, limit);
+	for (const path of budgetPaths) out = lowered(out, path, limit - answerRoom);
+	return out;
+}
+
+// lowered is target with the number at path lowered to limit, copying each
+// record along the path; a missing or non-numeric field leaves it unchanged.
+function lowered(target: Record<string, unknown>, path: string[], limit: number): Record<string, unknown> {
+	const [field, ...rest] = path;
+	const value = target[field];
+	if (rest.length > 0) {
+		if (!isRecord(value)) return target;
+		const inner = lowered(value, rest, limit);
+		return inner === value ? target : { ...target, [field]: inner };
+	}
+	if (typeof value !== "number" || value <= limit) return target;
+	return { ...target, [field]: limit };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
