@@ -131,11 +131,17 @@ func (m *Model) refreshArgumentPicker(l argLine) {
 		c.picker = nil
 		return
 	}
-	selected := 0
-	if p := c.openPicker(PickerArgument); p != nil && p.selected < len(items) && slices.Equal(p.items, items) {
-		selected = p.selected
+	c.picker = &picker{kind: PickerArgument, items: items, selected: c.keptSelection(items)}
+}
+
+// keptSelection keeps the highlighted row while the candidates are
+// unchanged, and starts at the top otherwise.
+func (c *composer) keptSelection(items []string) int {
+	p := c.openPicker(PickerArgument)
+	if p == nil || !slices.Equal(p.items, items) {
+		return 0
 	}
-	c.picker = &picker{kind: PickerArgument, items: items, selected: selected}
+	return p.selected
 }
 
 func (m *Model) argumentPickable() bool {
