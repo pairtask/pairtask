@@ -12,14 +12,22 @@ import (
 	"testing"
 )
 
-// acceptanceJournal is an independent test adapter for inbound request
-// persistence. It syncs each request before reporting success and reconstructs
-// a fresh MemStore on reopen. It does not persist decisions or outbound requests
-// and is not the production broker store or a proposed database implementation.
+// acceptanceJournal is an independent test adapter for the gate's persistence
+// contract. It syncs successful mutations and reconstructs a fresh MemStore on
+// reopen. It is not the production store or a proposed database implementation:
+// these tests do not simulate torn journal writes or storage-device failure.
 type acceptanceJournal struct {
 	*MemStore
 	mu   sync.Mutex
 	file *os.File
+}
+
+type acceptanceJournalEntry struct {
+	Operation   string
+	Request     Request
+	Fingerprint string
+	ID          string
+	Status      string
 }
 
 func acceptanceOpenJournal(t *testing.T, path string) *acceptanceJournal {
@@ -32,15 +40,15 @@ func acceptanceOpenJournal(t *testing.T, path string) *acceptanceJournal {
 	s := &acceptanceJournal{MemStore: NewMemStore(), file: f}
 	decoder := json.NewDecoder(f)
 	for {
-		var req Request
-		err := decoder.Decode(&req)
+		var entry acceptanceJournalEntry
+		err := decoder.Decode(&entry)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.MemStore.SaveRequest(context.Background(), req); err != nil {
+		if _, err := s.applyEntry(context.Background(), entry); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,19 +56,154 @@ func acceptanceOpenJournal(t *testing.T, path string) *acceptanceJournal {
 }
 
 func (s *acceptanceJournal) SaveRequest(ctx context.Context, req Request) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "request", Request: req})
+}
+
+func (s *acceptanceJournal) Accept(ctx context.Context, fp, id string) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "accept", Fingerprint: fp, ID: id})
+}
+func (s *acceptanceJournal) Ignore(ctx context.Context, fp, id string) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "ignore", Fingerprint: fp, ID: id})
+}
+func (s *acceptanceJournal) SaveOutbound(ctx context.Context, fp, id string) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "outbound", Fingerprint: fp, ID: id})
+}
+func (s *acceptanceJournal) Settle(ctx context.Context, fp, id, status string) (Outcome, error) {
+	return s.mutate(ctx, acceptanceJournalEntry{Operation: "settle", Fingerprint: fp, ID: id, Status: status})
+}
+
+func (s *acceptanceJournal) applyEntry(ctx context.Context, entry acceptanceJournalEntry) (Outcome, error) {
+	switch entry.Operation {
+	case "request":
+		return s.MemStore.SaveRequest(ctx, entry.Request)
+	case "accept":
+		return s.MemStore.Accept(ctx, entry.Fingerprint, entry.ID)
+	case "ignore":
+		return s.MemStore.Ignore(ctx, entry.Fingerprint, entry.ID)
+	case "outbound":
+		return s.MemStore.SaveOutbound(ctx, entry.Fingerprint, entry.ID)
+	case "settle":
+		return s.MemStore.Settle(ctx, entry.Fingerprint, entry.ID, entry.Status)
+	default:
+		return Outcome{}, errors.New("unknown fixture journal operation")
+	}
+}
+
+func (s *acceptanceJournal) mutate(ctx context.Context, entry acceptanceJournalEntry) (Outcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out, err := s.MemStore.SaveRequest(ctx, req)
+	out, err := s.applyEntry(ctx, entry)
 	if err != nil || out.Existing {
 		return out, err
 	}
-	if err := json.NewEncoder(s.file).Encode(req); err != nil {
+	if err := json.NewEncoder(s.file).Encode(entry); err != nil {
 		return Outcome{}, err
 	}
 	if err := s.file.Sync(); err != nil {
 		return Outcome{}, err
 	}
 	return out, nil
+}
+
+func TestAcceptanceLocalDecisionSurvivesRestart(t *testing.T) {
+	for _, decision := range []string{StatusAccepted, StatusIgnored} {
+		t.Run(decision, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "decisions.jsonl")
+			store := acceptanceOpenJournal(t, path)
+			p := acceptanceStart(t, GateConfig{Store: store})
+			cert := acceptanceCertificate(t, "alice")
+			record := acceptanceRecord("local-decision-restart")
+			acceptanceStatus(t, acceptanceSend(t, p.connect(t, cert), record), StatusPending)
+			fp := acceptanceFingerprint(t, cert)
+			var err error
+			if decision == StatusAccepted {
+				_, err = store.Accept(context.Background(), fp, record.RequestID)
+			} else {
+				_, err = store.Ignore(context.Background(), fp, record.RequestID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.stop()
+			store.file.Close()
+			reopened := acceptanceOpenJournal(t, path)
+			state, ok, err := reopened.Get(context.Background(), fp, record.RequestID)
+			if err != nil || !ok || state.Status != decision {
+				t.Fatalf("decision lost: %+v,%v,%v", state, ok, err)
+			}
+			resumed := acceptanceStart(t, GateConfig{Cert: p.serverCert, Store: reopened})
+			reply := acceptanceSend(t, resumed.connect(t, cert), record)
+			acceptanceStatus(t, reply, StatusDuplicate)
+			if reply.Reason != decision {
+				t.Fatalf("retry did not report persisted decision: %+v", reply)
+			}
+			if len(reopened.Snapshot()) != 1 {
+				t.Fatal("decision retry created an extra contact record")
+			}
+		})
+	}
+}
+
+func TestAcceptanceOutboundSettlementSurvivesFaultAndRestart(t *testing.T) {
+	for _, point := range []string{"before-persist", "after-persist", "before-reply", "after-reply"} {
+		t.Run(point, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "outbound.jsonl")
+			store := acceptanceOpenJournal(t, path)
+			cert := acceptanceCertificate(t, "alice")
+			fp := acceptanceFingerprint(t, cert)
+			if _, err := store.SaveOutbound(context.Background(), fp, "outbound-restart"); err != nil {
+				t.Fatal(err)
+			}
+			var hit atomic.Bool
+			fault := func(Record) error { hit.Store(true); return errors.New("injected settlement disconnect") }
+			hooks := &Faults{}
+			switch point {
+			case "before-persist":
+				hooks.BeforePersist = fault
+			case "after-persist":
+				hooks.AfterPersist = fault
+			case "before-reply":
+				hooks.BeforeReply = fault
+			case "after-reply":
+				hooks.AfterReply = fault
+			}
+			p := acceptanceStart(t, GateConfig{Store: store, Faults: hooks})
+			c := p.connect(t, cert)
+			record := acceptanceRecord("outbound-restart")
+			record.Kind = KindAccept
+			if err := json.NewEncoder(c).Encode(record); err != nil {
+				t.Fatal(err)
+			}
+			var reply Reply
+			err := json.NewDecoder(c).Decode(&reply)
+			if point != "after-reply" && err == nil {
+				t.Fatalf("acknowledged across %s fault: %+v", point, reply)
+			}
+			c.Close()
+			p.stop()
+			store.file.Close()
+			if !hit.Load() {
+				t.Fatal("settlement hook not reached")
+			}
+			reopened := acceptanceOpenJournal(t, path)
+			want := StatusAccepted
+			if point == "before-persist" {
+				want = StatusPending
+			}
+			if got := reopened.Snapshot()["out/"+fp+"/outbound-restart"]; got != want {
+				t.Fatalf("persisted settlement=%s,want %s", got, want)
+			}
+			resumed := acceptanceStart(t, GateConfig{Cert: p.serverCert, Store: reopened, Discoverable: func() bool { return false }})
+			want = StatusDuplicate
+			if point == "before-persist" {
+				want = StatusAccepted
+			}
+			acceptanceStatus(t, acceptanceSend(t, resumed.connect(t, cert), record), want)
+			if state := reopened.Snapshot(); len(state) != 1 || state["out/"+fp+"/outbound-restart"] != StatusAccepted {
+				t.Fatalf("settlement did not converge: %+v", state)
+			}
+		})
+	}
 }
 
 func TestAcceptanceRestartAcrossPersistenceAndReplyFaults(t *testing.T) {
