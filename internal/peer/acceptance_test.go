@@ -171,6 +171,33 @@ func TestAcceptanceGateRechecksDiscoveryForEveryRequest(t *testing.T) {
 	acceptanceStatus(t, acceptanceSend(t, c, acceptanceRecord("visible-again")), "pending")
 }
 
+func TestAcceptanceHiddenGateRecoversPersistedRequestOutcome(t *testing.T) {
+	var visible atomic.Bool
+	visible.Store(true)
+	p := acceptanceStart(t, GateConfig{Discoverable: visible.Load})
+	cert := acceptanceCertificate(t, "alice")
+	c := p.connect(t, cert)
+	record := acceptanceRecord("persisted-before-hidden")
+	acceptanceStatus(t, acceptanceSend(t, c, record), StatusPending)
+	fp := acceptanceFingerprint(t, cert)
+	if _, err := p.store.Accept(context.Background(), fp, record.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	visible.Store(false)
+	reply := acceptanceSend(t, c, record)
+	acceptanceStatus(t, reply, StatusDuplicate)
+	if reply.Reason != StatusAccepted {
+		t.Fatalf("lost accepted outcome while hidden: %+v", reply)
+	}
+	record.Note = "changed content"
+	acceptanceStatus(t, acceptanceSend(t, c, record), StatusRefused)
+	acceptanceStatus(t, acceptanceSend(t, c, acceptanceRecord("new-while-hidden")), StatusRefused)
+	state, ok, err := p.store.Get(context.Background(), fp, "persisted-before-hidden")
+	if err != nil || !ok || state.Status != StatusAccepted {
+		t.Fatalf("accepted state changed: %+v,%v,%v", state, ok, err)
+	}
+}
+
 func TestAcceptanceDuplicateAndChangedContent(t *testing.T) {
 	p := acceptanceStart(t, GateConfig{})
 	c := p.connect(t, acceptanceCertificate(t, "alice"))
