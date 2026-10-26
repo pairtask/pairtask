@@ -18,10 +18,12 @@ One timeline, several tabs. A message goes to the conversation you are in:
 The hint line above the input always shows the audience, so you can check it
 before sending. Use **All** to choose recipients with leading `@id` mentions or
 `/to ["id"]` (`@` opens a picker, Tab/Enter completes). A 1:1 keeps its
-recipient, and mentioning that same agent is allowed; groups and rooms reject
-leading mentions. Later `@` is plain text, pasted text stays literal, and a
-leading `\@` escapes it. Mentioning members inside a room or group is not
-supported yet ([#164](https://github.com/pairtask/pairtask/issues/164)).
+recipient, and mentioning that same agent is allowed. In a room or group, a
+leading `@a @b` still goes to everyone in it, and marks the named members as
+**addressed**: they are expected to answer, the others read along. The picker
+offers only that room's or group's members, and the hint line shows who is
+addressed. Later `@` is plain text, pasted text stays literal, and a leading
+`\@` escapes it.
 
 ## Commands
 
