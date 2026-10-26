@@ -92,8 +92,8 @@ type bodyLayout struct {
 // bodyAt is e's body laid out at width, formatted at most once per hash and
 // width.
 func (e *entry) bodyAt(width int) *bodyLayout {
-	if l := e.body; l != nil && l.hash == e.hash && l.width == width {
-		return l
+	if e.body.fits(e.hash, width) {
+		return e.body
 	}
 	b := lineBuilder{id: e.msg.MessageID, seq: e.msg.Seq, renders: e.drawingsFor()}
 	b.formatBody(payloadText(e.msg.Payload), width)
@@ -124,12 +124,22 @@ type statusLayout struct {
 	parts []string
 }
 
+// fits reports whether this layout is of the given state text and width.
+func (s *statusLayout) fits(text string, width int) bool {
+	return s != nil && s.text == text && s.width == width
+}
+
 func (e *entry) statusAt(text string, width int) []string {
-	if s := e.status; s != nil && s.text == text && s.width == width {
-		return s.parts
+	if e.status.fits(text, width) {
+		return e.status.parts
 	}
 	e.status = &statusLayout{text: text, width: width, parts: statusLines(e, text, width)}
 	return e.status.parts
+}
+
+// fits reports whether this layout is of the given body at the given width.
+func (l *bodyLayout) fits(hash string, width int) bool {
+	return l != nil && l.hash == hash && l.width == width
 }
 
 // addLaidOut appends a laid-out body after the lines already built.

@@ -95,16 +95,15 @@ func TestChatCacheAcceptanceOmittedBodyAndReplyResolve(t *testing.T) {
 	parent := newEntry(protocol.Message{MessageID: "parent", Seq: 0, From: "operator", To: "agent", Payload: json.RawMessage(`{"text":"parent message"}`)}, "sent", false)
 	m.timeline.insert(parent)
 	m.Update(statusTick{})
-	got := cacheAcceptanceText(m)
-	if !strings.Contains(got, "cache marker") || strings.Contains(got, "text not available") || strings.Contains(got, `re "parent" (claim)`) {
-		t.Fatalf("body or parent resolution stale:\n%s", got)
-	}
-	if !strings.Contains(got, "re #0") {
-		t.Fatalf("loaded parent sequence not used:\n%s", got)
-	}
+	cacheAcceptanceTextChecks(t, cacheAcceptanceText(m), map[string]bool{
+		"cache marker":        true,
+		"re #0":               true,
+		"text not available":  false,
+		`re "parent" (claim)`: false,
+	})
 }
 
-func TestChatCacheAcceptanceScrollAnchorAndResize(t *testing.T) {
+func TestChatCacheAcceptanceArrivalPreservesAnchor(t *testing.T) {
 	m := performanceModel(t, 100)
 	_ = m.View()
 	before := m.transcriptWindow(m.layout().transcript)
@@ -116,15 +115,18 @@ func TestChatCacheAcceptanceScrollAnchorAndResize(t *testing.T) {
 	if strings.Join(before, "\n") != strings.Join(after, "\n") || m.view != anchor {
 		t.Fatal("arrival moved cached scroll anchor")
 	}
+}
+
+func TestChatCacheAcceptanceResizePreservesAnchor(t *testing.T) {
+	m := performanceModel(t, 100)
+	_ = m.View()
+	before := m.transcriptWindow(m.layout().transcript)
+	anchor := m.view
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 36})
-	if m.view.anchorID != anchor.anchorID || m.view.anchorSrc != anchor.anchorSrc || m.view.anchorCol != anchor.anchorCol {
+	if m.view != anchor {
 		t.Fatal("resize lost logical anchor")
 	}
-	for _, row := range strings.Split(cacheAcceptanceText(m), "\n") {
-		if ansi.StringWidth(row) > 60 {
-			t.Fatalf("stale wide row after resize: %q", row)
-		}
-	}
+	cacheAcceptanceWidth(t, m, 60)
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 36})
 	restored := m.transcriptWindow(m.layout().transcript)
 	if strings.Join(before, "\n") != strings.Join(restored, "\n") {
@@ -145,5 +147,23 @@ func TestChatCacheAcceptanceWarmInteractionAllocationBudget(t *testing.T) {
 	})
 	if allocations > 100000 {
 		t.Fatalf("warm up/down interaction allocates %.0f objects; budget 100000", allocations)
+	}
+}
+
+func cacheAcceptanceWidth(t *testing.T, m *Model, width int) {
+	t.Helper()
+	for _, row := range strings.Split(cacheAcceptanceText(m), "\n") {
+		if ansi.StringWidth(row) > width {
+			t.Fatalf("stale wide row after resize: %q", row)
+		}
+	}
+}
+
+func cacheAcceptanceTextChecks(t *testing.T, text string, checks map[string]bool) {
+	t.Helper()
+	for fragment, present := range checks {
+		if strings.Contains(text, fragment) != present {
+			t.Fatalf("fragment %q presence should be %v:\n%s", fragment, present, text)
+		}
 	}
 }
