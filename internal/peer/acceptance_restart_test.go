@@ -139,41 +139,37 @@ func TestAcceptanceLocalDecisionSurvivesRestart(t *testing.T) {
 }
 
 func TestAcceptanceOutboundSettlementSurvivesFaultAndRestart(t *testing.T) {
-	for _, point := range []string{"before-persist", "after-persist", "before-reply", "after-reply"} {
-		t.Run(point, func(t *testing.T) {
+	cases := []struct {
+		point, persisted, retry string
+	}{
+		{"before-persist", StatusPending, StatusAccepted},
+		{"after-persist", StatusAccepted, StatusDuplicate},
+		{"before-reply", StatusAccepted, StatusDuplicate},
+		{"after-reply", StatusAccepted, StatusDuplicate},
+	}
+	for _, test := range cases {
+		t.Run(test.point, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "outbound.jsonl")
 			store := acceptanceOpenJournal(t, path)
 			cert := acceptanceCertificate(t, "alice")
 			fp := acceptanceFingerprint(t, cert)
-			if _, err := store.SaveOutbound(context.Background(), ContactRef{Fingerprint: fp, RequestID: "outbound-restart"}); err != nil {
-				t.Fatal(err)
-			}
-			hooks, hit := acceptanceFaultAt(t, point)
+			_, err := store.SaveOutbound(context.Background(), ContactRef{Fingerprint: fp, RequestID: "outbound-restart"})
+			acceptanceNoError(t, err)
+			hooks, hit := acceptanceFaultAt(t, test.point)
 			p := acceptanceStart(t, GateConfig{Store: store, Faults: hooks})
 			record := acceptanceRecord("outbound-restart")
 			record.Kind = KindAccept
-			acceptanceFaultRequest{Client: cert, Record: record, Point: point}.disconnect(t, p)
-			store.file.Close()
-			if !hit.Load() {
-				t.Fatal("settlement hook not reached")
-			}
+			acceptanceFaultRequest{Client: cert, Record: record, Point: test.point}.disconnect(t, p)
+			acceptanceNoError(t, store.file.Close())
+			acceptanceEqual(t, hit.Load(), true)
 			reopened := acceptanceOpenJournal(t, path)
-			want := StatusAccepted
-			if point == "before-persist" {
-				want = StatusPending
-			}
-			if got := reopened.Snapshot()["out/"+fp+"/outbound-restart"]; got != want {
-				t.Fatalf("persisted settlement=%s,want %s", got, want)
-			}
+			key := "out/" + fp + "/outbound-restart"
+			acceptanceEqual(t, reopened.Snapshot()[key], test.persisted)
 			resumed := acceptanceStart(t, GateConfig{Cert: p.serverCert, Store: reopened, Discoverable: func() bool { return false }})
-			want = StatusDuplicate
-			if point == "before-persist" {
-				want = StatusAccepted
-			}
-			acceptanceStatus(t, acceptanceSend(t, resumed.connect(t, cert), record), want)
-			if state := reopened.Snapshot(); len(state) != 1 || state["out/"+fp+"/outbound-restart"] != StatusAccepted {
-				t.Fatalf("settlement did not converge: %+v", state)
-			}
+			acceptanceStatus(t, acceptanceSend(t, resumed.connect(t, cert), record), test.retry)
+			state := reopened.Snapshot()
+			acceptanceEqual(t, len(state), 1)
+			acceptanceEqual(t, state[key], StatusAccepted)
 		})
 	}
 }
