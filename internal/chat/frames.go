@@ -132,6 +132,7 @@ var responseHandlers = map[string]responseHandler{
 	kindInboxStatus: (*Model).inboxStatusResponse,
 	kindAckMany:     (*Model).ackManyResponse,
 	kindRoom:        (*Model).roomResult,
+	kindRoomDelete:  (*Model).roomDeleted,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {

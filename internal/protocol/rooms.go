@@ -15,7 +15,7 @@ const (
 	TypeRoomLeave          = "room_leave"           // agent → broker: leave a room
 	TypeRoomList           = "room_list"            // agent → broker: its rooms, read from the broker
 	TypeRoomResult         = "room_result"          // broker → agent: its rooms afterwards
-	TypeOperatorRoom       = "operator_room"        // operator → broker: list, create, add or remove
+	TypeOperatorRoom       = "operator_room"        // operator → broker: list, create, add, remove or delete
 	TypeOperatorRoomResult = "operator_room_result" // broker → operator: the rooms afterwards
 
 	RoomSquare = "square" // everyone; the same as no room
@@ -26,6 +26,7 @@ const (
 	RoomOpCreate = "create"
 	RoomOpAdd    = "add"
 	RoomOpRemove = "remove"
+	RoomOpDelete = "delete" // operator only: the room and its memberships go; messages keep their room (#164)
 
 	ErrRoomDenied  = "room_denied"  // posting to a room the agent isn't in
 	ErrInvalidRoom = "invalid_room" // malformed, reserved or unknown room

@@ -12,7 +12,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorRoomUsage = "usage: pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json] [--timeout 5s]"
+const operatorRoomUsage = "usage: pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT | delete ROOM) [--socket PATH] [--json] [--timeout 5s]"
 
 // roomVerbs are the room operations and their positional arguments.
 var roomVerbs = map[string]struct {
@@ -23,6 +23,7 @@ var roomVerbs = map[string]struct {
 	"create": {protocol.RoomOpCreate, 1},
 	"add":    {protocol.RoomOpAdd, 2},
 	"remove": {protocol.RoomOpRemove, 2},
+	"delete": {protocol.RoomOpDelete, 1},
 }
 
 // runOperatorRoom lists rooms or changes one; the answer is every room.

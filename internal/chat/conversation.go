@@ -98,6 +98,7 @@ type conversations struct {
 	selected viewKey
 	saved    map[viewKey]*view
 	hidden   map[viewKey]bool // closed with /close; UI only, reopened by traffic or /chat
+	forgot   map[viewKey]bool // hidden with /forget: traffic doesn't reopen them, /chat does
 	uses     int
 }
 
@@ -123,6 +124,7 @@ func (m *Model) refreshDirectory() {
 	live := m.liveViews()
 	m.conv.order = pruneOrder(m.conv.order, live)
 	m.conv.order = appendUnseen(m.conv.order, live)
+
 }
 
 // pruneOrder keeps the directory entries that are still live.
@@ -256,6 +258,7 @@ func (m *Model) inView(e *entry, key viewKey) bool {
 // refused and nothing changes.
 func (m *Model) selectView(key viewKey) bool {
 	delete(m.conv.hidden, key) // selecting a conversation always shows it
+	delete(m.conv.forgot, key)
 	if key == m.conv.selected {
 		return true
 	}

@@ -133,6 +133,9 @@ func (h *Hub) admitOperator(ctx context.Context, clients map[string]*Client, sen
 	if retry != nil {
 		return h.repeatOperator(ctx, send, retry)
 	}
+	if rerr := h.requireRoom(ctx, send.msg.Room); rerr != nil {
+		return protocol.Message{}, rerr
+	}
 	return h.commitOperator(ctx, clients, send)
 }
 

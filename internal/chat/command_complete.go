@@ -52,11 +52,13 @@ func (m *Model) argumentCandidates(l argLine) []string {
 func (m *Model) roomCompletions(l argLine) []string {
 	switch {
 	case len(l.words) == 0:
-		return withPrefix(append([]string{"add", "remove"}, m.roomNames()...), l.current)
-	case l.words[0] != "add" && l.words[0] != "remove":
+		return withPrefix(append([]string{"add", "remove", "delete"}, m.roomNames()...), l.current)
+	case roomVerbArgs[l.words[0]] == 0:
 		return nil // /room NAME takes nothing more
 	case len(l.words) == 1:
 		return withPrefix(m.roomNames(), l.current)
+	case l.words[0] == "delete":
+		return nil // /room delete NAME takes nothing more
 	}
 	room := l.words[1]
 	if l.words[0] == "remove" {

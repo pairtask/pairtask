@@ -158,6 +158,9 @@ type routingError struct {
 	detail string
 }
 
+// Error lets an operation return a routing error through an error result.
+func (e *routingError) Error() string { return e.code + ": " + e.detail }
+
 func (e *routingError) frame(id string) protocol.Message {
 	return protocol.Message{Type: protocol.TypeError, Code: e.code, Detail: e.detail, MessageID: id}
 }
