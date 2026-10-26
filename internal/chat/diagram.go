@@ -127,13 +127,27 @@ func (m *Model) diagramCommand(arg argument) tea.Cmd {
 		m.status = reason
 		return nil
 	}
-	path, err := exportDiagram(diagramDir(), seq, k, d)
-	if err != nil {
-		m.status = "diagram not saved: " + safe(err.Error())
-		return nil
+	m.status = fmt.Sprintf("saving the diagram of #%d…", seq)
+	dir := diagramDir()
+	return func() tea.Msg {
+		path, err := exportDiagram(dir, seq, k, d)
+		return diagramSavedMsg{path: path, err: err}
 	}
-	m.status = "diagram saved: " + safe(path)
-	return nil
+}
+
+// diagramSavedMsg reports an export done outside Update, so disk latency
+// never stalls input.
+type diagramSavedMsg struct {
+	path string
+	err  error
+}
+
+func (m *Model) diagramSaved(msg diagramSavedMsg) {
+	if msg.err != nil {
+		m.status = "diagram not saved: " + safe(msg.err.Error())
+		return
+	}
+	m.status = "diagram saved: " + safe(msg.path)
 }
 
 // pickDiagram selects diagram k (1-based); k 0 means the only one.
