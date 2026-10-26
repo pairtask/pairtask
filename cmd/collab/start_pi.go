@@ -45,11 +45,19 @@ func (c *outputCap) String() string {
 
 func (c *outputCap) Set(v string) error {
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 || n > maxOutputCap || (n > 0 && n < minOutputCap) {
+	if err != nil || !validOutputCap(n) {
 		return fmt.Errorf("--max-tokens %q: 0 for no cap, or from %d to %d", v, minOutputCap, maxOutputCap)
 	}
 	c.n, c.set = n, true
 	return nil
+}
+
+// validOutputCap is 0, or within [minOutputCap, maxOutputCap].
+func validOutputCap(n int) bool {
+	if n == 0 {
+		return true
+	}
+	return n >= minOutputCap && n <= maxOutputCap
 }
 
 // agentEnv is the adapter contract a harness reads to join pairtask: its

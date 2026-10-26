@@ -181,14 +181,23 @@ func (o *startOptions) validateValues() error {
 	if strings.ContainsRune(o.Model, 0) || strings.ContainsRune(o.Socket, 0) {
 		return errors.New("arguments cannot contain NUL")
 	}
-	if o.Effort != "" && o.Agent == "pi" {
-		return errors.New("--effort is for claude and codex; pass pi's own options after --")
-	}
-	if o.MaxTokens.set && o.Agent != "pi" {
-		return errors.New("--max-tokens is for pi")
+	if err := o.validateAgentFlags(); err != nil {
+		return err
 	}
 	if o.Effort != "" && !startToken.MatchString(o.Effort) {
 		return fmt.Errorf("--effort %q: letters, digits, '.', '_' and '-' only", o.Effort)
+	}
+	return nil
+}
+
+// validateAgentFlags refuses a flag meant for another agent.
+func (o *startOptions) validateAgentFlags() error {
+	pi := o.Agent == "pi"
+	switch {
+	case o.Effort != "" && pi:
+		return errors.New("--effort is for claude and codex; pass pi's own options after --")
+	case o.MaxTokens.set && !pi:
+		return errors.New("--max-tokens is for pi")
 	}
 	return nil
 }
