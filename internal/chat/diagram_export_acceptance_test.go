@@ -174,6 +174,33 @@ func TestChatDiagramExportRunsOutsideUpdate(t *testing.T) {
 	chatEqual(t, "command creates export", string(diagramRead(t, path)), "A\n")
 }
 
+func diagramExistingObject(t *testing.T, kind, path, target string) {
+	t.Helper()
+	switch kind {
+	case "different file":
+		diagramWrite(t, path, "keep me")
+	case "large file":
+		diagramWrite(t, path, strings.Repeat("x", 300*1024))
+	case "symlink":
+		diagramSymlink(t, target, path)
+	case "directory":
+		diagramMkdir(t, path)
+	case "fifo":
+		if err := syscall.Mkfifo(path, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func diagramLstat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
 func TestChatDiagramExportNeverOverwritesExistingObjects(t *testing.T) {
 	for _, kind := range []string{"different file", "large file", "symlink", "directory", "fifo"} {
 		t.Run(kind, func(t *testing.T) {
@@ -182,33 +209,14 @@ func TestChatDiagramExportNeverOverwritesExistingObjects(t *testing.T) {
 			diagramMkdir(t, filepath.Dir(path))
 			target := filepath.Join(base, "target")
 			diagramWrite(t, target, "A\n")
-			switch kind {
-			case "different file":
-				diagramWrite(t, path, "keep me")
-			case "large file":
-				diagramWrite(t, path, strings.Repeat("x", 300*1024))
-			case "symlink":
-				diagramSymlink(t, target, path)
-			case "directory":
-				diagramMkdir(t, path)
-			case "fifo":
-				if err := syscall.Mkfifo(path, 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			before, err := os.Lstat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			diagramExistingObject(t, kind, path, target)
+			before := diagramLstat(t, path)
 			h := formattingHarness(t, "```mermaid\nA\n```", 80, 30)
 			status := diagramCommand(h, "/diagram #7")
 			if !strings.Contains(status, "diagram not saved:") {
 				t.Fatalf("unsafe target accepted: %q", status)
 			}
-			after, err := os.Lstat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			after := diagramLstat(t, path)
 			chatEqual(t, "target inode preserved", os.SameFile(before, after), true)
 			chatEqual(t, "target mode preserved", before.Mode(), after.Mode())
 			chatEqual(t, "target size preserved", before.Size(), after.Size())
@@ -220,6 +228,26 @@ func TestChatDiagramExportNeverOverwritesExistingObjects(t *testing.T) {
 	}
 }
 
+func diagramUnsafeComponent(t *testing.T, kind, outside, path string) {
+	t.Helper()
+	if kind == "symlink" {
+		diagramSymlink(t, outside, path)
+		return
+	}
+	diagramWrite(t, path, "unchanged")
+}
+
+func diagramEmptyDirectory(t *testing.T, path string) {
+	t.Helper()
+	files, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("unexpected files through directory symlink: %v", files)
+	}
+}
+
 func TestChatDiagramExportRefusesUnsafeDirectoryComponents(t *testing.T) {
 	for _, component := range []string{"pairtask", "pairtask/diagrams"} {
 		for _, kind := range []string{"symlink", "file"} {
@@ -228,19 +256,12 @@ func TestChatDiagramExportRefusesUnsafeDirectoryComponents(t *testing.T) {
 				path := filepath.Join(base, component)
 				diagramMkdir(t, filepath.Dir(path))
 				outside := t.TempDir()
-				if kind == "symlink" {
-					diagramSymlink(t, outside, path)
-				} else {
-					diagramWrite(t, path, "unchanged")
-				}
+				diagramUnsafeComponent(t, kind, outside, path)
 				h := formattingHarness(t, "```mermaid\nA\n```", 80, 30)
 				if status := diagramCommand(h, "/diagram #7"); !strings.Contains(status, "diagram not saved:") {
 					t.Fatalf("unsafe directory accepted: %q", status)
 				}
-				files, err := os.ReadDir(outside)
-				if err != nil || len(files) != 0 {
-					t.Fatalf("wrote through directory symlink: %v %v", files, err)
-				}
+				diagramEmptyDirectory(t, outside)
 				if kind == "file" {
 					chatEqual(t, "blocking file unchanged", string(diagramRead(t, path)), "unchanged")
 				}

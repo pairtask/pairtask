@@ -92,8 +92,10 @@ func TestChatDiagramTranscriptEscapesTerminalControls(t *testing.T) {
 	text := "```mermaid\nA\x1b[2J\x1b]52;c;secret\a\u202e --> B\n```"
 	h := formattingHarness(t, text, 120, 30)
 	frame := h.m.View().Content
-	if strings.Contains(frame, "\x1b[2J") || strings.Contains(frame, "\x1b]52") || strings.ContainsAny(frame, "\a\u202e") {
-		t.Fatal("diagram source injected terminal controls")
+	for _, control := range []string{"\x1b[2J", "\x1b]52", "\a", "\u202e"} {
+		if strings.Contains(frame, control) {
+			t.Fatalf("diagram source injected terminal control %q", control)
+		}
 	}
 	plain := ansi.Strip(frame)
 	for _, escaped := range []string{`\x1b`, `\x07`, `\u202e`} {
