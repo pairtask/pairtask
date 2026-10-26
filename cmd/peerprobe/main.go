@@ -24,19 +24,22 @@ import (
 
 const usage = "usage: peerprobe gate|relay|send|connect [flags]"
 
+// argv is a subcommand's arguments, after its name.
+type argv []string
+
 // command is one subcommand: it returns an exit code and an error to print.
-type command func(ctx context.Context, args []string) (int, error)
+type command func(ctx context.Context, args argv) (int, error)
 
 var commands = map[string]command{
 	"gate":    wrap(runGate),
 	"relay":   wrap(runRelay),
 	"send":    runSend,
-	"connect": func(_ context.Context, args []string) (int, error) { return runConnect(args) },
+	"connect": func(_ context.Context, args argv) (int, error) { return runConnect(args) },
 }
 
 // wrap adapts a command that only fails to the exit-code form.
-func wrap(run func(context.Context, []string) error) command {
-	return func(ctx context.Context, args []string) (int, error) { return 0, run(ctx, args) }
+func wrap(run func(context.Context, argv) error) command {
+	return func(ctx context.Context, args argv) (int, error) { return 0, run(ctx, args) }
 }
 
 func main() {
@@ -45,7 +48,7 @@ func main() {
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code, err := commands[os.Args[1]](ctx, os.Args[2:])
+	code, err := commands[os.Args[1]](ctx, argv(os.Args[2:]))
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -67,7 +70,7 @@ type gateFlags struct {
 	discoverable  bool
 }
 
-func parseGate(args []string) (gateFlags, error) {
+func parseGate(args argv) (gateFlags, error) {
 	var f gateFlags
 	flags := flag.NewFlagSet("gate", flag.ContinueOnError)
 	flags.StringVar(&f.socket, "socket", "", "Unix socket to listen on (required)")
@@ -84,7 +87,7 @@ func parseGate(args []string) (gateFlags, error) {
 
 // runGate serves the TLS gate on a Unix socket, with a self-signed identity
 // kept under --state, a private directory outside the shared IPC volume.
-func runGate(ctx context.Context, args []string) error {
+func runGate(ctx context.Context, args argv) error {
 	f, err := parseGate(args)
 	if err != nil {
 		return err
@@ -138,7 +141,7 @@ func listenSocket(path string) (net.Listener, error) {
 }
 
 // runRelay forwards a TCP listener to the gate's Unix socket, opaquely.
-func runRelay(ctx context.Context, args []string) error {
+func runRelay(ctx context.Context, args argv) error {
 	flags := flag.NewFlagSet("relay", flag.ContinueOnError)
 	listen := flags.String("listen", "", "TCP address to listen on (required)")
 	dial := flags.String("dial", "", "the gate's Unix socket (required)")
@@ -164,7 +167,7 @@ type sendFlags struct {
 	addr, serverCert, state, id, note, name string
 }
 
-func parseSend(args []string) (sendFlags, error) {
+func parseSend(args argv) (sendFlags, error) {
 	var f sendFlags
 	flags := flag.NewFlagSet("send", flag.ContinueOnError)
 	flags.StringVar(&f.addr, "addr", "", "the relay's host:port (required)")
@@ -187,7 +190,7 @@ func parseSend(args []string) (sendFlags, error) {
 // runSend sends one contact request through a relay and prints the reply.
 // Exit 0 for pending or duplicate, 2 for refused, 1 for a transport or
 // verification failure.
-func runSend(ctx context.Context, args []string) (int, error) {
+func runSend(ctx context.Context, args argv) (int, error) {
 	f, err := parseSend(args)
 	if err != nil {
 		return 1, err
@@ -243,7 +246,7 @@ func readCertificate(path string) (*x509.Certificate, error) {
 
 // runConnect tries only to open the Unix socket, for the isolation checks:
 // it reports success, EACCES or ENOENT and exits nonzero on failure.
-func runConnect(args []string) (int, error) {
+func runConnect(args argv) (int, error) {
 	flags := flag.NewFlagSet("connect", flag.ContinueOnError)
 	socket := flags.String("socket", "", "Unix socket to connect to (required)")
 	if err := flags.Parse(args); err != nil {
