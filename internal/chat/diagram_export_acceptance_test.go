@@ -19,9 +19,14 @@ func diagramStateHome(t *testing.T) string {
 	return dir
 }
 
-func diagramPath(base, source, ext string, index int) string {
-	sum := sha256.Sum256([]byte(source))
-	return filepath.Join(base, "pairtask", "diagrams", fmt.Sprintf("7-%d-%x.%s", index, sum[:6], ext))
+type diagramExportName struct {
+	base, source, ext string
+	index             int
+}
+
+func (n diagramExportName) path() string {
+	sum := sha256.Sum256([]byte(n.source))
+	return filepath.Join(n.base, "pairtask", "diagrams", fmt.Sprintf("7-%d-%x.%s", n.index, sum[:6], n.ext))
 }
 
 // Run only the returned filesystem command, separately from Update, as the UI does.
@@ -90,7 +95,7 @@ func TestChatDiagramExportRecognitionAndExactSource(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := diagramStateHome(t)
 			h := formattingHarness(t, tc.text, 80, 30)
-			path := diagramPath(base, tc.source, tc.ext, 1)
+			path := (diagramExportName{base, tc.source, tc.ext, 1}).path()
 			chatEqual(t, "saved path", diagramCommand(h, "/diagram #7"), "diagram saved: "+path)
 			chatEqual(t, "exact source plus one newline", string(diagramRead(t, path)), tc.source+"\n")
 			if len(h.requests) != 0 || len(h.wire.writes) != 0 {
@@ -122,7 +127,7 @@ func TestChatDiagramExportSelectsBlocksAndCapsAtSixteen(t *testing.T) {
 	diagramNoExport(t, base)
 	chatEqual(t, "out of range", diagramCommand(h, "/diagram #7 17"), "#7 has 16 diagrams")
 	diagramNoExport(t, base)
-	path := diagramPath(base, "block16", "mmd", 16)
+	path := (diagramExportName{base, "block16", "mmd", 16}).path()
 	chatEqual(t, "select last retained diagram", diagramCommand(h, "/diagram #7 16"), "diagram saved: "+path)
 	chatEqual(t, "selected bytes", string(diagramRead(t, path)), "block16\n")
 }
@@ -130,7 +135,7 @@ func TestChatDiagramExportSelectsBlocksAndCapsAtSixteen(t *testing.T) {
 func TestChatDiagramExportMixedBlocksUseSourceOrder(t *testing.T) {
 	base := diagramStateHome(t)
 	h := formattingHarness(t, "```go\nignored\n```\n```mermaid\nfirst\n```\n```plantuml\nsecond\n```", 80, 30)
-	path := diagramPath(base, "second", "puml", 2)
+	path := (diagramExportName{base, "second", "puml", 2}).path()
 	chatEqual(t, "second recognized block", diagramCommand(h, "/diagram #7 2"), "diagram saved: "+path)
 	chatEqual(t, "plantuml bytes", string(diagramRead(t, path)), "second\n")
 }
@@ -138,7 +143,7 @@ func TestChatDiagramExportMixedBlocksUseSourceOrder(t *testing.T) {
 func TestChatDiagramExportPermissionsAndIdempotence(t *testing.T) {
 	base := diagramStateHome(t)
 	h := formattingHarness(t, "```mermaid\nA --> B\n```", 80, 30)
-	path := diagramPath(base, "A --> B", "mmd", 1)
+	path := (diagramExportName{base, "A --> B", "mmd", 1}).path()
 	chatEqual(t, "first export", diagramCommand(h, "/diagram #7"), "diagram saved: "+path)
 	for _, p := range []string{filepath.Join(base, "pairtask"), filepath.Dir(path), path} {
 		info, err := os.Stat(p)
@@ -170,23 +175,25 @@ func TestChatDiagramExportRunsOutsideUpdate(t *testing.T) {
 		t.Fatal("diagram export must return a filesystem command")
 	}
 	h.input(cmd())
-	path := diagramPath(base, "A", "mmd", 1)
+	path := (diagramExportName{base, "A", "mmd", 1}).path()
 	chatEqual(t, "command creates export", string(diagramRead(t, path)), "A\n")
 }
 
-func diagramExistingObject(t *testing.T, kind, path, target string) {
+type diagramExistingObject struct{ kind, path, target string }
+
+func (o diagramExistingObject) create(t *testing.T) {
 	t.Helper()
-	switch kind {
+	switch o.kind {
 	case "different file":
-		diagramWrite(t, path, "keep me")
+		diagramWrite(t, o.path, "keep me")
 	case "large file":
-		diagramWrite(t, path, strings.Repeat("x", 300*1024))
+		diagramWrite(t, o.path, strings.Repeat("x", 300*1024))
 	case "symlink":
-		diagramSymlink(t, target, path)
+		diagramSymlink(t, o.target, o.path)
 	case "directory":
-		diagramMkdir(t, path)
+		diagramMkdir(t, o.path)
 	case "fifo":
-		if err := syscall.Mkfifo(path, 0600); err != nil {
+		if err := syscall.Mkfifo(o.path, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -205,11 +212,11 @@ func TestChatDiagramExportNeverOverwritesExistingObjects(t *testing.T) {
 	for _, kind := range []string{"different file", "large file", "symlink", "directory", "fifo"} {
 		t.Run(kind, func(t *testing.T) {
 			base := diagramStateHome(t)
-			path := diagramPath(base, "A", "mmd", 1)
+			path := (diagramExportName{base, "A", "mmd", 1}).path()
 			diagramMkdir(t, filepath.Dir(path))
 			target := filepath.Join(base, "target")
 			diagramWrite(t, target, "A\n")
-			diagramExistingObject(t, kind, path, target)
+			(diagramExistingObject{kind, path, target}).create(t)
 			before := diagramLstat(t, path)
 			h := formattingHarness(t, "```mermaid\nA\n```", 80, 30)
 			status := diagramCommand(h, "/diagram #7")
@@ -283,7 +290,7 @@ func TestChatDiagramExportSourceSizeBoundary(t *testing.T) {
 				}
 				diagramNoExport(t, base)
 			} else {
-				path := diagramPath(base, source, "mmd", 1)
+				path := (diagramExportName{base, source, "mmd", 1}).path()
 				chatEqual(t, "exact limit allowed", status, "diagram saved: "+path)
 				chatEqual(t, "limit plus newline", len(diagramRead(t, path)), size+1)
 			}
@@ -303,7 +310,7 @@ func TestChatDiagramExportHomeFallbackAndInvalidTargets(t *testing.T) {
 		}
 		diagramNoExport(t, filepath.Join(home, ".local", "state"))
 	}
-	path := diagramPath(filepath.Join(home, ".local", "state"), "A", "mmd", 1)
+	path := (diagramExportName{filepath.Join(home, ".local", "state"), "A", "mmd", 1}).path()
 	chatEqual(t, "HOME fallback", diagramCommand(h, "/diagram #7"), "diagram saved: "+path)
 	chatEqual(t, "fallback bytes", string(diagramRead(t, path)), "A\n")
 }

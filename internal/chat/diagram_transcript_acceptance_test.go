@@ -80,7 +80,7 @@ func TestChatDiagramExportSentMessagesWithoutAcknowledging(t *testing.T) {
 	h.reply(history, page)
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	h.input(tea.WindowSizeMsg{Width: 80, Height: 30})
-	path := diagramPath(base, "A", "mmd", 1)
+	path := (diagramExportName{base, "A", "mmd", 1}).path()
 	chatEqual(t, "sent message export", diagramCommand(h, "/diagram #7"), "diagram saved: "+path)
 	chatEqual(t, "no implicit acknowledgment", len(h.m.State().QueuedAcks), 0)
 	if len(h.requests) != 0 || len(h.wire.writes) != 0 {
