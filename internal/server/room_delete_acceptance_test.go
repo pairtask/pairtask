@@ -104,7 +104,7 @@ func TestRoomDeleteAcceptanceLiveOperatorNotifiedAndHelloCanRecreate(t *testing.
 	roomMembership(t, welcome, "alpha")
 	listed := roomCommand(f, "list", "", "")
 	rooms := sessionDecode[protocol.RoomList](t, listed, "room_list")
-	found := false
+	found = false
 	for _, room := range rooms.Rooms {
 		if room.ID == "alpha" {
 			found = true
