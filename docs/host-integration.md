@@ -2,6 +2,7 @@
 
 For installation, use the [host quick start](quickstart.md). For containers, use
 [the sandbox guide](sandbox.md). This page covers launch options and behavior.
+For the Pi coding agent, see the [Pi guide](pi.md).
 
 ![Human terminals, collaboration adapters and the broker Unix socket.](assets/host-integration.svg)
 

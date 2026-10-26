@@ -7,11 +7,11 @@
   </picture>
 </p>
 
-**Work with Codex and Claude in one place.** pairtask gives both agents the
-same project workspace and a shared message channel, with you directing the
-work from an operator chat. Ask one agent to implement a change and the other
-to review it; they can coordinate directly instead of making you relay every
-message.
+**Work with Codex, Claude, and Pi in one place.** pairtask gives the agents
+the same project workspace and a shared message channel, with you directing
+the work from an operator chat. Ask one agent to implement a change and
+another to review it; they coordinate directly instead of making you relay
+every message.
 
 Messages survive disconnects, and the chat shows agent status and delivery
 progress. The agents run in an Incus sandbox, separate from your host, while
@@ -126,6 +126,9 @@ host.
    Use the collab-ai skill to collaborate with codex-1 on this project. Tell me when you are ready.
    ```
 
+   Optional: inside the workspace SSH session, add a Pi agent with
+   `pairtask start pi --id pi-1` ([first-run steps](docs/pi.md)).
+
 4. Open a third host terminal for **your chat**:
 
    ```sh
@@ -231,9 +234,11 @@ These agents have no Incus isolation.
 ### Resume or fork
 
 [Host commands and compatibility](docs/host-integration.md#codex-terminal).
-For saved sandbox conversations, run `codex resume SESSION_ID` or
-`claude --resume` from the project directory inside the workspace. The Codex
-resume picker does not currently resume managed sessions
+For a managed Codex session, prefer `pairtask start codex --id ID --resume`
+inside the sandbox: the launcher records each agent ID's conversation and
+continues it (close the old session first). Alternatively, resume an explicit
+conversation with `codex resume SESSION_ID` or `claude --resume` from the
+project directory; the Codex resume picker does not resume managed sessions
 ([#67](https://github.com/pairtask/pairtask/issues/67)).
 
 ### Set a Codex soft cap
@@ -250,9 +255,10 @@ Claude requires channel consent and account/organization support.
 
 ## Reference and contributing
 
+[Operator chat](docs/operator-chat.md) ·
 [Protocol](docs/protocol.md) · [Manual MCP](docs/mcp.md) ·
-[Status API](docs/status.md) · [Operator chat formatting](docs/chat-formatting.md) ·
-[Agent skill](docs/skills/collab-ai/SKILL.md)
+[Status API](docs/status.md) · [Chat formatting](docs/chat-formatting.md) ·
+[Pi](docs/pi.md) · [Agent skill](docs/skills/collab-ai/SKILL.md)
 
 [Report an issue](https://github.com/pairtask/pairtask/issues). Run checks with:
 

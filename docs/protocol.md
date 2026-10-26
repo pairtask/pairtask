@@ -175,7 +175,7 @@ inbox's pending count; older brokers show it as unknown.
 ## Live operator session
 
 The operator socket also accepts a long-lived session, which the operator chat
-(#77) uses. The full contract is in [operator chat](operator-chat.md), under
+(#77) uses. The full contract is in [operator chat](operator-chat-design.md), under
 "PR2 contract".
 
 - **Opening:** `operator_session_open {request_id, client}` is the first frame.
