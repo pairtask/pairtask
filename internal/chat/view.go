@@ -294,6 +294,8 @@ func (m *Model) pickerLabel(p *picker, item string) string {
 		return "  @" + safe(item)
 	case PickerAck:
 		return m.ackLabel(item)
+	case PickerArgument:
+		return "  " + safe(item)
 	}
 	c := byName(item)
 	return fmt.Sprintf("  /%s %s  %s", c.name, c.usage, mutedStyle.Render(c.help))
