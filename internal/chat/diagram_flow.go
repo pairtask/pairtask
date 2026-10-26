@@ -35,11 +35,11 @@ type flowEdgeKey struct {
 
 // flowHeader reads "flowchart LR|TD" or "graph LR|TD".
 func flowHeader(line string) (lr, ok bool) {
-	kind, dir, found := strings.Cut(line, " ")
-	if !found || !flowKinds[kind] {
+	f := strings.Fields(line)
+	if len(f) != 2 || !flowKinds[f[0]] {
 		return false, false
 	}
-	lr, ok = flowDirections[strings.TrimSpace(dir)]
+	lr, ok = flowDirections[f[1]]
 	return lr, ok
 }
 
