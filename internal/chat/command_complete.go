@@ -147,16 +147,16 @@ func (m *Model) argumentPickable() bool {
 	return line.dismissed == nil || *line.dismissed != value
 }
 
-// completingArgument is an open argument picker for a word that isn't
-// already a whole candidate: Enter then completes it, and a word typed out
-// in full runs the line as before.
+// completingArgument is an open argument picker whose highlighted
+// candidate isn't the word already typed: Enter then completes it, and a
+// word typed out in full and still highlighted runs the line as before.
 func (m *Model) completingArgument() bool {
 	p := m.compose.openPicker(PickerArgument)
 	if p == nil {
 		return false
 	}
 	value := m.compose.cmd.input.Value()
-	return !slices.Contains(p.items, value[strings.LastIndex(value, " ")+1:])
+	return p.items[p.selected] != value[strings.LastIndex(value, " ")+1:]
 }
 
 // completeArgument replaces the word being typed with the selected
