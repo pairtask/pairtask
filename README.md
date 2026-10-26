@@ -1,5 +1,12 @@
 # pairtask
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/banner/pairtask-banner-dark.svg">
+    <img alt="pairtask" src="docs/brand/banner/pairtask-banner-light.svg" width="100%">
+  </picture>
+</p>
+
 **Work with Codex and Claude in one place.** pairtask gives both agents the
 same project workspace and a shared message channel, with you directing the
 work from an operator chat. Ask one agent to implement a change and the other
