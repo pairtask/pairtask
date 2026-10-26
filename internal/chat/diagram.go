@@ -33,28 +33,43 @@ type diagram struct {
 	source string
 }
 
+// messageText is a message's text; its lines are the source lines every
+// rendered row and diagram refers back to.
+type messageText string
+
+// lines splits the text with CRLF normalized.
+func (t messageText) lines() sourceLines {
+	return strings.Split(strings.ReplaceAll(string(t), "\r\n", "\n"), "\n")
+}
+
+type sourceLines []string
+
+type sourceLine string
+
+// isFence is the formatter's fence toggle: ``` at the start, once trimmed.
+func (l sourceLine) isFence() bool { return strings.HasPrefix(strings.TrimSpace(string(l)), "```") }
+
 // fenceLang is the lowercased first word of a fence's info string.
-func fenceLang(line string) string {
-	fields := strings.Fields(strings.TrimLeft(strings.TrimSpace(line), "`"))
+func (l sourceLine) fenceLang() string {
+	fields := strings.Fields(strings.TrimLeft(strings.TrimSpace(string(l)), "`"))
 	if len(fields) == 0 {
 		return ""
 	}
 	return strings.ToLower(fields[0])
 }
 
-// findDiagrams lists a message's diagrams in source order, from lines already
-// split on normalized newlines.
-func findDiagrams(lines []string) []diagram {
+// diagrams lists the diagrams in source order.
+func (ls sourceLines) diagrams() []diagram {
 	var out []diagram
 	open := -1
-	for i, line := range lines {
+	for i, line := range ls {
 		switch {
-		case !isFence(line):
+		case !sourceLine(line).isFence():
 		case open < 0:
 			open = i
 		default:
-			if _, ok := diagramExt[fenceLang(lines[open])]; ok && len(out) < maxDiagrams {
-				out = append(out, diagram{open: open, lang: fenceLang(lines[open]), source: strings.Join(lines[open+1:i], "\n")})
+			if lang := sourceLine(ls[open]).fenceLang(); diagramExt[lang] != "" && len(out) < maxDiagrams {
+				out = append(out, diagram{open: open, lang: lang, source: strings.Join(ls[open+1:i], "\n")})
 			}
 			open = -1
 		}
@@ -122,7 +137,7 @@ func (m *Model) diagramCommand(arg argument) tea.Cmd {
 		m.status = reason
 		return nil
 	}
-	d, reason := ref.pick(findDiagrams(bodyLines(payloadText(e.msg.Payload))))
+	d, reason := ref.pick(messageText(payloadText(e.msg.Payload)).lines().diagrams())
 	if reason != "" {
 		m.status = reason
 		return nil

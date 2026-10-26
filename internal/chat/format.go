@@ -29,20 +29,12 @@ var (
 
 // formatBody lays out a message's text as wrapped, styled lines.
 func (b *lineBuilder) formatBody(text string, width int) {
-	lines := bodyLines(text)
-	f := formatter{b: b, width: width, labels: b.diagramLabels(findDiagrams(lines))}
+	lines := messageText(text).lines()
+	f := formatter{b: b, width: width, labels: b.diagramLabels(lines.diagrams())}
 	for i := 0; i < len(lines); i++ {
 		i = f.line(lines, i)
 	}
 }
-
-// bodyLines splits message text into source lines, CRLF normalized.
-func bodyLines(text string) []string {
-	return strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-}
-
-// isFence is the fence toggle: a line starting with ``` once trimmed.
-func isFence(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "```") }
 
 type formatter struct {
 	b      *lineBuilder
@@ -57,7 +49,7 @@ type formatter struct {
 func (f *formatter) line(lines []string, i int) int {
 	line := lines[i]
 	switch {
-	case isFence(line):
+	case sourceLine(line).isFence():
 		f.fence(i)
 	case f.fenced:
 		f.code(line)
