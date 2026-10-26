@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -149,19 +150,9 @@ func TestAcceptanceOutboundSettlementSurvivesFaultAndRestart(t *testing.T) {
 			}
 			hooks, hit := acceptanceFaultAt(t, point)
 			p := acceptanceStart(t, GateConfig{Store: store, Faults: hooks})
-			c := p.connect(t, cert)
 			record := acceptanceRecord("outbound-restart")
 			record.Kind = KindAccept
-			if err := json.NewEncoder(c).Encode(record); err != nil {
-				t.Fatal(err)
-			}
-			var reply Reply
-			err := json.NewDecoder(c).Decode(&reply)
-			if point != "after-reply" && err == nil {
-				t.Fatalf("acknowledged across %s fault: %+v", point, reply)
-			}
-			c.Close()
-			p.stop()
+			acceptanceFaultRequest{Client: cert, Record: record, Point: point}.disconnect(t, p)
 			store.file.Close()
 			if !hit.Load() {
 				t.Fatal("settlement hook not reached")
@@ -195,18 +186,8 @@ func TestAcceptanceRestartAcrossPersistenceAndReplyFaults(t *testing.T) {
 			faults, hit := acceptanceFaultAt(t, point)
 			server, client := acceptanceCertificate(t, "gate"), acceptanceCertificate(t, "alice")
 			p := acceptanceStart(t, GateConfig{Cert: server, Store: store, Faults: faults})
-			c := p.connect(t, client)
 			record := acceptanceRecord("survives-restart")
-			if err := json.NewEncoder(c).Encode(record); err != nil {
-				t.Fatal(err)
-			}
-			var reply Reply
-			err := json.NewDecoder(c).Decode(&reply)
-			if point != "after-reply" && err == nil {
-				t.Fatalf("request acknowledged across %s fault: %+v", point, reply)
-			}
-			c.Close()
-			p.stop()
+			acceptanceFaultRequest{Client: client, Record: record, Point: point}.disconnect(t, p)
 			if !hit.Load() {
 				t.Fatal("fault hook was not reached")
 			}
@@ -254,4 +235,23 @@ func acceptanceFaultAt(t *testing.T, point string) (*Faults, *atomic.Bool) {
 		t.Fatalf("unknown fault point %s", point)
 	}
 	return hooks, hit
+}
+
+type acceptanceFaultRequest struct {
+	Client tls.Certificate
+	Record Record
+	Point  string
+}
+
+func (r acceptanceFaultRequest) disconnect(t *testing.T, p *acceptanceProbe) {
+	t.Helper()
+	c := p.connect(t, r.Client)
+	acceptanceNoError(t, json.NewEncoder(c).Encode(r.Record))
+	var reply Reply
+	err := json.NewDecoder(c).Decode(&reply)
+	if r.Point != "after-reply" && err == nil {
+		t.Fatalf("request acknowledged across %s fault: %+v", r.Point, reply)
+	}
+	c.Close()
+	p.stop()
 }
