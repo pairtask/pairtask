@@ -7,6 +7,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
 	"math/big"
 	"time"
 )
@@ -42,4 +44,20 @@ func SelfSigned(name string) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, nil
+}
+
+// EncodePEM serialises a self-signed identity so the probe can keep it
+// between runs; the key is unencrypted and must stay in a private directory.
+func EncodePEM(cert tls.Certificate) (certPEM, keyPEM []byte, err error) {
+	key, ok := cert.PrivateKey.(*ecdsa.PrivateKey)
+	if !ok || len(cert.Certificate) == 0 {
+		return nil, nil, errors.New("not a self-signed ECDSA identity")
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	return certPEM, keyPEM, nil
 }

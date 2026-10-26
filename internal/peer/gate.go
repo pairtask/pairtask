@@ -34,6 +34,17 @@ type GateConfig struct {
 	Discoverable func() bool // re-read for every contact request; a relay cache can't bypass it
 	Limits       Limits
 	Faults       *Faults // nil for none
+	// OnConnection, when set, is told about each connection after its
+	// handshake: who the kernel says connected to the Unix socket and which
+	// certificate the peer presented. It is for the probe's log; nil otherwise.
+	OnConnection func(ConnInfo)
+}
+
+// ConnInfo describes one accepted connection.
+type ConnInfo struct {
+	Fingerprint string
+	UID, GID    int  // from SO_PEERCRED on the Unix socket
+	HasCreds    bool // false when the listener isn't a Unix socket or the lookup failed
 }
 
 // Limits bound the gate; zero values take the defaults.
@@ -126,6 +137,11 @@ func (g *Gate) serve(ctx context.Context, raw net.Conn) {
 	peer, ok := peerOf(conn)
 	if !ok {
 		return
+	}
+	if g.cfg.OnConnection != nil {
+		info := ConnInfo{Fingerprint: peer.fingerprint}
+		info.UID, info.GID, info.HasCreds = peerCredentials(raw)
+		g.cfg.OnConnection(info)
 	}
 	if g.cfg.Blocked[peer.fingerprint] {
 		_ = WriteJSON(conn, Reply{Version: SchemaVersion, Status: StatusRefused, Reason: "blocked"})
