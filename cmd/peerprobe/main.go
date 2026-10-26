@@ -94,7 +94,9 @@ func runGate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	_ = os.Remove(*socket)
+	if err := removeStaleSocket(*socket); err != nil {
+		return err
+	}
 	ln, err := net.Listen("unix", *socket)
 	if err != nil {
 		return err
@@ -197,13 +199,35 @@ func runConnect(args []string) (int, error) {
 	return 3, nil
 }
 
-// identity loads or creates a self-signed certificate under dir.
+// removeStaleSocket unlinks a leftover Unix socket at path, and refuses to
+// touch anything else there: a regular file, directory or link stays.
+func removeStaleSocket(path string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case info.Mode()&os.ModeSocket == 0:
+		return fmt.Errorf("%s exists and is not a socket; refusing to replace it", path)
+	}
+	return os.Remove(path)
+}
+
+// identity loads the self-signed certificate under dir, or creates one when
+// neither file exists. A half-present or unreadable identity is an error,
+// never silently replaced, so a restart can't mask a lost key.
 func identity(dir, name string) (tls.Certificate, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return tls.Certificate{}, err
 	}
 	certPath, keyPath := filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key")
-	if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
+	certExists, keyExists := exists(certPath), exists(keyPath)
+	if certExists || keyExists {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("existing identity in %s can't be loaded: %w", dir, err)
+		}
 		return cert, nil
 	}
 	cert, err := peer.SelfSigned(name)
@@ -214,11 +238,29 @@ func identity(dir, name string) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+	if err := writeNew(keyPath, keyPEM); err != nil {
 		return tls.Certificate{}, err
 	}
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+	if err := writeNew(certPath, certPEM); err != nil {
 		return tls.Certificate{}, err
 	}
 	return tls.LoadX509KeyPair(certPath, keyPath)
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+// writeNew creates a private file that must not exist yet.
+func writeNew(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
