@@ -50,7 +50,7 @@ func (m *Model) transcript() []renderLine {
 // entryLines lays out one entry as logical lines, each wrapped to the width.
 func (m *Model) entryLines(e *entry) []renderLine {
 	width := m.transcriptWidth()
-	b := lineBuilder{id: e.msg.MessageID}
+	b := lineBuilder{id: e.msg.MessageID, seq: e.msg.Seq}
 	b.add([]string{""}, flush)
 	b.add(m.entryHeader(e), flush)
 	if e.msg.InReplyTo != "" {
@@ -72,6 +72,7 @@ func (m *Model) entryLines(e *entry) []renderLine {
 // lineBuilder numbers logical lines and the offsets of their wrapped parts.
 type lineBuilder struct {
 	id    string
+	seq   uint64 // the message number diagram labels refer to; 0 for none
 	src   int
 	lines []renderLine
 }

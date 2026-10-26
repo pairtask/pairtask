@@ -29,8 +29,8 @@ var (
 
 // formatBody lays out a message's text as wrapped, styled lines.
 func (b *lineBuilder) formatBody(text string, width int) {
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	f := formatter{b: b, width: width}
+	lines := messageText(text).lines()
+	f := formatter{b: b, width: width, labels: b.diagramLabels(lines.diagrams())}
 	for i := 0; i < len(lines); i++ {
 		i = f.line(lines, i)
 	}
@@ -39,8 +39,9 @@ func (b *lineBuilder) formatBody(text string, width int) {
 type formatter struct {
 	b      *lineBuilder
 	width  int
-	fenced bool // inside ``` … ```
-	blank  bool // the previous rendered row was blank
+	fenced bool           // inside ``` … ```
+	blank  bool           // the previous rendered row was blank
+	labels map[int]string // diagram labels by opening fence line
 }
 
 // line renders lines[i] (and, for a table, the rows that follow it) and
@@ -48,9 +49,8 @@ type formatter struct {
 func (f *formatter) line(lines []string, i int) int {
 	line := lines[i]
 	switch {
-	case strings.HasPrefix(strings.TrimSpace(line), "```"):
-		f.fenced = !f.fenced
-		f.b.skip()
+	case sourceLine(line).isFence():
+		f.fence(i)
 	case f.fenced:
 		f.code(line)
 	case strings.TrimSpace(line) == "":
@@ -63,6 +63,26 @@ func (f *formatter) line(lines []string, i int) int {
 		f.text(line)
 	}
 	return i
+}
+
+// fence toggles code; a diagram's opening fence keeps its source slot for a
+// one-row label, cut to the width.
+func (f *formatter) fence(i int) {
+	f.fenced = !f.fenced
+	label, ok := f.labels[i]
+	if !ok {
+		f.b.skip()
+		return
+	}
+	f.blank = false
+	in := f.codeIndent()
+	f.b.add([]string{mutedStyle.Render(ansi.Truncate(label, max(1, f.width-len(in)), ""))}, in)
+}
+
+// codeIndent is the body indent, narrowed so a code or label row keeps at
+// least one column at any width.
+func (f *formatter) codeIndent() indent {
+	return body[:min(len(body), max(0, f.width-1))]
 }
 
 func (f *formatter) blankRow() {
@@ -79,13 +99,14 @@ func (f *formatter) blankRow() {
 func (f *formatter) code(line string) {
 	f.blank = false
 	plain := safeText(line)
-	parts := strings.Split(ansi.Hardwrap(plain, max(1, f.width-len(body)), true), "\n")
+	in := f.codeIndent()
+	parts := strings.Split(ansi.Hardwrap(plain, max(1, f.width-len(in)), true), "\n")
 	pos := 0
 	for _, part := range parts {
 		if at := strings.Index(plain[pos:], part); at >= 0 {
 			pos += at
 		}
-		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: pos, text: string(body) + fenceStyle.Render(part)})
+		f.b.lines = append(f.b.lines, renderLine{id: f.b.id, src: f.b.src, col: pos, text: string(in) + fenceStyle.Render(part)})
 		pos += len(part)
 	}
 	f.b.src++

@@ -37,6 +37,7 @@ draft. `#n` is a message's number.
 | `/ack`, `/ack all`, `/ack from id` | Acknowledge messages ("seen, no reply needed") |
 | `/claims #n` | Task claims on a message with topics and ages |
 | `/history`, `/find`, `/copy #n`, `/stages #n`, `/to` | History, search, copy, delivery stages, set audience |
+| `/diagram #n [K]` | Save a `mermaid` or `plantuml` block's source to `~/.local/state/pairtask/diagrams` (under `$XDG_STATE_HOME` when set); nothing is rendered or run, and no file is overwritten |
 | `/close` | Hide the selected conversation; nothing is deleted or re-addressed |
 | `/clear`, `/help`, `/quit` | Clear the view, help, quit |
 

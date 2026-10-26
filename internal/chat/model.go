@@ -303,6 +303,8 @@ func (m *Model) terminalUpdate(msg tea.Msg) tea.Cmd {
 		return m.wheel(msg)
 	case tea.KeyPressMsg:
 		return m.key(msg)
+	case diagramSavedMsg:
+		m.diagramSaved(msg)
 	}
 	return nil
 }
