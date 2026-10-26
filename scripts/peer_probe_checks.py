@@ -113,12 +113,31 @@ def check_mounts(remote, project):
         raise ValueError("Secured peer mount is not writable")
     absent = ["/mnt/collab-ipc/broker.sock", "/run/collab-ai-operator/operator.sock",
               "/var/lib/collab-ai-secured/broker/broker.db", "/var/lib/incus/unix.socket",
-              "/dev/incus/sock", "/var/run/docker.sock"]
+              "/dev/incus/sock", "/var/run/docker.sock", "/var/lib/peerprobe"]
     program = "import json,os,sys; print(json.dumps([p for p in sys.argv[1:] if os.path.lexists(p)]))"
     exposed = json.loads(_run(_execute(remote, project, "connector", "python3", "-c", program, *absent)))
     if exposed:
         raise ValueError(f"Connector has private state or administrative paths: {exposed}")
     print("PASS: peer IPC is shared only with the connector, read-only there; private paths are absent.", flush=True)
+
+
+def _check_gate_permissions(remote, project):
+    gate_uid, gate_gid = _id(remote, project, "secured", "peergate")
+    program = """import json,os,stat,sys
+rows=[]
+for path in sys.argv[1:]:
+    info=os.lstat(path)
+    rows.append({'path':path,'mode':stat.S_IMODE(info.st_mode),'uid':info.st_uid,'gid':info.st_gid,
+                 'socket':stat.S_ISSOCK(info.st_mode),'directory':stat.S_ISDIR(info.st_mode)})
+print(json.dumps(rows))
+"""
+    rows = json.loads(_run(_execute(remote, project, "secured", "python3", "-c", program,
+                                   PEER_DIR, PEER_SOCKET, "/var/lib/peerprobe", "/var/lib/peerprobe/gate.key")))
+    for row, mode in zip(rows, (0o750, 0o660, 0o700, 0o600), strict=True):
+        if (row["mode"], row["uid"], row["gid"]) != (mode, gate_uid, gate_gid):
+            raise ValueError(f"Unexpected gate IPC/key ownership or permissions: {row}")
+    if not rows[0]["directory"] or not rows[1]["socket"] or not rows[2]["directory"]:
+        raise ValueError("Gate IPC or private state has an unexpected filesystem type")
 
 
 def _id(remote, project, role, user):
@@ -131,6 +150,7 @@ def _id(remote, project, role, user):
 
 def check_connect(remote, project):
     """Use real unprivileged connects; do not equate path visibility with access."""
+    _check_gate_permissions(remote, project)
     peer_uid, _ = _id(remote, project, "connector", "peer")
     peer_group = _run(_execute(remote, project, "connector", "getent", "group", "collab-peer"))
     peer_gid = int(peer_group.split(":")[2])
