@@ -79,12 +79,13 @@ then ends in `· rendered`); everything else shows its source as code:
   are no cycles. Edges are `A --> B`, `A -->|label| B`, `A --- B`, and chains
   such as `A --> B --> C`. Up to 30 nodes and 8 children per node.
 
-IDs are letters, digits and `_`; labels are at most 40 columns and can't
-contain brackets, parentheses, `|`, quotes, `<`, `>`, braces or backticks.
-Blank lines and `%%` comments are ignored. Any other line — notes, loops,
-subgraphs, styles, directives — or a source over 4 KiB or 200 lines shows the
-whole diagram as source. A drawing wider than the transcript also shows the
-source; widen the window to see it drawn.
+IDs start with a letter or `_`, followed by letters, digits and `_`; labels
+are at most 40 columns and can't contain brackets, parentheses, `|`, quotes,
+`<`, `>`, braces or backticks. Blank lines and `%%` comments are ignored. Any
+other line — notes, loops, subgraphs, styles, directives — a source over
+4 KiB or 200 lines, or a drawing over 200 columns or 150 rows shows the whole
+diagram as source. A drawing wider than the transcript also shows the source;
+widen the window to see it drawn.
 
 ````text
 ```mermaid
