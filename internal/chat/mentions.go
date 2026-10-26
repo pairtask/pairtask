@@ -66,14 +66,15 @@ func (m *Model) eligibleMembers() ([]string, bool) {
 }
 
 // mentionCandidates are the @ picker's choices: in a room or group only its
-// members (offline ones too), elsewhere every known agent.
+// members (offline ones too) not yet named, elsewhere every known agent.
 func (m *Model) mentionCandidates(fragment string) []string {
 	key := m.conv.selected
 	if !key.isGroup() && !key.isRoom() {
 		return m.agentCandidates(fragment)
 	}
 	members, _ := m.eligibleMembers()
-	members = slices.Clone(members)
+	typed := m.namedBefore()
+	members = slices.DeleteFunc(slices.Clone(members), func(id string) bool { return slices.Contains(typed, id) })
 	slices.Sort(members)
 	return withPrefix(members, fragment)
 }
@@ -88,4 +89,15 @@ func addressedNote(ids []string) string {
 		shown[i] = "@" + safe(id)
 	}
 	return " · addressed " + strings.Join(shown, " ")
+}
+
+// namedBefore are the mentions already complete in the draft, leaving out the
+// one being typed.
+func (m *Model) namedBefore() []string {
+	value := m.compose.editor.Value()
+	tokens := parsePrefix(value).tokens
+	if len(tokens) > 0 && openToken(value) {
+		tokens = tokens[:len(tokens)-1]
+	}
+	return tokens
 }
