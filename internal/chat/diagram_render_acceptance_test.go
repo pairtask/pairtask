@@ -84,25 +84,36 @@ func (c diagramRenderCase) wantSource(t *testing.T, v diagramRenderView) {
 		t.Fatalf("unsupported or oversized diagram rendered: %q", v.text())
 	}
 	lines := strings.Split(c.source, "\n")
-	got := make([]string, len(lines))
-	in := min(2, max(0, v.width-1))
-	for _, row := range v.lines {
-		i := row.src - 18
-		if i < 0 || i >= len(got) {
-			continue
-		}
-		plain := ansi.Strip(row.text)
-		if len(plain) < in {
-			t.Fatalf("missing code indent: %q", plain)
-		}
-		got[i] += plain[in:]
-	}
+	got := v.sourceLines(t, len(lines))
 	for i, line := range lines {
 		if got[i] != safeText(line) {
 			t.Errorf("fallback source line %d = %q, want %q", i, got[i], safeText(line))
 		}
 	}
 	v.bounds(t)
+}
+
+func (v diagramRenderView) sourceLines(t *testing.T, count int) []string {
+	t.Helper()
+	got := make([]string, count)
+	for _, row := range v.lines {
+		i := row.src - 18
+		if i < 0 || i >= len(got) {
+			continue
+		}
+		got[i] += v.codeText(t, row.text)
+	}
+	return got
+}
+
+func (v diagramRenderView) codeText(t *testing.T, text string) string {
+	t.Helper()
+	in := min(2, max(0, v.width-1))
+	plain := ansi.Strip(text)
+	if len(plain) < in {
+		t.Fatalf("missing code indent: %q", plain)
+	}
+	return plain[in:]
 }
 
 func TestDiagramRenderSupportedSubset(t *testing.T) {
@@ -271,24 +282,35 @@ func TestDiagramRenderHiddenSourceAnchorStaysInItsBlock(t *testing.T) {
 	b.formatBody(block+"\nbetween\n"+block+"\nafter", 100)
 	sourceCount := len(strings.Split(source, "\n"))
 	for _, open := range []int{17, 17 + sourceCount + 3} {
-		last := -1
-		rendered := false
-		for i, row := range b.lines {
-			if row.src == open && strings.Contains(ansi.Strip(row.text), " · rendered") {
-				rendered = true
-			}
-			if row.src > open && row.src < open+sourceCount+1 {
-				last = i
-			}
-		}
-		if !rendered || last < 0 {
-			t.Fatalf("fixture did not render block at %d", open)
-		}
+		block := diagramAnchorBlock{lines: b.lines, open: open, slots: sourceCount}
+		last := block.lastDrawnRow(t)
 		m := Model{view: viewport{anchorID: b.id, anchorSrc: open + sourceCount, anchorCol: 0}}
 		if got := m.anchorIndex(b.lines); got != last {
 			t.Errorf("hidden slot in block %d anchors row %d, want last rendered row %d", open, got, last)
 		}
 	}
+}
+
+type diagramAnchorBlock struct {
+	lines       []renderLine
+	open, slots int
+}
+
+func (b diagramAnchorBlock) lastDrawnRow(t *testing.T) int {
+	t.Helper()
+	last, rendered := -1, false
+	for i, row := range b.lines {
+		if row.src == b.open && strings.Contains(ansi.Strip(row.text), " · rendered") {
+			rendered = true
+		}
+		if row.src > b.open && row.src < b.open+b.slots+1 {
+			last = i
+		}
+	}
+	if !rendered || last < 0 {
+		t.Fatalf("fixture did not render block at %d", b.open)
+	}
+	return last
 }
 
 func TestDiagramRenderBlankCommentsAndTrailingSemicolons(t *testing.T) {
@@ -332,5 +354,81 @@ func TestDiagramRenderEntryCacheTracksBodyAndBlock(t *testing.T) {
 		if strings.Contains(v.text(), other) {
 			t.Errorf("cache retained old body %q", other)
 		}
+	}
+}
+
+func TestDiagramRenderPreservesFlowDirectionAndEdges(t *testing.T) {
+	c := diagramRenderCase{source: "flowchart LR\nA[Sender] --> B[Receiver]"}
+	v := c.format(100)
+	c.wantRendered(t, v)
+	fromRow, fromCol := v.labelPosition(t, "Sender")
+	toRow, toCol := v.labelPosition(t, "Receiver")
+	if fromRow != toRow || fromCol >= toCol {
+		t.Errorf("LR flow positions reversed/misaligned: (%d,%d) to (%d,%d)", fromRow, fromCol, toRow, toCol)
+	}
+	if strings.Count(v.text(), "►") != 1 {
+		t.Error("directed edge must have one right arrowhead")
+	}
+	c.source = "flowchart LR\nA[Sender] --- B[Receiver]"
+	v = c.format(100)
+	c.wantRendered(t, v)
+	if strings.ContainsAny(v.text(), "►◄▼▲") {
+		t.Error("undirected edge acquired an arrowhead")
+	}
+}
+
+func TestDiagramRenderBranchChildrenStayBelowParent(t *testing.T) {
+	c := diagramRenderCase{source: "flowchart TD\nRoot --> Left\nRoot --> Right"}
+	v := c.format(100)
+	c.wantRendered(t, v)
+	rootY, rootX := v.labelPosition(t, "Root")
+	leftY, leftX := v.labelPosition(t, "Left")
+	rightY, rightX := v.labelPosition(t, "Right")
+	if rootY >= leftY || leftY != rightY || leftX >= rootX || rootX >= rightX {
+		t.Errorf("tree topology lost: root(%d,%d) left(%d,%d) right(%d,%d)", rootY, rootX, leftY, leftX, rightY, rightX)
+	}
+	if strings.Count(v.text(), "▼") != 2 {
+		t.Error("branch must retain both directed edges")
+	}
+}
+
+func (v diagramRenderView) labelPosition(t *testing.T, label string) (int, int) {
+	t.Helper()
+	for y, row := range v.lines {
+		plain := ansi.Strip(row.text)
+		if x := strings.Index(plain, label); x >= 0 {
+			return y, ansi.StringWidth(plain[:x])
+		}
+	}
+	t.Fatalf("label %q missing from %s", label, v.text())
+	return -1, -1
+}
+
+func TestDiagramRenderSequenceKeepsMessageOrderAndDirection(t *testing.T) {
+	c := diagramRenderCase{source: "sequenceDiagram\nA->>B: request\nB-->>A: reply"}
+	v := c.format(100)
+	c.wantRendered(t, v)
+	requestY, _ := v.labelPosition(t, "request")
+	replyY, _ := v.labelPosition(t, "reply")
+	if requestY >= replyY {
+		t.Error("sequence messages changed order")
+	}
+	for _, mark := range []string{"►", "◄", "┄"} {
+		if !strings.Contains(v.text(), mark) {
+			t.Errorf("sequence lost message style/direction %q", mark)
+		}
+	}
+}
+
+func TestDiagramRenderSelfMessagesKeepDashedStyle(t *testing.T) {
+	for _, arrow := range []string{"-->>", "-->"} {
+		t.Run(arrow, func(t *testing.T) {
+			c := diagramRenderCase{source: "sequenceDiagram\nA" + arrow + "A: thinking"}
+			v := c.format(100)
+			c.wantRendered(t, v)
+			if !strings.Contains(v.text(), "┄") {
+				t.Errorf("dashed self message became solid: %s", v.text())
+			}
+		})
 	}
 }
