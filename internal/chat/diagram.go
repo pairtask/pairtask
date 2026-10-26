@@ -33,9 +33,6 @@ type diagram struct {
 	source string
 }
 
-// isFence is the formatter's fence toggle.
-func isFence(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "```") }
-
 // fenceLang is the lowercased first word of a fence's info string.
 func fenceLang(line string) string {
 	fields := strings.Fields(strings.TrimLeft(strings.TrimSpace(line), "`"))
@@ -65,10 +62,6 @@ func findDiagrams(lines []string) []diagram {
 	return out
 }
 
-func bodyLines(text string) []string {
-	return strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-}
-
 // diagramRef names diagram k (1-based; 0 for "the only one") of message seq.
 type diagramRef struct {
 	seq uint64
@@ -89,8 +82,7 @@ func (r diagramRef) command(n int) string {
 
 // diagramLabels maps each diagram's opening fence line to the row shown in
 // its place.
-func (b *lineBuilder) diagramLabels(lines []string) map[int]string {
-	ds := findDiagrams(lines)
+func (b *lineBuilder) diagramLabels(ds []diagram) map[int]string {
 	labels := make(map[int]string, len(ds))
 	for i, d := range ds {
 		labels[d.open] = "◇ " + d.lang + diagramRef{seq: b.seq, k: i + 1}.command(len(ds))
@@ -212,8 +204,14 @@ func (x diagramExport) save() (string, error) {
 		return "", err
 	}
 	defer dir.close()
-	name := x.name()
-	return filepath.Join(x.dir, name), dir.writeOnce(name, []byte(x.d.source+"\n"))
+	file := diagramFile{name: x.name(), content: []byte(x.d.source + "\n")}
+	return filepath.Join(x.dir, file.name), dir.writeOnce(file)
+}
+
+// diagramFile is a file name inside the diagrams directory and its content.
+type diagramFile struct {
+	name    string
+	content []byte
 }
 
 // dirFD is an open directory; everything below it is reached relative to it.
@@ -260,18 +258,20 @@ func (d dirFD) child(name string) (dirFD, error) {
 	return dirFD(fd), nil
 }
 
-// writeOnce creates name exclusively; when it exists, it must be a regular
-// file holding exactly content, and it is left untouched either way.
-func (d dirFD) writeOnce(name string, content []byte) error {
+// writeOnce creates the file exclusively; when it exists, it must be a
+// regular file holding exactly its content, and it is left untouched either
+// way.
+func (d dirFD) writeOnce(file diagramFile) error {
+	name := file.name
 	fd, err := unix.Openat(int(d), name, unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if errors.Is(err, unix.EEXIST) {
-		return d.sameFile(name, content)
+		return d.sameFile(file)
 	}
 	if err != nil {
 		return fmt.Errorf("create %s: %w", name, err)
 	}
 	f := os.NewFile(uintptr(fd), name)
-	_, err = f.Write(content)
+	_, err = f.Write(file.content)
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}
@@ -283,8 +283,9 @@ func (d dirFD) writeOnce(name string, content []byte) error {
 }
 
 // sameFile compares an existing file without following a link or blocking
-// on a FIFO, reading at most one byte past content.
-func (d dirFD) sameFile(name string, content []byte) error {
+// on a FIFO, reading at most one byte past the expected content.
+func (d dirFD) sameFile(file diagramFile) error {
+	name, content := file.name, file.content
 	fd, err := unix.Openat(int(d), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("unsafe file: %s exists and can't be read safely", name)
