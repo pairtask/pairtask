@@ -52,6 +52,8 @@ def _entry(role, entry):
     for flag, _ in FAMILIES:
         if not isinstance(entry.get(flag), bool):
             raise ValueError(f"{role} has an ID map entry without a boolean {flag}: {entry!r}")
+    if not (entry["Isuid"] or entry["Isgid"]):
+        raise ValueError(f"{role} has an ID map entry for neither UIDs nor GIDs: {entry!r}")
     for field in INTEGER_FIELDS:
         value = entry.get(field)
         # bool is an int in Python; a flag in a number field is still malformed.

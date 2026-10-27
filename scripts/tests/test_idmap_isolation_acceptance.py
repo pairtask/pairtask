@@ -128,6 +128,12 @@ class IDMapIsolationAcceptanceTests(unittest.TestCase):
                 replace_map(instances, "secured", [interval(200000, uid=uid, gid=gid)])
                 self.assert_refused(instances)
 
+    def test_entry_without_either_id_family_is_not_silently_ignored(self):
+        instances = topology()
+        replace_map(instances, "secured", [
+            interval(200000), interval(100050, uid=False, gid=False)])
+        self.assert_refused(instances)
+
     def test_privileged_or_nonisolated_instance_fails(self):
         for key, value in (("security.privileged", "true"), ("security.idmap.isolated", "false")):
             with self.subTest(key=key):
