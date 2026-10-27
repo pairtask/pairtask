@@ -80,7 +80,8 @@ type PairingStore interface {
 
 // ValidOutcome reports a missing required field, so stores refuse it alike.
 func ValidOutcome(o PairingOutcome) error {
-	if o.OperationID == "" || o.InvitationID == "" || o.IdentityKey == "" || len(o.TranscriptID) == 0 || o.At.IsZero() {
+	present := []bool{o.OperationID != "", o.InvitationID != "", o.IdentityKey != "", len(o.TranscriptID) > 0, !o.At.IsZero()}
+	if slices.Contains(present, false) {
 		return errors.New("peer: pairing outcome is missing a required field")
 	}
 	return nil

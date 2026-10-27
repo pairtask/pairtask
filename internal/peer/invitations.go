@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 )
@@ -44,7 +45,13 @@ func DefaultInvitationPolicy() InvitationPolicy {
 }
 
 func (p InvitationPolicy) validate() error {
-	if p.Digits < 4 || p.Digits > 18 || p.MaxAttempts < 1 || p.TTL <= 0 || p.AttemptTimeout <= 0 {
+	valid := []bool{
+		p.Digits >= 4, p.Digits <= 18, // fits a uint64 draw
+		p.MaxAttempts >= 1,
+		p.TTL > 0,
+		p.AttemptTimeout > 0,
+	}
+	if slices.Contains(valid, false) {
 		return fmt.Errorf("peer: invalid invitation policy %+v", p)
 	}
 	return nil
@@ -93,7 +100,7 @@ func NewInvitations(policy InvitationPolicy, clock func() time.Time, random io.R
 	if err := policy.validate(); err != nil {
 		return nil, err
 	}
-	if clock == nil || random == nil || store == nil {
+	if missing := slices.Contains([]bool{clock != nil, random != nil, store != nil}, false); missing {
 		return nil, errors.New("peer: invitations need a clock, randomness and a pairing store")
 	}
 	return &Invitations{policy: policy, clock: clock, random: random, store: store}, nil
