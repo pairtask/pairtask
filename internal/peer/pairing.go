@@ -8,16 +8,21 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Short-code pairing state (#178). A confirmed pairing becomes a pairing
 // request that the operator explicitly accepts or rejects; until then there is
 // no contact.
 //
-// IdentityKey is the peer's verified stable identity-key fingerprint. It is
-// provisional: how that key is generated and mapped to certificates is a later
-// slice, and it is deliberately not the renewable TLS certificate fingerprint
-// the probe uses. Names are display metadata only and never identify a peer.
+// IdentityKey is the peer's pairtask SPKI fingerprint (see WorkspaceIdentity),
+// never a certificate hash, so renewing a certificate keeps the identity.
+// Names are display metadata only and never identify a peer.
+//
+// Storage is bounded and nothing is evicted: a full store refuses new
+// records visibly, while an exact retry of a committed outcome still
+// succeeds. Rows from before these bounds are kept as they are.
 
 // PairingState is where a pairing request stands.
 type PairingState string
@@ -36,6 +41,28 @@ var (
 	ErrNotPending = errors.New("peer: pairing request is not pending")
 	// ErrNoPairingRequest means no request exists for that identity.
 	ErrNoPairingRequest = errors.New("peer: no pairing request for that identity")
+	// ErrInvalidPairingName: a name longer than MaxPairingNameBytes, not
+	// UTF-8, or with control or non-printing characters.
+	ErrInvalidPairingName = errors.New("peer: invalid pairing name")
+	// ErrInvalidPairingOutcome: an operation, invitation or transcript ID
+	// beyond its byte bound.
+	ErrInvalidPairingOutcome = errors.New("peer: pairing outcome field too long")
+	// ErrOutcomeCapacity, ErrIdentityCapacity and ErrTooManyPending refuse a
+	// new record to a full store.
+	ErrOutcomeCapacity  = errors.New("peer: pairing outcome capacity reached")
+	ErrIdentityCapacity = errors.New("peer: pairing identity capacity reached")
+	ErrTooManyPending   = errors.New("peer: too many pairing requests awaiting a decision")
+)
+
+// Storage bounds. Pending requests fit one listing, so every request awaiting
+// a decision can be shown.
+const (
+	MaxPendingPairingRequests = 64
+	MaxPairingIdentities      = 1024
+	MaxPairingOutcomes        = 4096
+	MaxPairingNameBytes       = 64
+	MaxPairingIDBytes         = 128
+	MaxTranscriptIDBytes      = 64 // SHA-512 at most
 )
 
 // PairingOutcome is one successful pairing operation, kept durably so a repeat
@@ -83,6 +110,52 @@ func ValidOutcome(o PairingOutcome) error {
 	present := []bool{o.OperationID != "", o.InvitationID != "", o.IdentityKey != "", len(o.TranscriptID) > 0, !o.At.IsZero()}
 	if slices.Contains(present, false) {
 		return errors.New("peer: pairing outcome is missing a required field")
+	}
+	return nil
+}
+
+// ValidNewOutcome checks what a new outcome may hold. It runs after the
+// exact-retry and conflict checks, so committed rows are never re-judged.
+func ValidNewOutcome(o PairingOutcome) error {
+	if err := ValidIdentityKey(o.IdentityKey); err != nil {
+		return err
+	}
+	if !validPairingName(o.Name) {
+		return ErrInvalidPairingName
+	}
+	sizes := []bool{len(o.OperationID) <= MaxPairingIDBytes, len(o.InvitationID) <= MaxPairingIDBytes, len(o.TranscriptID) <= MaxTranscriptIDBytes}
+	if slices.Contains(sizes, false) {
+		return ErrInvalidPairingOutcome
+	}
+	return nil
+}
+
+func validPairingName(name string) bool {
+	if len(name) > MaxPairingNameBytes || !utf8.ValidString(name) {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool { return !unicode.IsPrint(r) })
+}
+
+// PairingCounts is what admitting a new outcome depends on, read atomically
+// with the commit.
+type PairingCounts struct {
+	Outcomes, Identities, Pending int
+	KnownIdentity                 bool
+}
+
+// AdmitOutcome refuses a new outcome to a full store. A known identity adds
+// no request, so only the outcome bound applies to it.
+func AdmitOutcome(c PairingCounts) error {
+	switch {
+	case c.Outcomes >= MaxPairingOutcomes:
+		return ErrOutcomeCapacity
+	case c.KnownIdentity:
+		return nil
+	case c.Identities >= MaxPairingIdentities:
+		return ErrIdentityCapacity
+	case c.Pending >= MaxPendingPairingRequests:
+		return ErrTooManyPending
 	}
 	return nil
 }
@@ -140,6 +213,12 @@ func (s *MemPairingStore) Commit(_ context.Context, o PairingOutcome) (PairingRe
 	if _, used := s.byInvitation[o.InvitationID]; used {
 		return PairingRequest{}, ErrOutcomeConflict
 	}
+	if err := ValidNewOutcome(o); err != nil {
+		return PairingRequest{}, err
+	}
+	if err := AdmitOutcome(s.counts(o.IdentityKey)); err != nil {
+		return PairingRequest{}, err
+	}
 	request, ok := s.requests[o.IdentityKey]
 	if !ok {
 		request = PairingRequest{IdentityKey: o.IdentityKey, State: PairingPending, FirstPairedAt: o.At}
@@ -149,6 +228,17 @@ func (s *MemPairingStore) Commit(_ context.Context, o PairingOutcome) (PairingRe
 	s.outcomes[o.OperationID] = cloneOutcome(o)
 	s.byInvitation[o.InvitationID] = o.OperationID
 	return request, nil
+}
+
+func (s *MemPairingStore) counts(identityKey string) PairingCounts {
+	_, known := s.requests[identityKey]
+	c := PairingCounts{Outcomes: len(s.outcomes), Identities: len(s.requests), KnownIdentity: known}
+	for _, r := range s.requests {
+		if r.State == PairingPending {
+			c.Pending++
+		}
+	}
+	return c
 }
 
 func (s *MemPairingStore) Outcome(_ context.Context, operationID string) (PairingOutcome, bool, error) {

@@ -41,6 +41,10 @@ const (
 
 // PairingSnapshot is the open invitation, if any, and the pairing requests.
 type PairingSnapshot struct {
+	// SelfIdentity is this workspace's pairtask SPKI fingerprint, for the
+	// operators to compare by phone; IdentityError says why it is unavailable.
+	SelfIdentity      string               `json:"self_identity,omitempty"`
+	IdentityError     string               `json:"identity_error,omitempty"`
 	Invitation        *InvitationView      `json:"invitation,omitempty"`
 	Requests          []PairingRequestView `json:"requests"`
 	RequestsTotal     int                  `json:"requests_total"`

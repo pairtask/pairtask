@@ -124,6 +124,7 @@ func writePairing(w io.Writer, s *protocol.PairingSnapshot) {
 	if s == nil {
 		return
 	}
+	writeSelfIdentity(w, s)
 	writeInvitation(w, s.Invitation)
 	if len(s.Requests) == 0 && !s.RequestsTruncated {
 		fmt.Fprintln(w, "No pairing requests.")
@@ -133,6 +134,18 @@ func writePairing(w io.Writer, s *protocol.PairingSnapshot) {
 	}
 	if s.RequestsTruncated {
 		fmt.Fprintf(w, "(showing %d of %d requests; pending ones list first, so deciding these brings the rest into view)\n", len(s.Requests), s.RequestsTotal)
+	}
+}
+
+// writeSelfIdentity prints the fingerprint for the operators to compare by
+// phone, or why it is unavailable.
+func writeSelfIdentity(w io.Writer, s *protocol.PairingSnapshot) {
+	if s.IdentityError != "" {
+		fmt.Fprintf(w, "This workspace's identity is unavailable: %q; opening a code needs it\n", s.IdentityError)
+		return
+	}
+	if s.SelfIdentity != "" {
+		fmt.Fprintf(w, "This workspace: %q\n", s.SelfIdentity)
 	}
 }
 

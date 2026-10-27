@@ -100,6 +100,23 @@ when it matches exactly one listed request. This is a preview: nothing redeems
 a code yet, and joining another workspace and contact messaging aren't
 connected.
 
+The workspace identity is an Ed25519 key in `<DB_PATH>.peer/identity.key`
+(0600, in a 0700 directory), created on the first pairing use. Its
+fingerprint, `sha256:` and the 64 lowercase hex digits of the SHA-256 digest
+of the key's SubjectPublicKeyInfo DER, shows in `status` and `/pair`, so two operators can compare fingerprints by
+phone. Certificates made from the key can be renewed without changing it. The
+database records the fingerprint, so a missing, unreadable or different key is
+reported (`identity_missing`, `identity_corrupt`, `identity_unsafe`,
+`identity_mismatch`) and never silently replaced: restore the key from a
+backup. While it is unavailable only `open` is refused. Storage is bounded: 64
+requests awaiting a decision, 1024 identities and 4096 pairing records. A full
+store refuses new ones and never evicts.
+
+When redemption arrives: the colleague entering the code records their
+consent, and the inviting operator accepts once. Neither side reports the
+other as confirmed before a durable acknowledgement, a rejected request is
+never revived, and nothing is accepted automatically.
+
 **Pi** (#155): `pairtask start pi --id pi-1 [--room R] [--max-tokens N]`
 starts Pi with the pairtask extension, capping each request's output at
 32768 tokens unless `--max-tokens` says otherwise (0: no cap; #170); `pairtask join --id ID -- COMMAND` passes the adapter

@@ -199,3 +199,23 @@ func TestPairingCLIAcceptanceEmptyDecisionKeyIsUsageError(t *testing.T) {
 		}
 	}
 }
+
+func TestPairingIdentityCLIAcceptanceShowsFingerprintOrRecoveryError(t *testing.T) {
+	fingerprint := "sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct{ field, value string }{{"self_identity", fingerprint}, {"identity_error", "identity_missing"}} {
+		t.Run(tc.field, func(t *testing.T) {
+			response := pairingCLIResponse("", nil, 0)
+			response["pairing_result"].(map[string]any)[tc.field] = tc.value
+			path, _ := roomCLISocket(t, response)
+			var out, stderr bytes.Buffer
+			exit := run(context.Background(), []string{"operator", "pair", "status", "--socket", path}, &out, &stderr)
+			assertStatusEqual(t, "status remains available", exit, 0)
+			visible := strings.ToLower(out.String() + stderr.String())
+			if tc.field == "self_identity" {
+				assertStatusEqual(t, "fingerprint visible", strings.Contains(visible, fingerprint), true)
+			} else {
+				assertStatusEqual(t, "identity recovery state visible", strings.Contains(visible, "identity") && strings.Contains(visible, "missing"), true)
+			}
+		})
+	}
+}

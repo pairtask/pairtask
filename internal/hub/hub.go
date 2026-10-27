@@ -56,7 +56,8 @@ type Hub struct {
 	revision uint64
 	gen      uint64
 	statuses statusState
-	pairing  *peer.Invitations // operator pairing (#178); memory only, created on first use
+	pairing  *peer.Invitations       // operator pairing (#178); memory only, created on first use
+	identity *peer.WorkspaceIdentity // loaded on first pairing use; never replaced
 }
 
 // New creates a Hub. startSeq is the last persisted sequence number

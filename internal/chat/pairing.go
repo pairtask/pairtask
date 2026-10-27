@@ -145,9 +145,23 @@ func (m *Model) dropPairingCode() {
 func (m *Model) pairingRows() []string {
 	rows := []string{titleStyle.Render("Pairing") + mutedStyle.Render("  (Esc closes)"),
 		mutedStyle.Render("  " + protocol.PairingPreview)}
+	rows = append(rows, m.identityRow())
 	rows = append(rows, m.invitationRows()...)
 	rows = append(rows, m.pairingRequestRows()...)
 	return append(rows, mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY"))
+}
+
+// identityRow is this workspace's fingerprint, for the operators to compare
+// by phone, or why it is unavailable.
+func (m *Model) identityRow() string {
+	s := m.pairing.snapshot
+	switch {
+	case s == nil:
+		return "  this workspace: unknown"
+	case s.IdentityError != "":
+		return "  this workspace's identity is unavailable: " + safe(s.IdentityError) + "; opening a code needs it"
+	}
+	return "  this workspace: " + safe(s.SelfIdentity)
 }
 
 func (m *Model) invitationRows() []string {

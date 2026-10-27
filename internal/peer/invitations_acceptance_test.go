@@ -73,7 +73,7 @@ func beginInvitation(t *testing.T, f invitationFixture, id string) *peer.Attempt
 	return attempt
 }
 func pairedPeer() peer.PairedPeer {
-	return peer.PairedPeer{IdentityKey: strings.Repeat("a", 64), Name: "Alice", TranscriptID: bytes.Repeat([]byte{9}, 64)}
+	return peer.PairedPeer{IdentityKey: "sha256:" + strings.Repeat("a", 64), Name: "Alice", TranscriptID: bytes.Repeat([]byte{9}, 64)}
 }
 func invitationStatus(t *testing.T, f invitationFixture) peer.InvitationStatus {
 	t.Helper()
