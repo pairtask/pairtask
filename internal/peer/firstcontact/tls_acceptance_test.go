@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -110,12 +111,17 @@ func TestFirstContactAcceptanceHandshakeCancellationClosesRaw(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("handshake ignored cancellation")
 			}
-			_, err := b.Read(make([]byte, 1))
-			mustFail(t, err)
-			if e, ok := err.(interface{ Timeout() bool }); ok && e.Timeout() {
-				t.Fatal("failed handshake left raw connection open")
-			}
+			assertRawClosed(t, b)
 		})
+	}
+}
+
+func assertRawClosed(t *testing.T, raw net.Conn) {
+	t.Helper()
+	_, err := raw.Read(make([]byte, 1))
+	mustFail(t, err)
+	if e, ok := err.(interface{ Timeout() bool }); ok && e.Timeout() {
+		t.Fatal("failed handshake left raw connection open")
 	}
 }
 
