@@ -68,6 +68,22 @@ type outcome struct {
 	joinErr, inviteErr error
 }
 
+// bothConfirmed is a pairing both sides completed without error.
+func (o outcome) bothConfirmed() bool { return o.joinErr == nil && o.inviteErr == nil }
+
+// joinerConfirmed reports whether the joiner ended up believing it paired.
+func (o outcome) joinerConfirmed() bool { return o.joinErr == nil || o.join.InviterConfirmed }
+
+// neitherConfirmed is a pairing that both sides rejected.
+func (o outcome) neitherConfirmed() bool {
+	return o.joinErr != nil && o.inviteErr != nil && !o.join.InviterConfirmed
+}
+
+// sameBinding reports whether two ends computed the same binding.
+func sameBinding(a, b Binding) bool {
+	return string(a.EKM) == string(b.EKM) && a.InviterFP == b.InviterFP && a.JoinerFP == b.JoinerFP
+}
+
 func run(t *testing.T, j, i *Endpoint, jb, ib Binding, joinCode, inviteCode string) outcome {
 	t.Helper()
 	var o outcome
@@ -91,14 +107,17 @@ func TestCorrectCodeConfirmsBothSides(t *testing.T) {
 	jc, ic := selfSigned(t, "joiner"), selfSigned(t, "inviter")
 	j, i := connect(t, jc, ic)
 	o := run(t, j, i, binding(t, j, "inv-1"), binding(t, i, "inv-1"), "482913", "482913")
-	if o.joinErr != nil || o.inviteErr != nil {
+	if !o.bothConfirmed() {
 		t.Fatalf("correct code failed: joiner=%v inviter=%v", o.joinErr, o.inviteErr)
 	}
 	if !o.join.InviterConfirmed {
 		t.Fatal("joiner didn't see the inviter's confirmation")
 	}
-	if o.join.Peer != binding(t, i, "inv-1").InviterFP || o.invite.Peer != binding(t, j, "inv-1").JoinerFP {
-		t.Fatal("a side reports the wrong peer")
+	if o.join.Peer != binding(t, i, "inv-1").InviterFP {
+		t.Fatal("the joiner reports the wrong peer")
+	}
+	if o.invite.Peer != binding(t, j, "inv-1").JoinerFP {
+		t.Fatal("the inviter reports the wrong peer")
 	}
 	if string(o.join.TranscriptID) != string(o.invite.TranscriptID) {
 		t.Fatal("the two sides disagree on the transcript")
@@ -118,7 +137,7 @@ func TestMismatchesConfirmNothing(t *testing.T) {
 			if !errors.Is(o.inviteErr, ErrUnconfirmed) {
 				t.Fatalf("inviter: got %v, want ErrUnconfirmed", o.inviteErr)
 			}
-			if o.joinErr == nil || o.join.InviterConfirmed {
+			if o.joinerConfirmed() {
 				t.Fatalf("joiner confirmed a mismatched pairing: %+v", o.join)
 			}
 		})
@@ -136,7 +155,7 @@ func TestRelayingManInTheMiddleConfirmsNothing(t *testing.T) {
 	go relay(mToJoiner.Conn, mToInviter.Conn)
 	go relay(mToInviter.Conn, mToJoiner.Conn)
 	o := run(t, j, i, binding(t, j, "inv-1"), binding(t, i, "inv-1"), "482913", "482913")
-	if o.joinErr == nil || o.inviteErr == nil || o.join.InviterConfirmed {
+	if !o.neitherConfirmed() {
 		t.Fatalf("relayed pairing confirmed: joiner=%v inviter=%v", o.joinErr, o.inviteErr)
 	}
 }
@@ -153,7 +172,7 @@ func TestBindingIsPerConnection(t *testing.T) {
 	j1, i1 := connect(t, jc, ic)
 	j2, _ := connect(t, jc, ic)
 	a, b, c := binding(t, j1, "inv-1"), binding(t, i1, "inv-1"), binding(t, j2, "inv-1")
-	if string(a.EKM) != string(b.EKM) || a.InviterFP != b.InviterFP || a.JoinerFP != b.JoinerFP {
+	if !sameBinding(a, b) {
 		t.Fatal("the two ends of one connection disagree")
 	}
 	if string(a.EKM) == string(c.EKM) {

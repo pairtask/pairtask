@@ -29,44 +29,51 @@ func candidateStart(t *testing.T, a, b cpace.Input) (*cpace.Initiator, *cpace.Re
 	return i, r, reply
 }
 
+func candidateFinishInitiator(t *testing.T, i *cpace.Initiator, reply []byte) ([]byte, *cpace.Session) {
+	t.Helper()
+	final, session, err := i.Finish(reply)
+	acceptanceRequireNoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	return final, session
+}
+
+func candidateFinishResponder(t *testing.T, r *cpace.Responder, final []byte) *cpace.Session {
+	t.Helper()
+	session, err := r.Finish(final)
+	acceptanceRequireNoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+func candidateExport(t *testing.T, session *cpace.Session, purpose string) []byte {
+	t.Helper()
+	key, err := session.Export([]byte(purpose), nil, 32)
+	acceptanceRequireNoError(t, err)
+	return key
+}
+
+func candidateRequireRejected(t *testing.T, session *cpace.Session, err error) {
+	t.Helper()
+	acceptanceRequireError(t, err)
+	acceptanceRequireEqual(t, "rejected exchange session", session, nil)
+}
+
 func TestCandidateAcceptanceConfirmedKeysAndIdentity(t *testing.T) {
 	a, b := candidateInputs()
 	i, r, reply := candidateStart(t, a, b)
-	last, sa, err := i.Finish(reply)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sa.Close()
-	sb, err := r.Finish(last)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sb.Close()
-	ka, err := sa.Export([]byte("test-purpose"), nil, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kb, err := sb.Export([]byte("test-purpose"), nil, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(ka, kb) || !bytes.Equal(sa.TranscriptID(), sb.TranscriptID()) {
-		t.Fatal("confirmed peers disagree")
-	}
-	if !bytes.Equal(sa.PeerID(), b.SelfID) || !bytes.Equal(sb.PeerID(), a.SelfID) {
-		t.Fatal("peer identity changed")
-	}
-	other, err := sa.Export([]byte("other-purpose"), nil, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(ka, other) {
-		t.Fatal("export purpose not separated")
-	}
+	final, sa := candidateFinishInitiator(t, i, reply)
+	sb := candidateFinishResponder(t, r, final)
+	ka := candidateExport(t, sa, "test-purpose")
+	kb := candidateExport(t, sb, "test-purpose")
+	acceptanceRequireBytes(t, "confirmed keys", ka, kb)
+	acceptanceRequireBytes(t, "transcript IDs", sa.TranscriptID(), sb.TranscriptID())
+	acceptanceRequireBytes(t, "initiator peer identity", sa.PeerID(), b.SelfID)
+	acceptanceRequireBytes(t, "responder peer identity", sb.PeerID(), a.SelfID)
+	other := candidateExport(t, sa, "other-purpose")
+	acceptanceRequireEqual(t, "export purposes collide", bytes.Equal(ka, other), false)
 	_ = sa.Close()
-	if _, err := sa.Export([]byte("test-purpose"), nil, 32); err == nil {
-		t.Fatal("closed session exports secrets")
-	}
+	_, err := sa.Export([]byte("test-purpose"), nil, 32)
+	acceptanceRequireError(t, err)
 }
 
 func TestCandidateAcceptanceMismatchedInputsFail(t *testing.T) {
@@ -96,12 +103,10 @@ func TestCandidateAcceptanceMismatchedInputsFail(t *testing.T) {
 			}
 			defer r.Close()
 			final, session, err := i.Finish(reply)
-			if err == nil || session != nil || len(final) != 0 {
-				t.Fatal("mismatched inputs yielded authenticated output")
-			}
-			if _, session, err := i.Finish(reply); err == nil || session != nil {
-				t.Fatal("failed state was reusable")
-			}
+			candidateRequireRejected(t, session, err)
+			acceptanceRequireEqual(t, "failed finish output length", len(final), 0)
+			_, session, err = i.Finish(reply)
+			candidateRequireRejected(t, session, err)
 		})
 	}
 }
@@ -115,9 +120,8 @@ func TestCandidateAcceptanceReplayAndConcurrentUse(t *testing.T) {
 	}
 	defer sa.Close()
 	_, r2, _ := candidateStart(t, a, b)
-	if s, err := r2.Finish(final); err == nil || s != nil {
-		t.Fatal("confirmation replay accepted by a fresh exchange")
-	}
+	replaySession, replayErr := r2.Finish(final)
+	candidateRequireRejected(t, replaySession, replayErr)
 	var wg sync.WaitGroup
 	successes := make(chan *cpace.Session, 8)
 	copyR := *r
@@ -125,10 +129,7 @@ func TestCandidateAcceptanceReplayAndConcurrentUse(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			target := r
-			if n%2 == 1 {
-				target = &copyR
-			}
+			target := []*cpace.Responder{r, &copyR}[n%2]
 			s, err := target.Finish(final)
 			if err == nil {
 				successes <- s
@@ -147,8 +148,40 @@ func TestCandidateAcceptanceReplayAndConcurrentUse(t *testing.T) {
 	}
 }
 
-func TestCandidateAcceptanceMalformedMessages(t *testing.T) {
+func candidateMalformedFrame(msg []byte, kind string) []byte {
+	switch kind {
+	case "empty":
+		return nil
+	case "truncated":
+		return msg[:len(msg)-1]
+	case "trailing":
+		return append(bytes.Clone(msg), 0)
+	case "corrupt":
+		changed := bytes.Clone(msg)
+		changed[len(changed)-1] ^= 1
+		return changed
+	default:
+		panic("unknown malformed frame case: " + kind)
+	}
+}
+
+func candidateMalformedExchange(t *testing.T, phase, kind string) {
+	t.Helper()
 	a, b := candidateInputs()
+	i, r, reply := candidateStart(t, a, b)
+	if phase == "reply" {
+		_, session, err := i.Finish(candidateMalformedFrame(reply, kind))
+		candidateRequireRejected(t, session, err)
+		return
+	}
+	final, _ := candidateFinishInitiator(t, i, reply)
+	session, err := r.Finish(candidateMalformedFrame(final, kind))
+	candidateRequireRejected(t, session, err)
+}
+
+func candidateMalformedInitialFrames(t *testing.T) {
+	t.Helper()
+	_, b := candidateInputs()
 	bad := [][]byte{nil, {0}, {0xc1, 1, 1}, bytes.Repeat([]byte{0}, 131073), {0xc1, 1, 1, 0xff, 0xff, 0xff, 0xff}}
 	for n, msg := range bad {
 		r, _, err := cpace.Respond(b, msg)
@@ -159,42 +192,14 @@ func TestCandidateAcceptanceMalformedMessages(t *testing.T) {
 			t.Fatalf("malformed initial frame %d accepted", n)
 		}
 	}
+}
+
+func TestCandidateAcceptanceMalformedMessages(t *testing.T) {
+	candidateMalformedInitialFrames(t)
 	for _, phase := range []string{"reply", "confirm"} {
 		t.Run(phase, func(t *testing.T) {
 			for _, kind := range []string{"empty", "truncated", "trailing", "corrupt"} {
-				t.Run(kind, func(t *testing.T) {
-					i, r, reply := candidateStart(t, a, b)
-					msg := reply
-					if phase == "confirm" {
-						last, s, err := i.Finish(reply)
-						if err != nil {
-							t.Fatal(err)
-						}
-						defer s.Close()
-						msg = last
-					}
-					switch kind {
-					case "empty":
-						msg = nil
-					case "truncated":
-						msg = msg[:len(msg)-1]
-					case "trailing":
-						msg = append(bytes.Clone(msg), 0)
-					case "corrupt":
-						msg = bytes.Clone(msg)
-						msg[len(msg)-1] ^= 1
-					}
-					var s *cpace.Session
-					var err error
-					if phase == "reply" {
-						_, s, err = i.Finish(msg)
-					} else {
-						s, err = r.Finish(msg)
-					}
-					if err == nil || s != nil {
-						t.Fatal("malformed message produced a session")
-					}
-				})
+				t.Run(kind, func(t *testing.T) { candidateMalformedExchange(t, phase, kind) })
 			}
 		})
 	}

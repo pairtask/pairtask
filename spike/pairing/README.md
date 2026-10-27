@@ -8,7 +8,7 @@ The tests ran for the first time on 2026-10-27, after the operator allowed execu
 
 ## What it does
 
-- **Library:** [`github.com/the-sarge/cpace`](https://github.com/the-sarge/cpace) **v0.1.3**, commit `b4174c6bf4bae78f4081c3d6d6baebff5f1cbbf1`. It implements CPace, `draft-irtf-cfrg-cpace-21`, on ristretto255 with explicit mutual key confirmation. Its README says it has had **no independent cryptographic review and is not production-ready**. Its security write-ups are project-side self-assessments. It needs Go 1.26, hence this nested module; the repository root stays on 1.25.
+- **Library:** [`github.com/the-sarge/cpace`](https://github.com/the-sarge/cpace) **v0.1.3**, commit `b4174c6bf4bae78f4081c3d6d6baebff5f1cbbf1`. It implements CPace, `draft-irtf-cfrg-cpace-21`, on ristretto255 with explicit mutual key confirmation. Its README says it has had **no independent cryptographic review and is not production-ready**. Its security write-ups are project-side self-assessments. It needs Go 1.26, which the repository root also uses since #188. The spike stays a nested module to keep the evaluation's dependency out of the application.
 - **First-contact TLS 1.3** (`Client`/`Server` → `Endpoint`): at first contact, neither side can trust the other's certificate yet. The endpoint configures TLS itself, without session tickets, so every pairing connection is fresh and never resumed. It records the leaf it actually presented. It accepts exactly one parsable leaf from the peer, and `Binding` refuses before the handshake has completed.
 - **Binding** (`Endpoint.Binding`): the CPace exchange is bound to that exact connection. Each side builds its inputs from its own view:
 
@@ -57,7 +57,6 @@ cd spike/pairing && GOTOOLCHAIN=go1.26.10 go test -race -v ./...
 
 ## Before anything here could be adopted
 
-- Run the tests with `-race` on a host with cgo, and in CI on both architectures. Separately, compare core draft-vector conformance with `mendsec/cpace` (836a13c). The transport tests aren't cross-library, because the two packages frame their messages differently.
+- **Done in CI** (job `pairing-spike`, amd64 and arm64): `go vet`, `go test -race`, and the pinned upstream draft-21 core vectors of both this candidate and `mendsec/cpace` (836a13c). The transport tests aren't cross-library, because the two packages frame their messages differently. These are ongoing checks, not proof of security.
 - An independent cryptographic review of the library, or of whichever one we choose. CPace is still an IRTF draft.
 - An invitation state layer for criteria 1, 3, 5 and 6, with persistence.
-- Move the repository to Go 1.26 or later, as its own change.

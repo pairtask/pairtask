@@ -20,6 +20,40 @@ import (
 	p "github.com/pairtask/pairtask/spike/pairing"
 )
 
+func acceptanceRequireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func acceptanceRequireError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
+func acceptanceRequireEqual[T comparable](t *testing.T, name string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s: got %v, want %v", name, got, want)
+	}
+}
+
+func acceptanceRequireBytes(t *testing.T, name string, got, want []byte) {
+	t.Helper()
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s: got %x, want %x", name, got, want)
+	}
+}
+
+func acceptanceRequireUnconfirmed(t *testing.T, result acceptanceResult) {
+	t.Helper()
+	acceptanceRequireError(t, result.err)
+	acceptanceRequireEqual(t, "unconfirmed transcript length", len(result.result.TranscriptID), 0)
+}
+
 func acceptanceCertificate(t *testing.T) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -91,23 +125,21 @@ func acceptanceExchange(t *testing.T, link acceptanceLink, codeA, codeB string) 
 func TestTransportAcceptanceRealTLSBindsBothCertificates(t *testing.T) {
 	client, server := acceptanceCertificate(t), acceptanceCertificate(t)
 	link := acceptanceTLS(t, client, server)
-	if !bytes.Equal(link.a.EKM, link.b.EKM) || len(link.a.EKM) != 32 {
-		t.Fatal("TLS endpoints disagree on exporter")
-	}
-	if link.a.JoinerFP != sha256.Sum256(client.Certificate[0]) || link.a.InviterFP != sha256.Sum256(server.Certificate[0]) || link.a.JoinerFP != link.b.JoinerFP || link.a.InviterFP != link.b.InviterFP {
-		t.Fatal("binding does not name actually presented certificates")
-	}
+	acceptanceRequireBytes(t, "exporters", link.a.EKM, link.b.EKM)
+	acceptanceRequireEqual(t, "exporter length", len(link.a.EKM), 32)
+	acceptanceRequireEqual(t, "presented client certificate", link.a.JoinerFP, sha256.Sum256(client.Certificate[0]))
+	acceptanceRequireEqual(t, "presented server certificate", link.a.InviterFP, sha256.Sum256(server.Certificate[0]))
+	acceptanceRequireEqual(t, "joiner fingerprints", link.a.JoinerFP, link.b.JoinerFP)
+	acceptanceRequireEqual(t, "inviter fingerprints", link.a.InviterFP, link.b.InviterFP)
 	a, b := acceptanceExchange(t, link, "047291", "047291")
-	if a.err != nil || b.err != nil {
-		t.Fatalf("pairing failed: join=%v invite=%v", a.err, b.err)
-	}
-	if !a.result.InviterConfirmed || a.result.Peer != link.a.InviterFP || b.result.Peer != link.b.JoinerFP || !bytes.Equal(a.result.TranscriptID, b.result.TranscriptID) {
-		t.Fatal("confirmed pairing result disagrees")
-	}
+	acceptanceRequireNoError(t, a.err)
+	acceptanceRequireNoError(t, b.err)
+	acceptanceRequireEqual(t, "inviter confirmed", a.result.InviterConfirmed, true)
+	acceptanceRequireEqual(t, "joiner sees inviter", a.result.Peer, link.a.InviterFP)
+	acceptanceRequireEqual(t, "inviter sees joiner", b.result.Peer, link.b.JoinerFP)
+	acceptanceRequireBytes(t, "confirmed transcripts", a.result.TranscriptID, b.result.TranscriptID)
 	another := acceptanceTLS(t, client, server)
-	if bytes.Equal(link.a.EKM, another.a.EKM) {
-		t.Fatal("new TLS connection reused exporter")
-	}
+	acceptanceRequireEqual(t, "new connection reused exporter", bytes.Equal(link.a.EKM, another.a.EKM), false)
 }
 
 func TestTransportAcceptanceContextChangesFailClosed(t *testing.T) {
@@ -129,11 +161,23 @@ func TestTransportAcceptanceContextChangesFailClosed(t *testing.T) {
 			link := acceptanceTLS(t, client, server)
 			tc.mutate(&link)
 			a, b := acceptanceExchange(t, link, "047291", tc.code)
-			if a.err == nil || b.err == nil || len(a.result.TranscriptID) != 0 || len(b.result.TranscriptID) != 0 {
-				t.Fatalf("tampered connection confirmed: %v / %v", a.err, b.err)
-			}
+			acceptanceRequireUnconfirmed(t, a)
+			acceptanceRequireUnconfirmed(t, b)
 		})
 	}
+}
+
+func acceptanceRelayFrames(steps [][2]p.Frames) error {
+	for _, step := range steps {
+		frame, err := step[0].Recv()
+		if err != nil {
+			return err
+		}
+		if err := step[1].Send(frame); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func TestTransportAcceptanceTwoSessionRelayMITMFails(t *testing.T) {
@@ -146,18 +190,7 @@ func TestTransportAcceptanceTwoSessionRelayMITMFails(t *testing.T) {
 	go func() {
 		defer left.server.Conn.NetConn().Close()
 		defer right.client.Conn.NetConn().Close()
-		for _, step := range [][2]p.Frames{{left.server.Frames(), right.client.Frames()}, {right.client.Frames(), left.server.Frames()}, {left.server.Frames(), right.client.Frames()}, {right.client.Frames(), left.server.Frames()}} {
-			frame, err := step[0].Recv()
-			if err != nil {
-				proxy <- err
-				return
-			}
-			if err := step[1].Send(frame); err != nil {
-				proxy <- err
-				return
-			}
-		}
-		proxy <- nil
+		proxy <- acceptanceRelayFrames([][2]p.Frames{{left.server.Frames(), right.client.Frames()}, {right.client.Frames(), left.server.Frames()}, {left.server.Frames(), right.client.Frames()}, {right.client.Frames(), left.server.Frames()}})
 	}()
 	done := make(chan acceptanceResult, 1)
 	go func() {
@@ -168,9 +201,8 @@ func TestTransportAcceptanceTwoSessionRelayMITMFails(t *testing.T) {
 	a, err := p.Join(left.client.Frames(), left.a, []byte("047291"))
 	_ = left.client.Conn.NetConn().Close()
 	b := <-done
-	if err == nil || b.err == nil || len(a.TranscriptID) != 0 || len(b.result.TranscriptID) != 0 {
-		t.Fatal("relay authenticated across unrelated TLS connections")
-	}
+	acceptanceRequireUnconfirmed(t, acceptanceResult{a, err})
+	acceptanceRequireUnconfirmed(t, b)
 	<-proxy
 }
 
@@ -220,12 +252,11 @@ func TestTransportAcceptanceLostFinalAckIsNotSuccess(t *testing.T) {
 	a, err := p.Join(link.client.Frames(), link.a, []byte("047291"))
 	_ = link.client.Conn.NetConn().Close()
 	b := <-done
-	if !errors.Is(err, p.ErrOutcomeUnknown) || a.InviterConfirmed || len(a.TranscriptID) == 0 {
-		t.Fatalf("joiner lost outcome distinction: %+v %v", a, err)
-	}
-	if b.err == nil || len(b.result.TranscriptID) == 0 {
-		t.Fatal("inviter lost verified identity on reply failure")
-	}
+	acceptanceRequireEqual(t, "lost ack error is outcome unknown", errors.Is(err, p.ErrOutcomeUnknown), true)
+	acceptanceRequireEqual(t, "lost ack inviter confirmed", a.InviterConfirmed, false)
+	acceptanceRequireEqual(t, "joiner retained verified transcript", len(a.TranscriptID) > 0, true)
+	acceptanceRequireError(t, b.err)
+	acceptanceRequireEqual(t, "inviter retained verified transcript", len(b.result.TranscriptID) > 0, true)
 }
 
 func TestTransportAcceptanceFrameBounds(t *testing.T) {

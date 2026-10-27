@@ -50,39 +50,96 @@ FIXTURES = {
 }
 
 
+def package_events(output, package):
+    events = [json.loads(line) for line in output.splitlines()]
+    return [event for event in events if event.get("Package") == package]
+
+
 def require_passes(output, package, required):
     """Go exits zero for a missing -run match or skipped test: reject both."""
-    passed = set()
-    package_passed = False
-    for line in output.splitlines():
-        event = json.loads(line)
-        if event.get("Package") != package:
-            continue
+    events = package_events(output, package)
+    for event in events:
         if event.get("Action") == "fail":
             raise RuntimeError(f"{package}: failed {event.get('Test', 'package')}")
-        if event.get("Action") == "pass":
-            if "Test" in event:
-                passed.add(event["Test"])
-            else:
-                package_passed = True
+    passed = {event.get("Test") for event in events if event.get("Action") == "pass"}
     missing = set(required) - passed
-    if missing or not package_passed:
-        raise RuntimeError(
-            f"{package}: required tests did not pass: {sorted(missing)}; "
-            f"package passed={package_passed}"
-        )
+    if missing:
+        raise RuntimeError(f"{package}: required tests did not pass: {sorted(missing)}")
+    if None not in passed:
+        raise RuntimeError(f"{package}: package did not pass")
 
 
-def run(go, args, cwd, env):
-    result = subprocess.run(
-        [go, *args], cwd=cwd, env=env, text=True, capture_output=True, check=False
-    )
-    if result.returncode:
-        raise RuntimeError(
-            f"go {' '.join(args)} exited {result.returncode}\n"
-            f"{result.stdout}{result.stderr}"
+class VectorChecks:
+    def __init__(self, go, race):
+        self.go = go
+        self.race = race
+        self.env = {**os.environ, "GOWORK": "off", "GOTOOLCHAIN": "local", "GOFLAGS": ""}
+
+    def run(self, args, cwd):
+        result = subprocess.run(
+            [self.go, *args], cwd=cwd, env=self.env, text=True, capture_output=True, check=False
         )
-    return result.stdout
+        if result.returncode:
+            raise RuntimeError(
+                f"go {' '.join(args)} exited {result.returncode}\n"
+                f"{result.stdout}{result.stderr}"
+            )
+        return result.stdout
+
+    def check_selection(self):
+        selected = json.loads(self.run(["list", "-m", "-json", CANDIDATE], SPIKE))
+        if selected.get("Replace"):
+            raise RuntimeError("spike candidate replaced: review and update the vector pins")
+        if selected.get("Version") != MODULES[CANDIDATE]["version"]:
+            raise RuntimeError("spike candidate changed: review and update the vector pins")
+
+    def download(self, module, temporary):
+        spec = MODULES[module]
+        download = json.loads(self.run([
+            "mod", "download", "-json", f"{module}@{spec['version']}"
+        ], temporary))
+        expected = {"Path": module, "Version": spec["version"], "Sum": spec["sum"]}
+        for key, want in expected.items():
+            if download.get(key) != want:
+                raise RuntimeError(f"{module}: downloaded {key} does not match reviewed pin")
+        if download.get("Error"):
+            raise RuntimeError(download["Error"])
+        # Cached metadata alone would not detect edited module-cache sources.
+        Path(temporary, "go.mod").write_text(
+            f"module pairtask-vector-download\n\ngo 1.26.0\n\nrequire {module} {spec['version']}\n"
+        )
+        self.run(["mod", "verify"], temporary)
+        return Path(download["Dir"])
+
+    def test_module(self, module, directory):
+        spec = MODULES[module]
+        pattern = "^(" + "|".join(re.escape(name) for name in spec["tests"]) + ")$"
+        command = ["test", "-mod=readonly", "-json", "-count=1", "-timeout=120s"]
+        if self.race:
+            command.append("-race")
+        output = self.run([*command, "-run", pattern, "."], directory)
+        require_passes(output, module, spec["tests"])
+        for name in spec["tests"]:
+            print(f"PASS {module}@{spec['version']} {name}", flush=True)
+
+    def check_all(self):
+        self.check_selection()
+        print("Vector checks: " + ("with race detector" if self.race else "WITHOUT race detector"), flush=True)
+        # Do not add mendsec to the spike or application's dependency graph.
+        with tempfile.TemporaryDirectory(prefix="pairtask-vectors-") as temporary:
+            Path(temporary, "go.mod").write_text("module pairtask-vector-download\n\ngo 1.26.0\n")
+            for module in MODULES:
+                directory = self.download(module, temporary)
+                if module == CANDIDATE:
+                    verify_fixtures(directory)
+                self.test_module(module, directory)
+
+
+def verify_fixtures(directory):
+    for name, want in FIXTURES.items():
+        data = (directory / "testdata" / name).read_bytes().rstrip(b"\r\n")
+        if hashlib.sha256(data).hexdigest() != want:
+            raise RuntimeError(f"{name}: differs from the official draft-21 fixture")
 
 
 def main():
@@ -90,44 +147,7 @@ def main():
     parser.add_argument("--go", default="go", help="Go 1.26+ executable")
     parser.add_argument("--no-race", action="store_true", help="local hosts without cgo only")
     args = parser.parse_args()
-    env = {**os.environ, "GOWORK": "off", "GOTOOLCHAIN": "local", "GOFLAGS": ""}
-
-    selected = json.loads(run(args.go, ["list", "-m", "-json", CANDIDATE], SPIKE, env))
-    if selected.get("Replace") or selected.get("Version") != MODULES[CANDIDATE]["version"]:
-        raise RuntimeError("spike candidate changed: review and update the vector pins")
-
-    print("Vector checks: " + ("WITHOUT race detector" if args.no_race else "with race detector"), flush=True)
-    # Download outside the spike module so the comparison never changes its
-    # go.mod/go.sum or adds mendsec to the application's dependency graph.
-    with tempfile.TemporaryDirectory(prefix="pairtask-vectors-") as temporary:
-        Path(temporary, "go.mod").write_text("module pairtask-vector-download\n\ngo 1.26.0\n")
-        for module, spec in MODULES.items():
-            download = json.loads(run(args.go, [
-                "mod", "download", "-json", f"{module}@{spec['version']}"
-            ], temporary, env))
-            if (download.get("Path") != module or download.get("Version") != spec["version"]
-                    or download.get("Sum") != spec["sum"] or download.get("Error")):
-                raise RuntimeError(f"{module}: downloaded module does not match reviewed pin")
-            directory = Path(download["Dir"])
-            # Also check extracted source against its checksum; cached metadata
-            # alone would not detect locally edited module-cache files.
-            Path(temporary, "go.mod").write_text(
-                f"module pairtask-vector-download\n\ngo 1.26.0\n\nrequire {module} {spec['version']}\n"
-            )
-            run(args.go, ["mod", "verify"], temporary, env)
-            if module == CANDIDATE:
-                for name, want in FIXTURES.items():
-                    data = (directory / "testdata" / name).read_bytes().rstrip(b"\r\n")
-                    if hashlib.sha256(data).hexdigest() != want:
-                        raise RuntimeError(f"{name}: differs from the official draft-21 fixture")
-            pattern = "^(" + "|".join(re.escape(name) for name in spec["tests"]) + ")$"
-            command = ["test", "-mod=readonly", "-json", "-count=1", "-timeout=120s"]
-            if not args.no_race:
-                command.append("-race")
-            output = run(args.go, [*command, "-run", pattern, "."], directory, env)
-            require_passes(output, module, spec["tests"])
-            for name in spec["tests"]:
-                print(f"PASS {module}@{spec['version']} {name}", flush=True)
+    VectorChecks(args.go, race=not args.no_race).check_all()
 
 
 if __name__ == "__main__":
