@@ -30,10 +30,12 @@ type pairingRequestWire struct {
 	FirstPairedAt time.Time `json:"first_paired_at"`
 }
 type pairingSnapshotWire struct {
-	Invitation *pairingInvitationWire `json:"invitation"`
-	Requests   []pairingRequestWire   `json:"requests"`
-	Total      int                    `json:"requests_total"`
-	Truncated  bool                   `json:"requests_truncated"`
+	SelfIdentity  string                 `json:"self_identity"`
+	IdentityError string                 `json:"identity_error"`
+	Invitation    *pairingInvitationWire `json:"invitation"`
+	Requests      []pairingRequestWire   `json:"requests"`
+	Total         int                    `json:"requests_total"`
+	Truncated     bool                   `json:"requests_truncated"`
 }
 
 func pairingCommand(f *operatorFixture, op, target string) sessionWire {
@@ -269,4 +271,49 @@ func TestPairingOperatorAcceptanceAuditUnavailablePreventsMutation(t *testing.T)
 	inboxExec(f, `DROP TRIGGER fail_pairing_audit`)
 	operatorEqual(t, "no unaudited invitation", pairingSnapshot(t, pairingCommand(f, "status", "")).Invitation == nil, true)
 	operatorEqual(t, "no unaudited decision", pairingStoredState(f, "pending"), "pending_acceptance")
+}
+
+func TestPairingIdentityOperatorAcceptanceSurvivesRestartAndReportsKeyLoss(t *testing.T) {
+	database := filepath.Join(t.TempDir(), "identity.db")
+	var fingerprint string
+	t.Run("initialize", func(t *testing.T) {
+		f := newOperatorFixture(t, os.Getuid(), database)
+		pairingOpen(f)
+		snap := pairingSnapshot(t, pairingCommand(f, "status", ""))
+		fingerprint = snap.SelfIdentity
+		operatorEqual(t, "canonical self identity", regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(fingerprint), true)
+		operatorEqual(t, "identity available", snap.IdentityError, "")
+	})
+	t.Run("restart", func(t *testing.T) {
+		f := newOperatorFixture(t, os.Getuid(), database)
+		snap := pairingSnapshot(t, pairingCommand(f, "status", ""))
+		operatorEqual(t, "restart retains self identity", snap.SelfIdentity, fingerprint)
+		operatorEqual(t, "restart drops invitation", snap.Invitation == nil, true)
+	})
+	operatorNoError(t, os.Remove(filepath.Join(database+".peer", "identity.key")))
+	t.Run("key missing", func(t *testing.T) {
+		f := newOperatorFixture(t, os.Getuid(), database)
+		snap := pairingSnapshot(t, pairingCommand(f, "list", ""))
+		operatorEqual(t, "key loss visible", snap.IdentityError, "identity_missing")
+		refusal := pairingCommand(f, "open", "")
+		operatorEqual(t, "open refused", refusal.text("code"), "pairing_refused")
+		operatorEqual(t, "open explains key loss", refusal.text("detail"), "identity_missing")
+		_, err := os.Lstat(filepath.Join(database+".peer", "identity.key"))
+		operatorEqual(t, "lost key was not recreated", os.IsNotExist(err), true)
+	})
+}
+
+func TestPairingIdentityOperatorAcceptanceBrokenIdentityStillAllowsDecisions(t *testing.T) {
+	database := filepath.Join(t.TempDir(), "identity.db")
+	operatorNoError(t, os.Mkdir(database+".peer", 0700))
+	operatorNoError(t, os.WriteFile(filepath.Join(database+".peer", "identity.key"), []byte("broken"), 0600))
+	f := newOperatorFixture(t, os.Getuid(), database)
+	for _, decision := range []struct{ key, op, state string }{{"legacy-a", "accept", "accepted"}, {"legacy-b", "reject", "rejected"}} {
+		pairingSeed(f, decision.key, "pending_acceptance")
+		snap := pairingSnapshot(t, pairingCommand(f, decision.op, decision.key))
+		operatorEqual(t, "identity failure remains visible", snap.IdentityError, "identity_corrupt")
+		operatorEqual(t, "decision remains usable", pairingStoredState(f, decision.key), decision.state)
+	}
+	refusal := pairingCommand(f, "cancel", "missing-invitation")
+	operatorEqual(t, "cancel reaches invitation manager", refusal.text("detail"), "no_invitation")
 }

@@ -55,7 +55,8 @@ CREATE INDEX IF NOT EXISTS agents_recent ON agents(connected_at DESC, agent_id, 
 
 // Store wraps the SQLite database handle.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // Open opens (creating if necessary) the database at path and applies the schema.
@@ -67,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -75,7 +76,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, path: path}, nil
 }
 
 // Existing tables don't gain columns from CREATE TABLE IF NOT EXISTS. Added

@@ -212,3 +212,29 @@ func TestPairingChatAcceptanceEmptyPartialListReportsOmittedRequests(t *testing.
 	v3Contains(t, view, "partial")
 	chatEqual(t, "omitted requests are not an empty directory", strings.Contains(view, "no pairing requests"), false)
 }
+
+func TestPairingIdentityChatAcceptanceShowsFingerprintOrRecoveryError(t *testing.T) {
+	fingerprint := "sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct{ field, value string }{{"self_identity", fingerprint}, {"identity_error", "identity_missing"}} {
+		t.Run(tc.field, func(t *testing.T) {
+			h := pairingChatHarness(t, true)
+			v2Command(h, "/pair status")
+			req := pairingChatRequest(h, "status")
+			result := map[string]any{"requests": []any{}, "requests_total": 0, "requests_truncated": false, tc.field: tc.value}
+			data, err := json.Marshal(map[string]any{"type": "operator_pairing_result", "pairing_result": result})
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.reply(req, roomChatJSON(t, string(data)))
+			h.await(func() bool { return h.m.State().InFlight == 0 })
+			view := strings.ToLower(ansi.Strip(h.m.View().Content))
+			if tc.field == "self_identity" {
+				v3Contains(t, view, fingerprint)
+			} else {
+				v3Contains(t, view, "identity")
+				v3Contains(t, view, "missing")
+			}
+			chatEqual(t, "identity status is not a chat message", len(h.m.State().Entries), 0)
+		})
+	}
+}

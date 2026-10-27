@@ -29,7 +29,7 @@ func pairEqual[T comparable](t *testing.T, got, want T) {
 	}
 }
 func pairOutcome(n int) peer.PairingOutcome {
-	return peer.PairingOutcome{OperationID: fmt.Sprintf("%032x", n), InvitationID: fmt.Sprintf("%032x", n+100), IdentityKey: strings.Repeat("a", 64), Name: "Alice", TranscriptID: bytes.Repeat([]byte{7}, 64), At: time.Date(2026, 10, 27, 12, 0, n, 0, time.UTC)}
+	return peer.PairingOutcome{OperationID: fmt.Sprintf("%032x", n), InvitationID: fmt.Sprintf("%032x", n+100), IdentityKey: "sha256:" + strings.Repeat("a", 64), Name: "Alice", TranscriptID: bytes.Repeat([]byte{7}, 64), At: time.Date(2026, 10, 27, 12, 0, n, 0, time.UTC)}
 }
 func pairSQLite(t *testing.T, path string) *store.Store {
 	t.Helper()
@@ -94,7 +94,7 @@ func TestPairingStoreAcceptanceRejectedIdentityStaysRejected(t *testing.T) {
 		pairEqual(t, errors.Is(err, peer.ErrNotPending), true)
 		pairEqual(t, pairSaved(t, db, pairOutcome(4)).State, peer.PairingRejected)
 		changed := pairOutcome(5)
-		changed.IdentityKey = strings.Repeat("b", 64)
+		changed.IdentityKey = "sha256:" + strings.Repeat("b", 64)
 		// Same name is not identity and cannot inherit the old decision.
 		pairEqual(t, pairSaved(t, db, changed).State, peer.PairingPending)
 		rows, err := db.Requests(ctx)
@@ -119,7 +119,7 @@ func pairConflict(t *testing.T, db peer.PairingStore, original peer.PairingOutco
 }
 func TestPairingStoreAcceptanceOutcomeContentCannotChange(t *testing.T) {
 	mutations := map[string]func(*peer.PairingOutcome){
-		"identity":   func(o *peer.PairingOutcome) { o.IdentityKey = strings.Repeat("b", 64) },
+		"identity":   func(o *peer.PairingOutcome) { o.IdentityKey = "sha256:" + strings.Repeat("b", 64) },
 		"name":       func(o *peer.PairingOutcome) { o.Name = "Mallory" },
 		"invitation": func(o *peer.PairingOutcome) { o.InvitationID = strings.Repeat("f", 32) },
 		"transcript": func(o *peer.PairingOutcome) { o.TranscriptID[0] ^= 1 },
@@ -144,7 +144,7 @@ func TestPairingStoreAcceptanceOneWinnerPerInvitation(t *testing.T) {
 				defer wg.Done()
 				o := pairOutcome(n)
 				o.InvitationID = strings.Repeat("f", 32)
-				o.IdentityKey = fmt.Sprintf("%064x", n)
+				o.IdentityKey = fmt.Sprintf("sha256:%064x", n)
 				_, err := db.Commit(context.Background(), o)
 				results <- err
 			}(n)

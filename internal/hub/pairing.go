@@ -29,6 +29,27 @@ var pairingRefusals = map[error]string{
 	peer.ErrInvitationCancelled: "invitation_cancelled",
 	peer.ErrNotPending:          "not_pending",
 	peer.ErrNoPairingRequest:    "no_pairing_request",
+	peer.ErrOutcomeCapacity:     "outcome_capacity",
+	peer.ErrIdentityCapacity:    "identity_capacity",
+	peer.ErrTooManyPending:      "pending_capacity",
+}
+
+// identityProblems name why the workspace identity is unavailable; anything
+// else, such as an unreadable marker, is identity_unavailable.
+var identityProblems = map[error]string{
+	peer.ErrIdentityMissing:  "identity_missing",
+	peer.ErrIdentityCorrupt:  "identity_corrupt",
+	peer.ErrIdentityUnsafe:   "identity_unsafe",
+	peer.ErrIdentityMismatch: "identity_mismatch",
+}
+
+func identityProblem(err error) string {
+	for known, reason := range identityProblems {
+		if errors.Is(err, known) {
+			return reason
+		}
+	}
+	return "identity_unavailable"
 }
 
 func pairingError(err error) *routingError {
@@ -41,26 +62,29 @@ func pairingError(err error) *routingError {
 }
 
 // pairingOp checks a request's target and applies it; open returns the code.
+// Only open needs the workspace identity: the others keep working without it,
+// so the operator can still see and decide requests while repairing it.
 type pairingOp struct {
-	target bool
-	apply  func(h *Hub, ctx context.Context, target string) (code string, err error)
+	target   bool
+	identity bool
+	apply    func(h *Hub, ctx context.Context, target string) (code string, err error)
 }
 
 var pairingOps = map[string]pairingOp{
-	protocol.PairingOpOpen: {false, func(h *Hub, _ context.Context, _ string) (string, error) {
+	protocol.PairingOpOpen: {false, true, func(h *Hub, _ context.Context, _ string) (string, error) {
 		inv, err := h.pairing.Open()
 		return inv.Code, err
 	}},
-	protocol.PairingOpCancel: {true, func(h *Hub, _ context.Context, id string) (string, error) {
+	protocol.PairingOpCancel: {true, false, func(h *Hub, _ context.Context, id string) (string, error) {
 		return "", h.pairing.Cancel(id)
 	}},
-	protocol.PairingOpStatus: {false, noPairingChange},
-	protocol.PairingOpList:   {false, noPairingChange},
-	protocol.PairingOpAccept: {true, func(h *Hub, ctx context.Context, key string) (string, error) {
+	protocol.PairingOpStatus: {false, false, noPairingChange},
+	protocol.PairingOpList:   {false, false, noPairingChange},
+	protocol.PairingOpAccept: {true, false, func(h *Hub, ctx context.Context, key string) (string, error) {
 		_, err := h.store.Accept(ctx, key)
 		return "", err
 	}},
-	protocol.PairingOpReject: {true, func(h *Hub, ctx context.Context, key string) (string, error) {
+	protocol.PairingOpReject: {true, false, func(h *Hub, ctx context.Context, key string) (string, error) {
 		_, err := h.store.Reject(ctx, key)
 		return "", err
 	}},
@@ -79,10 +103,25 @@ func (h *Hub) ensurePairing() error {
 	return err
 }
 
+// loadIdentity loads, or for a new workspace creates, the identity key; a
+// failure is retried on the next request, never repaired by replacing a key.
+func (h *Hub) loadIdentity(ctx context.Context) string {
+	if h.identity != nil {
+		return ""
+	}
+	id, err := peer.LoadOrCreateIdentity(ctx, h.store.PeerDir(), h.store, rand.Reader)
+	if err != nil {
+		h.log.Warn("workspace identity unavailable", "err", err)
+		return identityProblem(err)
+	}
+	h.identity = id
+	return ""
+}
+
 func (h *Hub) operatorPairing(ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
 	msg := req.msg
 	if len(msg.MessageID) > 128 {
-		return (&routingError{protocol.ErrMalformedFrame, "message_id is at most 128 bytes"}).frame("")
+		return (&routingError{protocol.ErrMalformedFrame, "message_id must be at most 128 bytes"}).frame("")
 	}
 	op, ok := pairingOps[msg.PairingOp]
 	if !ok {
@@ -138,6 +177,10 @@ func (h *Hub) applyPairing(ctx context.Context, op pairingOp, target string) (*p
 	if err := h.ensurePairing(); err != nil {
 		return nil, &routingError{protocol.ErrInternal, "pairing unavailable"}
 	}
+	problem := h.loadIdentity(ctx)
+	if op.identity && problem != "" {
+		return nil, &routingError{protocol.ErrPairing, problem}
+	}
 	code, err := op.apply(h, ctx, target)
 	if err != nil {
 		return nil, pairingError(err)
@@ -148,6 +191,10 @@ func (h *Hub) applyPairing(ctx context.Context, op pairingOp, target string) (*p
 	}
 	if code != "" {
 		snapshot.Invitation.Code = code
+	}
+	snapshot.IdentityError = problem
+	if h.identity != nil {
+		snapshot.SelfIdentity = h.identity.Fingerprint()
 	}
 	return snapshot, nil
 }

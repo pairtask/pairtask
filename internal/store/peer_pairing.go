@@ -12,8 +12,9 @@ import (
 )
 
 // peerPairingSchema keeps one decision row per identity and one immutable row
-// per successful pairing operation (#178). The identity key is provisional,
-// see peer.PairingRequest; names are metadata only.
+// per successful pairing operation (#178). The identity key is a pairtask SPKI
+// fingerprint, see peer.PairingRequest; names are metadata only. Rows written
+// before the bounds stay as they are.
 const peerPairingSchema = `
 CREATE TABLE IF NOT EXISTS peer_pairing_requests (
     identity_key    TEXT PRIMARY KEY,
@@ -60,26 +61,57 @@ func commitPairing(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) (peer
 		return peer.PairingRequest{}, err
 	}
 	if found {
-		if !peer.SameOutcome(known, o) {
-			return peer.PairingRequest{}, peer.ErrOutcomeConflict
-		}
-		return pairingRequest(ctx, tx, o.IdentityKey)
+		return replayPairing(ctx, tx, known, o)
 	}
-	if err := invitationUnused(ctx, tx, o.InvitationID); err != nil {
+	if err := admitPairing(ctx, tx, o); err != nil {
 		return peer.PairingRequest{}, err
 	}
+	if err := insertPairing(ctx, tx, o); err != nil {
+		return peer.PairingRequest{}, err
+	}
+	return pairingRequest(ctx, tx, o.IdentityKey)
+}
+
+// replayPairing answers a committed operation: identical content returns its
+// request, anything else conflicts. It runs before any newer check, so rows
+// written before the bounds replay unchanged.
+func replayPairing(ctx context.Context, tx *sql.Tx, known, o peer.PairingOutcome) (peer.PairingRequest, error) {
+	if !peer.SameOutcome(known, o) {
+		return peer.PairingRequest{}, peer.ErrOutcomeConflict
+	}
+	return pairingRequest(ctx, tx, o.IdentityKey)
+}
+
+// admitPairing refuses a reused invitation, an invalid new outcome or a full
+// store, reading the counts in the commit's transaction.
+func admitPairing(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) error {
+	if err := invitationUnused(ctx, tx, o.InvitationID); err != nil {
+		return err
+	}
+	if err := peer.ValidNewOutcome(o); err != nil {
+		return err
+	}
+	counts, err := pairingCounts(ctx, tx, o.IdentityKey)
+	if err != nil {
+		return err
+	}
+	return peer.AdmitOutcome(counts)
+}
+
+// insertPairing writes the request, keeping any decision, and the outcome.
+func insertPairing(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_pairing_requests (identity_key, name, state, first_paired_at)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(identity_key) DO UPDATE SET name = excluded.name`,
 		o.IdentityKey, o.Name, string(peer.PairingPending), stamp(o.At)); err != nil {
-		return peer.PairingRequest{}, fmt.Errorf("store pairing request: %w", err)
+		return fmt.Errorf("store pairing request: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_pairing_outcomes (operation_id, invitation_id, identity_key, name, transcript_id, at)
 VALUES (?, ?, ?, ?, ?, ?)`,
 		o.OperationID, o.InvitationID, o.IdentityKey, o.Name, o.TranscriptID, stamp(o.At)); err != nil {
-		return peer.PairingRequest{}, fmt.Errorf("store pairing outcome: %w", err)
+		return fmt.Errorf("store pairing outcome: %w", err)
 	}
-	return pairingRequest(ctx, tx, o.IdentityKey)
+	return nil
 }
 
 // invitationUnused refuses a second outcome for one invitation.
@@ -92,6 +124,18 @@ func invitationUnused(ctx context.Context, tx *sql.Tx, invitationID string) erro
 		return peer.ErrOutcomeConflict
 	}
 	return nil
+}
+
+// pairingCounts reads what admission needs inside the commit's transaction.
+func pairingCounts(ctx context.Context, tx *sql.Tx, identityKey string) (peer.PairingCounts, error) {
+	var c peer.PairingCounts
+	err := tx.QueryRowContext(ctx, `SELECT
+    (SELECT COUNT(*) FROM peer_pairing_outcomes),
+    (SELECT COUNT(*) FROM peer_pairing_requests),
+    (SELECT COUNT(*) FROM peer_pairing_requests WHERE state = ?),
+    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?)`,
+		string(peer.PairingPending), identityKey).Scan(&c.Outcomes, &c.Identities, &c.Pending, &c.KnownIdentity)
+	return c, err
 }
 
 type rowQuerier interface {
