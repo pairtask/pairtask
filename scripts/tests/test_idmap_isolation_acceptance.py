@@ -15,8 +15,9 @@ import peer_probe_checks as peer
 import sandbox_secured_checks as secured
 
 
-def interval(host, size=100, ns=0, uid=True, gid=True):
-    return {"Hostid": host, "Nsid": ns, "Maprange": size, "Isuid": uid, "Isgid": gid}
+def interval(host, size=100, ns=0, families="ug"):
+    return {"Hostid": host, "Nsid": ns, "Maprange": size,
+            "Isuid": "u" in families, "Isgid": "g" in families}
 
 
 def instance(role, mappings):
@@ -64,21 +65,21 @@ class IDMapIsolationAcceptanceTests(unittest.TestCase):
         self.assert_refused(instances)
 
     def test_uid_and_gid_overlap_are_each_rejected(self):
-        for uid, gid in ((True, False), (False, True)):
-            with self.subTest(uid=uid):
+        for family, other in (("u", "g"), ("g", "u")):
+            with self.subTest(family=family):
                 instances = topology()
                 replace_map(instances, "secured", [
-                    interval(100050, uid=uid, gid=gid),
-                    interval(200000, uid=gid, gid=uid),
+                    interval(100050, families=family),
+                    interval(200000, families=other),
                 ])
                 self.assert_refused(instances)
 
     def test_uid_numbers_do_not_collide_with_gid_numbers(self):
         instances = topology()
         replace_map(instances, "workspace", [
-            interval(100000, gid=False), interval(200000, uid=False)])
+            interval(100000, families="u"), interval(200000, families="g")])
         replace_map(instances, "secured", [
-            interval(200000, gid=False), interval(100000, uid=False)])
+            interval(200000, families="u"), interval(100000, families="g")])
         check(instances)
 
     def test_host_share_exceptions_outside_isolated_range_are_valid(self):
@@ -122,16 +123,16 @@ class IDMapIsolationAcceptanceTests(unittest.TestCase):
                 self.assert_refused(instances)
 
     def test_both_uid_and_gid_evidence_are_required(self):
-        for uid, gid in ((True, False), (False, True), (False, False)):
-            with self.subTest(uid=uid, gid=gid):
+        for families in ("u", "g", ""):
+            with self.subTest(families=families):
                 instances = topology()
-                replace_map(instances, "secured", [interval(200000, uid=uid, gid=gid)])
+                replace_map(instances, "secured", [interval(200000, families=families)])
                 self.assert_refused(instances)
 
     def test_entry_without_either_id_family_is_not_silently_ignored(self):
         instances = topology()
         replace_map(instances, "secured", [
-            interval(200000), interval(100050, uid=False, gid=False)])
+            interval(200000), interval(100050, families="")])
         self.assert_refused(instances)
 
     def test_privileged_or_nonisolated_instance_fails(self):
