@@ -50,7 +50,7 @@ func TestRedeemAcceptanceMalformedHelloDoesNotCharge(t *testing.T) {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			r := newRedeemFixture(t)
 			f := &redeemScript{input: [][]byte{frame}}
-			i, err := peer.NewInviter(r.inviteEx, r.inv.manager, r.alice, rand.Reader)
+			i, err := peer.NewInviter(r.inviteEx, r.inv.manager, r.alice)
 			invOK(t, err)
 			_, err = i.Serve(context.Background(), f, peer.Connection{PeerLeaf: r.bob.Fingerprint(), ChannelBinding: r.joinBinding})
 			invEqual(t, errors.Is(err, peer.ErrPairingProtocol), true)
@@ -126,7 +126,7 @@ func redeemOversizeCase(t *testing.T, side, mode string) {
 		_, err = j.Join(context.Background(), f, peer.JoinInput{Connection: peer.Connection{PeerLeaf: r.alice.Fingerprint(), ChannelBinding: r.joinBinding}, Code: r.code(), Name: "Bob"})
 	} else {
 		f.input = [][]byte{redeemWire(1, []byte("op"), []byte("Bob")), make([]byte, 4097)}
-		i, e := peer.NewInviter(ex, r.inv.manager, r.alice, rand.Reader)
+		i, e := peer.NewInviter(ex, r.inv.manager, r.alice)
 		invOK(t, e)
 		_, err = i.Serve(context.Background(), f, peer.Connection{PeerLeaf: r.bob.Fingerprint(), ChannelBinding: r.inviteBinding})
 	}

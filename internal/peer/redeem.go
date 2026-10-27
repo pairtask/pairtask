@@ -262,18 +262,17 @@ func (j *Joiner) unknown(ctx context.Context, opID string, cause error) (JoinRec
 
 // Inviter answers joins of this workspace's open invitation.
 type Inviter struct {
-	ex     Exchanger
-	inv    *Invitations
-	self   *WorkspaceIdentity
-	random io.Reader // for the exchange's own needs; the invitation draws its IDs
+	ex   Exchanger
+	inv  *Invitations
+	self *WorkspaceIdentity
 }
 
 // NewInviter returns an inviter; with a nil Exchanger every join is refused.
-func NewInviter(ex Exchanger, inv *Invitations, self *WorkspaceIdentity, random io.Reader) (*Inviter, error) {
-	if slices.Contains([]bool{inv != nil, self != nil, random != nil}, false) {
-		return nil, errors.New("peer: an inviter needs invitations, an identity and randomness")
+func NewInviter(ex Exchanger, inv *Invitations, self *WorkspaceIdentity) (*Inviter, error) {
+	if inv == nil || self == nil {
+		return nil, errors.New("peer: an inviter needs invitations and an identity")
 	}
-	return &Inviter{ex: ex, inv: inv, self: self, random: random}, nil
+	return &Inviter{ex: ex, inv: inv, self: self}, nil
 }
 
 // Serve answers one join. An attempt is charged only after a well-formed

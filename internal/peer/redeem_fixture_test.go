@@ -152,6 +152,11 @@ type redeemSide struct {
 
 func (r *redeemFixture) run(t *testing.T, code []byte) redeemResult {
 	t.Helper()
+	return r.runWith(t, code, r.joinEx, r.inviteEx)
+}
+
+func (r *redeemFixture) runWith(t *testing.T, code []byte, joinEx, inviteEx peer.Exchanger) redeemResult {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	a, b := make(chan []byte, 4), make(chan []byte, 4)
@@ -160,9 +165,9 @@ func (r *redeemFixture) run(t *testing.T, code []byte) redeemResult {
 	if r.filter != nil {
 		inviteFrames = redeemFilter{inviteFrames, r.filter}
 	}
-	joiner, err := peer.NewJoiner(r.joinEx, r.joins, r.bob, r.inv.clock.read, rand.Reader)
+	joiner, err := peer.NewJoiner(joinEx, r.joins, r.bob, r.inv.clock.read, rand.Reader)
 	invOK(t, err)
-	inviter, err := peer.NewInviter(r.inviteEx, r.inv.manager, r.alice, rand.Reader)
+	inviter, err := peer.NewInviter(inviteEx, r.inv.manager, r.alice)
 	invOK(t, err)
 	results := make(chan redeemSide, 2)
 	go func() {
