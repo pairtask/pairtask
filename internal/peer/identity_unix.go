@@ -40,33 +40,20 @@ func LoadOrCreateIdentity(ctx context.Context, dir string, marker IdentityMarker
 	if dir == "" {
 		return nil, ErrIdentityUnavailable
 	}
-	if err := privateDir(dir); err != nil {
+	p := identityPaths{dir: dir, key: filepath.Join(dir, identityFile)}
+	if err := p.ensureDir(); err != nil {
 		return nil, err
 	}
 	known, initialized, err := marker.IdentityFingerprint(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read identity marker: %w", err)
 	}
-	path := filepath.Join(dir, identityFile)
-	// Before the marker exists, whatever key is adopted is made durable first,
-	// even one another creator published and may not have synced yet.
-	id, err := readIdentity(path, !initialized)
-	if errors.Is(err, fs.ErrNotExist) {
-		if initialized {
-			return nil, ErrIdentityMissing
-		}
-		id, err = createIdentity(dir, path, random)
+	if initialized {
+		return p.load(known)
 	}
+	id, err := p.adoptOrCreate(random)
 	if err != nil {
 		return nil, err
-	}
-	if initialized && id.fingerprint != known {
-		return nil, ErrIdentityMismatch
-	}
-	if !initialized {
-		if err := syncPublished(dir); err != nil {
-			return nil, err
-		}
 	}
 	if err := marker.InitIdentity(ctx, id.fingerprint); err != nil {
 		return nil, fmt.Errorf("record identity: %w", err)
@@ -74,18 +61,52 @@ func LoadOrCreateIdentity(ctx context.Context, dir string, marker IdentityMarker
 	return id, nil
 }
 
-// privateDir creates dir 0700 if missing and checks it is a private
+// identityPaths are the private key directory and the key file in it.
+type identityPaths struct {
+	dir, key string
+}
+
+// load reads the key of an initialized workspace; it never creates one.
+func (p identityPaths) load(known string) (*WorkspaceIdentity, error) {
+	id, err := p.read(false)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrIdentityMissing
+	}
+	if err != nil {
+		return nil, err
+	}
+	if id.fingerprint != known {
+		return nil, ErrIdentityMismatch
+	}
+	return id, nil
+}
+
+// adoptOrCreate is the key of a workspace with no marker yet: one already
+// published (by a crashed or concurrent creator) or a new one. Either way it
+// is made durable, file and directory entries, before the marker records it.
+func (p identityPaths) adoptOrCreate(random io.Reader) (*WorkspaceIdentity, error) {
+	id, err := p.read(true)
+	if errors.Is(err, fs.ErrNotExist) {
+		id, err = p.create(random)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return id, p.syncPublished()
+}
+
+// ensureDir creates the directory 0700 if missing and checks it is a private
 // directory of ours, not a symlink.
-func privateDir(dir string) error {
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+func (p identityPaths) ensureDir() error {
+	if err := os.Mkdir(p.dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("create identity directory: %w", err)
 	}
-	info, err := os.Lstat(dir)
+	info, err := os.Lstat(p.dir)
 	if err != nil {
 		return fmt.Errorf("identity directory: %w", err)
 	}
 	if !info.IsDir() || !private(info) {
-		return fmt.Errorf("%w: %s must be a directory of ours with mode 0700", ErrIdentityUnsafe, dir)
+		return fmt.Errorf("%w: %s must be a directory of ours with mode 0700", ErrIdentityUnsafe, p.dir)
 	}
 	return nil
 }
@@ -99,39 +120,62 @@ func private(info fs.FileInfo) bool {
 	return info.Mode().Perm()&0o077 == 0
 }
 
-// readIdentity opens without following a symlink and without blocking on a
-// FIFO, then checks what it opened before reading it; sync also flushes it.
-func readIdentity(path string, sync bool) (*WorkspaceIdentity, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+// open opens the key without following a symlink and without blocking on a
+// FIFO, and checks what it opened before anything reads it.
+func (p identityPaths) open() (*os.File, error) {
+	fd, err := syscall.Open(p.key, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, p.openError(err)
+	}
+	f := os.NewFile(uintptr(fd), p.key)
+	if err := p.checkOpened(f, fd); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+func (p identityPaths) openError(err error) error {
 	switch {
 	case errors.Is(err, syscall.ENOENT):
-		return nil, fs.ErrNotExist
+		return fs.ErrNotExist
 	case errors.Is(err, syscall.ELOOP):
-		return nil, fmt.Errorf("%w: %s is a symlink", ErrIdentityUnsafe, path)
-	case err != nil:
-		return nil, fmt.Errorf("open identity key: %w", err)
+		return fmt.Errorf("%w: %s is a symlink", ErrIdentityUnsafe, p.key)
 	}
-	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
+	return fmt.Errorf("open identity key: %w", err)
+}
+
+// checkOpened accepts a private regular file and makes reads blocking again.
+func (p identityPaths) checkOpened(f *os.File, fd int) error {
 	info, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("identity key: %w", err)
+		return fmt.Errorf("identity key: %w", err)
 	}
 	if !info.Mode().IsRegular() || !private(info) {
-		return nil, fmt.Errorf("%w: %s must be a regular file of ours with mode 0600", ErrIdentityUnsafe, path)
+		return fmt.Errorf("%w: %s must be a regular file of ours with mode 0600", ErrIdentityUnsafe, p.key)
 	}
-	if err := syscall.SetNonblock(fd, false); err != nil {
-		return nil, fmt.Errorf("identity key: %w", err)
+	return syscall.SetNonblock(fd, false)
+}
+
+// read loads the key; sync also flushes the file before it is relied on.
+func (p identityPaths) read(sync bool) (*WorkspaceIdentity, error) {
+	f, err := p.open()
+	if err != nil {
+		return nil, err
 	}
+	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, maxIdentityBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read identity key: %w", err)
 	}
 	id, err := parseIdentity(data)
-	if err == nil && sync {
-		err = f.Sync()
+	if err != nil {
+		return nil, err
 	}
-	return id, err
+	if sync {
+		return id, f.Sync()
+	}
+	return id, nil
 }
 
 func parseIdentity(data []byte) (*WorkspaceIdentity, error) {
@@ -161,9 +205,25 @@ func onePrivateKeyBlock(block *pem.Block, rest []byte) bool {
 	return len(bytes.TrimSpace(rest)) == 0
 }
 
-// createIdentity publishes a new key without ever replacing one: a link
-// fails if the name exists, so a concurrent creator's key wins and is read.
-func createIdentity(dir, path string, random io.Reader) (*WorkspaceIdentity, error) {
+// create publishes a new key without ever replacing one: a link fails if the
+// name exists, so a concurrent creator's key wins and is read instead.
+func (p identityPaths) create(random io.Reader) (*WorkspaceIdentity, error) {
+	encoded, err := newKeyPEM(random)
+	if err != nil {
+		return nil, err
+	}
+	tmp, err := p.writeTemp(encoded)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp)
+	if err := os.Link(tmp, p.key); err != nil && !errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("publish identity key: %w", err)
+	}
+	return p.read(true)
+}
+
+func newKeyPEM(random io.Reader) ([]byte, error) {
 	_, key, err := ed25519.GenerateKey(random)
 	if err != nil {
 		return nil, fmt.Errorf("generate identity key: %w", err)
@@ -172,44 +232,35 @@ func createIdentity(dir, path string, random io.Reader) (*WorkspaceIdentity, err
 	if err != nil {
 		return nil, err
 	}
-	tmp, err := writeTemp(dir, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmp)
-	if err := os.Link(tmp, path); err != nil && !errors.Is(err, fs.ErrExist) {
-		return nil, fmt.Errorf("publish identity key: %w", err)
-	}
-	if err := syncDir(dir); err != nil {
-		return nil, err
-	}
-	return readIdentity(path, true)
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
 }
 
-// writeTemp writes data to a new private file in dir and syncs it.
-func writeTemp(dir string, data []byte) (string, error) {
-	f, err := os.CreateTemp(dir, identityFile+".tmp-*")
+// writeTemp writes data to a new private file beside the key and syncs it.
+func (p identityPaths) writeTemp(data []byte) (string, error) {
+	f, err := os.CreateTemp(p.dir, identityFile+".tmp-*")
 	if err != nil {
 		return "", fmt.Errorf("write identity key: %w", err)
 	}
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
+	if err := writeSynced(f, data); err != nil {
 		os.Remove(f.Name())
 		return "", fmt.Errorf("write identity key: %w", err)
 	}
 	return f.Name(), nil
 }
 
+// writeSynced writes, syncs and closes f.
+func writeSynced(f *os.File, data []byte) error {
+	_, err := f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
+}
+
 // syncPublished makes the key's directory entry and the directory's own
 // entry in its parent durable before the marker can record the identity.
-func syncPublished(dir string) error {
-	for _, d := range []string{dir, filepath.Dir(dir)} {
+func (p identityPaths) syncPublished() error {
+	for _, d := range []string{p.dir, filepath.Dir(p.dir)} {
 		if err := syncDir(d); err != nil {
 			return fmt.Errorf("sync identity directory: %w", err)
 		}

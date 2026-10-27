@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
 )
@@ -40,6 +41,45 @@ func pairCapacityRefusal(t *testing.T, db peer.PairingStore, o peer.PairingOutco
 		t.Fatalf("commit error = %v, want %v", err, want)
 	}
 	pairMissingReceipt(t, db, o.OperationID)
+}
+
+// Seed only the bulk setup. Tests exercise the final slot and all refusals,
+// replays and decisions through the real store, without thousands of fsyncs.
+func pairSeededBackends(t *testing.T, count int, outcome func(int) peer.PairingOutcome, state peer.PairingState, check func(*testing.T, peer.PairingStore)) {
+	t.Helper()
+	t.Run("memory", func(t *testing.T) {
+		db := peer.NewMemPairingStore()
+		for n := 1; n <= count; n++ {
+			o := outcome(n)
+			pairSaved(t, db, o)
+			if state == peer.PairingRejected {
+				_, err := db.Reject(context.Background(), o.IdentityKey)
+				pairOK(t, err)
+			}
+		}
+		check(t, db)
+	})
+	t.Run("sqlite", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "pairings.db")
+		db := pairSQLite(t, path)
+		pairSeedSQLite(t, pairRaw(t, path), count, outcome, state)
+		check(t, db)
+	})
+}
+
+func pairSeedSQLite(t *testing.T, db *sql.DB, count int, outcome func(int) peer.PairingOutcome, state peer.PairingState) {
+	t.Helper()
+	tx, err := db.Begin()
+	pairOK(t, err)
+	defer tx.Rollback()
+	for n := 1; n <= count; n++ {
+		o := outcome(n)
+		_, err := tx.Exec(`INSERT INTO peer_pairing_requests(identity_key,name,state,first_paired_at) VALUES(?,?,?,?) ON CONFLICT(identity_key) DO NOTHING`, o.IdentityKey, o.Name, string(state), o.At.Format(time.RFC3339Nano))
+		pairOK(t, err)
+		_, err = tx.Exec(`INSERT INTO peer_pairing_outcomes(operation_id,invitation_id,identity_key,name,transcript_id,at) VALUES(?,?,?,?,?,?)`, o.OperationID, o.InvitationID, o.IdentityKey, o.Name, o.TranscriptID, o.At.Format(time.RFC3339Nano))
+		pairOK(t, err)
+	}
+	pairOK(t, tx.Commit())
 }
 
 func TestPairingBoundsAcceptanceValidatesNewFieldsAtomically(t *testing.T) {
@@ -140,13 +180,11 @@ func TestPairingBoundsAcceptanceConcurrentAdmissionRespectsLastSlot(t *testing.T
 
 func TestPairingBoundsAcceptanceIdentityLimitRetainsDecisions(t *testing.T) {
 	pairEqual(t, peer.MaxPairingIdentities, 1024)
-	pairBackends(t, func(t *testing.T, db peer.PairingStore) {
-		for n := 1; n <= 1024; n++ {
-			o := boundedOutcome(n)
-			pairSaved(t, db, o)
-			_, err := db.Reject(context.Background(), o.IdentityKey)
-			pairOK(t, err)
-		}
+	pairSeededBackends(t, 1023, boundedOutcome, peer.PairingRejected, func(t *testing.T, db peer.PairingStore) {
+		last := boundedOutcome(1024)
+		pairEqual(t, pairSaved(t, db, last).State, peer.PairingPending)
+		_, err := db.Reject(context.Background(), last.IdentityKey)
+		pairOK(t, err)
 		pairCapacityRefusal(t, db, boundedOutcome(1025), peer.ErrIdentityCapacity)
 		first := boundedOutcome(1)
 		pairEqual(t, pairSaved(t, db, first).State, peer.PairingRejected)
@@ -161,13 +199,14 @@ func TestPairingBoundsAcceptanceIdentityLimitRetainsDecisions(t *testing.T) {
 
 func TestPairingBoundsAcceptanceOutcomeLimitRetainsReplayAndConflicts(t *testing.T) {
 	pairEqual(t, peer.MaxPairingOutcomes, 4096)
-	pairBackends(t, func(t *testing.T, db peer.PairingStore) {
-		first := boundedOutcome(1)
-		for n := 1; n <= 4096; n++ {
-			o := boundedOutcome(n)
-			o.IdentityKey = first.IdentityKey
-			pairSaved(t, db, o)
-		}
+	first := boundedOutcome(1)
+	outcome := func(n int) peer.PairingOutcome {
+		o := boundedOutcome(n)
+		o.IdentityKey = first.IdentityKey
+		return o
+	}
+	pairSeededBackends(t, 4095, outcome, peer.PairingPending, func(t *testing.T, db peer.PairingStore) {
+		pairEqual(t, pairSaved(t, db, outcome(4096)).IdentityKey, first.IdentityKey)
 		blocked := boundedOutcome(4097)
 		blocked.IdentityKey = first.IdentityKey
 		pairCapacityRefusal(t, db, blocked, peer.ErrOutcomeCapacity)

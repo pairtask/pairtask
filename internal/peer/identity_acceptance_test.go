@@ -205,16 +205,15 @@ func TestIdentityAcceptanceConcurrentCreatorsConverge(t *testing.T) {
 		}()
 	}
 	close(start)
-	var expected string
-	for range 16 {
+	first := <-results
+	invOK(t, first.err)
+	invEqual(t, first.fp != "", true)
+	for range 15 {
 		r := <-results
 		invOK(t, r.err)
-		if expected == "" {
-			expected = r.fp
-		}
-		invEqual(t, r.fp, expected)
+		invEqual(t, r.fp, first.fp)
 	}
-	invEqual(t, identityLoad(t, dir, marker, bytes.NewReader(nil)).Fingerprint(), expected)
+	invEqual(t, identityLoad(t, dir, marker, bytes.NewReader(nil)).Fingerprint(), first.fp)
 }
 
 func TestIdentityAcceptanceRejectsUnsafePathsAndPermissions(t *testing.T) {
