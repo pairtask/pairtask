@@ -117,6 +117,7 @@ type Model struct {
 	claims   claimView
 	rooms    []protocol.RoomInfo // rooms and members, from the snapshot (bounded)
 	roomsCut bool                // the snapshot left rooms out
+	pairing  pairingView         // the last /pair snapshot, never its code
 
 	compose    composer
 	conv       conversations
@@ -367,6 +368,7 @@ func (m *Model) closed(gen uint64, err error) tea.Cmd {
 	m.history.disconnected()
 	m.send.disconnected()
 	m.bulkDisconnected()
+	m.dropPairingCode()
 	if isMalformed(err) {
 		return m.stop(err)
 	}
@@ -419,6 +421,7 @@ func (m *Model) newEpoch(epoch string) {
 		m.inbox.suspendAll("broker restarted")
 	}
 	m.epoch, m.revision = epoch, 0
+	m.pairing = pairingView{} // a restarted broker dropped the invitation
 	m.resetSequenceState()
 }
 

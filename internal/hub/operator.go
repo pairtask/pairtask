@@ -73,6 +73,7 @@ type operatorHandler func(h *Hub, ctx context.Context, clients map[string]*Clien
 var operatorHandlers = map[string]operatorHandler{
 	protocol.TypeOperatorSend:     (*Hub).routeOperatorSend,
 	protocol.TypeOperatorRoom:     (*Hub).operatorRoom,
+	protocol.TypeOperatorPairing:  (*Hub).operatorPairing,
 	protocol.TypeOperatorReceived: (*Hub).operatorReceived,
 	protocol.TypeOperatorAck:      (*Hub).operatorAck,
 	protocol.TypeOperatorAckMany:  (*Hub).operatorAckMany,

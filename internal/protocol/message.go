@@ -166,6 +166,9 @@ type Message struct {
 	Rooms             []string          `json:"rooms,omitempty"`               // v9 hello: rooms to join; welcome, room_result: the agent's rooms
 	RoomOp            string            `json:"room_op,omitempty"`             // operator_room: what to do
 	RoomList          *RoomList         `json:"room_list,omitempty"`           // operator_room_result
+	PairingOp         string            `json:"pairing_op,omitempty"`          // operator_pairing: what to do (#178)
+	PairingTarget     string            `json:"pairing_target,omitempty"`      // operator_pairing: full invitation ID or identity key
+	PairingResult     *PairingSnapshot  `json:"pairing_result,omitempty"`      // operator_pairing_result
 	PageRequest       *PageRequest      `json:"page_request,omitempty"`        // operator_receive
 	Page              *OperatorPage     `json:"page,omitempty"`                // operator_page
 	MessageIDs        []string          `json:"message_ids,omitempty"`         // operator_received

@@ -91,6 +91,15 @@ joins rooms on registration, in addition to any the agent already has. From
 `secured`, `pairtask operator room list|create R|add R AGENT|remove R AGENT|delete R`
 manages rooms and `pairtask operator send --all --room R TEXT` posts to one.
 
+**Pairing preview** (#178): from `secured`, `pairtask operator pair [list]`,
+`open`, `status`, `cancel [INVITATION_ID]` and `accept|reject KEY` manage the
+short-code invitation and pairing requests. `open` prints a one-time 6-digit
+code on stdout only; the broker keeps it in memory and never stores, logs or
+audits it. `accept` and `reject` take a key prefix and send the full key only
+when it matches exactly one listed request. This is a preview: nothing redeems
+a code yet, and joining another workspace and contact messaging aren't
+connected.
+
 **Pi** (#155): `pairtask start pi --id pi-1 [--room R] [--max-tokens N]`
 starts Pi with the pairtask extension, capping each request's output at
 32768 tokens unless `--max-tokens` says otherwise (0: no cap; #170); `pairtask join --id ID -- COMMAND` passes the adapter

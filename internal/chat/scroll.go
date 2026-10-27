@@ -190,8 +190,9 @@ type panel struct {
 	kind   string
 	seq    uint64
 	id     string
-	offset int // first visible row, moved with PgUp/PgDn
-	rows   int // rows at the last render, to bound scrolling
+	offset int    // first visible row, moved with PgUp/PgDn
+	rows   int    // rows at the last render, to bound scrolling
+	code   string // a pairing panel's one-time code; gone with the panel
 }
 
 // scroll moves the panel by a page. A panel taller than the window shows
@@ -207,9 +208,10 @@ var panelBuilders = map[string]func(*Model) []string{
 	panelAgents: func(m *Model) []string {
 		return append([]string{titleStyle.Render("Agents") + mutedStyle.Render("  (Esc closes)")}, m.agentRows()...)
 	},
-	panelStages: (*Model).stageRows,
-	panelClaims: (*Model).claimRows,
-	panelRooms:  (*Model).roomRows,
+	panelStages:  (*Model).stageRows,
+	panelClaims:  (*Model).claimRows,
+	panelRooms:   (*Model).roomRows,
+	panelPairing: (*Model).pairingRows,
 }
 
 func (m *Model) panelRows(height int) []string {
