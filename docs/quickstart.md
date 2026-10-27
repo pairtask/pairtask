@@ -3,7 +3,7 @@
 **Outside the sandbox only.** Sandbox users get their tools from the rollout and should use
 [the README](../README.md#set-up-a-sandbox).
 
-You need macOS/Linux, Git, Go 1.25+, and installed, signed-in Codex and Claude Code.
+You need macOS/Linux, Git, Go 1.26+, and installed, signed-in Codex and Claude Code.
 Codex integration was tested with 0.156.1. Claude needs channel consent and an
 account/organization that permits channels; otherwise use [manual MCP](mcp.md).
 
