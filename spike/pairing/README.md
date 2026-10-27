@@ -4,7 +4,7 @@ An **evaluation**, not an implementation. It shows how the operator's chosen pai
 
 It isn't wired into the broker and decides nothing about adoption.
 
-The tests ran for the first time on 2026-10-27, after the operator allowed executing the library's code: **all 17 test functions pass** (Go 1.26.5, linux/arm64). That run was without `-race`, since cgo isn't available on that host. The CI job `pairing-spike` runs `go vet` and `go test -race` on amd64 and arm64 runners with Go 1.26.10. The first run exposed one defect, now fixed: when the joiner detected a mismatch first and hung up, the inviter reported a bare `EOF` instead of `ErrUnconfirmed`. Passing tests are evidence about this spike, not a cryptographic review.
+The tests ran for the first time on 2026-10-27, after the operator allowed executing the library's code: **all 17 test functions pass** (Go 1.26.5, linux/arm64). That run was without `-race`, since cgo isn't available on that host. The CI job `pairing-spike` runs `go vet` and `go test -race` on amd64 and arm64 runners with Go 1.26.10. It also runs the pinned upstream draft-21 vector tests of both CPace implementations; see [VECTOR-CHECKS.md](VECTOR-CHECKS.md) for what that does and doesn't establish. The first run exposed one defect, now fixed: when the joiner detected a mismatch first and hung up, the inviter reported a bare `EOF` instead of `ErrUnconfirmed`. Passing tests are evidence about this spike, not a cryptographic review.
 
 ## What it does
 
