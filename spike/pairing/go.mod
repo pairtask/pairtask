@@ -1,8 +1,8 @@
 module github.com/pairtask/pairtask/spike/pairing
 
-go 1.26
+go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.10
 
 require github.com/the-sarge/cpace v0.1.3
 

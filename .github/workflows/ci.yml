@@ -82,6 +82,30 @@ jobs:
           tofu -chdir=infra/incus validate
           tofu -chdir=infra/incus test
 
+  # The #178 pairing spike (draft #182) is a nested Go module, so the root
+  # `go test ./...` above skips it. Run it here on both architectures.
+  pairing-spike:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: spike/pairing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: spike/pairing/go.sum
+      - run: go version
+      - run: go vet ./...
+      - run: go test -race -count=1 -v ./...
+
   classify:
     # Decides whether this run needs the image proofs. Only a pull request that
     # touches nothing but unshipped top-level docs may skip them; see
