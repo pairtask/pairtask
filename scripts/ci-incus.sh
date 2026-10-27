@@ -11,7 +11,9 @@ fi
 apt-get update
 apt-get install -y ca-certificates curl gnupg
 # Ubuntu 24.04's original 6.0.0 package misdetects idmapped mounts on newer
-# kernels (https://github.com/lxc/incus/issues/882). Use maintained 6.0 LTS.
+# kernels (https://github.com/lxc/incus/issues/882). Use maintained 7.0 LTS:
+# 6.0 can give concurrently created isolated containers the same ID map base
+# (#183), fixed upstream in 7.0.2 (lxc/incus ec0e0a7).
 # Repository and signing key: https://github.com/zabbly/incus
 install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
@@ -19,9 +21,9 @@ key_fingerprint=$(gpg --batch --show-keys --with-colons /etc/apt/keyrings/zabbly
 test "$key_fingerprint" = 4EFC590696CB15B87C73A3AD82CC8797C838DCFD
 chmod 0644 /etc/apt/keyrings/zabbly.asc
 . /etc/os-release
-cat > /etc/apt/sources.list.d/zabbly-incus-lts-6.0.sources <<EOF
+cat > /etc/apt/sources.list.d/zabbly-incus-lts-7.0.sources <<EOF
 Types: deb
-URIs: https://pkgs.zabbly.com/incus/lts-6.0
+URIs: https://pkgs.zabbly.com/incus/lts-7.0
 Suites: $VERSION_CODENAME
 Components: main
 Architectures: $(dpkg --print-architecture)
@@ -36,6 +38,16 @@ usermod --add-subuids 60000-60000 --add-subgids 60000-60000 root
 modprobe btrfs
 systemctl start incus.socket
 incus admin init --preseed <infra/image/ci-host.json
+server_version=$(incus query /1.0 | python3 -c 'import json,sys; print(json.load(sys.stdin)["environment"]["server_version"])')
+# 7.1-7.4 are feature releases without the fix; accept only the fixed 7.0 LTS.
+case "$server_version" in
+    7.0.*) ;;
+    *) echo "Incus $server_version is not 7.0 LTS; need 7.0 LTS 7.0.2+ (#183)" >&2; exit 1 ;;
+esac
+if ! dpkg --compare-versions "$server_version" ge 7.0.2; then
+    echo "Incus $server_version lacks the ID map allocation fix (#183); need 7.0 LTS 7.0.2+" >&2
+    exit 1
+fi
 # GitHub runners also run Docker, whose forwarding policy can block Incus.
 # Scope the exception to the disposable builder bridge; do not change the
 # default policy or any developer host's firewall.
