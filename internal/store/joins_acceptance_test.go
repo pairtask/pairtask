@@ -32,16 +32,16 @@ func joinGet(t *testing.T, db peer.JoinStore, id string) peer.JoinRecord {
 }
 func joinStart(t *testing.T, db peer.JoinStore, id string) peer.JoinRecord {
 	t.Helper()
-	r, err := db.BeginJoin(context.Background(), id, joinKey(1), "Bob", joinAt)
+	r, err := db.BeginJoin(context.Background(), peer.JoinStart{OperationID: id, Joiner: joinKey(1), Name: "Bob", At: joinAt})
 	pairOK(t, err)
 	return r
 }
 func joinVerified(t *testing.T, db peer.JoinStore, id string) peer.JoinRecord {
 	t.Helper()
 	joinStart(t, db, id)
-	_, err := db.SetCorrelation(context.Background(), id, "inv-"+id, "remote-"+id, joinAt.Add(time.Second))
+	_, err := db.SetCorrelation(context.Background(), id, peer.InviterHello{InvitationID: "inv-" + id, OperationID: "remote-" + id}, joinAt.Add(time.Second))
 	pairOK(t, err)
-	r, err := db.RecordVerified(context.Background(), id, joinKey(2), []byte("provider-transcript"), joinAt.Add(2*time.Second))
+	r, err := db.RecordVerified(context.Background(), id, peer.ExchangeResult{Peer: joinKey(2), TranscriptID: []byte("provider-transcript")}, joinAt.Add(2*time.Second))
 	pairOK(t, err)
 	return r
 }
@@ -65,11 +65,11 @@ func TestJoinsAcceptanceReceiptAndRetriesNeverRegress(t *testing.T) {
 		pairEqual(t, accepted.State, peer.JoinAwaitingAcceptance)
 		pairEqual(t, accepted.Joiner, joinKey(1))
 		pairEqual(t, accepted.Peer, joinKey(2))
-		_, err = db.BeginJoin(ctx, r.OperationID, r.Joiner, r.JoinerName, later)
+		_, err = db.BeginJoin(ctx, peer.JoinStart{OperationID: r.OperationID, Joiner: r.Joiner, Name: r.JoinerName, At: later})
 		pairOK(t, err)
-		_, err = db.SetCorrelation(ctx, r.OperationID, r.InvitationID, r.InviterOperationID, later)
+		_, err = db.SetCorrelation(ctx, r.OperationID, peer.InviterHello{InvitationID: r.InvitationID, OperationID: r.InviterOperationID}, later)
 		pairOK(t, err)
-		_, err = db.RecordVerified(ctx, r.OperationID, r.Peer, r.TranscriptID, later)
+		_, err = db.RecordVerified(ctx, r.OperationID, peer.ExchangeResult{Peer: r.Peer, TranscriptID: r.TranscriptID}, later)
 		pairOK(t, err)
 		_, err = db.RecordReceipt(ctx, r.OperationID, joinReceipt(r), later.Add(time.Hour))
 		pairOK(t, err)
@@ -105,17 +105,17 @@ func TestJoinsAcceptanceImmutableCorrelationAndInputCopies(t *testing.T) {
 	joinBackends(t, func(t *testing.T, db peer.JoinStore) {
 		ctx := context.Background()
 		r := joinVerified(t, db, "one")
-		_, err := db.BeginJoin(ctx, "one", joinKey(3), "Bob", joinAt)
+		_, err := db.BeginJoin(ctx, peer.JoinStart{OperationID: "one", Joiner: joinKey(3), Name: "Bob", At: joinAt})
 		pairEqual(t, errors.Is(err, peer.ErrJoinConflict), true)
-		_, err = db.BeginJoin(ctx, "one", joinKey(1), "Mallory", joinAt)
+		_, err = db.BeginJoin(ctx, peer.JoinStart{OperationID: "one", Joiner: joinKey(1), Name: "Mallory", At: joinAt})
 		pairEqual(t, errors.Is(err, peer.ErrJoinConflict), true)
-		_, err = db.SetCorrelation(ctx, "one", "changed", r.InviterOperationID, joinAt)
+		_, err = db.SetCorrelation(ctx, "one", peer.InviterHello{InvitationID: "changed", OperationID: r.InviterOperationID}, joinAt)
 		pairEqual(t, errors.Is(err, peer.ErrJoinConflict), true)
-		_, err = db.SetCorrelation(ctx, "one", r.InvitationID, "changed", joinAt)
+		_, err = db.SetCorrelation(ctx, "one", peer.InviterHello{InvitationID: r.InvitationID, OperationID: "changed"}, joinAt)
 		pairEqual(t, errors.Is(err, peer.ErrJoinConflict), true)
-		_, err = db.RecordVerified(ctx, "one", joinKey(3), r.TranscriptID, joinAt)
+		_, err = db.RecordVerified(ctx, "one", peer.ExchangeResult{Peer: joinKey(3), TranscriptID: r.TranscriptID}, joinAt)
 		pairEqual(t, errors.Is(err, peer.ErrJoinConflict), true)
-		_, err = db.RecordVerified(ctx, "one", r.Peer, []byte("changed"), joinAt)
+		_, err = db.RecordVerified(ctx, "one", peer.ExchangeResult{Peer: r.Peer, TranscriptID: []byte("changed")}, joinAt)
 		pairEqual(t, errors.Is(err, peer.ErrJoinConflict), true)
 		joinUnchanged(t, db, r)
 		copy := joinGet(t, db, "one")
@@ -132,7 +132,7 @@ func TestJoinsAcceptanceRecoveryIsExplicitAndPreservesUnknown(t *testing.T) {
 		ctx := context.Background()
 		joinStart(t, db, "intent")
 		joinStart(t, db, "exchange")
-		_, err := db.SetCorrelation(ctx, "exchange", "inv", "remote", joinAt)
+		_, err := db.SetCorrelation(ctx, "exchange", peer.InviterHello{InvitationID: "inv", OperationID: "remote"}, joinAt)
 		pairOK(t, err)
 		unknown := joinVerified(t, db, "unknown")
 		ready := joinVerified(t, db, "ready")
@@ -152,7 +152,7 @@ func TestJoinsAcceptanceRecoveryIsExplicitAndPreservesUnknown(t *testing.T) {
 		n, err = db.RecoverJoins(ctx, joinAt.Add(2*time.Hour))
 		pairOK(t, err)
 		pairEqual(t, n, 0)
-		_, err = db.RecordVerified(ctx, "exchange", joinKey(2), []byte("late"), joinAt)
+		_, err = db.RecordVerified(ctx, "exchange", peer.ExchangeResult{Peer: joinKey(2), TranscriptID: []byte("late")}, joinAt)
 		pairEqual(t, errors.Is(err, peer.ErrJoinState), true)
 	})
 }
@@ -169,7 +169,7 @@ func TestJoinsAcceptanceOpenCapacityAndAtomicLastSlot(t *testing.T) {
 			wg.Add(1)
 			go func(n int) {
 				defer wg.Done()
-				_, err := db.BeginJoin(context.Background(), fmt.Sprintf("race-%d", n), joinKey(1), "Bob", joinAt)
+				_, err := db.BeginJoin(context.Background(), peer.JoinStart{OperationID: fmt.Sprintf("race-%d", n), Joiner: joinKey(1), Name: "Bob", At: joinAt})
 				results <- err
 			}(n)
 		}
@@ -198,7 +198,7 @@ func TestJoinsAcceptanceInvalidNewFieldsWriteNothing(t *testing.T) {
 	joinBackends(t, func(t *testing.T, db peer.JoinStore) {
 		ctx := context.Background()
 		for _, args := range [][3]string{{"", joinKey(1), "Bob"}, {strings.Repeat("x", 129), joinKey(1), "Bob"}, {"id", "bad", "Bob"}, {"id", joinKey(1), "bad\nname"}, {"id", joinKey(1), strings.Repeat("é", 33)}} {
-			_, err := db.BeginJoin(ctx, args[0], args[1], args[2], joinAt)
+			_, err := db.BeginJoin(ctx, peer.JoinStart{OperationID: args[0], Joiner: args[1], Name: args[2], At: joinAt})
 			if err == nil {
 				t.Fatal("invalid intent accepted")
 			}
@@ -207,7 +207,7 @@ func TestJoinsAcceptanceInvalidNewFieldsWriteNothing(t *testing.T) {
 		pairOK(t, err)
 		pairEqual(t, len(rows), 0)
 		before := joinStart(t, db, "one")
-		_, err = db.SetCorrelation(ctx, "one", "", "remote", joinAt)
+		_, err = db.SetCorrelation(ctx, "one", peer.InviterHello{InvitationID: "", OperationID: "remote"}, joinAt)
 		if err == nil {
 			t.Fatal("empty correlation accepted")
 		}
@@ -269,7 +269,7 @@ func joinTotalCheck(t *testing.T, db peer.JoinStore) {
 	joinStart(t, db, "last")
 	_, err := db.FailJoin(ctx, "last", joinAt)
 	pairOK(t, err)
-	_, err = db.BeginJoin(ctx, "overflow", joinKey(1), "Bob", joinAt)
+	_, err = db.BeginJoin(ctx, peer.JoinStart{OperationID: "overflow", Joiner: joinKey(1), Name: "Bob", At: joinAt})
 	pairEqual(t, errors.Is(err, peer.ErrJoinCapacity), true)
 	_, found, err := db.GetJoin(ctx, "overflow")
 	pairOK(t, err)
@@ -317,22 +317,22 @@ func TestJoinsAcceptanceVerificationIsValidatedAndCopied(t *testing.T) {
 	joinBackends(t, func(t *testing.T, db peer.JoinStore) {
 		ctx := context.Background()
 		joinStart(t, db, "one")
-		before, err := db.SetCorrelation(ctx, "one", "inv", "remote", joinAt)
+		before, err := db.SetCorrelation(ctx, "one", peer.InviterHello{InvitationID: "inv", OperationID: "remote"}, joinAt)
 		pairOK(t, err)
 		for _, transcript := range [][]byte{nil, {}, make([]byte, 65)} {
-			_, err := db.RecordVerified(ctx, "one", joinKey(2), transcript, joinAt)
+			_, err := db.RecordVerified(ctx, "one", peer.ExchangeResult{Peer: joinKey(2), TranscriptID: transcript}, joinAt)
 			if err == nil {
 				t.Fatal("invalid transcript accepted")
 			}
 			joinUnchanged(t, db, before)
 		}
-		_, err = db.RecordVerified(ctx, "one", "invalid", []byte("ok"), joinAt)
+		_, err = db.RecordVerified(ctx, "one", peer.ExchangeResult{Peer: "invalid", TranscriptID: []byte("ok")}, joinAt)
 		if err == nil {
 			t.Fatal("invalid authenticated identity accepted")
 		}
 		joinUnchanged(t, db, before)
 		transcript := bytes.Repeat([]byte{7}, 64)
-		_, err = db.RecordVerified(ctx, "one", joinKey(2), transcript, joinAt)
+		_, err = db.RecordVerified(ctx, "one", peer.ExchangeResult{Peer: joinKey(2), TranscriptID: transcript}, joinAt)
 		pairOK(t, err)
 		transcript[0] = 99
 		pairEqual(t, joinGet(t, db, "one").TranscriptID[0], byte(7))
@@ -344,19 +344,19 @@ func TestJoinsAcceptanceVerificationWriteFailureRollsBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "failure.db")
 	db := pairSQLite(t, path)
 	joinStart(t, db, "one")
-	before, err := db.SetCorrelation(ctx, "one", "inv", "remote", joinAt)
+	before, err := db.SetCorrelation(ctx, "one", peer.InviterHello{InvitationID: "inv", OperationID: "remote"}, joinAt)
 	pairOK(t, err)
 	raw := pairRaw(t, path)
 	_, err = raw.Exec(`CREATE TRIGGER reject_verified BEFORE UPDATE ON peer_joins WHEN NEW.state='outcome_unknown' BEGIN SELECT RAISE(ABORT, 'injected disk failure'); END`)
 	pairOK(t, err)
-	_, err = db.RecordVerified(ctx, "one", joinKey(2), []byte("transcript"), joinAt.Add(time.Second))
+	_, err = db.RecordVerified(ctx, "one", peer.ExchangeResult{Peer: joinKey(2), TranscriptID: []byte("transcript")}, joinAt.Add(time.Second))
 	if err == nil {
 		t.Fatal("injected database failure was ignored")
 	}
 	joinUnchanged(t, db, before)
 	_, err = raw.Exec(`DROP TRIGGER reject_verified`)
 	pairOK(t, err)
-	_, err = db.RecordVerified(ctx, "one", joinKey(2), []byte("transcript"), joinAt.Add(time.Second))
+	_, err = db.RecordVerified(ctx, "one", peer.ExchangeResult{Peer: joinKey(2), TranscriptID: []byte("transcript")}, joinAt.Add(time.Second))
 	pairOK(t, err)
 	pairEqual(t, joinGet(t, db, "one").State, peer.JoinOutcomeUnknown)
 }

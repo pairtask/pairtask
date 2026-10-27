@@ -34,17 +34,17 @@ var _ peer.JoinStore = (*Store)(nil)
 const joinColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at`
 
 // BeginJoin records a join's intent; see peer.JoinStore.
-func (s *Store) BeginJoin(ctx context.Context, opID, joiner, name string, at time.Time) (peer.JoinRecord, error) {
+func (s *Store) BeginJoin(ctx context.Context, start peer.JoinStart) (peer.JoinRecord, error) {
 	return s.inJoinTx(ctx, func(tx *sql.Tx) (peer.JoinRecord, error) {
-		known, found, err := getJoin(ctx, tx, opID)
+		known, found, err := getJoin(ctx, tx, start.OperationID)
 		if err != nil || found {
-			return replayJoin(known, joiner, name, err)
+			return replayJoin(known, start, err)
 		}
 		counts, err := joinCounts(ctx, tx)
 		if err != nil {
 			return peer.JoinRecord{}, err
 		}
-		r, err := peer.NewJoin(opID, joiner, name, at, counts)
+		r, err := peer.NewJoin(start, counts)
 		if err != nil {
 			return peer.JoinRecord{}, err
 		}
@@ -52,11 +52,11 @@ func (s *Store) BeginJoin(ctx context.Context, opID, joiner, name string, at tim
 	})
 }
 
-func replayJoin(known peer.JoinRecord, joiner, name string, err error) (peer.JoinRecord, error) {
+func replayJoin(known peer.JoinRecord, start peer.JoinStart, err error) (peer.JoinRecord, error) {
 	if err != nil {
 		return peer.JoinRecord{}, err
 	}
-	return peer.ReplayJoin(known, joiner, name)
+	return peer.ReplayJoin(known, start)
 }
 
 func joinCounts(ctx context.Context, tx *sql.Tx) (peer.JoinCounts, error) {
@@ -66,15 +66,15 @@ func joinCounts(ctx context.Context, tx *sql.Tx) (peer.JoinCounts, error) {
 	return c, err
 }
 
-func (s *Store) SetCorrelation(ctx context.Context, opID, invitationID, inviterOpID string, at time.Time) (peer.JoinRecord, error) {
+func (s *Store) SetCorrelation(ctx context.Context, opID string, h peer.InviterHello, at time.Time) (peer.JoinRecord, error) {
 	return s.updateJoin(ctx, opID, func(r peer.JoinRecord) (peer.JoinRecord, bool, error) {
-		return peer.Correlate(r, invitationID, inviterOpID, at)
+		return peer.Correlate(r, h, at)
 	})
 }
 
-func (s *Store) RecordVerified(ctx context.Context, opID, peerKey string, transcriptID []byte, at time.Time) (peer.JoinRecord, error) {
+func (s *Store) RecordVerified(ctx context.Context, opID string, res peer.ExchangeResult, at time.Time) (peer.JoinRecord, error) {
 	return s.updateJoin(ctx, opID, func(r peer.JoinRecord) (peer.JoinRecord, bool, error) {
-		return peer.Verify(r, peerKey, transcriptID, at)
+		return peer.Verify(r, res, at)
 	})
 }
 

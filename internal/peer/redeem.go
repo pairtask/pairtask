@@ -69,11 +69,25 @@ func NewJoiner(ex Exchanger, store JoinStore, self *WorkspaceIdentity, clock fun
 	return &Joiner{ex: ex, store: store, self: self, clock: clock, random: random}, nil
 }
 
-// Join redeems code on one connection. It writes the join before sending
+// JoinInput is what a join needs from the operator and the connection. The
+// code is never formatted or encoded.
+type JoinInput struct {
+	Connection Connection
+	Code       []byte `json:"-"`
+	Name       string
+}
+
+func (in JoinInput) String() string {
+	return fmt.Sprintf("peer.JoinInput{Peer: %q, Name: %q, Code: [redacted]}", in.Connection.PeerLeaf, in.Name)
+}
+
+func (in JoinInput) GoString() string { return in.String() }
+
+// Join redeems a code on one connection. It writes the join before sending
 // anything, and the authenticated inviter and transcript before our final
 // confirmation can leave. With ErrJoinOutcomeUnknown the record is returned.
-func (j *Joiner) Join(ctx context.Context, f Frames, c Connection, code []byte, name string) (JoinRecord, error) {
-	digits, err := j.admit(c, code, name)
+func (j *Joiner) Join(ctx context.Context, f Frames, in JoinInput) (JoinRecord, error) {
+	digits, err := j.admit(in)
 	if err != nil {
 		return JoinRecord{}, err
 	}
@@ -82,15 +96,16 @@ func (j *Joiner) Join(ctx context.Context, f Frames, c Connection, code []byte, 
 	if err != nil {
 		return JoinRecord{}, err
 	}
-	if _, err := j.store.BeginJoin(ctx, opID, j.self.Fingerprint(), name, j.clock()); err != nil {
+	start := JoinStart{OperationID: opID, Joiner: j.self.Fingerprint(), Name: in.Name, At: j.clock()}
+	if _, err := j.store.BeginJoin(ctx, start); err != nil {
 		return JoinRecord{}, err
 	}
-	hello, err := j.correlate(ctx, f, opID, name)
+	hello, err := j.correlate(ctx, f, start)
 	if err != nil {
 		return j.fail(ctx, opID, err)
 	}
 	b := ExchangeBinding{InvitationID: hello.InvitationID, JoinerOperationID: opID, InviterOperationID: hello.OperationID,
-		Inviter: c.PeerLeaf, Joiner: j.self.Fingerprint(), JoinerName: name, ChannelBinding: c.ChannelBinding}
+		Inviter: in.Connection.PeerLeaf, Joiner: start.Joiner, JoinerName: in.Name, ChannelBinding: in.Connection.ChannelBinding}
 	persisted, err := j.exchange(ctx, f, b, digits)
 	if !persisted {
 		return j.fail(ctx, opID, errors.Join(ErrExchangeFailed, err))
@@ -103,17 +118,17 @@ func (j *Joiner) Join(ctx context.Context, f Frames, c Connection, code []byte, 
 
 // admit refuses before anything is written or sent, and returns the code's
 // digits.
-func (j *Joiner) admit(c Connection, code []byte, name string) ([]byte, error) {
+func (j *Joiner) admit(in JoinInput) ([]byte, error) {
 	if j.ex == nil {
 		return nil, ErrExchangeUnavailable
 	}
-	if err := c.check(j.self.Fingerprint()); err != nil {
+	if err := in.Connection.check(j.self.Fingerprint()); err != nil {
 		return nil, err
 	}
-	if !validPairingName(name) {
+	if !validPairingName(in.Name) {
 		return nil, ErrInvalidBinding
 	}
-	return normalizeCode(code)
+	return normalizeCode(in.Code)
 }
 
 // Code bounds match InvitationPolicy's; typed input, grouping included, is
@@ -130,19 +145,27 @@ func normalizeCode(code []byte) ([]byte, error) {
 	if len(code) > maxCodeInput {
 		return nil, ErrInvalidBinding
 	}
-	digits := make([]byte, 0, maxCodeDigits)
+	digits := make([]byte, 0, maxCodeInput)
 	for _, c := range code {
-		switch {
-		case c >= '0' && c <= '9':
-			digits = append(digits, c)
-		case c != '-' && c != ' ':
+		keep, ok := codeByte(c)
+		if !ok {
 			return nil, ErrInvalidBinding
 		}
+		digits = append(digits, keep...)
 	}
 	if len(digits) < minCodeDigits || len(digits) > maxCodeDigits {
 		return nil, ErrInvalidBinding
 	}
 	return digits, nil
+}
+
+// codeByte is what one typed byte contributes: a digit, nothing for
+// grouping, or not ok.
+func codeByte(c byte) ([]byte, bool) {
+	if c >= '0' && c <= '9' {
+		return []byte{c}, true
+	}
+	return nil, c == '-' || c == ' '
 }
 
 func randomOperationID(random io.Reader) (string, error) {
@@ -154,8 +177,8 @@ func randomOperationID(random io.Reader) (string, error) {
 }
 
 // correlate sends our hello and records the inviter's answer.
-func (j *Joiner) correlate(ctx context.Context, f Frames, opID, name string) (InviterHello, error) {
-	frame, err := EncodeJoinerHello(JoinerHello{OperationID: opID, Name: name})
+func (j *Joiner) correlate(ctx context.Context, f Frames, start JoinStart) (InviterHello, error) {
+	frame, err := EncodeJoinerHello(JoinerHello{OperationID: start.OperationID, Name: start.Name})
 	if err != nil {
 		return InviterHello{}, err
 	}
@@ -166,7 +189,7 @@ func (j *Joiner) correlate(ctx context.Context, f Frames, opID, name string) (In
 	if err != nil {
 		return InviterHello{}, err
 	}
-	_, err = j.store.SetCorrelation(ctx, opID, hello.InvitationID, hello.OperationID, j.clock())
+	_, err = j.store.SetCorrelation(ctx, start.OperationID, hello, j.clock())
 	return hello, err
 }
 
@@ -200,7 +223,7 @@ func (j *Joiner) exchange(ctx context.Context, f Frames, b ExchangeBinding, code
 		if res.Peer != b.Inviter {
 			return ErrPeerMismatch
 		}
-		if _, err := j.store.RecordVerified(ctx, b.JoinerOperationID, res.Peer, res.TranscriptID, j.clock()); err != nil {
+		if _, err := j.store.RecordVerified(ctx, b.JoinerOperationID, res, j.clock()); err != nil {
 			return err
 		}
 		persisted = true

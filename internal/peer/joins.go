@@ -78,9 +78,9 @@ type JoinReceipt struct {
 // JoinStore keeps joins durably. Each write checks and applies its
 // transition atomically; an identical repeat returns the record unchanged.
 type JoinStore interface {
-	BeginJoin(ctx context.Context, opID, joiner, name string, at time.Time) (JoinRecord, error)
-	SetCorrelation(ctx context.Context, opID, invitationID, inviterOpID string, at time.Time) (JoinRecord, error)
-	RecordVerified(ctx context.Context, opID, peer string, transcriptID []byte, at time.Time) (JoinRecord, error)
+	BeginJoin(ctx context.Context, s JoinStart) (JoinRecord, error)
+	SetCorrelation(ctx context.Context, opID string, h InviterHello, at time.Time) (JoinRecord, error)
+	RecordVerified(ctx context.Context, opID string, res ExchangeResult, at time.Time) (JoinRecord, error)
 	RecordReceipt(ctx context.Context, opID string, r JoinReceipt, at time.Time) (JoinRecord, error)
 	FailJoin(ctx context.Context, opID string, at time.Time) (JoinRecord, error)
 	// RecoverJoins marks joins interrupted before verification unverified.
@@ -95,14 +95,21 @@ func (s JoinState) Open() bool {
 	return s != JoinFailed && s != JoinUnverified
 }
 
+// JoinStart is a join's intent: our operation ID, our own fingerprint and
+// the name we pair under.
+type JoinStart struct {
+	OperationID, Joiner, Name string
+	At                        time.Time
+}
+
 // JoinCounts is what admitting a new join depends on.
 type JoinCounts struct {
 	Total, Open int
 }
 
 // NewJoin is a join's first record, or why it can't be admitted.
-func NewJoin(opID, joiner, name string, at time.Time, c JoinCounts) (JoinRecord, error) {
-	if err := validJoinStart(opID, joiner, name); err != nil {
+func NewJoin(s JoinStart, c JoinCounts) (JoinRecord, error) {
+	if err := s.validate(); err != nil {
 		return JoinRecord{}, err
 	}
 	if c.Total >= MaxJoins {
@@ -111,14 +118,14 @@ func NewJoin(opID, joiner, name string, at time.Time, c JoinCounts) (JoinRecord,
 	if c.Open >= MaxOpenJoins {
 		return JoinRecord{}, ErrTooManyOpenJoins
 	}
-	return JoinRecord{OperationID: opID, Joiner: joiner, JoinerName: name, State: JoinIntent, CreatedAt: at, UpdatedAt: at}, nil
+	return JoinRecord{OperationID: s.OperationID, Joiner: s.Joiner, JoinerName: s.Name, State: JoinIntent, CreatedAt: s.At, UpdatedAt: s.At}, nil
 }
 
-func validJoinStart(opID, joiner, name string) error {
-	if !validPairingID(opID) || !validPairingName(name) {
+func (s JoinStart) validate() error {
+	if !validPairingID(s.OperationID) || !validPairingName(s.Name) {
 		return ErrInvalidJoin
 	}
-	if ValidIdentityKey(joiner) != nil {
+	if ValidIdentityKey(s.Joiner) != nil {
 		return ErrInvalidJoin
 	}
 	return nil
@@ -129,8 +136,8 @@ func validPairingID(id string) bool {
 }
 
 // ReplayJoin answers BeginJoin for a known operation.
-func ReplayJoin(r JoinRecord, joiner, name string) (JoinRecord, error) {
-	if r.Joiner != joiner || r.JoinerName != name {
+func ReplayJoin(r JoinRecord, s JoinStart) (JoinRecord, error) {
+	if r.Joiner != s.Joiner || r.JoinerName != s.Name {
 		return JoinRecord{}, ErrJoinConflict
 	}
 	return r, nil
@@ -140,28 +147,28 @@ func ReplayJoin(r JoinRecord, joiner, name string) (JoinRecord, error) {
 // can't apply. Stores call them on the record read in their transaction.
 
 // Correlate records the inviter's hello.
-func Correlate(r JoinRecord, invitationID, inviterOpID string, at time.Time) (JoinRecord, bool, error) {
-	if !validPairingID(invitationID) || !validPairingID(inviterOpID) {
+func Correlate(r JoinRecord, h InviterHello, at time.Time) (JoinRecord, bool, error) {
+	if !validPairingID(h.InvitationID) || !validPairingID(h.OperationID) {
 		return r, false, ErrInvalidJoin
 	}
 	if r.State == JoinIntent {
-		r.InvitationID, r.InviterOperationID, r.State, r.UpdatedAt = invitationID, inviterOpID, JoinExchanging, at
+		r.InvitationID, r.InviterOperationID, r.State, r.UpdatedAt = h.InvitationID, h.OperationID, JoinExchanging, at
 		return r, true, nil
 	}
-	return r, false, sameOnce(r.InviterOperationID != "", r.InvitationID == invitationID && r.InviterOperationID == inviterOpID)
+	return r, false, sameOnce(r.InviterOperationID != "", r.InvitationID == h.InvitationID && r.InviterOperationID == h.OperationID)
 }
 
 // Verify records the authenticated inviter and transcript, before our final
 // confirmation can leave.
-func Verify(r JoinRecord, peer string, transcriptID []byte, at time.Time) (JoinRecord, bool, error) {
-	if ValidIdentityKey(peer) != nil || !validTranscriptID(transcriptID) {
+func Verify(r JoinRecord, res ExchangeResult, at time.Time) (JoinRecord, bool, error) {
+	if ValidIdentityKey(res.Peer) != nil || !validTranscriptID(res.TranscriptID) {
 		return r, false, ErrInvalidJoin
 	}
 	if r.State == JoinExchanging {
-		r.Peer, r.TranscriptID, r.State, r.UpdatedAt = peer, bytes.Clone(transcriptID), JoinOutcomeUnknown, at
+		r.Peer, r.TranscriptID, r.State, r.UpdatedAt = res.Peer, bytes.Clone(res.TranscriptID), JoinOutcomeUnknown, at
 		return r, true, nil
 	}
-	return r, false, sameOnce(r.Peer != "", r.Peer == peer && bytes.Equal(r.TranscriptID, transcriptID))
+	return r, false, sameOnce(r.Peer != "", r.Peer == res.Peer && bytes.Equal(r.TranscriptID, res.TranscriptID))
 }
 
 func validTranscriptID(id []byte) bool {
@@ -253,18 +260,18 @@ func cloneJoin(r JoinRecord) JoinRecord {
 	return r
 }
 
-func (s *MemJoinStore) BeginJoin(_ context.Context, opID, joiner, name string, at time.Time) (JoinRecord, error) {
+func (s *MemJoinStore) BeginJoin(_ context.Context, start JoinStart) (JoinRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if r, ok := s.joins[opID]; ok {
-		r, err := ReplayJoin(r, joiner, name)
+	if r, ok := s.joins[start.OperationID]; ok {
+		r, err := ReplayJoin(r, start)
 		return cloneJoin(r), err
 	}
-	r, err := NewJoin(opID, joiner, name, at, s.counts())
+	r, err := NewJoin(start, s.counts())
 	if err != nil {
 		return JoinRecord{}, err
 	}
-	s.joins[opID] = r
+	s.joins[start.OperationID] = r
 	return cloneJoin(r), nil
 }
 
@@ -296,12 +303,12 @@ func (s *MemJoinStore) update(opID string, step func(JoinRecord) (JoinRecord, bo
 	return cloneJoin(next), nil
 }
 
-func (s *MemJoinStore) SetCorrelation(_ context.Context, opID, invitationID, inviterOpID string, at time.Time) (JoinRecord, error) {
-	return s.update(opID, func(r JoinRecord) (JoinRecord, bool, error) { return Correlate(r, invitationID, inviterOpID, at) })
+func (s *MemJoinStore) SetCorrelation(_ context.Context, opID string, h InviterHello, at time.Time) (JoinRecord, error) {
+	return s.update(opID, func(r JoinRecord) (JoinRecord, bool, error) { return Correlate(r, h, at) })
 }
 
-func (s *MemJoinStore) RecordVerified(_ context.Context, opID, peer string, transcriptID []byte, at time.Time) (JoinRecord, error) {
-	return s.update(opID, func(r JoinRecord) (JoinRecord, bool, error) { return Verify(r, peer, transcriptID, at) })
+func (s *MemJoinStore) RecordVerified(_ context.Context, opID string, res ExchangeResult, at time.Time) (JoinRecord, error) {
+	return s.update(opID, func(r JoinRecord) (JoinRecord, bool, error) { return Verify(r, res, at) })
 }
 
 func (s *MemJoinStore) RecordReceipt(_ context.Context, opID string, receipt JoinReceipt, at time.Time) (JoinRecord, error) {
