@@ -75,6 +75,9 @@ func parseOperatorPair(args []string, stderr io.Writer) (operatorCall, protocol.
 			return fmt.Errorf("pair %s: wrong number of arguments", op)
 		}
 		if len(rest) == 1 {
+			if strings.TrimSpace(rest[0]) == "" {
+				return fmt.Errorf("pair %s: the argument is empty", op)
+			}
 			req.PairingTarget = rest[0]
 		}
 		return call.validate()
@@ -86,8 +89,8 @@ func parseOperatorPair(args []string, stderr io.Writer) (operatorCall, protocol.
 // an ID reads the open invitation; accept and reject resolve a key prefix
 // against a listing, and nothing is sent unless it names exactly one request.
 func resolvePairTarget(ctx context.Context, call operatorCall, req *protocol.Message, stderr io.Writer) error {
-	read := pairVerbs[req.PairingOp].read
-	if read == "" || (req.PairingOp == protocol.PairingOpCancel && req.PairingTarget != "") {
+	read := pairRead(*req)
+	if read == "" {
 		return nil
 	}
 	resp, err := call.expect(ctx, protocol.Message{Type: protocol.TypeOperatorPairing, MessageID: uuid.NewString(), PairingOp: read},
@@ -106,6 +109,15 @@ func resolvePairTarget(ctx context.Context, call operatorCall, req *protocol.Mes
 	}
 	req.PairingTarget = target
 	return nil
+}
+
+// pairRead is the read a request needs first, if any; a cancel naming its
+// invitation needs none.
+func pairRead(req protocol.Message) string {
+	if req.PairingOp == protocol.PairingOpCancel && req.PairingTarget != "" {
+		return ""
+	}
+	return pairVerbs[req.PairingOp].read
 }
 
 func writePairing(w io.Writer, s *protocol.PairingSnapshot) {

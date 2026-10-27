@@ -188,3 +188,14 @@ func TestPairingCLIAcceptanceDefaultListAndExplicitCancel(t *testing.T) {
 		})
 	}
 }
+
+func TestPairingCLIAcceptanceEmptyDecisionKeyIsUsageError(t *testing.T) {
+	for _, op := range []string{"accept", "reject"} {
+		for _, key := range []string{"", "   "} {
+			var out, stderr bytes.Buffer
+			exit := run(context.Background(), []string{"operator", "pair", op, "--socket", filepath.Join(t.TempDir(), "absent.sock"), key}, &out, &stderr)
+			assertStatusEqual(t, "empty key rejected before connection", exit, 2)
+			assertStatusEqual(t, "usage refusal leaves stdout empty", out.Len(), 0)
+		}
+	}
+}

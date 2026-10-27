@@ -70,15 +70,20 @@ type PairingRequestView struct {
 
 var (
 	ErrPairingNoInvitation = errors.New("no open invitation")
+	ErrPairingEmptyKey     = errors.New("a key or key prefix is required")
 	ErrPairingAmbiguous    = errors.New("matches more than one request; type more of the key")
 	ErrPairingPartial      = errors.New("the request list is partial; use a full listed key")
 	ErrPairingUnknown      = errors.New("no listed request starts with it")
 )
 
 // ResolveKey resolves a typed prefix to the one listed identity key it
-// starts, so a decision always names a full key. An exact key always
-// resolves; a partial listing can't prove a prefix unique.
+// starts, so a decision always names a full key. An empty prefix never
+// resolves, an exact key always does, and a partial listing can't prove a
+// prefix unique.
 func (s *PairingSnapshot) ResolveKey(prefix string) (string, error) {
+	if strings.TrimSpace(prefix) == "" {
+		return "", ErrPairingEmptyKey
+	}
 	var matches []string
 	for _, r := range s.Requests {
 		if r.IdentityKey == prefix {
