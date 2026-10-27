@@ -157,9 +157,14 @@ func checkLateInvitation(t *testing.T, invalidate func(*testing.T, invitationFix
 
 func TestInvitationAcceptanceLateCompletionRefused(t *testing.T) {
 	cases := map[string]func(*testing.T, invitationFixture, string){
-		"cancel":                   func(t *testing.T, f invitationFixture, id string) { invOK(t, f.manager.Cancel(id)) },
-		"replace":                  func(t *testing.T, f invitationFixture, id string) { invEqual(t, openInvitation(t, f).ID == id, false) },
-		"expiry-boundary":          func(_ *testing.T, f invitationFixture, _ string) { f.clock.advance(10 * time.Minute) },
+		"cancel":  func(t *testing.T, f invitationFixture, id string) { invOK(t, f.manager.Cancel(id)) },
+		"replace": func(t *testing.T, f invitationFixture, id string) { invEqual(t, openInvitation(t, f).ID == id, false) },
+		"expiry-boundary": func(t *testing.T, f invitationFixture, _ string) {
+			f.clock.advance(10 * time.Minute)
+			status := invitationStatus(t, f)
+			invEqual(t, status.Expired, true)
+			invEqual(t, status.InFlight, false)
+		},
 		"attempt-timeout-boundary": func(_ *testing.T, f invitationFixture, _ string) { f.clock.advance(30 * time.Second) },
 		"clock-rollback":           func(_ *testing.T, f invitationFixture, _ string) { f.clock.advance(-time.Second) },
 	}
