@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import json
 import subprocess
 
+import sandbox_idmap_checks
+
 PEER_DIR = "/mnt/collab-peer"
 PEER_SOCKET = PEER_DIR + "/gate.sock"
 STATE_DIR = "/var/lib/peerprobe"
@@ -65,15 +67,6 @@ def _control_network(probe, instance):
         require(not routes, "Secured has a default network route")
 
 
-def _mapping(role, instance):
-    config = instance["expanded_config"]
-    require(config.get("security.privileged", "false") == "false", f"{role} is privileged")
-    require(config.get("security.idmap.isolated") == "true", f"{role} has no isolated mapping")
-    mapping = json.loads(config["volatile.idmap.current"])
-    require(bool(mapping), f"{role} has no measured UID mapping")
-    return json.dumps(mapping, sort_keys=True)
-
-
 def _control_config(role, instance):
     config = instance["expanded_config"]
     require(config.get("security.nesting", "false") == "false", f"{role} allows nesting")
@@ -84,11 +77,10 @@ def check_topology(remote, project):
     probe = Probe(remote, project)
     instances = probe.instances()
     _control_network(probe, instances["secured"])
-    mappings = [_mapping(role, instance) for role, instance in instances.items()]
-    require(len(set(mappings)) == 3, "Probe containers share a UID mapping")
+    sandbox_idmap_checks.check_disjoint(instances)
     for role in ("secured", "connector"):
         _control_config(role, instances[role])
-    print("PASS: secured has only loopback and no default route; all UID mappings differ.", flush=True)
+    print("PASS: secured has only loopback and no default route; host UID and GID ranges are disjoint.", flush=True)
 
 
 def _mount_options(probe, role):
