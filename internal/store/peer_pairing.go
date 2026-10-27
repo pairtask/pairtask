@@ -33,8 +33,6 @@ CREATE TABLE IF NOT EXISTS peer_pairing_outcomes (
 
 var _ peer.PairingStore = (*Store)(nil)
 
-func pairingTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
-
 // Commit writes the outcome and its request in one transaction; see
 // peer.PairingStore.
 func (s *Store) Commit(ctx context.Context, o peer.PairingOutcome) (peer.PairingRequest, error) {
@@ -73,12 +71,12 @@ func commitPairing(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) (peer
 	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_pairing_requests (identity_key, name, state, first_paired_at)
 VALUES (?, ?, ?, ?)
 ON CONFLICT(identity_key) DO UPDATE SET name = excluded.name`,
-		o.IdentityKey, o.Name, string(peer.PairingPending), pairingTime(o.At)); err != nil {
+		o.IdentityKey, o.Name, string(peer.PairingPending), stamp(o.At)); err != nil {
 		return peer.PairingRequest{}, fmt.Errorf("store pairing request: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_pairing_outcomes (operation_id, invitation_id, identity_key, name, transcript_id, at)
 VALUES (?, ?, ?, ?, ?, ?)`,
-		o.OperationID, o.InvitationID, o.IdentityKey, o.Name, o.TranscriptID, pairingTime(o.At)); err != nil {
+		o.OperationID, o.InvitationID, o.IdentityKey, o.Name, o.TranscriptID, stamp(o.At)); err != nil {
 		return peer.PairingRequest{}, fmt.Errorf("store pairing outcome: %w", err)
 	}
 	return pairingRequest(ctx, tx, o.IdentityKey)

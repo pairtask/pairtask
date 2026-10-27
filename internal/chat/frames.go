@@ -133,6 +133,7 @@ var responseHandlers = map[string]responseHandler{
 	kindAckMany:     (*Model).ackManyResponse,
 	kindRoom:        (*Model).roomResult,
 	kindRoomDelete:  (*Model).roomDeleted,
+	kindPairing:     (*Model).pairingResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
