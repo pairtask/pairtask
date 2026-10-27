@@ -26,6 +26,41 @@ quota-capable pool (ZFS/Btrfs), a managed network bridge and Incus access.
 Skip Colima; replace `colima-pairtask:` with `local:` throughout.
 Do not reinitialize an existing server. Mac requires Colima 0.10.3+.
 
+### Incus server version
+
+The Incus **server** must be **7.0.x at 7.0.2 or later** (LTS) or **7.5 or
+later**. Older servers (6.0.x, 7.0.0–7.0.1, 7.1–7.4) can give two containers
+created at the same moment overlapping host UID/GID ranges, which weakens the
+file-permission separation between `secured` and `workspace`
+([#183](https://github.com/pairtask/pairtask/issues/183); fixed upstream in
+[lxc/incus#3999](https://github.com/lxc/incus/pull/3999)). Check the server
+line, not the client:
+
+```sh
+incus version colima-pairtask:     # Linux: incus version local:
+```
+
+- **Stay on your track.** On 6.0 LTS, move to the fixed 7.0 LTS (7.0.2+). On
+  7.1–7.4, upgrade forward to 7.5+; don't move to 7.0 LTS, because Incus
+  can't downgrade its database.
+- **Colima holds Incus.** Its VM image installs Incus from zabbly `stable` and
+  `apt-mark hold`s the Incus packages, so `apt upgrade` in the VM skips them,
+  and `brew upgrade incus` updates the Mac client, not the VM's server. Upgrade the held `incus*`
+  packages deliberately inside the VM. Stop the sandbox first and back up the
+  Incus database.
+- **Upgrading alone doesn't repair an existing overlap.** After upgrading,
+  check that the existing containers' ranges don't overlap:
+
+  ```sh
+  K=volatile.idmap.current
+  incus --project pairtask config get colima-pairtask:secured $K
+  incus --project pairtask config get colima-pairtask:workspace $K
+  ```
+
+  Each entry maps container IDs to host IDs `[Hostid, Hostid + Maprange)`.
+  The two containers' UID ranges must not overlap, and the same for their GID
+  ranges. If they do overlap, ask before repairing anything.
+
 ## 2. Install or upgrade
 
 Exit agents before upgrading. The one-line installer does everything below
