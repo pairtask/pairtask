@@ -52,17 +52,17 @@ func (m *Model) entryLines(e *entry) []renderLine {
 	width := m.transcriptWidth()
 	b := lineBuilder{id: e.msg.MessageID, seq: e.msg.Seq, renders: e.drawingsFor()}
 	b.add([]string{""}, flush)
-	b.add(m.entryHeader(e), flush)
+	b.add(e.headerAt(width, m.entryHeader), flush)
 	if e.msg.InReplyTo != "" {
 		b.add([]string{mutedStyle.Render("↳ " + m.replyLabel(e))}, body)
 	}
 	if e.omitted {
 		b.add([]string{mutedStyle.Render("[text not available: this message exceeds the history page size]")}, body)
 	} else {
-		b.formatBody(payloadText(e.msg.Payload), width)
+		b.addLaidOut(e.bodyAt(width))
 	}
 	b.add(m.claimLines(e, width-len(body)), body)
-	b.add(m.statusLines(e, width), body)
+	b.add(e.statusAt(m.statusText(e), width), body)
 	if e.gapBelow {
 		b.add([]string{warnStyle.Render("── older messages may be missing here · /history loads them ──")}, body)
 	}
@@ -76,6 +76,79 @@ type lineBuilder struct {
 	renders *diagramRenders // nil draws without a cache
 	src     int
 	lines   []renderLine
+}
+
+// bodyLayout is an entry's body laid out at one width, with logical line
+// numbers starting at 0. Formatting the body is the costly part of a redraw
+// and depends only on the body (its hash), the width and the entry's number,
+// so it is reused until either changes.
+type bodyLayout struct {
+	hash  string
+	width int
+	lines []renderLine
+	srcs  int // logical lines used
+}
+
+// bodyAt is e's body laid out at width, formatted at most once per hash and
+// width.
+func (e *entry) bodyAt(width int) *bodyLayout {
+	if e.body.fits(e.hash, width) {
+		return e.body
+	}
+	b := lineBuilder{id: e.msg.MessageID, seq: e.msg.Seq, renders: e.drawingsFor()}
+	b.formatBody(payloadText(e.msg.Payload), width)
+	e.body = &bodyLayout{hash: e.hash, width: width, lines: b.lines, srcs: b.src}
+	return e.body
+}
+
+// headerLayout is an entry's header at one width. The header reads only the
+// message's own fields, which don't change, so the width is the whole key.
+type headerLayout struct {
+	width int
+	parts []string
+}
+
+func (e *entry) headerAt(width int, render func(*entry) []string) []string {
+	if h := e.header; h != nil && h.width == width {
+		return h.parts
+	}
+	e.header = &headerLayout{width: width, parts: render(e)}
+	return e.header.parts
+}
+
+// statusLayout is an entry's delivery-state lines for one state text and
+// width; the text is cheap to build, wrapping and styling it is not.
+type statusLayout struct {
+	text  string
+	width int
+	parts []string
+}
+
+// fits reports whether this layout is of the given state text and width.
+func (s *statusLayout) fits(text string, width int) bool {
+	return s != nil && s.text == text && s.width == width
+}
+
+func (e *entry) statusAt(text string, width int) []string {
+	if e.status.fits(text, width) {
+		return e.status.parts
+	}
+	e.status = &statusLayout{text: text, width: width, parts: statusLines(e, text, width)}
+	return e.status.parts
+}
+
+// fits reports whether this layout is of the given body at the given width.
+func (l *bodyLayout) fits(hash string, width int) bool {
+	return l != nil && l.hash == hash && l.width == width
+}
+
+// addLaidOut appends a laid-out body after the lines already built.
+func (b *lineBuilder) addLaidOut(l *bodyLayout) {
+	for _, line := range l.lines {
+		line.src += b.src
+		b.lines = append(b.lines, line)
+	}
+	b.src += l.srcs
 }
 
 func (b *lineBuilder) add(parts []string, in indent) {
@@ -101,13 +174,21 @@ func (b *lineBuilder) addText(text string, parts []string, in indent) {
 	b.src++
 }
 
-// statusLines is the entry's delivery state, wrapped: a received message
+// statusText is the entry's delivery state on one line: a received message
 // leads with its acknowledgment mark, a sent one with a bullet.
-func (m *Model) statusLines(e *entry, width int) []string {
+func (m *Model) statusText(e *entry) string {
 	if e.direction == "received" {
-		return wrap(m.receivedStatus(e), width-len(body))
+		return m.receivedStatus(e)
 	}
-	return styled(wrap("· "+m.sentStatus(e), width-len(body)), mutedStyle)
+	return "· " + m.sentStatus(e)
+}
+
+// statusLines wraps the delivery state; a sent message's is muted.
+func statusLines(e *entry, text string, width int) []string {
+	if e.direction == "received" {
+		return wrap(text, width-len(body))
+	}
+	return styled(wrap(text, width-len(body)), mutedStyle)
 }
 
 func styled(parts []string, style lipgloss.Style) []string {

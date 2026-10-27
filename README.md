@@ -41,6 +41,9 @@ host.
    3.9+, Git, and OpenSSH. See the [full sandbox setup](docs/sandbox.md) for
    host details.
 
+   The Incus **server** must be 7.0.x ≥ 7.0.2 or 7.5+; see
+   [Incus server version](docs/sandbox.md#incus-server-version).
+
 2. On your **host**, install pairtask and provision the sandbox:
 
    ```sh

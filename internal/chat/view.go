@@ -258,9 +258,11 @@ func (m *Model) mainArea(l frameLayout) []string {
 	if l.transcript == 0 {
 		return nil
 	}
-	lines := m.transcriptWindow(l.transcript)
+	var lines []string
 	if m.panel != nil {
 		lines = m.panelRows(l.transcript)
+	} else {
+		lines = m.transcriptWindow(l.transcript)
 	}
 	for len(lines) < l.transcript {
 		lines = append([]string{""}, lines...)

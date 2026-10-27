@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 
+import sandbox_idmap_checks
 import sandbox_installed_checks
 import sandbox_broker_checks
 from sandbox_boundary_checks import report, stop_relay
@@ -57,12 +58,9 @@ def check_configuration(deployment):
     check_volume_permissions(deployment)
     instances = {item["name"]: item for item in json.loads(run(
         deployment.base + ["list", deployment.remote, "--format", "json"]))}
-    mappings = [instances[role]["expanded_config"]["volatile.idmap.current"]
-                for role in ("workspace", "secured")]
     for role in ("workspace", "secured"):
         check_offline(deployment, role)
-    if mappings[0] == mappings[1]:
-        raise ValueError("Dev and secured share an identity mapping")
+    sandbox_idmap_checks.check_disjoint({role: instances[role] for role in ("workspace", "secured")})
     devices = instances["secured"]["expanded_devices"]
     if set(devices) != {"root", "secured-state", "budget-status", "dev-executor", "broker-ipc", "secured-tools"}:
         raise ValueError("Secured inherited unexpected devices")

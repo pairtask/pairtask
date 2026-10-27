@@ -29,7 +29,9 @@ shells in the containers are stopped.
 Prerequisites the installer cannot bundle: Incus (and Colima on macOS), Python
 3.9+, Git, OpenSSH. macOS: `brew install colima incus python git`. Linux:
 [install Incus](https://linuxcontainers.org/incus/docs/main/installing/) with a
-quota-capable pool and a managed bridge. Details: [sandbox setup](sandbox.md).
+quota-capable pool and a managed bridge. The Incus server must be 7.0.x ≥ 7.0.2
+or 7.5+ ([why and how to check](sandbox.md#incus-server-version)). Details:
+[sandbox setup](sandbox.md).
 
 ## Start, stop and status
 
