@@ -75,29 +75,39 @@ func (o outcome) bothConfirmed() bool { return o.joinErr == nil && o.inviteErr =
 func (o outcome) joinerConfirmed() bool { return o.joinErr == nil || o.join.InviterConfirmed }
 
 // neitherConfirmed is a pairing that both sides rejected.
-func (o outcome) neitherConfirmed() bool {
-	return o.joinErr != nil && o.inviteErr != nil && !o.join.InviterConfirmed
-}
+func (o outcome) neitherConfirmed() bool { return !o.joinerConfirmed() && o.inviteErr != nil }
 
 // sameBinding reports whether two ends computed the same binding.
-func sameBinding(a, b Binding) bool {
-	return string(a.EKM) == string(b.EKM) && a.InviterFP == b.InviterFP && a.JoinerFP == b.JoinerFP
+func sameBinding(a, b Binding) bool { return a.key() == b.key() }
+
+// bindingKey is a binding's comparable identity: exporter and both fingerprints.
+type bindingKey struct {
+	ekm                 string
+	inviterFP, joinerFP [32]byte
 }
 
-func run(t *testing.T, j, i *Endpoint, jb, ib Binding, joinCode, inviteCode string) outcome {
-	t.Helper()
+func (b Binding) key() bindingKey { return bindingKey{string(b.EKM), b.InviterFP, b.JoinerFP} }
+
+// side is one end of a pairing attempt: its endpoint, binding and code.
+type side struct {
+	end     *Endpoint
+	binding Binding
+	code    string
+}
+
+func run(joiner, inviter side) outcome {
 	var o outcome
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		o.invite, o.inviteErr = Invite(i.Frames(), ib, []byte(inviteCode))
+		o.invite, o.inviteErr = Invite(inviter.end.Frames(), inviter.binding, []byte(inviter.code))
 		if o.inviteErr != nil {
-			i.Conn.Close() // a failed inviter hangs up
+			inviter.end.Conn.Close() // a failed inviter hangs up
 		}
 	}()
-	o.join, o.joinErr = Join(j.Frames(), jb, []byte(joinCode))
+	o.join, o.joinErr = Join(joiner.end.Frames(), joiner.binding, []byte(joiner.code))
 	if o.joinErr != nil {
-		j.Conn.Close()
+		joiner.end.Conn.Close()
 	}
 	<-done
 	return o
@@ -106,7 +116,7 @@ func run(t *testing.T, j, i *Endpoint, jb, ib Binding, joinCode, inviteCode stri
 func TestCorrectCodeConfirmsBothSides(t *testing.T) {
 	jc, ic := selfSigned(t, "joiner"), selfSigned(t, "inviter")
 	j, i := connect(t, jc, ic)
-	o := run(t, j, i, binding(t, j, "inv-1"), binding(t, i, "inv-1"), "482913", "482913")
+	o := run(side{j, binding(t, j, "inv-1"), "482913"}, side{i, binding(t, i, "inv-1"), "482913"})
 	if !o.bothConfirmed() {
 		t.Fatalf("correct code failed: joiner=%v inviter=%v", o.joinErr, o.inviteErr)
 	}
@@ -133,7 +143,7 @@ func TestMismatchesConfirmNothing(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			j, i := connect(t, selfSigned(t, "joiner"), selfSigned(t, "inviter"))
-			o := run(t, j, i, binding(t, j, c.joinInv), binding(t, i, "inv-1"), c.joinCode, "482913")
+			o := run(side{j, binding(t, j, c.joinInv), c.joinCode}, side{i, binding(t, i, "inv-1"), "482913"})
 			if !errors.Is(o.inviteErr, ErrUnconfirmed) {
 				t.Fatalf("inviter: got %v, want ErrUnconfirmed", o.inviteErr)
 			}
@@ -154,7 +164,7 @@ func TestRelayingManInTheMiddleConfirmsNothing(t *testing.T) {
 	mToInviter, i := connect(t, mc, ic)
 	go relay(mToJoiner.Conn, mToInviter.Conn)
 	go relay(mToInviter.Conn, mToJoiner.Conn)
-	o := run(t, j, i, binding(t, j, "inv-1"), binding(t, i, "inv-1"), "482913", "482913")
+	o := run(side{j, binding(t, j, "inv-1"), "482913"}, side{i, binding(t, i, "inv-1"), "482913"})
 	if !o.neitherConfirmed() {
 		t.Fatalf("relayed pairing confirmed: joiner=%v inviter=%v", o.joinErr, o.inviteErr)
 	}
