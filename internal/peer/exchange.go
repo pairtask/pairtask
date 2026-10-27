@@ -109,6 +109,10 @@ func (c Connection) check(self string) error {
 	return validChannelBinding(c.ChannelBinding)
 }
 
+// BoundFrames enforces MaxFrameBytes on every frame sent or received.
+// Wrapping twice is harmless.
+func BoundFrames(f Frames) Frames { return boundedFrames{f} }
+
 // boundedFrames enforces MaxFrameBytes on every frame, the exchange's
 // included.
 type boundedFrames struct{ Frames }

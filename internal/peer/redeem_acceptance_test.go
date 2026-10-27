@@ -160,7 +160,7 @@ func TestRedeemAcceptanceUnavailableAndSelfRefuseBeforeSideEffects(t *testing.T)
 				connection.PeerLeaf = "not-a-fingerprint"
 			}
 			f := &redeemScript{}
-			inviter, err := peer.NewInviter(ex, r.inv.manager, r.alice, rand.Reader)
+			inviter, err := peer.NewInviter(ex, r.inv.manager, r.alice)
 			invOK(t, err)
 			_, err = inviter.Serve(context.Background(), f, connection)
 			invError(t, err)

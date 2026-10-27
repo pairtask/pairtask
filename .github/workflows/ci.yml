@@ -82,6 +82,35 @@ jobs:
           tofu -chdir=infra/incus validate
           tofu -chdir=infra/incus test
 
+  pake-vectors:
+    # The experimental CPace dependency (#178): its pinned upstream draft-21
+    # vector tests, cross-checked with a second implementation, under -race.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    env:
+      CGO_ENABLED: '1'
+    defaults:
+      run:
+        working-directory: internal/peer/pake/vectors
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+      - run: go version
+      - name: Test the pake package under the race detector
+        run: go test -race -count=1 ../...
+      - name: Test the vector runner
+        run: python3 -m unittest -v test_check_vectors.py
+      - name: Run the pinned upstream draft-21 vector tests
+        run: python3 check_vectors.py
+
   classify:
     # Decides whether this run needs the image proofs. Only a pull request that
     # touches nothing but unshipped top-level docs may skip them; see
@@ -287,7 +316,7 @@ jobs:
     if: >-
       github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
       needs.classify.outputs.images == 'true'
-    needs: [checks, classify, images, mac-sharing, base-mirror, bundle-publish]
+    needs: [checks, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
