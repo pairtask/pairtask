@@ -35,14 +35,18 @@ type Result struct {
 
 var (
 	// ErrUnconfirmed means the exchange didn't complete: wrong code, a
-	// different connection, invitation or identity, or a broken message.
-	// Nothing may be trusted or recorded.
+	// different connection, invitation or identity, a broken message, or a
+	// peer that hung up first (it detects a mismatch before we do). Nothing
+	// may be trusted or recorded.
 	ErrUnconfirmed = errors.New("pairing: not confirmed")
 	// ErrOutcomeUnknown means the joiner confirmed the inviter, but the
 	// inviter's final frame didn't arrive, so the joiner can't know whether
 	// the inviter verified it.
 	ErrOutcomeUnknown = errors.New("pairing: confirmed, inviter's outcome unknown")
 )
+
+// unconfirmed marks a failure before this side verified its peer.
+func unconfirmed(err error) error { return fmt.Errorf("%w: %w", ErrUnconfirmed, err) }
 
 func (b Binding) input(role Role, code []byte) cpace.Input {
 	in := cpace.Input{Password: code, Context: b.context(), SessionID: b.EKM}
@@ -58,19 +62,19 @@ func (b Binding) input(role Role, code []byte) cpace.Input {
 func Join(f Frames, b Binding, code []byte) (Result, error) {
 	initiator, msgA, err := cpace.Start(b.input(Joiner, code))
 	if err != nil {
-		return Result{}, err
+		return Result{}, unconfirmed(err)
 	}
 	defer initiator.Close()
 	if err := f.Send(msgA); err != nil {
-		return Result{}, err
+		return Result{}, unconfirmed(err)
 	}
 	msgB, err := f.Recv()
 	if err != nil {
-		return Result{}, err
+		return Result{}, unconfirmed(err)
 	}
 	msgC, session, err := initiator.Finish(msgB)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: %w", ErrUnconfirmed, err)
+		return Result{}, unconfirmed(err)
 	}
 	defer session.Close()
 	res := Result{Peer: b.InviterFP, TranscriptID: session.TranscriptID()}
@@ -90,23 +94,23 @@ func Join(f Frames, b Binding, code []byte) (Result, error) {
 func Invite(f Frames, b Binding, code []byte) (Result, error) {
 	msgA, err := f.Recv()
 	if err != nil {
-		return Result{}, err
+		return Result{}, unconfirmed(err)
 	}
 	responder, msgB, err := cpace.Respond(b.input(Inviter, code), msgA)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: %w", ErrUnconfirmed, err)
+		return Result{}, unconfirmed(err)
 	}
 	defer responder.Close()
 	if err := f.Send(msgB); err != nil {
-		return Result{}, err
+		return Result{}, unconfirmed(err)
 	}
 	msgC, err := f.Recv()
 	if err != nil {
-		return Result{}, err
+		return Result{}, unconfirmed(err)
 	}
 	session, err := responder.Finish(msgC)
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: %w", ErrUnconfirmed, err)
+		return Result{}, unconfirmed(err)
 	}
 	defer session.Close()
 	res := Result{Peer: b.JoinerFP, TranscriptID: session.TranscriptID()}

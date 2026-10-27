@@ -38,7 +38,9 @@ func connect(t *testing.T, joiner, inviter tls.Certificate) (*Endpoint, *Endpoin
 	t.Helper()
 	a, b := net.Pipe()
 	j, i := Client(a, joiner), Server(b, inviter)
-	t.Cleanup(func() { j.Conn.Close(); i.Conn.Close() })
+	// Close the pipe, not TLS: a TLS close waits up to 5s to deliver its
+	// close_notify, and nobody reads an in-memory pipe after the test.
+	t.Cleanup(func() { a.Close(); b.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	errs := make(chan error, 1)

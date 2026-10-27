@@ -2,7 +2,9 @@
 
 An **evaluation**, not an implementation. It shows how the operator's chosen pairing UX could work: a short code, shared over another medium (phone, in person, a private message), typed in on the other workspace. It uses an existing PAKE library instead of our own cryptography.
 
-It isn't wired into the broker, it decides nothing about adoption, and **none of its tests have been executed**. The harness running the build agent refused, twice, to execute third-party library code. The code and tests are compiled and `go vet`-clean under Go 1.26.5, nothing more.
+It isn't wired into the broker and decides nothing about adoption.
+
+The tests ran for the first time on 2026-10-27, after the operator allowed executing the library's code: **all 17 test functions pass** (Go 1.26.5, linux/arm64). That run was without `-race`, since cgo isn't available on that host. The first run exposed one defect, now fixed: when the joiner detected a mismatch first and hung up, the inviter reported a bare `EOF` instead of `ErrUnconfirmed`. Passing tests are evidence about this spike, not a cryptographic review.
 
 ## What it does
 
@@ -27,7 +29,7 @@ It isn't wired into the broker, it decides nothing about adoption, and **none of
   `Result.InviterConfirmed` acknowledges the **pairing** only. Contact acceptance remains a separate, explicit operator step (#178 acceptance 3, pairing criterion 2). If the final frame is lost, the joiner gets `ErrOutcomeUnknown`. `ErrUnconfirmed` means nothing may be trusted or recorded.
 - **After pairing:** the pairing connection is meant to close. Later traffic uses a fresh connection, strictly pinned to the verified certificates, as #179's exact-certificate client does. That part isn't in the spike.
 
-## Tests, all unrun
+## Tests
 
 | File | Author | Covers |
 | --- | --- | --- |
@@ -35,7 +37,7 @@ It isn't wired into the broker, it decides nothing about adoption, and **none of
 | `transport_acceptance_test.go` | @codex-1 | real TLS 1.3: both certificates bound, every binding field changed independently, a two-session relaying MITM, the lost final ack, frame bounds |
 | `pairing_test.go` | @claude-1 | sanity checks: correct code, wrong code and other invitation, relaying MITM, the binding per connection, before the handshake, oversized frames |
 
-To run them, with the harness's permission or by hand:
+To run them:
 
 ```sh
 cd spike/pairing && GOTOOLCHAIN=go1.26.5 go test -race -v ./...
@@ -46,16 +48,16 @@ cd spike/pairing && GOTOOLCHAIN=go1.26.5 go test -race -v ./...
 | # | Criterion | Spike |
 | --- | --- | --- |
 | 1 | Only an explicit operator action opens an invitation; the code is visible to the operator only | **Not implemented.** Callers supply the code. |
-| 2 | Mutual confirmation binds both identities to one session; contact acceptance stays separate | Confirmation and binding covered by unrun tests. Contact acceptance **not implemented**. |
-| 3 | Wrong, expired, cancelled or consumed codes fail closed; one winner under concurrency | Wrong code covered by unrun tests. Expiry, cancel, consumption and concurrency on an invitation **not implemented**. |
-| 4 | Replay, swapped roles, other sessions and substituted keys fail | Key and session changes, the TLS MITM and candidate replay covered by unrun tests. |
+| 2 | Mutual confirmation binds both identities to one session; contact acceptance stays separate | Confirmation and binding covered by passing tests. Contact acceptance **not implemented**. |
+| 3 | Wrong, expired, cancelled or consumed codes fail closed; one winner under concurrency | Wrong code covered by passing tests. Expiry, cancel, consumption and concurrency on an invitation **not implemented**. |
+| 4 | Replay, swapped roles, other sessions and substituted keys fail | Key and session changes, the TLS MITM and candidate replay covered by passing tests. |
 | 5 | Documented code generation, expiry and attempt policy; restarts can't reset the guessing budget | **Not implemented.** |
-| 6 | Disconnects reconcile without duplicates; a consumed code can't enroll another peer; identities survive restart | The lost final ack (`ErrOutcomeUnknown`) covered by unrun tests. Persistence and idempotent recovery **not implemented**. |
-| 7 | A new key for a known workspace needs an explicit re-pair | Key substitution failing is covered by unrun tests. A rotation or re-pair policy is **not implemented**. |
+| 6 | Disconnects reconcile without duplicates; a consumed code can't enroll another peer; identities survive restart | The lost final ack (`ErrOutcomeUnknown`) covered by passing tests. Persistence and idempotent recovery **not implemented**. |
+| 7 | A new key for a known workspace needs an explicit re-pair | Key substitution failing is covered by passing tests. A rotation or re-pair policy is **not implemented**. |
 
 ## Before anything here could be adopted
 
-- Run all tests. Separately, compare core draft-vector conformance with `mendsec/cpace` (836a13c). The transport tests aren't cross-library, because the two packages frame their messages differently.
+- Run the tests with `-race` on a host with cgo, and in CI on both architectures. Separately, compare core draft-vector conformance with `mendsec/cpace` (836a13c). The transport tests aren't cross-library, because the two packages frame their messages differently.
 - An independent cryptographic review of the library, or of whichever one we choose. CPace is still an IRTF draft.
 - An invitation state layer for criteria 1, 3, 5 and 6, with persistence.
 - Move the repository to Go 1.26 or later, as its own change.
