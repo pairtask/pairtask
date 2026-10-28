@@ -6,7 +6,8 @@ import (
 )
 
 // PickerArgument completes a command's argument: room names and the words
-// of /room, and agent mentions in /room add|remove and /chat (#164).
+// of /room, agent mentions in /room add|remove and /chat (#164), and the
+// words and listed review IDs of /review status|cancel (#208).
 const PickerArgument = "argument"
 
 // argLine is a command line split for completion: the command name, the
@@ -45,8 +46,31 @@ func (m *Model) argumentCandidates(l argLine) []string {
 		return m.roomCompletions(l)
 	case "chat":
 		return m.mentionCompletions(l, m.agentCandidates)
+	case "review":
+		return m.reviewCompletions(l)
 	}
 	return nil
+}
+
+// reviewCompletions offers status and cancel, then the listed review IDs
+// after either; a request's TARGET and AGENT are never completed.
+func (m *Model) reviewCompletions(l argLine) []string {
+	switch {
+	case len(l.words) == 0:
+		return withPrefix([]string{"status", "cancel"}, l.current)
+	case len(l.words) == 1 && (l.words[0] == "status" || l.words[0] == "cancel"):
+		return withPrefix(m.reviewIDs(), l.current)
+	}
+	return nil
+}
+
+// reviewIDs are the listed reviews' IDs, newest first as listed.
+func (m *Model) reviewIDs() []string {
+	ids := make([]string, 0, len(m.reviews.list))
+	for _, r := range m.reviews.list {
+		ids = append(ids, r.ID)
+	}
+	return ids
 }
 
 func (m *Model) roomCompletions(l argLine) []string {

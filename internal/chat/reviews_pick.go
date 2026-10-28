@@ -37,10 +37,7 @@ func (m *Model) pickAfterList() {
 // openReviewPicker lists the known reviews, the one shown or requested last
 // highlighted.
 func (m *Model) openReviewPicker(action string) {
-	ids := make([]string, 0, len(m.reviews.list))
-	for _, r := range m.reviews.list {
-		ids = append(ids, r.ID)
-	}
+	ids := m.reviewIDs()
 	if len(ids) == 0 {
 		m.status = "no reviews to " + action
 		return
