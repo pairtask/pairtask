@@ -1,0 +1,272 @@
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"errors"
+	"fmt"
+	"math"
+	"time"
+
+	"github.com/pairtask/pairtask/internal/peer/messaging"
+)
+
+// peerMessagesSchema keeps messages between paired workspaces (#210), both
+// directions, one row each. A message's ID, sequence, time and hash never
+// change; its text is collected within the bounds, and an inbound row is
+// the tombstone that stops a replay until the floor passes it.
+const peerMessagesSchema = `
+CREATE TABLE IF NOT EXISTS peer_messages (
+    cursor       INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact      TEXT NOT NULL,
+    direction    TEXT NOT NULL,
+    message_id   TEXT NOT NULL,
+    n            INTEGER NOT NULL,
+    created_at   TEXT NOT NULL,
+    text         TEXT,
+    text_bytes   INTEGER NOT NULL,
+    text_hash    BLOB NOT NULL,
+    hash         BLOB NOT NULL,
+    state        TEXT NOT NULL,
+    class        TEXT NOT NULL DEFAULT '',
+    reason       TEXT NOT NULL DEFAULT '',
+    stored_at    TEXT NOT NULL,
+    delivered_at TEXT,
+    read_at      TEXT,
+    receipt      TEXT NOT NULL DEFAULT '',
+    receipt_at   TEXT,
+    UNIQUE (contact, direction, message_id),
+    UNIQUE (contact, direction, n)
+);
+CREATE INDEX IF NOT EXISTS peer_messages_state ON peer_messages (contact, direction, state);
+CREATE TABLE IF NOT EXISTS peer_message_sequences (
+    contact TEXT PRIMARY KEY,
+    next    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS peer_message_floors (
+    contact TEXT PRIMARY KEY,
+    floor   INTEGER NOT NULL
+);
+`
+
+// messagePageLimit bounds one Page.
+const messagePageLimit = 64
+
+// PeerMessages is the store's messages between paired workspaces.
+type PeerMessages struct{ db *sql.DB }
+
+var _ messaging.Store = (*PeerMessages)(nil)
+
+// PeerMessages is the messaging store over this database.
+func (s *Store) PeerMessages() *PeerMessages { return &PeerMessages{db: s.db} }
+
+// confirmedContact: a contact row and a confirmed decision, as the inviter
+// (a delivered acceptance) or as the joiner (a confirmed contact join). A
+// pending or rejected pairing never counts.
+func confirmedContact(ctx context.Context, q rowQuerier, contact string) (bool, error) {
+	var ok bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1) AND (
+    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?1 AND state = 'accepted' AND delivered_at IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM peer_joins WHERE peer = ?1 AND state = 'contact' AND decision_confirmed_at IS NOT NULL))`,
+		contact).Scan(&ok)
+	return ok, err
+}
+
+func requireContact(ctx context.Context, q rowQuerier, contact string) error {
+	ok, err := confirmedContact(ctx, q, contact)
+	if err == nil && !ok {
+		err = messaging.ErrUnknownContact
+	}
+	return err
+}
+
+func textHash(text string) []byte {
+	sum := sha256.Sum256([]byte(text))
+	return sum[:]
+}
+
+// Queue stores an outbound message with the contact's next sequence.
+func (p *PeerMessages) Queue(ctx context.Context, contact, id, text string, now time.Time) (messaging.Row, error) {
+	if !messaging.ValidID(id) || !messaging.ValidText(text) {
+		return messaging.Row{}, fmt.Errorf("%w: ID or text", messaging.ErrInvalid)
+	}
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return messaging.Row{}, err
+	}
+	defer tx.Rollback()
+	if err := requireContact(ctx, tx, contact); err != nil {
+		return messaging.Row{}, err
+	}
+	row, found, err := messageRow(ctx, tx, contact, messaging.DirOut, id)
+	if err != nil || found {
+		return replayed(row, text, err)
+	}
+	if err := outboxRoom(ctx, tx, contact, len(text)); err != nil {
+		return messaging.Row{}, err
+	}
+	n, err := nextSequence(ctx, tx, contact)
+	if err != nil {
+		return messaging.Row{}, err
+	}
+	m := messaging.Message{ID: id, N: n, CreatedAt: now.UTC(), Text: text}
+	if err := insertMessage(ctx, tx, contact, messaging.DirOut, m, messaging.StateQueued, now); err != nil {
+		return messaging.Row{}, err
+	}
+	if row, _, err = messageRow(ctx, tx, contact, messaging.DirOut, id); err != nil {
+		return messaging.Row{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return messaging.Row{}, err
+	}
+	return row.Row, nil
+}
+
+// replayed answers a Queue of an ID already queued: the same text is the
+// same message, other text a conflict.
+func replayed(row storedRow, text string, err error) (messaging.Row, error) {
+	switch {
+	case err != nil:
+		return messaging.Row{}, err
+	case string(textHash(text)) != string(row.textHash):
+		return messaging.Row{}, messaging.ErrConflict
+	}
+	return row.Row, nil
+}
+
+// outboxRoom refuses a message the contact's queued messages leave no room for.
+func outboxRoom(ctx context.Context, tx *sql.Tx, contact string, size int) error {
+	var count, bytes int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(text_bytes), 0) FROM peer_messages
+WHERE contact = ? AND direction = 'out' AND state = 'queued'`, contact).Scan(&count, &bytes)
+	if err != nil {
+		return err
+	}
+	if count >= messaging.OutboxMessages || bytes+size > messaging.OutboxBytes {
+		return messaging.ErrOutboxFull
+	}
+	return nil
+}
+
+// nextSequence takes the contact's next sequence, from 1; it is never
+// reused and never wraps.
+func nextSequence(ctx context.Context, tx *sql.Tx, contact string) (uint64, error) {
+	var next int64 = 1
+	err := tx.QueryRowContext(ctx, `SELECT next FROM peer_message_sequences WHERE contact = ?`, contact).Scan(&next)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if next < 1 || next == math.MaxInt64 {
+		return 0, errors.New("messaging: sequence exhausted for this contact")
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_sequences (contact, next) VALUES (?, ?)
+ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, contact, next+1)
+	return uint64(next), err
+}
+
+func insertMessage(ctx context.Context, tx *sql.Tx, contact, direction string, m messaging.Message, state string, now time.Time) error {
+	hash := m.Hash()
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
+(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		contact, direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:], state, msgStamp(now))
+	return err
+}
+
+// Offer is the oldest queued messages that fit the session bounds; queued
+// messages past QueuedExpiry are expired first and never offered.
+func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, maxCount, maxBytes int) ([]messaging.Row, error) {
+	maxCount, maxBytes = clamp(maxCount, messaging.SessionMessages), clamp(maxBytes, messaging.SessionBytes)
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if err := expireQueued(ctx, tx, contact, now); err != nil {
+		return nil, err
+	}
+	rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' ORDER BY n`, contact)
+	if err != nil {
+		return nil, err
+	}
+	var out []messaging.Row
+	bytes := 0
+	for _, r := range rows {
+		if len(out) == maxCount || bytes+len(r.Text) > maxBytes {
+			break
+		}
+		out, bytes = append(out, r.Row), bytes+len(r.Text)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// clamp keeps a caller's limit within [0, bound].
+func clamp(n, bound int) int { return max(0, min(n, bound)) }
+
+func expireQueued(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
+	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'expired'
+WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ?`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
+	return err
+}
+
+// Delivered records the peer's Stored: a queued or expired message is
+// delivered; a read one stays read, and the time is kept once set.
+func (p *PeerMessages) Delivered(ctx context.Context, contact, id string, at time.Time) error {
+	_, err := p.db.ExecContext(ctx, `UPDATE peer_messages SET
+    delivered_at = COALESCE(delivered_at, ?),
+    state = CASE WHEN state IN ('queued', 'expired') THEN 'delivered' ELSE state END,
+    class = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE class END,
+    reason = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE reason END
+WHERE contact = ? AND direction = 'out' AND message_id = ? AND state IN ('queued', 'expired', 'delivered', 'read')`,
+		msgStamp(at), contact, id)
+	return err
+}
+
+// Refused records a refusal of a queued message: a terminal one ends it, a
+// transient one keeps it queued with the reason.
+func (p *PeerMessages) Refused(ctx context.Context, contact, id string, r messaging.Refusal, _ time.Time) error {
+	if !r.Valid() {
+		return fmt.Errorf("%w: refusal", messaging.ErrInvalid)
+	}
+	state := messaging.StateQueued
+	if r.Class == messaging.Terminal {
+		state = messaging.StateRefused
+	}
+	_, err := p.db.ExecContext(ctx, `UPDATE peer_messages SET state = ?, class = ?, reason = ?
+WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`, state, r.Class, r.Reason, contact, id)
+	return err
+}
+
+// PeerRead records the peer's Read of one of this side's messages to it; a
+// read message was stored, so it is delivered too. Refused messages and
+// anything else are left alone.
+func (p *PeerMessages) PeerRead(ctx context.Context, contact, id string, at time.Time) error {
+	_, err := p.db.ExecContext(ctx, `UPDATE peer_messages SET state = 'read',
+    read_at = COALESCE(read_at, ?1), delivered_at = COALESCE(delivered_at, ?1), class = '', reason = ''
+WHERE contact = ?2 AND direction = 'out' AND message_id = ?3 AND state IN ('queued', 'expired', 'delivered', 'read')`,
+		msgStamp(at), contact, id)
+	return err
+}
+
+// Page is a contact's messages, both directions, newest first, before a
+// cursor (0 or less for the newest).
+func (p *PeerMessages) Page(ctx context.Context, contact string, before int64, limit int) ([]messaging.Row, bool, error) {
+	limit = max(1, min(limit, messagePageLimit))
+	if before <= 0 {
+		before = math.MaxInt64
+	}
+	rows, err := queryRows(ctx, p.db, `WHERE contact = ? AND cursor < ? ORDER BY cursor DESC LIMIT ?`, contact, before, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	more := len(rows) > limit
+	out := make([]messaging.Row, 0, min(len(rows), limit))
+	for _, r := range rows[:min(len(rows), limit)] {
+		out = append(out, r.Row)
+	}
+	return out, more, nil
+}
