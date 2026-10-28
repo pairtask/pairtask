@@ -69,9 +69,11 @@ type chatHarness struct {
 // not. A test that takes operator_pairing itself, like the contact fixture,
 // gets it instead: nothing is served inside baseline or such a take.
 type chatQuietContacts struct {
-	armed bool   // the next pairing list is the quiet read
-	id    string // its request ID, until served or taken
-	hold  int    // > 0 while serving is suspended
+	armed    bool        // the next pairing list is the quiet read
+	expected bool        // its batch was seen, so it was issued
+	wire     *chatScript // the connection it was issued on
+	id       string      // its request ID, until served or taken
+	hold     int         // > 0 while serving is suspended
 }
 
 type chatDialResult struct {
@@ -131,7 +133,7 @@ func (h *chatHarness) await(want func() bool) {
 	h.t.Helper()
 	timer := time.NewTimer(4 * time.Second)
 	defer timer.Stop()
-	for h.serveQuiet(); !want(); h.serveQuiet() {
+	for h.serveQuiet(); !want() || h.quietDue(); h.serveQuiet() {
 		select {
 		case msg := <-h.results:
 			h.input(msg)
@@ -167,12 +169,31 @@ func (h *chatHarness) take(kind string) protocol.Message {
 	return req
 }
 
-// intake records a request, noting the quiet pairing read.
+// intake records a request, noting the quiet pairing read and the batch
+// that issues it with the baseline's inbox and history reads.
 func (h *chatHarness) intake(req protocol.Message) {
-	if h.quiet.armed && pairingList(req) {
-		h.quiet.armed, h.quiet.id = false, req.RequestID
+	switch {
+	case !h.quiet.armed:
+	case pairingList(req):
+		h.quiet.armed, h.quiet.expected, h.quiet.id = false, false, req.RequestID
+	case req.Type == protocol.TypeOperatorReceive || req.Type == protocol.TypeOperatorHistory:
+		h.quiet.expected = true
 	}
 	h.requests = append(h.requests, req)
+}
+
+// quietDue reports a quiet read already issued, written and on its way, so
+// a generic wait never ends with it unseen in flight. One queued behind the
+// in-flight bound, or on a connection since replaced, is not waited for.
+func (h *chatHarness) quietDue() bool {
+	q := h.quiet
+	if !q.armed || !q.expected {
+		return false
+	}
+	if q.hold > 0 || q.wire != h.wire {
+		return false
+	}
+	return h.m.State().Queued == 0
 }
 
 func pairingList(req protocol.Message) bool {
@@ -201,7 +222,8 @@ func (h *chatHarness) reply(req, response protocol.Message) {
 	if response.Type == protocol.TypeOperatorSnapshot {
 		// The session that asked for this snapshot decides whether a quiet
 		// pairing read follows it.
-		h.quiet.armed, h.quiet.id = slices.Contains(h.m.State().Session.Capabilities, protocol.CapabilityPairingContacts), ""
+		h.quiet = chatQuietContacts{armed: slices.Contains(h.m.State().Session.Capabilities, protocol.CapabilityPairingContacts),
+			wire: h.wire, hold: h.quiet.hold}
 	}
 	response.RequestID = req.RequestID
 	h.wire.in <- response
