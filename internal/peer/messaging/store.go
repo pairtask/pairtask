@@ -12,6 +12,13 @@ type Outgoing struct {
 	Now               time.Time
 }
 
+// Limit is how many messages, and how many bytes of their text, one call
+// may take.
+type Limit struct{ Count, Bytes int }
+
+// SessionLimit is what one session carries each way.
+var SessionLimit = Limit{SessionMessages, SessionBytes}
+
 // Row is one message as a side holds it, either direction.
 type Row struct {
 	Cursor      int64  // local insertion order; Page pages by it
@@ -39,14 +46,14 @@ type Store interface {
 	// reused). The same ID with the same text returns the existing row; with
 	// other text, ErrConflict.
 	Queue(ctx context.Context, o Outgoing) (Row, error)
-	// Offer is up to maxCount messages and maxBytes of text still to send,
-	// oldest first; a queued row past QueuedExpiry becomes StateExpired.
-	Offer(ctx context.Context, contact string, now time.Time, maxCount, maxBytes int) ([]Row, error)
+	// Offer is the messages still to send within the limit, oldest first; a
+	// queued row past QueuedExpiry becomes StateExpired.
+	Offer(ctx context.Context, contact string, now time.Time, l Limit) ([]Row, error)
 	// Delivered records the peer's Stored; it never moves a read row back.
 	Delivered(ctx context.Context, contact, id string, at time.Time) error
-	// Refused records a refusal: a terminal one ends the row, a transient
-	// one keeps it queued with its reason.
-	Refused(ctx context.Context, contact, id string, r Refusal, at time.Time) error
+	// Refused records the peer's refusal of one message: a terminal one ends
+	// the row, a transient one keeps it queued with its reason.
+	Refused(ctx context.Context, contact string, r Refused) error
 	// Accept decides one inbound Message and stores it when accepted: a
 	// replay first, then the replay floor, then validity and quota.
 	Accept(ctx context.Context, contact string, m Message, now time.Time) (Answer, error)
