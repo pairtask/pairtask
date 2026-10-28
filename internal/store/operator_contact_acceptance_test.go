@@ -133,7 +133,7 @@ func TestOperatorContactAcceptanceCrossContactRetryConflictsWithoutChangingTrans
 	pairEqual(t, errors.Is(err, messaging.ErrConflict), true)
 	pairEqual(t, len(messagePage(t, f.db.PeerMessages(), other)), 0)
 	// The transport API still permits independent peers to use the same ID.
-	_, err = f.db.PeerMessages().Queue(context.Background(), other, "operation", "text", messageAt)
+	_, err = f.db.PeerMessages().Queue(context.Background(), messaging.Outgoing{Contact: other, ID: "operation", Text: "text", Now: messageAt})
 	pairOK(t, err)
 	pairEqual(t, len(messagePage(t, f.db.PeerMessages(), original)), 1)
 	pairEqual(t, len(messagePage(t, f.db.PeerMessages(), other)), 1)

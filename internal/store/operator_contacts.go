@@ -82,7 +82,7 @@ func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messagi
 			row = held.Row
 			return err
 		}
-		row, err = queueIn(ctx, tx, key, c.Text, c.Now)
+		row, err = queueIn(ctx, tx, outgoing{key, c.Text, c.Now})
 		return err
 	}, c.Now)
 	if err != nil {
@@ -121,7 +121,7 @@ func (s *Store) operationTx(ctx context.Context, op operation, auditID int64, ap
 		return err
 	}
 	defer tx.Rollback()
-	if err := requireContact(ctx, tx, op.contact); err != nil {
+	if err := requireContact(ctx, tx, contactKey(op.contact)); err != nil {
 		return err
 	}
 	replay, err := registered(ctx, tx, op)
