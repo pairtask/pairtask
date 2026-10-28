@@ -51,14 +51,15 @@ type Hub struct {
 	operator   chan operatorRequest
 	startedAt  time.Time
 	// Live operator session state, owned by the Run goroutine.
-	owner    *OperatorSession
-	epoch    string
-	revision uint64
-	gen      uint64
-	statuses statusState
-	pairing  *peer.Invitations       // operator pairing (#178); memory only
-	identity *peer.WorkspaceIdentity // loaded at Run's start or on a pairing request; never replaced
-	pair     pairingWiring           // redemption and the inbound endpoint
+	owner       *OperatorSession
+	epoch       string
+	revision    uint64
+	gen         uint64
+	statuses    statusState
+	pairing     *peer.Invitations       // operator pairing (#178); memory only
+	identity    *peer.WorkspaceIdentity // loaded at Run's start or on a pairing request; never replaced
+	pair        pairingWiring           // redemption and the inbound endpoint
+	reviewClock func() time.Time        // review lifecycle times (#201); nil is time.Now
 }
 
 // New creates a Hub. startSeq is the last persisted sequence number
@@ -605,6 +606,12 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 		h.handleClaim(ctx, clients, in)
 	case roomFrames[in.Msg.Type]:
 		h.handleRoom(ctx, clients, in)
+	case reviewFrames[in.Msg.Type]:
+		h.handleReview(ctx, clients, in)
+	case in.Msg.Type == protocol.TypeOperatorReview:
+		refusal := statusError(in.Msg.RequestID, protocol.ErrForbidden, "review requests are operator-only")
+		refusal.MessageID = in.Msg.MessageID
+		h.enqueue(clients, in.From, refusal)
 	case in.Msg.Type == protocol.TypeOperatorPairing:
 		// Pairing is operator-socket only (#178); an agent gets a correlated refusal.
 		refusal := statusError(in.Msg.RequestID, protocol.ErrForbidden, "pairing is operator-only")

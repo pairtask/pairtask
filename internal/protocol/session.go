@@ -127,6 +127,7 @@ type SessionEvent struct {
 	ProtocolVersion   int       `json:"protocol_version,omitempty"`
 	Detail            string    `json:"detail,omitempty"`              // send_refused: the bound that refused
 	OperatorMessageID string    `json:"operator_message_id,omitempty"` // claims_changed
+	ReviewID          string    `json:"review_id,omitempty"`           // reviews_changed (#201)
 }
 
 // Operator history limits. New operator payloads are capped so every new
