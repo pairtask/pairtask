@@ -59,10 +59,20 @@ def package_events(output, package):
 def require_passes(output, package, required):
     """Go exits zero for a missing -run match or skipped test: reject both."""
     events = package_events(output, package)
-    for event in events:
-        if event.get("Action") == "fail":
-            raise RuntimeError(f"{package}: failed {event.get('Test', 'package')}")
+    reject_failures(events, package)
     passed = {event.get("Test") for event in events if event.get("Action") == "pass"}
+    require_named(passed, package, required)
+
+
+def reject_failures(events, package):
+    """Any fail event, for a test or the package, fails the gate."""
+    failed = [event for event in events if event.get("Action") == "fail"]
+    if failed:
+        raise RuntimeError(f"{package}: failed {failed[0].get('Test', 'package')}")
+
+
+def require_named(passed, package, required):
+    """Each required test, and the package itself (Test None), must pass."""
     missing = set(required) - passed
     if missing:
         raise RuntimeError(f"{package}: required tests did not pass: {sorted(missing)}")
