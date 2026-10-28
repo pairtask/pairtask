@@ -278,6 +278,9 @@ func (m *Model) selectView(key viewKey) bool {
 	m.conv.uses++
 	m.conv.saved[m.conv.selected] = &view{port: m.view, cutoff: m.cutoff, find: m.find, found: m.found, compose: m.compose, used: m.conv.uses}
 	m.conv.selected = key
+	if t := m.contacts.threads[key.contact]; key.isContact() && t != nil {
+		t.failed = false // reopening a contact tab retries a failed read
+	}
 	if target == nil {
 		target = &view{port: viewport{following: true}, compose: m.freshComposer()}
 	}
@@ -352,7 +355,7 @@ func (m *Model) placeholder() string {
 		return "Message everyone · @agent for one · / for commands"
 	}
 	if m.conv.selected.isContact() {
-		return "nothing is sent to a workspace yet · / for commands"
+		return "Message this workspace's operator · / for commands"
 	}
 	return "Message " + m.conv.selected.label() + " · / for commands"
 }

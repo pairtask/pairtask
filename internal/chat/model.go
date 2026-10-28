@@ -119,6 +119,7 @@ type Model struct {
 	roomsCut bool                // the snapshot left rooms out
 	pairing  pairingView         // the last /pair snapshot, never its code
 	reviews  reviewState         // review requests (#201): the last list and a request in flight
+	contacts contactState        // messages with paired workspaces (#210)
 
 	compose    composer
 	conv       conversations
@@ -266,10 +267,14 @@ func (m *Model) release(id string) (pendingRequest, tea.Cmd) {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if cmd, ok := m.connectionUpdate(msg); ok {
-		return m, cmd
+	cmd, ok := m.connectionUpdate(msg)
+	if !ok {
+		cmd = m.terminalUpdate(msg)
 	}
-	return m, m.terminalUpdate(msg)
+	if follow := m.contactFollowUp(); follow != nil {
+		return m, tea.Batch(cmd, follow)
+	}
+	return m, cmd
 }
 
 // connectionUpdate handles broker connection messages.
@@ -369,6 +374,7 @@ func (m *Model) closed(gen uint64, err error) tea.Cmd {
 	m.history.disconnected()
 	m.send.disconnected()
 	m.reviewsDisconnected()
+	m.contactsDisconnected()
 	m.bulkDisconnected()
 	m.dropPairingCode()
 	if isMalformed(err) {

@@ -10,8 +10,8 @@ import (
 
 // Contact conversations (#178): one per paired workspace, keyed by its full
 // identity fingerprint, never by a name, so a workspace called "operator"
-// or like an agent can't stand in for either. Messages between workspaces
-// arrive in a later step: nothing is ever sent from one.
+// or like an agent can't stand in for either. Its messages (#210) are in
+// contact_messages.go.
 
 const kindPairingQuiet = "pairing quiet"
 
@@ -55,27 +55,25 @@ func (m *Model) contact(fingerprint string) (protocol.PairingContactView, bool) 
 	return protocol.PairingContactView{}, false
 }
 
-// contactUnsendable is why a contact conversation's composer sends nothing.
-const contactUnsendable = "messages between workspaces arrive in a later step; nothing is sent from here"
-
-// contactNotice is the composer's refusal in a contact conversation.
-func (m *Model) contactNotice(viewKey) string { return contactUnsendable }
-
-// contactCard fills a contact conversation, most important first: who it
-// is and whether both sides confirmed, why nothing can be sent, and the
-// full identity to compare.
-func (m *Model) contactCard(key viewKey, rows int) []string {
-	c, ok := m.contact(key.contact)
-	state := "confirming: the peer has not yet confirmed the decision"
-	if ok && c.Confirmed {
-		state = "confirmed on both sides"
+// contactNotice is why the agent addressing rules don't apply in a
+// contact tab: its composer sends to the workspace instead (contactSubmit).
+func (m *Model) contactNotice(key viewKey) string {
+	if !m.contactsAvailable() {
+		return "this broker doesn't carry contact messages; upgrade it"
 	}
-	lines := []string{
-		titleStyle.Render(fmt.Sprintf("⇄ workspace %q", safe(c.Name))) + mutedStyle.Render(" · "+state),
-		"  " + contactUnsendable,
-		mutedStyle.Render("  identity " + safe(key.contact)),
+	if !m.confirmedContact(key.contact) {
+		return contactConfirming
 	}
-	return lines[:min(len(lines), rows)]
+	return ""
+}
+
+// contactHint is the composer's line in a contact tab.
+func (m *Model) contactHint(key viewKey) string {
+	if notice := m.contactNotice(key); notice != "" {
+		return "✗ " + notice
+	}
+	c, _ := m.contact(key.contact)
+	return fmt.Sprintf("to workspace %q · queued now, it leaves at the next sync", safe(c.Name))
 }
 
 // refreshContacts quietly reads the pairing state after a baseline, so

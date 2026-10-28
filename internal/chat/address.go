@@ -70,7 +70,7 @@ func parsePrefix(draft string) prefix {
 // audience; in a 1:1 it goes to that agent, and mentions of anyone else block.
 func (m *Model) resolveAudience() audience {
 	if key := m.conv.selected; key.isContact() {
-		return audience{err: m.contactNotice(key)}
+		return audience{err: "messages to a workspace are sent from its ⇄ tab"}
 	}
 	c := &m.compose
 	if c.pasted {

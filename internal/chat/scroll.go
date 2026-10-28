@@ -70,6 +70,9 @@ func (m *Model) scrollPage(direction int) tea.Cmd {
 	if m.panel != nil {
 		return nil
 	}
+	if m.conv.selected.isContact() {
+		return m.contactScroll(direction)
+	}
 	height := max(1, m.layout().transcript)
 	lines := m.transcript()
 	start := m.top(lines, height)

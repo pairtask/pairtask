@@ -60,12 +60,17 @@ func TestContactsChatAcceptanceDeduplicatesIdentityAndRebuildsAfterReconnect(t *
 	chatEqual(t, "explicit contact distinct from group and All", views[0].Contact != "" && len(views[0].Group) == 0 && !views[0].All, true)
 	h.input(chatKey(tea.KeyTab, 0))
 	view := ansi.Strip(h.m.View().Content)
-	for _, want := range []string{"⇄ workspace", `workspace "operator"`, key, "confirming", "messages between workspaces arrive in a later step"} {
+	for _, want := range []string{"⇄ workspace", `workspace "operator"`, key, "confirming", "nothing is sent until it is"} {
 		v3Contains(t, view, want)
 	}
+	h.input(chatKey(tea.KeyTab, tea.ModShift))
 	h.reconnectTo(newChatScript(), "epoch")
 	row.Confirmed = true
 	contactChatBaseline(h, row)
+	h.input(chatKey(tea.KeyTab, 0))
+	load := h.take(protocol.TypeOperatorContact)
+	h.reply(load, contactMessagesPage(key))
+	h.await(func() bool { return h.m.State().InFlight == 0 })
 	chatEqual(t, "reconnect does not duplicate contact", len(contactChatViews(h)), 1)
 	v3Contains(t, ansi.Strip(h.m.View().Content), "confirmed")
 	for _, size := range []tea.WindowSizeMsg{{Width: 45, Height: 16}, {Width: 120, Height: 30}} {
@@ -103,9 +108,9 @@ func TestContactsChatAcceptanceOldBrokerCannotSettle(t *testing.T) {
 	chatEqual(t, "no transcript entry", len(h.m.State().Entries), 0)
 }
 
-func TestContactsChatAcceptanceComposerCannotSendToContact(t *testing.T) {
+func TestContactsChatAcceptanceComposerCannotSendToUnconfirmedContact(t *testing.T) {
 	key := "sha256:" + strings.Repeat("b", 64)
-	h := contactChatHarness(t, contactChatRow(key, "alice", true))
+	h := contactChatHarness(t, contactChatRow(key, "alice", false))
 	v2Type(h, "saved All draft")
 	h.input(chatKey(tea.KeyTab, 0))
 	v2Type(h, "must not leave this workspace")

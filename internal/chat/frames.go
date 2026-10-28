@@ -68,6 +68,8 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		m.statuses.presence(ev)
 	case protocol.EventSendRefused:
 		return m.sendRefused(ev)
+	case protocol.EventContactMessagesChanged:
+		return m.contactsChanged(ev.ContactKey)
 	}
 	if refresh := refreshEvents[ev.Kind]; refresh != nil {
 		return refresh(m)
@@ -148,6 +150,9 @@ var responseHandlers = map[string]responseHandler{
 	kindPairingQuiet: (*Model).quietPairingResult,
 	kindReview:       (*Model).reviewResult,
 	kindReviewQuiet:  (*Model).quietReviewResult,
+	kindContactList:  (*Model).contactListResult,
+	kindContactSend:  (*Model).contactSendResult,
+	kindContactRead:  (*Model).contactReadResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
@@ -211,7 +216,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 		}
 	}
 	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
-		m.refreshContacts(), m.reviewsReconnected())
+		m.refreshContacts(), m.reviewsReconnected(), m.contactsReconnected())
 }
 
 func validSnapshot(resp protocol.Message) bool {
