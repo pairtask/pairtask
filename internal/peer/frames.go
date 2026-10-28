@@ -32,10 +32,12 @@ const (
 	FrameAckReceipt  byte = 8
 )
 
-// Receipt answers in a SettleReply.
+// SettleReceipt is whether the inviter holds the exact outcome of a join.
+type SettleReceipt byte
+
 const (
-	ReceiptUnknown byte = 0
-	ReceiptMatched byte = 1
+	ReceiptUnknown SettleReceipt = 0
+	ReceiptMatched SettleReceipt = 1
 )
 
 // ErrPairingProtocol is a malformed, unexpected or oversized frame.
@@ -181,7 +183,7 @@ type Settle struct {
 // SettleReply is the inviter's durable answer: whether it holds the exact
 // outcome, and the request's decision.
 type SettleReply struct {
-	Receipt  byte
+	Receipt  SettleReceipt
 	Decision PairingState
 }
 
@@ -208,7 +210,7 @@ func DecodeSettle(frame []byte) (Settle, error) {
 var replyDecisions = []PairingState{PairingPending, PairingAccepted, PairingRejected}
 
 func EncodeSettleReply(m SettleReply) ([]byte, error) {
-	return encodeFrame(FrameSettleReply, []byte{m.Receipt}, []byte(m.Decision))
+	return encodeFrame(FrameSettleReply, []byte{byte(m.Receipt)}, []byte(m.Decision))
 }
 
 func DecodeSettleReply(frame []byte) (SettleReply, error) {
@@ -228,11 +230,11 @@ func DecodeSettleReply(frame []byte) (SettleReply, error) {
 }
 
 // parseReceipt accepts exactly one byte naming a known receipt.
-func parseReceipt(field []byte) (byte, error) {
-	if len(field) != 1 || field[0] > ReceiptMatched {
+func parseReceipt(field []byte) (SettleReceipt, error) {
+	if len(field) != 1 || SettleReceipt(field[0]) > ReceiptMatched {
 		return 0, fmt.Errorf("%w: bad settle receipt", ErrPairingProtocol)
 	}
-	return field[0], nil
+	return SettleReceipt(field[0]), nil
 }
 
 func EncodeAck(m Ack) ([]byte, error) {

@@ -23,12 +23,15 @@ import (
 // any exchange secret. States only move forward:
 //
 //	intent → exchanging → outcome_unknown → awaiting_acceptance
-//	intent | exchanging → failed          (refused, or failed before verifying)
-//	intent | exchanging → unverified      (RecoverJoins after a restart)
+//	awaiting_acceptance → contact | declined  (the inviter's decision, by Settle)
+//	intent | exchanging → failed              (refused, or failed before verifying)
+//	intent | exchanging → unverified          (RecoverJoins after a restart)
 //
 // outcome_unknown means our final confirmation may have reached the
-// inviter; only an exactly matching receipt settles it. Acceptance and
-// rejection arrive in a later slice.
+// inviter; only an exactly matching receipt, at the start of a Settle, moves
+// it on. contact and declined are final: they hold the inviter's
+// authenticated decision, and DecisionConfirmedAt records, once, that the
+// inviter took note of our acknowledgment of it.
 
 // JoinState is where a join stands.
 type JoinState string
