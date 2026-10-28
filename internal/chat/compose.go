@@ -24,6 +24,8 @@ type composer struct {
 	editor textarea.Model
 	width  int          // the outer width the editor was last sized to
 	pasted bool         // the draft began with pasted text: literal, never parsed
+	guard  string       // the draft text a command-like send was held on; Enter again sends it
+	slash  bool         // the draft began with "//": a literal "/" chosen on purpose, never held
 	to     []string     // /to audience
 	reply  *replyTarget // frozen reply target
 	cmd    *commandLine
@@ -42,7 +44,7 @@ type replyTarget struct {
 // commandLine is the separate input for commands; it never touches the draft.
 type commandLine struct {
 	input     textinput.Model
-	pasted    bool    // pasted text is inert: Enter refuses it
+	pasted    []bool  // per rune: pasted, never typed; a pasted command name never runs
 	dismissed *string // the text an argument picker was closed on with Esc
 }
 
@@ -56,6 +58,7 @@ type picker struct {
 	kind     string
 	items    []string
 	selected int
+	action   string // what a review picker does with its choice
 }
 
 func newComposer() composer {
@@ -90,13 +93,13 @@ func (c *composer) draftEmpty() bool {
 func (c *composer) setDraft(text string, pasted bool) {
 	c.editor.SetValue(text)
 	c.editor.CursorEnd()
-	c.pasted = pasted && text != ""
+	c.pasted, c.guard = pasted && text != "", ""
 }
 
 // resetDraft clears the draft and the metadata that belongs to it.
 func (c *composer) resetDraft() {
 	c.editor.Reset()
-	c.pasted, c.to, c.reply, c.picker = false, nil, nil, nil
+	c.pasted, c.to, c.reply, c.picker, c.guard, c.slash = false, nil, nil, nil, "", false
 }
 
 // editorKey handles a key while the draft has the input.
@@ -176,8 +179,9 @@ func (m *Model) updateEditor(msg tea.Msg) tea.Cmd {
 func (m *Model) afterEdit() {
 	c := &m.compose
 	if c.draftEmpty() {
-		c.pasted = false
+		c.pasted, c.slash = false, false
 	}
+	c.guard = "" // any edit arms the send guard again
 	m.refreshAgentPicker()
 }
 
@@ -186,15 +190,13 @@ func (m *Model) afterEdit() {
 func (m *Model) paste(msg tea.PasteMsg) tea.Cmd {
 	c := &m.compose
 	if c.cmd != nil {
-		c.cmd.pasted, c.picker = true, nil // pasted text is inert: nothing completes it
-		var cmd tea.Cmd
-		c.cmd.input, cmd = c.cmd.input.Update(msg)
-		return cmd
+		c.picker = nil // a paste completes nothing
+		return c.cmd.update(msg, true)
 	}
 	if c.draftEmpty() {
 		c.pasted = true
 	}
-	c.picker = nil
+	c.picker, c.guard = nil, ""
 	m.endRecall() // pasting edits the draft
 	return m.updateEditor(msg)
 }
@@ -355,8 +357,7 @@ func (m *Model) commandKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.slashDraft()
 		return nil
 	}
-	var cmd tea.Cmd
-	line.input, cmd = line.input.Update(msg)
+	cmd := line.update(msg, false)
 	m.refreshCommandPicker()
 	return cmd
 }
@@ -387,6 +388,7 @@ func (m *Model) slashDraft() {
 	if c.draftEmpty() {
 		c.editor.SetValue("/")
 		c.editor.CursorEnd()
+		c.slash = true
 	}
 }
 
@@ -410,8 +412,7 @@ func (m *Model) completeCommand() {
 	if c.picker == nil || c.picker.kind != PickerCommand {
 		return
 	}
-	c.cmd.input.SetValue(c.picker.items[c.picker.selected] + " ")
-	c.cmd.input.CursorEnd()
+	c.cmd.set(c.picker.items[c.picker.selected] + " ")
 	c.picker = nil
 	m.refreshCommandPicker() // a command's first argument may complete too
 }
@@ -420,8 +421,8 @@ func (m *Model) completeCommand() {
 // without an argument; a command that needs one stays on the line, completed,
 // waiting for it.
 func (m *Model) runPicked() tea.Cmd {
-	if m.compose.cmd.pasted {
-		return m.runCommandLine() // refused: pasted text never runs
+	if !m.compose.cmd.trusted() {
+		return m.runCommandLine() // refused: a pasted command name never runs
 	}
 	m.completeCommand()
 	name := strings.TrimSpace(m.compose.cmd.input.Value())
@@ -440,11 +441,11 @@ func (m *Model) key(msg tea.KeyPressMsg) tea.Cmd {
 	if m.compose.cmd != nil {
 		return m.commandKey(msg)
 	}
+	if cmd, handled := m.reviewPickerKey(msg); handled {
+		return cmd
+	}
 	if m.panel != nil {
-		if msg.String() == "esc" {
-			m.panel = nil
-		}
-		return nil
+		return m.panelKey(msg)
 	}
 	return m.editorKey(msg)
 }
@@ -482,6 +483,18 @@ func altDigit(key string) (int, bool) {
 	}
 	position := int(digit[0] - '0')
 	return position, position >= 1 && position <= 9
+}
+
+// panelKey: Esc closes the panel, and "/" starts a command over it, so a
+// panel opened by a command doesn't have to be closed to type the next one.
+func (m *Model) panelKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case msg.String() == "esc":
+		m.panel = nil
+	case msg.Text == "/":
+		m.openCommandLine()
+	}
+	return nil
 }
 
 func (m *Model) ensureCommandLine() {

@@ -149,7 +149,7 @@ func (c *composer) keptSelection(items []string) int {
 func (m *Model) argumentPickable() bool {
 	line := m.compose.cmd
 	value := line.input.Value()
-	if line.pasted || line.input.Position() != len([]rune(value)) {
+	if !line.trusted() || line.input.Position() != len([]rune(value)) {
 		return false
 	}
 	return line.dismissed == nil || *line.dismissed != value
@@ -172,13 +172,14 @@ func (m *Model) completingArgument() bool {
 func (m *Model) completeArgument() {
 	c := &m.compose
 	p := c.openPicker(PickerArgument)
-	if p == nil || c.cmd.pasted {
+	if p == nil || !c.cmd.trusted() {
 		return
 	}
 	value := c.cmd.input.Value()
 	cut := strings.LastIndex(value, " ") + 1
 	c.cmd.input.SetValue(value[:cut] + p.items[p.selected] + " ")
 	c.cmd.input.CursorEnd()
+	c.cmd.track(value, false)
 	c.picker = nil
 	m.refreshCommandPicker() // the next word may have candidates of its own
 }

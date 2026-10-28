@@ -68,6 +68,9 @@ func (m *Model) submit() tea.Cmd {
 		}
 		return nil
 	}
+	if m.guardSend() {
+		return nil
+	}
 	if !m.ready() {
 		m.status = "not connected; the draft is kept"
 		return nil

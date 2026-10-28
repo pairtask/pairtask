@@ -194,7 +194,7 @@ func TestCommandCompleteAcceptanceDoesNotReplaceSuffixWhileEditingEarlierToken(t
 	chatEqual(t, "end-of-line completion works", h.m.State().CommandLine.Text, "room add alpha @bob ")
 }
 
-func TestCommandCompleteAcceptanceUnsupportedAndPastedTextStayInert(t *testing.T) {
+func TestCommandCompleteAcceptanceUnsupportedAndPastedTextDoNotComplete(t *testing.T) {
 	for _, line := range []string{"chat alice", "chat @missing", "cha @", "room remove missing @", "find @", "room alpha extra", "room add alpha bob"} {
 		t.Run(line, func(t *testing.T) {
 			h := commandCompleteHarness(t)
@@ -208,8 +208,7 @@ func TestCommandCompleteAcceptanceUnsupportedAndPastedTextStayInert(t *testing.T
 	commandCompleteLine(h, "room add alpha @")
 	h.input(tea.PasteMsg{Content: "bo"})
 	h.input(chatKey(tea.KeyTab, 0))
-	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "pasted command stays literal", h.m.State().CommandLine.Text, "room add alpha @bo")
-	chatEqual(t, "paste and Enter do not act", h.m.State().InFlight, 0)
-	v3Contains(t, h.m.State().Status, "pasted text doesn't run")
+	chatEqual(t, "pasted argument is not completed", h.m.State().CommandLine.Text, "room add alpha @bo")
+	chatEqual(t, "paste opens no completion picker", h.m.State().Picker, nil)
+	chatEqual(t, "paste and Tab do not act", h.m.State().InFlight, 0)
 }

@@ -55,7 +55,7 @@ func TestReviewChatAcceptanceLiveRefreshCoalescesAndPreservesDetailAndDraft(t *t
 	chatEqual(t, "draft retained", h.m.State().Draft, "keep this draft")
 	chatEqual(t, "no transcript entries", len(h.m.State().Entries), 0)
 	view := ansi.Strip(h.m.View().Content)
-	for _, want := range []string{row.Revisions.Base, row.Revisions.Head, "verdict (attempt 1): approve", "published as comment by review-account", "src/example.go:9", "finding text", "stale", row.Publication.Receipt.URL} {
+	for _, want := range []string{row.Revisions.Base, row.Revisions.Head, "Verdict", "approve", "attempt 1", "recorded as comment by review-account", "src/example.go:9", "finding text", "stale", row.Publication.Receipt.URL} {
 		v3Contains(t, view, want)
 	}
 }
@@ -66,6 +66,7 @@ func TestReviewChatAcceptanceRequestedReviewUpdatesWithPanelClosed(t *testing.T)
 	req := h.take(protocol.TypeOperatorReview)
 	row := reviewChatRow(req.MessageID)
 	reviewChatSettle(h, req, row)
+	h.input(chatKey(tea.KeyEscape, 0)) // Explicitly close the automatically opened review panel.
 	h.input(tea.PasteMsg{Content: "untouched draft"})
 	reviewChatChanged(h, 2)
 	refresh := h.take(protocol.TypeOperatorReview)
@@ -100,7 +101,8 @@ func TestReviewChatAcceptanceTruncatedListAndUntrustedText(t *testing.T) {
 	chatEqual(t, "OSC command removed", strings.Contains(view, "\x1b]52"), false)
 	chatEqual(t, "control bell removed", strings.Contains(view, "\a"), false)
 	chatEqual(t, "carriage return removed", strings.Contains(view, "\r"), false)
-	v3Contains(t, ansi.Strip(view), "publication published")
+	v3Contains(t, ansi.Strip(view), "Publication")
+	v3Contains(t, ansi.Strip(view), "published")
 }
 
 func TestReviewChatAcceptancePartialRefreshPreservesSelectedDetail(t *testing.T) {
