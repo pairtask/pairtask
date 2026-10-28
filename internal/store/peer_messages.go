@@ -90,8 +90,8 @@ func textHash(text string) []byte {
 }
 
 // Queue stores an outbound message with the contact's next sequence.
-func (p *PeerMessages) Queue(ctx context.Context, contact, id, text string, now time.Time) (messaging.Row, error) {
-	if !messaging.ValidID(id) || !messaging.ValidText(text) {
+func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messaging.Row, error) {
+	if !messaging.ValidID(o.ID) || !messaging.ValidText(o.Text) {
 		return messaging.Row{}, fmt.Errorf("%w: ID or text", messaging.ErrInvalid)
 	}
 	tx, err := p.db.BeginTx(ctx, nil)
@@ -99,8 +99,8 @@ func (p *PeerMessages) Queue(ctx context.Context, contact, id, text string, now 
 		return messaging.Row{}, err
 	}
 	defer tx.Rollback()
-	key := messageKey{contact, messaging.DirOut, id}
-	row, err := queueIn(ctx, tx, outgoing{key, text, now})
+	key := messageKey{o.Contact, messaging.DirOut, o.ID}
+	row, err := queueIn(ctx, tx, outgoing{key, o.Text, o.Now})
 	if err != nil {
 		return messaging.Row{}, err
 	}
