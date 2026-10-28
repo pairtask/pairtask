@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -116,8 +117,8 @@ func (h *Hub) contactRead(ctx context.Context, req operatorRequest, auditID int6
 		h.SyncMessages(msg.ContactKey) // the receipts travel at the next session
 		h.MessagesChanged(msg.ContactKey)
 	}
-	out := h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, ContactKey: msg.ContactKey, ContactOp: msg.ContactOp})
-	out.ContactMarked = &marked
+	out := h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, ContactKey: msg.ContactKey, ContactOp: msg.ContactOp,
+		ContactMarked: &marked})
 	return out, nil
 }
 
@@ -146,8 +147,38 @@ func (h *Hub) contactList(ctx context.Context, msg protocol.Message) protocol.Me
 	for _, r := range rows {
 		page.Messages = append(page.Messages, contactMessageView(r))
 	}
-	return protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
-		ContactOp: msg.ContactOp, ContactPage: &page}
+	out := protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
+		ContactOp: msg.ContactOp, ContactPage: &page, ContactMarked: msg.ContactMarked}
+	fitContactPage(&out)
+	return out
+}
+
+// contactEnvelope is room left in a frame for what the session adds to a
+// response: its request_id at the longest, and the trailing newline.
+const contactEnvelope = 256
+
+// fitContactPage keeps the newest messages that fit one frame, as encoded,
+// with room for the session's envelope: every message kept is whole, the
+// newest always stays, and More tells the client older ones remain, from
+// the last cursor returned.
+func fitContactPage(out *protocol.Message) {
+	page := out.ContactPage
+	all := page.Messages
+	page.Messages = []protocol.ContactMessageView{}
+	base, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	used := len(base) + contactEnvelope
+	for i, m := range all {
+		size, err := json.Marshal(m)
+		if err != nil || (i > 0 && used+len(size)+1 > protocol.MaxFrameBytes) {
+			page.Messages, page.More = all[:i], true
+			return
+		}
+		used += len(size) + 1
+	}
+	page.Messages = all
 }
 
 func (h *Hub) contactNow() time.Time {

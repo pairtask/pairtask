@@ -4,8 +4,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,4 +64,36 @@ func TestContactOperatorAcceptanceAuditFailureNoQueue(t *testing.T) {
 			operatorEqual(t, "no operation", f.count("operator_contact_requests"), 0)
 		})
 	}
+}
+
+func TestContactOperatorAcceptancePageBoundsEncodedBytes(t *testing.T) {
+	f := newRedeemOperator(t, redeemConfig(), "")
+	id := messageIdentity(t)
+	messageConfirm(f, id, 1)
+	text := strings.Repeat("\x00", protocol.ContactTextBytes)
+	for n := 1; n <= 12; n++ {
+		answer, err := f.st.PeerMessages().Accept(context.Background(), id.Fingerprint(), messaging.Message{ID: fmt.Sprint("large-", n), N: uint64(n), CreatedAt: time.Now(), Text: text}, time.Now())
+		operatorNoError(t, err)
+		operatorEqual(t, "seed accepted", answer.Stored, true)
+	}
+	seen := map[string]bool{}
+	var before int64
+	for pages := 0; pages < 12; pages++ {
+		r := f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: id.Fingerprint(), ContactBefore: before})
+		if r.ContactPage == nil || len(r.ContactPage.Messages) == 0 {
+			t.Fatalf("missing nonempty page: %+v", r)
+		}
+		for _, m := range r.ContactPage.Messages {
+			if seen[m.ID] {
+				t.Fatalf("duplicate row %s", m.ID)
+			}
+			seen[m.ID] = true
+			operatorEqual(t, "text preserved", m.Text, text)
+			before = m.Cursor
+		}
+		if !r.ContactPage.More {
+			break
+		}
+	}
+	operatorEqual(t, "every row reachable", len(seen), 12)
 }
