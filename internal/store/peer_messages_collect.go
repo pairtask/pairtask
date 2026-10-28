@@ -93,8 +93,8 @@ ORDER BY cursor DESC`, contact)
 		}
 		drop = append(drop, cursor)
 	}
-	if err := rows.Close(); err != nil {
-		return err
+	if err := closeRows(rows); err != nil {
+		return err // an incomplete read collects nothing
 	}
 	for _, cursor := range drop {
 		if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET text = NULL WHERE cursor = ?`, cursor); err != nil {
@@ -129,8 +129,8 @@ FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(
 		}
 		forget, last = append(forget, cursor), n
 	}
-	if err := rows.Close(); err != nil || len(forget) == 0 {
-		return err
+	if err := closeRows(rows); err != nil || len(forget) == 0 {
+		return err // an incomplete read forgets nothing
 	}
 	for _, cursor := range forget {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_messages WHERE cursor = ?`, cursor); err != nil {
@@ -140,4 +140,13 @@ FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(
 	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_floors (contact, floor) VALUES (?, ?)
 ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact, last+1)
 	return err
+}
+
+// closeRows ends a read, reporting an iteration error before a close one.
+func closeRows(rows *sql.Rows) error {
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	return rows.Close()
 }
