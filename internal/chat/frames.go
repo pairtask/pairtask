@@ -72,6 +72,8 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		return m.refreshStatuses() // the snapshot carries statuses, claims and rooms
 	case protocol.EventPairingChanged:
 		return m.pairingChanged()
+	case protocol.EventReviewsChanged:
+		return m.reviewsChanged()
 	}
 	return nil
 }
@@ -137,6 +139,8 @@ var responseHandlers = map[string]responseHandler{
 	kindRoomDelete:   (*Model).roomDeleted,
 	kindPairing:      (*Model).pairingResult,
 	kindPairingQuiet: (*Model).quietPairingResult,
+	kindReview:       (*Model).reviewResult,
+	kindReviewQuiet:  (*Model).quietReviewResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
@@ -200,7 +204,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 		}
 	}
 	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
-		m.refreshContacts())
+		m.refreshContacts(), m.reviewsReconnected())
 }
 
 func validSnapshot(resp protocol.Message) bool {

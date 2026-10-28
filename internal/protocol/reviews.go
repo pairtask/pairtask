@@ -32,6 +32,10 @@ const (
 // ReviewVersion is the protocol version that carries review requests.
 const ReviewVersion = 10
 
+// CapabilityReviews: the operator session serves operator_review and sends
+// reviews_changed.
+const CapabilityReviews = "reviews"
+
 // Operator review operations.
 const (
 	ReviewOpRequest = "request" // message_id is the request ID: an identical retry returns the same review
