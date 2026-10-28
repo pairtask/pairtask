@@ -13,6 +13,8 @@ import (
 
 	"github.com/pairtask/pairtask/internal/bridge"
 	"github.com/pairtask/pairtask/internal/budget"
+	"github.com/pairtask/pairtask/internal/forge"
+	"github.com/pairtask/pairtask/internal/forge/github"
 	"github.com/pairtask/pairtask/internal/host"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/resume"
@@ -40,7 +42,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: "codex-app-server", Rooms: rooms}
+	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: "codex-app-server", Rooms: rooms, Forges: reviewForges()}
 	selection := budgetSelection{name: *budgetName, path: *budgetFile, limit: *tokenCap}
 	cap, err := selection.open(*mcpSocket)
 	if err != nil {
@@ -239,4 +241,10 @@ func serve(ctx context.Context, p *host.Proxy, operatorIn, output io.ReadCloser)
 		return nil
 	}
 	return err
+}
+
+// reviewForges are the forges this agent's reviews may use (#201), with the
+// agent's own access.
+func reviewForges() forge.Registry {
+	return forge.Registry{"github": github.New(github.Production())}
 }
