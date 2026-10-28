@@ -26,6 +26,12 @@ const (
 	// ContactALPN names a connection between paired workspaces, each pinning
 	// the other's identity; no exchange runs on it.
 	ContactALPN = "pairtask-contact/1"
+	// MessageALPN names a message session between confirmed contacts (#210),
+	// each pinning the other's identity; a peer that doesn't speak it
+	// refuses the handshake, so nothing reaches its settlement.
+	MessageALPN = "pairtask-message/1"
+	// MaxMessageFrameBytes bounds a message session's frames.
+	MaxMessageFrameBytes = 32 << 10
 	// ExporterLabel is RFC 9266's tls-exporter channel binding.
 	ExporterLabel = "EXPORTER-Channel-Binding"
 	// ChannelBindingBytes is the exporter's length.
@@ -73,9 +79,12 @@ type Conn struct {
 // reports true for.
 type ServerOptions struct {
 	ContactPins func(fingerprint string) bool
+	// MessagePins, when set, also offers message sessions, accepting one
+	// only from an identity it reports true for: a confirmed contact.
+	MessagePins func(fingerprint string) bool
 }
 
-// Protocol is the negotiated ALPN: ALPN or ContactALPN.
+// Protocol is the negotiated ALPN: ALPN, ContactALPN or MessageALPN.
 func (c *Conn) Protocol() string { return c.protocol }
 
 // Server runs the inviter's end over raw, which it owns: on any error raw is
@@ -99,6 +108,22 @@ func Client(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock
 // is pin, refusing any other; raw is owned as by Client.
 func ContactClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
 	return handshake(ctx, raw, id, clock, contactRole(pin))
+}
+
+// MessageClient opens a message session's connection to the contact whose
+// identity is pin, refusing any other; raw is owned as by Client.
+func MessageClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, pinned{MessageALPN, pin}.role())
+}
+
+// NoCommonProtocol reports a handshake the peer refused for want of a
+// protocol in common, by its TLS alert: an older workspace without message
+// sessions, as opposed to one that couldn't be reached or presented another
+// identity. crypto/tls reports a peer's alert as a "remote error" OpError
+// whose error is the alert's text.
+func NoCommonProtocol(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "remote error" && op.Err != nil && op.Err.Error() == "tls: no application protocol"
 }
 
 func handshake(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, role tlsRole) (*Conn, error) {
@@ -147,6 +172,12 @@ func established(t *tls.Conn) (*Conn, error) {
 // peer's presented key and the exporter, as a copy.
 func (c *Conn) Connection() peer.Connection {
 	return peer.Connection{PeerLeaf: c.conn.PeerLeaf, ChannelBinding: append([]byte(nil), c.conn.ChannelBinding...)}
+}
+
+// MessageFrames carries a message session's frames, as Frames does but up
+// to MaxMessageFrameBytes each.
+func (c *Conn) MessageFrames(ctx context.Context) peer.Frames {
+	return streamFrames{ctx: ctx, conn: c.tls, limit: MaxMessageFrameBytes}
 }
 
 // Frames carries pairing frames, each a 4-byte big-endian length and its

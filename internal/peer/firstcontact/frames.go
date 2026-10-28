@@ -11,12 +11,13 @@ import (
 )
 
 type streamFrames struct {
-	ctx  context.Context
-	conn net.Conn
+	ctx   context.Context
+	conn  net.Conn
+	limit int // the largest frame; zero is pairing's
 }
 
 func (s streamFrames) Send(p []byte) error {
-	if err := checkFrameSize(len(p)); err != nil {
+	if err := s.checkFrameSize(len(p)); err != nil {
 		return err
 	}
 	frame := binary.BigEndian.AppendUint32(make([]byte, 0, 4+len(p)), uint32(len(p)))
@@ -48,7 +49,7 @@ func (s streamFrames) Recv() ([]byte, error) {
 			return err
 		}
 		size := binary.BigEndian.Uint32(prefix[:])
-		if err := checkFrameSize(int(size)); err != nil {
+		if err := s.checkFrameSize(int(size)); err != nil {
 			return err
 		}
 		body = make([]byte, size)
@@ -60,8 +61,12 @@ func (s streamFrames) Recv() ([]byte, error) {
 
 // checkFrameSize refuses an empty or oversized frame before any body is
 // read or allocated.
-func checkFrameSize(n int) error {
-	if n == 0 || n > peer.MaxFrameBytes {
+func (s streamFrames) checkFrameSize(n int) error {
+	limit := s.limit
+	if limit == 0 {
+		limit = peer.MaxFrameBytes
+	}
+	if n <= 0 || n > limit {
 		return fmt.Errorf("%w: frame of %d bytes", peer.ErrPairingProtocol, n)
 	}
 	return nil

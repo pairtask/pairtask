@@ -104,19 +104,24 @@ func TestRedeemOperatorAcceptancePeerEndpointNeverCarriesLocalAuthority(t *testi
 
 func TestRedeemOperatorAcceptanceInboundConnectionLimit(t *testing.T) {
 	alice, bob := newRedeemOperator(t, redeemConfig(), ""), newRedeemOperator(t, redeemConfig(), "")
+	server := messageAdmissionServer(t, alice)
+	route := *alice
+	route.pairSocket = server.socketPath
 	for range 4 {
-		pairingClient(t, alice, bob)
+		pairingClient(t, &route, bob)
 	}
-	raw, err := net.DialTimeout("unix", alice.pairSocket, time.Second)
-	operatorNoError(t, err)
-	defer raw.Close()
-	operatorNoError(t, raw.SetReadDeadline(time.Now().Add(time.Second)))
-	_, err = raw.Read(make([]byte, 1))
+	awaitAdmissionSlots(t, server.slots, 4)
+	// Admission now follows TLS: a fifth completed pairing handshake is
+	// refused independently of the eight unauthenticated handshake slots.
+	fifth := pairingClient(t, &route, bob)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := fifth.Frames(ctx).Recv()
 	if err == nil {
-		t.Fatal("fifth unauthenticated connection was admitted")
+		t.Fatal("fifth pairing session was admitted")
 	}
 	if e, ok := err.(net.Error); ok && e.Timeout() {
-		t.Fatal("fifth connection waited instead of immediate refusal")
+		t.Fatal("fifth completed pairing handshake waited instead of immediate refusal")
 	}
 	operatorEqual(t, "no attempt without hello", alice.count("peer_pairing_requests"), 0)
 }
