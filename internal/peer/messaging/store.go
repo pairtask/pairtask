@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// Outgoing is a message to queue: to a contact, under an ID that names it,
+// at a time.
+type Outgoing struct {
+	Contact, ID, Text string
+	Now               time.Time
+}
+
 // Row is one message as a side holds it, either direction.
 type Row struct {
 	Cursor      int64  // local insertion order; Page pages by it
@@ -31,7 +38,7 @@ type Store interface {
 	// Queue stores an outbound message with the next sequence (from 1, never
 	// reused). The same ID with the same text returns the existing row; with
 	// other text, ErrConflict.
-	Queue(ctx context.Context, contact, id, text string, now time.Time) (Row, error)
+	Queue(ctx context.Context, o Outgoing) (Row, error)
 	// Offer is up to maxCount messages and maxBytes of text still to send,
 	// oldest first; a queued row past QueuedExpiry becomes StateExpired.
 	Offer(ctx context.Context, contact string, now time.Time, maxCount, maxBytes int) ([]Row, error)
