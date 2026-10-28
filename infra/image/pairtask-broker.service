@@ -8,6 +8,8 @@ After=pairtask-workspace-setup.service
 # The secured runtime reserves its state for host-administered services.
 ConditionPathIsMountPoint=!/var/lib/collab-ai-secured
 ConditionPathIsMountPoint=!/mnt/collab-ipc
+# Nor does the pairing route's connector run a broker.
+ConditionPathIsMountPoint=!/mnt/pairtask-egress
 
 [Service]
 User=agent

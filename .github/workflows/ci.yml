@@ -225,6 +225,9 @@ jobs:
       - name: Probe the peer gate topology (#178, disposable)
         if: needs.classify.outputs.images != 'false'
         run: sudo env "PATH=$PATH" "GOCACHE=$RUNNER_TEMP/go-build" python3 scripts/sandbox-peer-probe.py --remote local --image-dir dist/installed
+      - name: Prove the installed pairing route (#178, disposable)
+        if: needs.classify.outputs.images != 'false'
+        run: sudo env "PATH=$PATH" "GOCACHE=$RUNNER_TEMP/go-build" python3 scripts/sandbox-pairing-route.py --remote local --image-dir dist/installed
       - name: Prove containerized provisioning and host-state recovery
         if: needs.classify.outputs.images != 'false'
         env:

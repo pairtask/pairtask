@@ -38,7 +38,7 @@ resource "incus_project" "sandbox" {
     "restricted.devices.nic"     = "managed"
     "restricted.networks.access" = var.dev_network
     "restricted.devices.proxy"   = "block"
-    "limits.containers"          = var.secured_runtime ? (var.peer_connector_probe ? "3" : "2") : "1"
+    "limits.containers"          = var.secured_runtime ? (var.peer_connector_probe || var.pairing_route ? "3" : "2") : "1"
     "limits.virtual-machines"    = "0"
   }, local.mount_project_config)
 

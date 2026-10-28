@@ -1,0 +1,25 @@
+[Unit]
+Description=Pairing egress forwarder for secured (#178, experimental)
+Requires=pairtask-connector-setup.service
+After=pairtask-connector-setup.service
+ConditionPathIsMountPoint=!/var/lib/collab-ai-secured
+ConditionPathIsMountPoint=/mnt/pairtask-pairing
+ConditionPathIsMountPoint=/mnt/pairtask-egress
+
+[Service]
+User=peer
+Group=collab-peer
+# As peer: removes only its own stale socket; an active one stops the start.
+ExecStartPre=/usr/local/lib/pairtask/pairtask-pairing-setup clean-egress
+ExecStart=/usr/local/bin/pairtask peer egress --socket /mnt/pairtask-egress/egress.sock --group collab-peer
+UMask=0117
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/mnt/pairtask-egress
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

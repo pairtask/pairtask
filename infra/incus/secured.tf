@@ -73,9 +73,10 @@ resource "incus_storage_volume" "budget_status" {
 }
 
 resource "incus_profile" "secured" {
-  count   = var.secured_runtime ? 1 : 0
-  name    = "secured-offline"
-  project = incus_project.sandbox.name
+  count      = var.secured_runtime ? 1 : 0
+  depends_on = [terraform_data.pairing_route_preflight]
+  name       = "secured-offline"
+  project    = incus_project.sandbox.name
   config = {
     "security.privileged"     = "false"
     "security.nesting"        = "false"
@@ -141,6 +142,33 @@ resource "incus_profile" "secured" {
       source = incus_storage_volume.secured_tools[0].name
       pool   = var.storage_pool
       path   = "/var/lib/collab-ai-tools"
+    }
+  }
+  # The pairing route (#178): the broker's pairing socket volume read-write,
+  # connector's egress socket volume read-only.
+  dynamic "device" {
+    for_each = var.pairing_route ? [incus_storage_volume.pairing_ingress[0].name] : []
+    content {
+      name = "pairing-ingress"
+      type = "disk"
+      properties = {
+        source = device.value
+        pool   = var.storage_pool
+        path   = "/mnt/pairtask-pairing"
+      }
+    }
+  }
+  dynamic "device" {
+    for_each = var.pairing_route ? [incus_storage_volume.pairing_egress[0].name] : []
+    content {
+      name = "pairing-egress"
+      type = "disk"
+      properties = {
+        source   = device.value
+        pool     = var.storage_pool
+        path     = "/mnt/pairtask-egress"
+        readonly = "true"
+      }
     }
   }
   # Validation only (#178): the peer gate's socket volume, read-write here.

@@ -1,0 +1,19 @@
+[Unit]
+Description=Prepare the secured side of the opt-in pairing route (#178)
+After=local-fs.target pairtask-secured-setup.service
+Before=pairtask-secured-broker.service
+# Only secured with both route mounts; without them this is skipped and the
+# broker runs exactly as without the route.
+ConditionPathIsMountPoint=/var/lib/collab-ai-secured
+ConditionPathIsMountPoint=/mnt/pairtask-pairing
+ConditionPathIsMountPoint=/mnt/pairtask-egress
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pairtask/pairtask-pairing-setup secured
+# /run is cleared on restart anyway; stopping clears the route settings too.
+ExecStopPost=/usr/local/lib/pairtask/pairtask-pairing-setup disable
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
