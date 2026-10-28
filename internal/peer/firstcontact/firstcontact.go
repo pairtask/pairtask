@@ -21,8 +21,11 @@ import (
 )
 
 const (
-	// ALPN names this protocol; both ends must negotiate it.
+	// ALPN names the pairing exchange; both ends must negotiate it.
 	ALPN = "pairtask-pairing/2"
+	// ContactALPN names a connection between paired workspaces, each pinning
+	// the other's identity; no exchange runs on it.
+	ContactALPN = "pairtask-contact/1"
 	// ExporterLabel is RFC 9266's tls-exporter channel binding.
 	ExporterLabel = "EXPORTER-Channel-Binding"
 	// ChannelBindingBytes is the exporter's length.
@@ -60,23 +63,45 @@ func checkDeps(id *peer.WorkspaceIdentity, clock func() time.Time) error {
 
 // Conn is one first-contact connection.
 type Conn struct {
-	tls  *tls.Conn
-	conn peer.Connection
+	tls      *tls.Conn
+	conn     peer.Connection
+	protocol string
 }
+
+// ServerOptions widen what a server accepts. ContactPins, when set, also
+// offers contact connections, accepting one only from an identity it
+// reports true for.
+type ServerOptions struct {
+	ContactPins func(fingerprint string) bool
+}
+
+// Protocol is the negotiated ALPN: ALPN or ContactALPN.
+func (c *Conn) Protocol() string { return c.protocol }
 
 // Server runs the inviter's end over raw, which it owns: on any error raw is
 // closed.
 func Server(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time) (*Conn, error) {
-	return handshake(ctx, raw, id, clock, true)
+	return handshake(ctx, raw, id, clock, pairingRole(true))
+}
+
+// ServerWith is Server with options, such as accepting contact connections.
+func ServerWith(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, opts ServerOptions) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, serverRole(opts))
 }
 
 // Client runs the joiner's end over raw, which it owns: on any error raw is
 // closed.
 func Client(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time) (*Conn, error) {
-	return handshake(ctx, raw, id, clock, false)
+	return handshake(ctx, raw, id, clock, pairingRole(false))
 }
 
-func handshake(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, server bool) (*Conn, error) {
+// ContactClient opens a contact connection to the workspace whose identity
+// is pin, refusing any other; raw is owned as by Client.
+func ContactClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, contactRole(pin))
+}
+
+func handshake(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, role tlsRole) (*Conn, error) {
 	if err := checkDeps(id, clock); err != nil {
 		raw.Close()
 		return nil, err
@@ -86,9 +111,9 @@ func handshake(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, cl
 		raw.Close()
 		return nil, fmt.Errorf("%w: certificate: %w", ErrFirstContact, err)
 	}
-	cfg := selfSignedTLSConfig(own, id.Fingerprint(), clock, server)
+	cfg := selfSignedTLSConfig(own, id.Fingerprint(), clock, role)
 	t := tls.Client(raw, cfg)
-	if server {
+	if role.server {
 		t = tls.Server(raw, cfg)
 	}
 	ctx, cancel := context.WithTimeout(ctx, HandshakeTimeout)
@@ -114,7 +139,8 @@ func established(t *tls.Conn) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: channel binding: %w", ErrFirstContact, err)
 	}
-	return &Conn{tls: t, conn: peer.Connection{PeerLeaf: peer.SPKIFingerprint(cs.PeerCertificates[0]), ChannelBinding: ekm}}, nil
+	return &Conn{tls: t, conn: peer.Connection{PeerLeaf: peer.SPKIFingerprint(cs.PeerCertificates[0]), ChannelBinding: ekm},
+		protocol: cs.NegotiatedProtocol}, nil
 }
 
 // Connection is what this connection fixes for the pairing exchange: the

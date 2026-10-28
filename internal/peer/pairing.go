@@ -83,6 +83,9 @@ type PairingRequest struct {
 	Name          string
 	State         PairingState
 	FirstPairedAt time.Time
+	// DeliveredAt is when the joiner acknowledged the decision; until then
+	// an accepted request is not yet a contact.
+	DeliveredAt time.Time
 }
 
 // PairingStore keeps pairing outcomes and requests durably.
@@ -103,6 +106,32 @@ type PairingStore interface {
 	Reject(ctx context.Context, identityKey string) (PairingRequest, error)
 	Request(ctx context.Context, identityKey string) (PairingRequest, bool, error)
 	Requests(ctx context.Context) ([]PairingRequest, error)
+	// Deliver records that the joiner acknowledged the request's decision,
+	// once; an accepted one becomes a contact in the same write. The
+	// request must hold that decision.
+	Deliver(ctx context.Context, identityKey string, decision PairingState, at time.Time) (PairingRequest, error)
+}
+
+// DeliverDecision is Deliver's transition for one request: it changes it
+// (true) the first time, repeats as a no-op, and refuses a decision the
+// request doesn't hold.
+func DeliverDecision(r PairingRequest, decision PairingState, at time.Time) (PairingRequest, bool, error) {
+	if decision != PairingAccepted && decision != PairingRejected {
+		return r, false, ErrInvalidJoin
+	}
+	if r.State != decision {
+		return r, false, ErrNotPending
+	}
+	if !r.DeliveredAt.IsZero() {
+		return r, false, nil
+	}
+	r.DeliveredAt = at
+	return r, true, nil
+}
+
+// InviterContact is the contact an accepted, delivered request makes.
+func InviterContact(r PairingRequest) Contact {
+	return Contact{IdentityKey: r.IdentityKey, Name: r.Name, EstablishedAt: r.DeliveredAt, Invited: true}
 }
 
 // ValidOutcome reports a missing required field, so stores refuse it alike.
@@ -187,19 +216,49 @@ func DecidePairing(current, decision PairingState) (PairingState, error) {
 
 // MemPairingStore is an in-memory PairingStore for tests and the probe.
 type MemPairingStore struct {
+	*MemContacts
 	mu           sync.Mutex
 	requests     map[string]PairingRequest
 	outcomes     map[string]PairingOutcome
 	byInvitation map[string]string
 }
 
-// NewMemPairingStore returns an empty store.
+// NewMemPairingStore returns an empty store with its own contacts.
 func NewMemPairingStore() *MemPairingStore {
+	return NewMemPairingStoreWith(NewMemContacts())
+}
+
+// NewMemPairingStoreWith returns an empty store sharing contacts, as a
+// joiner's store may.
+func NewMemPairingStoreWith(contacts *MemContacts) *MemPairingStore {
 	return &MemPairingStore{
+		MemContacts:  contacts,
 		requests:     map[string]PairingRequest{},
 		outcomes:     map[string]PairingOutcome{},
 		byInvitation: map[string]string{},
 	}
+}
+
+func (s *MemPairingStore) Deliver(_ context.Context, identityKey string, decision PairingState, at time.Time) (PairingRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	request, ok := s.requests[identityKey]
+	if !ok {
+		return PairingRequest{}, ErrNoPairingRequest
+	}
+	next, changed, err := DeliverDecision(request, decision, at)
+	if err != nil || !changed {
+		return next, err
+	}
+	commit := func() { s.requests[identityKey] = next }
+	if next.State != PairingAccepted {
+		commit()
+		return next, nil
+	}
+	if err := s.apply(InviterContact(next), commit); err != nil {
+		return request, err
+	}
+	return next, nil
 }
 
 func cloneOutcome(o PairingOutcome) PairingOutcome {

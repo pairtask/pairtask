@@ -14,6 +14,8 @@ type Listener struct {
 	tcp   *net.TCPListener
 	id    *peer.WorkspaceIdentity
 	clock func() time.Time
+	// Opts apply to every accepted connection; set them before Accept.
+	Opts ServerOptions
 }
 
 // Listen listens on a TCP endpoint.
@@ -44,7 +46,7 @@ func (l *Listener) Accept(ctx context.Context) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Server(ctx, raw, l.id, l.clock)
+	return ServerWith(ctx, raw, l.id, l.clock, l.Opts)
 }
 
 // Addr is the listening address.

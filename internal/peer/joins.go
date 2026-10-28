@@ -23,12 +23,15 @@ import (
 // any exchange secret. States only move forward:
 //
 //	intent → exchanging → outcome_unknown → awaiting_acceptance
-//	intent | exchanging → failed          (refused, or failed before verifying)
-//	intent | exchanging → unverified      (RecoverJoins after a restart)
+//	awaiting_acceptance → contact | declined  (the inviter's decision, by Settle)
+//	intent | exchanging → failed              (refused, or failed before verifying)
+//	intent | exchanging → unverified          (RecoverJoins after a restart)
 //
 // outcome_unknown means our final confirmation may have reached the
-// inviter; only an exactly matching receipt settles it. Acceptance and
-// rejection arrive in a later slice.
+// inviter; only an exactly matching receipt moves it on: the redemption's
+// own, or one a later Settle matches. contact and declined are final: they
+// hold the inviter's authenticated decision, and DecisionConfirmedAt
+// records, once, that the inviter took note of our acknowledgment of it.
 
 // JoinState is where a join stands.
 type JoinState string
@@ -40,6 +43,10 @@ const (
 	JoinAwaitingAcceptance JoinState = "awaiting_acceptance"
 	JoinFailed             JoinState = "failed"
 	JoinUnverified         JoinState = "unverified"
+	// JoinContact and JoinDeclined hold the inviter's authenticated decision;
+	// both are final.
+	JoinContact  JoinState = "contact"
+	JoinDeclined JoinState = "declined"
 )
 
 // Join bounds: open joins (not failed or unverified) and all joins.
@@ -71,6 +78,9 @@ type JoinRecord struct {
 	State              JoinState
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	// DecisionConfirmedAt is when the inviter acknowledged our receipt of
+	// its decision; until then a final join still settles again.
+	DecisionConfirmedAt time.Time
 }
 
 // JoinReceipt is the inviter's word that it committed this join.
@@ -90,13 +100,69 @@ type JoinStore interface {
 	// RecoverJoins marks joins interrupted before verification unverified.
 	// It runs once at startup, while no join can be live.
 	RecoverJoins(ctx context.Context, at time.Time) (int, error)
+	// RecordDecision records the inviter's decision on a join awaiting it;
+	// an acceptance makes the contact in the same write.
+	RecordDecision(ctx context.Context, opID string, decision PairingState, at time.Time) (JoinRecord, error)
+	// RecordDecisionConfirmed records, once, that the inviter confirmed it.
+	RecordDecisionConfirmed(ctx context.Context, opID string, decision PairingState, at time.Time) (JoinRecord, error)
 	GetJoin(ctx context.Context, opID string) (JoinRecord, bool, error)
 	Joins(ctx context.Context) ([]JoinRecord, error)
 }
 
 // Open reports a join that counts against MaxOpenJoins.
 func (s JoinState) Open() bool {
-	return s != JoinFailed && s != JoinUnverified
+	return slices.Contains([]JoinState{JoinIntent, JoinExchanging, JoinOutcomeUnknown, JoinAwaitingAcceptance}, s)
+}
+
+// decisionStates are where each decision leaves a join.
+var decisionStates = map[PairingState]JoinState{PairingAccepted: JoinContact, PairingRejected: JoinDeclined}
+
+// Decide records the inviter's decision on a join awaiting it. Repeating
+// the decision changes nothing; a different one conflicts.
+func Decide(r JoinRecord, decision PairingState, at time.Time) (JoinRecord, bool, error) {
+	final, ok := decisionStates[decision]
+	if !ok {
+		return r, false, ErrInvalidJoin
+	}
+	if r.State == JoinAwaitingAcceptance {
+		r.State, r.UpdatedAt = final, at
+		return r, true, nil
+	}
+	return r, false, finalState(r.State, final)
+}
+
+// finalState answers a decision or confirmation on a join that may already
+// hold one.
+func finalState(current, want JoinState) error {
+	if current == want {
+		return nil
+	}
+	if current == JoinContact || current == JoinDeclined {
+		return ErrJoinConflict
+	}
+	return ErrJoinState
+}
+
+// ConfirmDecision records, once, that the inviter durably took note of our
+// acknowledgement of its decision.
+func ConfirmDecision(r JoinRecord, decision PairingState, at time.Time) (JoinRecord, bool, error) {
+	final, ok := decisionStates[decision]
+	if !ok {
+		return r, false, ErrInvalidJoin
+	}
+	if err := finalState(r.State, final); err != nil {
+		return r, false, err
+	}
+	if !r.DecisionConfirmedAt.IsZero() {
+		return r, false, nil
+	}
+	r.DecisionConfirmedAt, r.UpdatedAt = at, at
+	return r, true, nil
+}
+
+// JoinerContact is the contact an accepted join makes.
+func JoinerContact(r JoinRecord) Contact {
+	return Contact{IdentityKey: r.Peer, Destination: r.Destination, EstablishedAt: r.UpdatedAt, Joined: true}
 }
 
 // JoinStart is a join's intent: our operation ID, our own fingerprint, the
@@ -238,8 +304,8 @@ func validTranscriptID(id []byte) bool {
 	return len(id) > 0 && len(id) <= MaxTranscriptIDBytes
 }
 
-// Settle accepts a receipt only if every field equals what we recorded.
-func Settle(r JoinRecord, receipt JoinReceipt, at time.Time) (JoinRecord, bool, error) {
+// ApplyReceipt accepts a receipt only if every field equals what we recorded.
+func ApplyReceipt(r JoinRecord, receipt JoinReceipt, at time.Time) (JoinRecord, bool, error) {
 	if r.Peer == "" {
 		return r, false, ErrJoinState
 	}
@@ -310,12 +376,44 @@ func MatchReceipt(ctx context.Context, s PairingStore, r JoinReceipt) (bool, err
 
 // MemJoinStore is an in-memory JoinStore for tests.
 type MemJoinStore struct {
+	*MemContacts
 	mu    sync.Mutex
 	joins map[string]JoinRecord
 }
 
 func NewMemJoinStore() *MemJoinStore {
-	return &MemJoinStore{joins: map[string]JoinRecord{}}
+	return NewMemJoinStoreWith(NewMemContacts())
+}
+
+// NewMemJoinStoreWith shares contacts with a pairing store.
+func NewMemJoinStoreWith(contacts *MemContacts) *MemJoinStore {
+	return &MemJoinStore{MemContacts: contacts, joins: map[string]JoinRecord{}}
+}
+
+func (s *MemJoinStore) RecordDecision(_ context.Context, opID string, decision PairingState, at time.Time) (JoinRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.joins[opID]
+	if !ok {
+		return JoinRecord{}, ErrNoJoin
+	}
+	next, changed, err := Decide(r, decision, at)
+	if err != nil || !changed {
+		return cloneJoin(next), err
+	}
+	commit := func() { s.joins[opID] = next }
+	if next.State != JoinContact {
+		commit()
+		return cloneJoin(next), nil
+	}
+	if err := s.apply(JoinerContact(next), commit); err != nil {
+		return cloneJoin(r), err
+	}
+	return cloneJoin(next), nil
+}
+
+func (s *MemJoinStore) RecordDecisionConfirmed(_ context.Context, opID string, decision PairingState, at time.Time) (JoinRecord, error) {
+	return s.update(opID, func(r JoinRecord) (JoinRecord, bool, error) { return ConfirmDecision(r, decision, at) })
 }
 
 func cloneJoin(r JoinRecord) JoinRecord {
@@ -375,7 +473,7 @@ func (s *MemJoinStore) RecordVerified(_ context.Context, opID string, res Exchan
 }
 
 func (s *MemJoinStore) RecordReceipt(_ context.Context, opID string, receipt JoinReceipt, at time.Time) (JoinRecord, error) {
-	return s.update(opID, func(r JoinRecord) (JoinRecord, bool, error) { return Settle(r, receipt, at) })
+	return s.update(opID, func(r JoinRecord) (JoinRecord, bool, error) { return ApplyReceipt(r, receipt, at) })
 }
 
 func (s *MemJoinStore) FailJoin(_ context.Context, opID string, at time.Time) (JoinRecord, error) {
