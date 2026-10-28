@@ -1,7 +1,6 @@
 package messaging_test
 
 import (
-	"bytes"
 	"encoding/hex"
 	"errors"
 	"reflect"
@@ -55,23 +54,29 @@ func TestMessageCodecAcceptanceAllFrameKinds(t *testing.T) {
 }
 
 func TestMessageCodecAcceptanceGoldenWireBytes(t *testing.T) {
-	frame, err := messaging.EncodeHello(messaging.Hello{Min: 1, Max: 1})
-	if err != nil || hex.EncodeToString(frame) != "0101000101000101" {
-		t.Fatalf("hello wire %x, %v", frame, err)
+	for _, tc := range []struct {
+		name, want string
+		encode     func() ([]byte, error)
+	}{
+		{"hello", "0101000101000101", func() ([]byte, error) { return messaging.EncodeHello(messaging.Hello{Min: 1, Max: 1}) }},
+		{"stored", "010300016d", func() ([]byte, error) { return messaging.EncodeStored(messaging.Stored{ID: "m"}) }},
+		{"end", "0105", messaging.EncodeEnd},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := tc.encode()
+			if err != nil || hex.EncodeToString(frame) != tc.want {
+				t.Fatalf("wire %x, %v; want %s", frame, err, tc.want)
+			}
+		})
 	}
-	frame, err = messaging.EncodeStored(messaging.Stored{ID: "m"})
-	if err != nil || hex.EncodeToString(frame) != "010300016d" {
-		t.Fatalf("stored wire %x, %v", frame, err)
-	}
-	frame, err = messaging.EncodeEnd()
-	if err != nil || !bytes.Equal(frame, []byte{1, 5}) {
-		t.Fatalf("end wire %x, %v", frame, err)
-	}
-	if err = messaging.DecodeEnd(frame); err != nil {
+}
+
+func TestMessageCodecAcceptanceEndHasNoFields(t *testing.T) {
+	if err := messaging.DecodeEnd([]byte{1, 5}); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range [][]byte{nil, {1}, {1, 5, 0}, {1, 3}, {2, 5}} {
-		if err = messaging.DecodeEnd(bad); !errors.Is(err, messaging.ErrProtocol) {
+		if err := messaging.DecodeEnd(bad); !errors.Is(err, messaging.ErrProtocol) {
 			t.Fatalf("bad end accepted %x", bad)
 		}
 	}

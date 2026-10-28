@@ -62,17 +62,29 @@ func TestPeerMessagesAcceptanceConcurrentQueueEnforcesQuota(t *testing.T) {
 	close(start)
 	wg.Wait()
 	close(results)
+	pairEqual(t, messageQueueSuccesses(t, results), 1)
+	rows := messagePage(t, s, contact)
+	pairEqual(t, len(rows), 64)
+	messageUniqueSequences(t, rows)
+}
+
+func messageQueueSuccesses(t *testing.T, results <-chan error) int {
+	t.Helper()
 	successes := 0
 	for err := range results {
 		if err == nil {
 			successes++
-		} else if !errors.Is(err, messaging.ErrOutboxFull) {
+			continue
+		}
+		if !errors.Is(err, messaging.ErrOutboxFull) {
 			t.Fatal(err)
 		}
 	}
-	pairEqual(t, successes, 1)
-	rows := messagePage(t, s, contact)
-	pairEqual(t, len(rows), 64)
+	return successes
+}
+
+func messageUniqueSequences(t *testing.T, rows []messaging.Row) {
+	t.Helper()
 	seen := map[uint64]bool{}
 	for _, row := range rows {
 		if seen[row.N] {
