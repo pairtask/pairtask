@@ -82,11 +82,18 @@ func Hash(requester string, spec protocol.ReviewSpec) string {
 
 // Expire ends an open review whose time is up.
 func Expire(r Record, now time.Time) (Record, bool) {
-	v := r.View
-	if !Open(v.State) || v.ExpiresAt == nil || now.Before(*v.ExpiresAt) {
+	if !due(r.View, now) {
 		return r, false
 	}
 	return finish(r, protocol.ReviewExpired, "expired", now), true
+}
+
+// due reports an open review whose time is up.
+func due(v protocol.ReviewView, now time.Time) bool {
+	if !Open(v.State) || v.ExpiresAt == nil {
+		return false
+	}
+	return !now.Before(*v.ExpiresAt)
 }
 
 // Prepare pins the revisions the reviewer resolved: requested → ready. The
@@ -175,7 +182,7 @@ func Restart(r Record, attempt int, now time.Time) (Record, bool, error) {
 // changes nothing.
 func Submit(r Record, attempt int, verdict protocol.Verdict, now time.Time) (Record, bool, error) {
 	v := r.View
-	if v.State == protocol.ReviewCompleted && attempt == v.Attempt && sameVerdict(v.Verdict, verdict) {
+	if resubmitted(v, attempt, verdict) {
 		return r, false, nil
 	}
 	if v.State != protocol.ReviewInReview || attempt != v.Attempt {
@@ -185,12 +192,24 @@ func Submit(r Record, attempt int, verdict protocol.Verdict, now time.Time) (Rec
 		verdict.Findings = []protocol.Finding{}
 	}
 	r.View.State, r.View.Verdict, r.View.ExpiresAt = protocol.ReviewCompleted, &verdict, nil
-	r.View.Publication.State = protocol.PublicationNone
-	if v.Spec.Policy != nil && v.Spec.Policy.Publish {
-		r.View.Publication.State = protocol.PublicationPending
-	}
-	r.View.Publication.Updated = &now
+	r.View.Publication = protocol.Publication{State: firstPublication(v.Spec.Policy), Updated: &now}
 	return touched(r, now), true, nil
+}
+
+// resubmitted: this attempt already completed with this verdict.
+func resubmitted(v protocol.ReviewView, attempt int, verdict protocol.Verdict) bool {
+	if v.State != protocol.ReviewCompleted || attempt != v.Attempt {
+		return false
+	}
+	return sameVerdict(v.Verdict, verdict)
+}
+
+// firstPublication is pending when the policy publishes, else none.
+func firstPublication(policy *protocol.ReviewPolicy) string {
+	if policy != nil && policy.Publish {
+		return protocol.PublicationPending
+	}
+	return protocol.PublicationNone
 }
 
 // Observe records the change as the reviewer's side sees it now, after a
@@ -198,14 +217,30 @@ func Submit(r Record, attempt int, verdict protocol.Verdict, now time.Time) (Rec
 // publication, so a published receipt stays.
 func Observe(r Record, attempt int, observed protocol.Revisions, now time.Time) (Record, bool, error) {
 	v := r.View
-	if v.Verdict == nil || v.Revisions == nil || attempt != v.Attempt {
+	if !observable(v, attempt) {
 		return r, false, ErrConflict
 	}
-	if observed == *v.Revisions || (v.Stale != nil && *v.Stale == observed) {
+	if alreadySeen(v, observed) {
 		return r, false, nil
 	}
 	r.View.Stale = &observed
 	return touched(r, now), true, nil
+}
+
+// observable: a verdict on pinned revisions, from the current attempt.
+func observable(v protocol.ReviewView, attempt int) bool {
+	if v.Verdict == nil || v.Revisions == nil {
+		return false
+	}
+	return attempt == v.Attempt
+}
+
+// alreadySeen: the pins themselves, or the change as last recorded.
+func alreadySeen(v protocol.ReviewView, observed protocol.Revisions) bool {
+	if observed == *v.Revisions {
+		return true
+	}
+	return v.Stale != nil && *v.Stale == observed
 }
 
 func sameVerdict(a *protocol.Verdict, b protocol.Verdict) bool {

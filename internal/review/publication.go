@@ -40,23 +40,42 @@ func Publish(r Record, attempt int, u protocol.PublicationUpdate, now time.Time)
 	if replay, ok := replayed(r, u); ok {
 		return r, replay, nil
 	}
-	if u.From != v.Publication.State || !allowed(u.From, u.To) {
-		return r, Step{}, ErrConflict
-	}
-	if inFlight(u.From) && u.Intent != v.Publication.Intent {
-		return r, Step{}, ErrConflict
-	}
-	if u.To == protocol.PublicationSubmitting && v.Stale != nil {
-		return r, Step{}, ErrConflict // the change moved: nothing more is written from this verdict
-	}
-	if u.To == protocol.PublicationSubmitting && v.Publication.Intent >= protocol.ReviewWriteIntents {
-		return r, Step{}, ErrLimit
+	if err := admit(v, u); err != nil {
+		return r, Step{}, err
 	}
 	r = apply(r, u, now)
 	if v.State == protocol.ReviewCancelled {
 		r.View.Publication = cancelPublication(r.View.Publication, now)
 	}
 	return touched(r, now), Step{Changed: true, Acquired: u.To == protocol.PublicationSubmitting}, nil
+}
+
+// admit checks a new step: compare and set on the current state, the
+// allowed move, the current intent for a step out of one in flight, and a
+// new intent's own conditions.
+func admit(v protocol.ReviewView, u protocol.PublicationUpdate) error {
+	if u.From != v.Publication.State || !allowed(u.From, u.To) {
+		return ErrConflict
+	}
+	if inFlight(u.From) && u.Intent != v.Publication.Intent {
+		return ErrConflict
+	}
+	if u.To == protocol.PublicationSubmitting {
+		return admitIntent(v)
+	}
+	return nil
+}
+
+// admitIntent refuses a write intent once the change moved, or past the
+// bound on intents.
+func admitIntent(v protocol.ReviewView) error {
+	if v.Stale != nil {
+		return ErrConflict // nothing more is written from this verdict
+	}
+	if v.Publication.Intent >= protocol.ReviewWriteIntents {
+		return ErrLimit
+	}
+	return nil
 }
 
 // publishable: a completed review takes every step; a cancelled one only
@@ -72,21 +91,56 @@ func inFlight(state string) bool {
 	return state == protocol.PublicationSubmitting || state == protocol.PublicationUncertain
 }
 
+// replays recognise a step that already happened, by where it went.
+var replays = map[string]func(Record, protocol.PublicationUpdate) bool{
+	protocol.PublicationSubmitting: replayedIntent,
+	protocol.PublicationStale:      replayedStale,
+	protocol.PublicationPublished:  replayedReceipt,
+}
+
 // replayed answers a step that already happened: the same token's intent,
-// or the same final answer about the current intent.
+// or the same answer about the current intent. It never changes anything.
 func replayed(r Record, u protocol.PublicationUpdate) (Step, bool) {
-	p := r.View.Publication
-	switch {
-	case u.To == protocol.PublicationSubmitting:
-		return Step{}, p.Intent > 0 && u.Token == r.Token && p.State != protocol.PublicationFailed
-	case u.To == protocol.PublicationStale:
-		return Step{}, p.State == protocol.PublicationStale && r.View.Stale != nil && u.Observed != nil && *r.View.Stale == *u.Observed
-	case u.To != p.State || u.Intent != p.Intent:
-		return Step{}, false
-	case u.To == protocol.PublicationPublished:
-		return Step{}, p.Receipt != nil && u.Receipt != nil && *p.Receipt == *u.Receipt
+	if check, ok := replays[u.To]; ok {
+		return Step{}, check(r, u)
 	}
-	return Step{}, u.Reason == p.Reason
+	return Step{}, sameAnswer(r.View.Publication, u)
+}
+
+// replayedIntent: this token already holds, or held, the current intent.
+func replayedIntent(r Record, u protocol.PublicationUpdate) bool {
+	p := r.View.Publication
+	if p.Intent == 0 || u.Token != r.Token {
+		return false
+	}
+	return p.State != protocol.PublicationFailed
+}
+
+func replayedStale(r Record, u protocol.PublicationUpdate) bool {
+	if r.View.Publication.State != protocol.PublicationStale || r.View.Stale == nil {
+		return false
+	}
+	return u.Observed != nil && *r.View.Stale == *u.Observed
+}
+
+func replayedReceipt(r Record, u protocol.PublicationUpdate) bool {
+	p := r.View.Publication
+	if !sameIntent(p, u) || p.Receipt == nil {
+		return false
+	}
+	return u.Receipt != nil && *p.Receipt == *u.Receipt
+}
+
+// sameAnswer: the current intent already ended this way, for this reason.
+func sameAnswer(p protocol.Publication, u protocol.PublicationUpdate) bool {
+	if !sameIntent(p, u) {
+		return false
+	}
+	return u.Reason == p.Reason
+}
+
+func sameIntent(p protocol.Publication, u protocol.PublicationUpdate) bool {
+	return u.To == p.State && u.Intent == p.Intent
 }
 
 func allowed(from, to string) bool {
@@ -108,14 +162,25 @@ func apply(r Record, u protocol.PublicationUpdate, now time.Time) Record {
 	case protocol.PublicationPublished:
 		receipt := *u.Receipt
 		p.Receipt = &receipt
-		if pinned := r.View.Revisions; pinned != nil && receipt.Revision != pinned.Head && r.View.Stale == nil {
-			// The forge recorded another head: the receipt stays, the
-			// mismatch shows.
-			r.View.Stale = &protocol.Revisions{Base: pinned.Base, Head: receipt.Revision}
+		if moved := receiptMismatch(r.View, receipt); moved != nil {
+			r.View.Stale = moved // the receipt stays; the mismatch shows
 		}
 	case protocol.PublicationStale:
 		observed := *u.Observed
 		r.View.Stale = &observed
 	}
 	return r
+}
+
+// receiptMismatch is the change as the forge recorded it, when that is not
+// the pinned head and nothing else marked the review stale yet.
+func receiptMismatch(v protocol.ReviewView, receipt protocol.PublicationReceipt) *protocol.Revisions {
+	pinned := v.Revisions
+	if pinned == nil || v.Stale != nil {
+		return nil
+	}
+	if receipt.Revision == pinned.Head {
+		return nil
+	}
+	return &protocol.Revisions{Base: pinned.Base, Head: receipt.Revision}
 }

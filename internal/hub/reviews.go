@@ -127,7 +127,7 @@ func (h *Hub) reviewGet(ctx context.Context, in Inbound) protocol.Message {
 	msg := in.Msg
 	if msg.ReviewID != "" {
 		rec, found, err := h.store.GetReview(ctx, msg.ReviewID)
-		if err == nil && (!found || rec.View.Spec.Reviewer != in.From.ID) {
+		if err == nil && !ownReview(rec, found, in.From.ID) {
 			err = review.ErrNotFound
 		}
 		if err != nil {
@@ -141,6 +141,11 @@ func (h *Hub) reviewGet(ctx context.Context, in Inbound) protocol.Message {
 		return h.reviewFailure(msg.RequestID, err)
 	}
 	return protocol.Message{Type: protocol.TypeReviewResult, RequestID: msg.RequestID, ReviewPage: page}
+}
+
+// ownReview: a stored review whose reviewer is agent.
+func ownReview(rec review.Record, found bool, agent string) bool {
+	return found && rec.View.Spec.Reviewer == agent
 }
 
 // reviewPage is the newest reviews, of one reviewer or all, with the total.

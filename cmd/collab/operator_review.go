@@ -142,7 +142,7 @@ var shortTarget = regexp.MustCompile(`^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9
 
 // reviewTarget reads TARGET, or --forge, --repository and --change.
 func reviewTarget(rf reviewFlags, rest []string) (protocol.ReviewTarget, error) {
-	if rf.repository != "" || rf.change != "" || rf.forge != "" {
+	if rf.forge+rf.repository+rf.change != "" {
 		if len(rest) != 0 {
 			return protocol.ReviewTarget{}, errors.New("give TARGET or --forge, --repository and --change, not both")
 		}
@@ -159,15 +159,24 @@ func reviewTarget(rf reviewFlags, rest []string) (protocol.ReviewTarget, error) 
 
 // pullRequestURL reads https://github.com/OWNER/REPO/pull/N.
 func pullRequestURL(raw string) (protocol.ReviewTarget, error) {
-	u, err := url.Parse(raw)
-	parts := []string{}
-	if err == nil {
-		parts = strings.Split(strings.Trim(u.Path, "/"), "/")
-	}
-	if err != nil || u.Scheme != "https" || u.Host != "github.com" || len(parts) != 4 || parts[2] != "pull" {
+	parts, ok := githubPullPath(raw)
+	if !ok {
 		return protocol.ReviewTarget{}, fmt.Errorf("TARGET %q is neither a GitHub pull request URL nor OWNER/REPO#N", raw)
 	}
 	return protocol.ReviewTarget{Forge: "github", Repository: "github.com/" + parts[0] + "/" + parts[1], Change: parts[3]}, nil
+}
+
+// githubPullPath is OWNER, REPO, "pull" and N from a pull request URL.
+func githubPullPath(raw string) ([]string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme+"://"+u.Host != "https://github.com" {
+		return nil, false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 4 {
+		return nil, false
+	}
+	return parts, parts[2] == "pull"
 }
 
 // writeReviewResult prints one review or a list, every peer-chosen string
@@ -209,6 +218,14 @@ func writeReview(w io.Writer, r protocol.ReviewView) {
 // writeReviewDetail prints what one review holds: the exact pins, the
 // verdict with its findings, and the publication's reason and receipt.
 func writeReviewDetail(w io.Writer, r protocol.ReviewView) {
+	writePins(w, r)
+	if v := r.Verdict; v != nil {
+		writeVerdict(w, *v, r.Attempt)
+	}
+	writePublication(w, r.Publication)
+}
+
+func writePins(w io.Writer, r protocol.ReviewView) {
 	if r.Revisions != nil {
 		fmt.Fprintf(w, "  pinned base %s head %s\n", r.Revisions.Base, r.Revisions.Head)
 	}
@@ -218,13 +235,16 @@ func writeReviewDetail(w io.Writer, r protocol.ReviewView) {
 	if r.Reason != "" {
 		fmt.Fprintf(w, "  reason %q\n", r.Reason)
 	}
-	if v := r.Verdict; v != nil {
-		fmt.Fprintf(w, "  verdict %s (attempt %d): %q\n", v.Outcome, r.Attempt, v.Summary)
-		for _, f := range v.Findings {
-			fmt.Fprintf(w, "    %q:%d %q\n", f.Path, f.Line, f.Summary)
-		}
+}
+
+func writeVerdict(w io.Writer, v protocol.Verdict, attempt int) {
+	fmt.Fprintf(w, "  verdict %s (attempt %d): %q\n", v.Outcome, attempt, v.Summary)
+	for _, f := range v.Findings {
+		fmt.Fprintf(w, "    %q:%d %q\n", f.Path, f.Line, f.Summary)
 	}
-	p := r.Publication
+}
+
+func writePublication(w io.Writer, p protocol.Publication) {
 	fmt.Fprintf(w, "  publication %s", p.State)
 	if p.Reason != "" {
 		fmt.Fprintf(w, " (%s)", p.Reason)

@@ -74,7 +74,7 @@ func (s *Store) CreateReview(ctx context.Context, rec review.Record, act ReviewA
 	if err != nil {
 		return review.Record{}, false, err
 	}
-	if err := record(ctx, tx, out, created, act); err != nil {
+	if err := record(ctx, tx, reviewChange{out, created, act}); err != nil {
 		return review.Record{}, false, err
 	}
 	return out, created, tx.Commit()
@@ -96,18 +96,25 @@ func createReview(ctx context.Context, tx *sql.Tx, rec review.Record) (review.Re
 	return rec, true, saveReview(ctx, tx, rec, true)
 }
 
+// reviewChange is one step's result and who took it.
+type reviewChange struct {
+	rec     review.Record
+	changed bool
+	act     ReviewAction
+}
+
 // record writes a change's event and finishes its operator audit row, both
 // inside the change's own transaction.
-func record(ctx context.Context, tx *sql.Tx, rec review.Record, changed bool, act ReviewAction) error {
-	if changed {
-		if err := reviewEvent(ctx, tx, rec, act); err != nil {
+func record(ctx context.Context, tx *sql.Tx, c reviewChange) error {
+	if c.changed {
+		if err := reviewEvent(ctx, tx, c.rec, c.act); err != nil {
 			return err
 		}
 	}
-	if act.AuditID <= 0 {
+	if c.act.AuditID <= 0 {
 		return nil
 	}
-	return finishAudit(ctx, tx, act.AuditID, AuditOutcome{Result: AuditAccepted})
+	return finishAudit(ctx, tx, c.act.AuditID, AuditOutcome{Result: AuditAccepted})
 }
 
 // reviewEvent is one change in a review's trail: who, what, and the state it
@@ -169,7 +176,7 @@ func (s *Store) ChangeReview(ctx context.Context, id string, act ReviewAction, s
 			return review.Record{}, false, err
 		}
 	}
-	if err := record(ctx, tx, next, changed, act); err != nil {
+	if err := record(ctx, tx, reviewChange{next, changed, act}); err != nil {
 		return review.Record{}, false, err
 	}
 	return next, changed, tx.Commit()
@@ -210,29 +217,17 @@ func (s *Store) Reviews(ctx context.Context, reviewer string, limit int) ([]revi
 
 // ExpireReviews ends every open review whose time is up, and returns their IDs.
 func (s *Store) ExpireReviews(ctx context.Context, now time.Time) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT review_id FROM reviews WHERE state IN `+openStates+` AND expires_at <= ?`, stamp(now))
+	due, err := s.dueReviews(ctx, now)
 	if err != nil {
 		return nil, err
 	}
-	var due []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		due = append(due, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 	var expired []string
+	expire := func(r review.Record) (review.Record, bool, error) {
+		next, changed := review.Expire(r, now)
+		return next, changed, nil
+	}
 	for _, id := range due {
-		_, changed, err := s.ChangeReview(ctx, id, ReviewAction{Actor: "broker", Action: "expire"}, func(r review.Record) (review.Record, bool, error) {
-			next, changed := review.Expire(r, now)
-			return next, changed, nil
-		})
+		_, changed, err := s.ChangeReview(ctx, id, ReviewAction{Actor: "broker", Action: "expire"}, expire)
 		if err != nil {
 			return expired, err
 		}
@@ -241,6 +236,24 @@ func (s *Store) ExpireReviews(ctx context.Context, now time.Time) ([]string, err
 		}
 	}
 	return expired, nil
+}
+
+// dueReviews are the open reviews whose time is up.
+func (s *Store) dueReviews(ctx context.Context, now time.Time) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT review_id FROM reviews WHERE state IN `+openStates+` AND expires_at <= ?`, stamp(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var due []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		due = append(due, id)
+	}
+	return due, rows.Err()
 }
 
 const reviewColumns = `hash, token, doc`

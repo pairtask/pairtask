@@ -81,10 +81,10 @@ func TestReviewAcceptanceCancelCompletedReviewPreservesPublicationTruth(t *testi
 			reviewTestComplete(f, p, "cancel-publication")
 			intent := 0
 			if state != "pending" {
-				intent = reviewTestView(t, reviewTestPublication(p, "cancel-publication", "pending", "submitting", map[string]any{"token": "write"}), "review_result").Publication.Intent
+				intent = reviewTestView(t, p.reviewPublication("cancel-publication", "pending", "submitting", map[string]any{"token": "write"}), "review_result").Publication.Intent
 			}
 			if state == "published" {
-				reviewTestView(t, reviewTestPublication(p, "cancel-publication", "submitting", "published", map[string]any{"intent": intent, "receipt": reviewTestReceipt()}), "review_result")
+				reviewTestView(t, p.reviewPublication("cancel-publication", "submitting", "published", map[string]any{"intent": intent, "receipt": reviewTestReceipt()}), "review_result")
 			}
 			cancelled := reviewTestView(t, reviewTestOperator(f, map[string]any{"review_op": "cancel", "review_id": "cancel-publication", "review_reason": "stop"}), "operator_review_result")
 			operatorEqual(t, "review cancelled", cancelled.State, "cancelled")
@@ -94,10 +94,10 @@ func TestReviewAcceptanceCancelCompletedReviewPreservesPublicationTruth(t *testi
 				want = "cancelled"
 			}
 			operatorEqual(t, "cancellation preserves write truth", cancelled.Publication.State, want)
-			operatorEqual(t, "new write blocked", reviewTestPublication(p, "cancel-publication", want, "submitting", map[string]any{"token": "new-write"}).text("code"), "review_conflict")
+			operatorEqual(t, "new write blocked", p.reviewPublication("cancel-publication", want, "submitting", map[string]any{"token": "new-write"}).text("code"), "review_conflict")
 			if state == "submitting" {
-				reviewTestView(t, reviewTestPublication(p, "cancel-publication", "submitting", "uncertain", map[string]any{"intent": intent, "reason": "unavailable"}), "review_result")
-				cancelled = reviewTestView(t, reviewTestPublication(p, "cancel-publication", "uncertain", "published", map[string]any{"intent": intent, "receipt": reviewTestReceipt()}), "review_result")
+				reviewTestView(t, p.reviewPublication("cancel-publication", "submitting", "uncertain", map[string]any{"intent": intent, "reason": "unavailable"}), "review_result")
+				cancelled = reviewTestView(t, p.reviewPublication("cancel-publication", "uncertain", "published", map[string]any{"intent": intent, "receipt": reviewTestReceipt()}), "review_result")
 			}
 			if state != "pending" {
 				operatorEqual(t, "published review not retracted", *cancelled.Publication.Receipt, reviewTestReceipt())

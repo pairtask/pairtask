@@ -30,12 +30,23 @@ func boundedText(text string, limit int, multiline bool) error {
 		return errors.New("not valid UTF-8")
 	}
 	for _, r := range text {
-		if unicode.IsControl(r) && !(multiline && (r == '\n' || r == '\t')) {
+		if !allowedRune(r, multiline) {
 			return errors.New("control characters are not allowed")
 		}
 	}
 	return nil
 }
+
+// allowedRune is anything but a control character, or a newline or tab in
+// long text.
+func allowedRune(r rune, multiline bool) bool {
+	if !unicode.IsControl(r) {
+		return true
+	}
+	return multiline && lineBreak(r)
+}
+
+func lineBreak(r rune) bool { return r == '\n' || r == '\t' }
 
 // ValidateReviewID checks a review ID: an operator message ID.
 func ValidateReviewID(id string) error {
@@ -74,8 +85,14 @@ func ValidateReviewSpec(s ReviewSpec) error {
 
 // ValidateRevisions checks a pinned base and head: lowercase hex commit IDs.
 func ValidateRevisions(r *Revisions) error {
-	if r == nil || !revision.MatchString(r.Base) || !revision.MatchString(r.Head) {
-		return errors.New("revisions need full commit IDs for base and head: 40 or 64 lowercase hex digits")
+	errRevisions := errors.New("revisions need full commit IDs for base and head: 40 or 64 lowercase hex digits")
+	if r == nil {
+		return errRevisions
+	}
+	for _, id := range []string{r.Base, r.Head} {
+		if !revision.MatchString(id) {
+			return errRevisions
+		}
 	}
 	return nil
 }
@@ -88,16 +105,28 @@ func ValidateVerdict(v *Verdict) error {
 	if err := boundedText(v.Summary, ReviewSummaryBytes, true); err != nil {
 		return fmt.Errorf("summary: %w", err)
 	}
-	if len(v.Findings) > ReviewFindings {
+	if err := validFindings(v.Findings); err != nil {
+		return err
+	}
+	return encodedVerdict(v)
+}
+
+func validFindings(findings []Finding) error {
+	if len(findings) > ReviewFindings {
 		return fmt.Errorf("at most %d findings", ReviewFindings)
 	}
-	for i, f := range v.Findings {
+	for i, f := range findings {
 		if err := validFinding(f); err != nil {
 			return fmt.Errorf("finding %d: %w", i+1, err)
 		}
 	}
-	// Escaping can multiply raw text; bound what is stored and sent.
-	if encoded, err := json.Marshal(v); err != nil || len(encoded) > ReviewVerdictBytes {
+	return nil
+}
+
+// encodedVerdict bounds a verdict as sent: escaping can multiply raw text.
+func encodedVerdict(v *Verdict) error {
+	encoded, err := json.Marshal(v)
+	if err != nil || len(encoded) > ReviewVerdictBytes {
 		return fmt.Errorf("verdict: at most %d bytes as encoded JSON", ReviewVerdictBytes)
 	}
 	return nil
@@ -139,32 +168,58 @@ func ValidatePublicationUpdate(u *PublicationUpdate) error {
 	if u == nil {
 		return errors.New("publication is required")
 	}
+	if err := publicationShape(u); err != nil {
+		return err
+	}
+	if check := stepChecks[u.To]; check != nil {
+		return check(u)
+	}
+	return nil
+}
+
+// publicationShape checks the reason class and both states.
+func publicationShape(u *PublicationUpdate) error {
 	if u.Reason != "" && !reasonKey.MatchString(u.Reason) {
 		return errors.New("publication reason must be 1 to 64 of a-z, 0-9 and _")
 	}
-	if !oneOf(u.From, publicationStates) || !oneOf(u.To, publicationStates) {
-		return errors.New("publication from and to must be publication states")
+	for _, state := range []string{u.From, u.To} {
+		if !oneOf(state, publicationStates) {
+			return errors.New("publication from and to must be publication states")
+		}
 	}
-	switch u.To {
-	case PublicationSubmitting:
+	return nil
+}
+
+// stepChecks are what a step to each state must carry.
+var stepChecks = map[string]func(*PublicationUpdate) error{
+	PublicationSubmitting: func(u *PublicationUpdate) error {
 		if u.Token == "" || len(u.Token) > 128 {
 			return errors.New("a step to submitting needs a token of at most 128 bytes")
 		}
-	case PublicationPublished:
-		return validReceipt(u.Receipt)
-	case PublicationFailed, PublicationUncertain:
-		if u.Reason == "" {
-			return errors.New("a failed or uncertain step needs a reason")
-		}
-	case PublicationStale:
-		return ValidateRevisions(u.Observed)
+		return nil
+	},
+	PublicationPublished: func(u *PublicationUpdate) error { return validReceipt(u.Receipt) },
+	PublicationFailed:    needsReason,
+	PublicationUncertain: needsReason,
+	PublicationStale:     func(u *PublicationUpdate) error { return ValidateRevisions(u.Observed) },
+}
+
+func needsReason(u *PublicationUpdate) error {
+	if u.Reason == "" {
+		return errors.New("a failed or uncertain step needs a reason")
 	}
 	return nil
 }
 
 func validReceipt(r *PublicationReceipt) error {
-	if r == nil || r.ReviewID == "" || r.Identity == "" || !revision.MatchString(r.Revision) {
-		return errors.New("published needs a receipt with review_id, identity and the recorded revision")
+	errReceipt := errors.New("published needs a receipt with review_id, identity and the recorded revision")
+	if r == nil || !revision.MatchString(r.Revision) {
+		return errReceipt
+	}
+	for _, required := range []string{r.ReviewID, r.Identity} {
+		if required == "" {
+			return errReceipt
+		}
 	}
 	for _, field := range []string{r.ReviewID, r.Identity, r.URL} {
 		if err := boundedText(field, ReviewFindingBytes, false); err != nil {

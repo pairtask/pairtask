@@ -177,10 +177,10 @@ func TestReviewAcceptanceFiniteAttemptsAndProviderWriteIntents(t *testing.T) {
 		// independently of the connection's burst-rate limit.
 		_, err := f.db.Exec(`UPDATE reviews SET doc=json_set(doc,'$.publication.intent',?,'$.publication.state','failed') WHERE review_id='bounded-writes'`, protocol.ReviewWriteIntents-1)
 		operatorNoError(t, err)
-		got := reviewTestView(t, reviewTestPublication(p, "bounded-writes", "failed", "submitting", map[string]any{"token": "last-allowed-write"}), "review_result")
+		got := reviewTestView(t, p.reviewPublication("bounded-writes", "failed", "submitting", map[string]any{"token": "last-allowed-write"}), "review_result")
 		operatorEqual(t, "last permitted intent", got.Publication.Intent, protocol.ReviewWriteIntents)
-		reviewTestView(t, reviewTestPublication(p, "bounded-writes", "submitting", "failed", map[string]any{"intent": got.Publication.Intent, "reason": "forbidden"}), "review_result")
-		operatorEqual(t, "write limit enforced", reviewTestPublication(p, "bounded-writes", "failed", "submitting", map[string]any{"token": "one-too-many"}).text("code"), "invalid_review")
+		reviewTestView(t, p.reviewPublication("bounded-writes", "submitting", "failed", map[string]any{"intent": got.Publication.Intent, "reason": "forbidden"}), "review_result")
+		operatorEqual(t, "write limit enforced", p.reviewPublication("bounded-writes", "failed", "submitting", map[string]any{"token": "one-too-many"}).text("code"), "invalid_review")
 		got = reviewTestView(t, reviewTestCall(p, "review_get", "bounded-writes", nil), "review_result")
 		operatorEqual(t, "verdict remains available at limit", got.Verdict != nil, true)
 		operatorEqual(t, "no extra intent created", got.Publication.Intent, protocol.ReviewWriteIntents)
