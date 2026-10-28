@@ -22,9 +22,12 @@ type rowsQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-func messageRow(ctx context.Context, q rowQuerier, contact, direction, id string) (storedRow, bool, error) {
+// messageKey names one message: a contact, a direction and an ID.
+type messageKey struct{ contact, direction, id string }
+
+func messageRow(ctx context.Context, q rowQuerier, k messageKey) (storedRow, bool, error) {
 	row := q.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM peer_messages WHERE contact = ? AND direction = ? AND message_id = ?`,
-		contact, direction, id)
+		k.contact, k.direction, k.id)
 	r, err := scanMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedRow{}, false, nil
