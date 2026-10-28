@@ -152,3 +152,74 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         result = self.run_cli("--unexpected-option")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("images=false", result.stdout)
+
+    def test_tui_files_and_safe_docs_skip_images(self):
+        for name in ("internal/chat/view.go", "internal/chat/view_test.go",
+                     "internal/chat/testdata/terminal.txt", "internal/chat/README.md",
+                     "internal/chat/space name.go", "docs/operator-chat.md"):
+            with self.subTest(path=name):
+                self.write(name)
+                self.assertEqual(self.decision(self.base, self.commit()),
+                                 "images=false\nreason=safe-chat-only\n")
+
+    def test_tui_exception_does_not_hide_other_changes(self):
+        self.write("internal/chat/view.go")
+        chat = self.commit()
+        for name in ("internal/protocol/types.go", "internal/hub/server.go",
+                     "internal/peer/transport.go", "cmd/operator/main.go",
+                     "infra/image/install.sh", "scripts/ci-incus.sh",
+                     ".github/workflows/ci.yml", "go.mod", "go.sum",
+                     "internal/chatty/view.go", "internal/chat.go",
+                     "internal/Chat/view.go", "docs/nested/guide.md"):
+            with self.subTest(path=name):
+                self.git("reset", "--hard", chat)
+                self.write(name)
+                self.assert_builds(self.base, self.commit())
+
+    def test_tui_deletion_is_classified_by_deleted_path(self):
+        self.write("internal/chat/view.go")
+        before = self.commit()
+        (self.repo / "internal/chat/view.go").unlink()
+        self.assertEqual(self.decision(before, self.commit()),
+                         "images=false\nreason=safe-chat-only\n")
+
+    def test_rename_across_tui_boundary_builds_in_both_directions(self):
+        self.write("internal/chat/view.go")
+        before = self.commit()
+        (self.repo / "internal/protocol").mkdir()
+        (self.repo / "internal/chat/view.go").rename(self.repo / "internal/protocol/view.go")
+        after = self.commit()
+        self.assert_builds(before, after)
+        self.assert_builds(after, before)
+
+    def test_rename_within_tui_can_skip(self):
+        self.write("internal/chat/before.go")
+        before = self.commit()
+        (self.repo / "internal/chat/before.go").rename(self.repo / "internal/chat/after.go")
+        self.assertEqual(self.decision(before, self.commit()),
+                         "images=false\nreason=safe-chat-only\n")
+
+    def test_earlier_system_change_is_not_hidden_by_latest_tui_commit(self):
+        self.write("internal/protocol/types.go")
+        self.commit()
+        self.write("internal/chat/view.go")
+        self.assert_builds(self.base, self.commit())
+
+    def test_force_full_overrides_each_pr_skip(self):
+        heads = [self.base]
+        for name in ("README.md", "internal/chat/view.go"):
+            self.write(name)
+            heads.append(self.commit())
+        for head in heads:
+            with self.subTest(head=head):
+                result = self.run_cli("--event", "pull_request", "--base", self.base,
+                                      "--head", head, "--force-full")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "images=true\nreason=forced-full\n")
+
+    def test_force_full_preserves_non_pr_event_policy(self):
+        for event in ("push", "workflow_dispatch", "schedule", "unknown"):
+            with self.subTest(event=event):
+                result = self.run_cli("--event", event, "--force-full")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "images=true\nreason=event-always-builds\n")

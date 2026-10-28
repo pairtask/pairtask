@@ -7,10 +7,15 @@ Prints exactly two lines for $GITHUB_OUTPUT:
     reason=<token>
 
 The reason is one of a closed set of tokens, never a file name, so nothing
-from the diff reaches the workflow's shell. Only a pull request whose full
-diff touches nothing but unshipped top-level documentation may skip images.
-Every other event, any unknown or shipped path, and any failure to read the
-diff build images. A usage error exits non-zero and prints no decision.
+from the diff reaches the workflow's shell. A pull request may skip images
+only when its full diff touches nothing but unshipped top-level
+documentation, or that and the operator chat TUI (internal/chat/): the
+installed-image proofs never run the TUI, it reaches the broker only through
+internal/protocol, which still builds, and the host Go suites test it on
+both architectures. This is a TUI-only exception, not "presentation".
+Every other event, any unknown or shipped path, --force-full (the pull
+request's ci:full-images label), and any failure to read the diff build
+images. A usage error exits non-zero and prints no decision.
 """
 
 import argparse
@@ -21,8 +26,13 @@ import sandbox_source
 
 BUILD = ("true", "shipped-or-unknown-path")
 SKIP = ("false", "safe-docs-only")
+SKIP_CHAT = ("false", "safe-chat-only")
 ALWAYS = ("true", "event-always-builds")
+FORCED = ("true", "forced-full")
 FAILED = ("true", "diff-failed")
+
+# The operator chat TUI; see the module docstring for why it may skip.
+CHAT = "internal/chat/"
 
 # Every path an image is built from: a change to any of them builds.
 SHIPPED = tuple(sandbox_source.APP_PATHS) + tuple(sandbox_source.RECIPE_PATHS)
@@ -40,6 +50,10 @@ def safe_doc(path):
         return True
     parts = path.split("/")
     return len(parts) == 2 and parts[0] == "docs" and parts[1].endswith(".md")
+
+
+def chat(path):
+    return path.startswith(CHAT) and path != CHAT
 
 
 def git(repo, *args):
@@ -68,14 +82,25 @@ def changed_paths(repo, base, head):
     return [name.decode("utf-8", "surrogateescape") for name in out.split(b"\0") if name]
 
 
-def decide(repo, event, base, head):
+def decide(repo, event, base, head, force_full=False):
     if event != "pull_request":
         return ALWAYS
+    if force_full:
+        return FORCED
     try:
         paths = changed_paths(repo, base, head)
     except (subprocess.CalledProcessError, OSError, ValueError):
         return FAILED
-    return SKIP if all(safe_doc(path) for path in paths) else BUILD
+    return skip_for(paths)
+
+
+def skip_for(paths):
+    """Docs alone skip as docs; docs and chat, with some chat, skip as chat."""
+    if all(safe_doc(path) for path in paths):
+        return SKIP
+    if all(safe_doc(path) or chat(path) for path in paths):
+        return SKIP_CHAT
+    return BUILD
 
 
 def main(argv=None):
@@ -84,8 +109,9 @@ def main(argv=None):
     parser.add_argument("--event", default="")
     parser.add_argument("--base", default="")
     parser.add_argument("--head", default="")
+    parser.add_argument("--force-full", action="store_true", help="build images whatever the diff (the ci:full-images label)")
     args = parser.parse_args(argv)
-    images, reason = decide(args.repo, args.event, args.base, args.head)
+    images, reason = decide(args.repo, args.event, args.base, args.head, args.force_full)
     sys.stdout.write("images=%s\nreason=%s\n" % (images, reason))
     return 0
 
