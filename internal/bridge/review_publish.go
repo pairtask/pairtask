@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -66,22 +67,17 @@ func owesPublication(state string) bool {
 
 // resubmission: this attempt already completed with this same verdict.
 func resubmission(v protocol.ReviewView, attempt int, verdict protocol.Verdict) bool {
-	if v.State != protocol.ReviewCompleted || attempt != v.Attempt || v.Verdict == nil {
+	if v.State != protocol.ReviewCompleted || v.Verdict == nil {
 		return false
 	}
-	return sameVerdict(*v.Verdict, verdict)
+	return attempt == v.Attempt && sameVerdict(*v.Verdict, verdict)
 }
 
 func sameVerdict(a, b protocol.Verdict) bool {
-	if a.Outcome != b.Outcome || a.Summary != b.Summary || len(a.Findings) != len(b.Findings) {
+	if a.Outcome != b.Outcome || a.Summary != b.Summary {
 		return false
 	}
-	for i := range a.Findings {
-		if a.Findings[i] != b.Findings[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a.Findings, b.Findings)
 }
 
 // runningAttempt refuses, before any forge work, a submission for a review
@@ -155,13 +151,21 @@ func publish(ctx context.Context, c reviewClient, f forge.Forge, v protocol.Revi
 // wants and the adapter can't make is refused, never sent as a comment.
 func event(v protocol.ReviewView, caps forge.Caps) (string, error) {
 	outcome := v.Verdict.Outcome
-	if outcome == protocol.OutcomeComment || v.Spec.Policy == nil || !v.Spec.Policy.Formal {
+	if !wantsFormal(v) {
 		return forge.EventComment, nil
 	}
 	if formalSupported(outcome, caps) {
 		return outcome, nil
 	}
 	return "", forge.Errorf(forge.ClassUnsupported, "this forge adapter can't publish %s formally; the verdict is kept and nothing was written", outcome)
+}
+
+// wantsFormal: a formal outcome that the policy publishes formally.
+func wantsFormal(v protocol.ReviewView) bool {
+	if v.Spec.Policy == nil || !v.Spec.Policy.Formal {
+		return false
+	}
+	return v.Verdict.Outcome != protocol.OutcomeComment
 }
 
 func formalSupported(outcome string, caps forge.Caps) bool {
@@ -249,7 +253,7 @@ func submitted(ctx context.Context, c reviewClient, held protocol.ReviewView, pu
 			outcome.Class = forge.ClassUncertain
 			outcome.Note = "the write may have landed (" + err.Error() + "); publish_review will only look for it, never write it again"
 		}
-		return recordStep(ctx, c, held, step, outcome)
+		return recordStep(ctx, c, stepReport{held, step, outcome})
 	}
 }
 
@@ -300,7 +304,7 @@ func reconcile(ctx context.Context, c reviewClient, f forge.Forge, v protocol.Re
 		step.To, step.Reason = protocol.PublicationUncertain, "interrupted"
 		outcome = lookupMiss(err)
 	}
-	return recordStep(ctx, c, v, step, outcome)
+	return recordStep(ctx, c, stepReport{v, step, outcome})
 }
 
 func lookupMiss(err error) *ForgeOutcome {
@@ -313,12 +317,21 @@ func lookupMiss(err error) *ForgeOutcome {
 // markStale records that the change moved before publishing.
 func markStale(ctx context.Context, c reviewClient, v protocol.ReviewView, current protocol.Revisions) ReviewResult {
 	step := protocol.PublicationUpdate{From: v.Publication.State, To: protocol.PublicationStale, Observed: &current, Reason: "moved"}
-	return recordStep(ctx, c, v, step, &ForgeOutcome{Class: "stale", Note: "the change moved since the review; nothing was published from this verdict"})
+	return recordStep(ctx, c, stepReport{v, step, &ForgeOutcome{Class: "stale", Note: "the change moved since the review; nothing was published from this verdict"}})
+}
+
+// stepReport is one publication step to tell the broker, and what happened
+// on the forge.
+type stepReport struct {
+	review  protocol.ReviewView
+	step    protocol.PublicationUpdate
+	outcome *ForgeOutcome
 }
 
 // recordStep tells the broker what happened; if the broker can't be told,
 // the result still says what happened on the forge.
-func recordStep(ctx context.Context, c reviewClient, v protocol.ReviewView, step protocol.PublicationUpdate, outcome *ForgeOutcome) ReviewResult {
+func recordStep(ctx context.Context, c reviewClient, r stepReport) ReviewResult {
+	v, step, outcome := r.review, r.step, r.outcome
 	out, err := c.ReviewCall(ctx, protocol.Message{Type: protocol.TypeReviewPublication, ReviewID: v.ID, Attempt: v.Attempt, PublicationStep: &step})
 	if err == nil && out.Review != nil {
 		return ReviewResult{Review: out.Review, Forge: outcome}

@@ -34,19 +34,16 @@ func TestReviewForgeAcceptanceLostResponseReconcilesWithoutSecondWrite(t *testin
 	f.SetRevisions(contractTarget(), contractPins())
 	f.LandThenFail(Errorf(ClassUncertain, "response lost"))
 	_, err := f.Publish(context.Background(), contractSubmission())
-	if ClassOf(err) != ClassUncertain {
-		t.Fatalf("lost response class: %v", err)
-	}
+	contractEqual(t, "lost response class", ClassOf(err), ClassUncertain)
 	r, found, err := f.Find(context.Background(), contractTarget(), contractExpected())
-	if err != nil || !found {
-		t.Fatalf("saved review not found: found=%v err=%v", found, err)
-	}
-	if r.Identity != "fake-reviewer" || r.Event != EventApprove || r.Revision != contractPins().Head || !strings.HasPrefix(r.ReviewID, "fk-") {
-		t.Fatalf("provider receipt lost facts: %+v", r)
-	}
-	if len(f.Attempts()) != 1 || len(f.Reviews(contractTarget())) != 1 {
-		t.Fatal("reconciliation made another write")
-	}
+	contractNoError(t, err)
+	contractEqual(t, "saved review found", found, true)
+	contractEqual(t, "receipt identity", r.Identity, "fake-reviewer")
+	contractEqual(t, "receipt event", r.Event, EventApprove)
+	contractEqual(t, "receipt revision", r.Revision, contractPins().Head)
+	contractEqual(t, "provider-specific review ID", strings.HasPrefix(r.ReviewID, "fk-"), true)
+	contractEqual(t, "single write attempt", len(f.Attempts()), 1)
+	contractEqual(t, "single provider review", len(f.Reviews(contractTarget())), 1)
 }
 
 func TestReviewForgeAcceptanceCopiedMarkerCannotProvePublication(t *testing.T) {
@@ -65,9 +62,7 @@ func TestReviewForgeAcceptanceCopiedMarkerCannotProvePublication(t *testing.T) {
 			tc.change(&r)
 			f.AddReview(contractTarget(), r, contractExpected().Marker)
 			_, found, err := f.Find(context.Background(), contractTarget(), contractExpected())
-			if found || err == nil || ClassOf(err) != ClassAmbiguous {
-				t.Fatalf("copied marker accepted: found=%v err=%v", found, err)
-			}
+			contractAmbiguous(t, found, err)
 		})
 	}
 }
@@ -79,9 +74,7 @@ func TestReviewForgeAcceptanceMultipleMatchesRemainAmbiguous(t *testing.T) {
 	f.AddReview(contractTarget(), a, contractExpected().Marker)
 	f.AddReview(contractTarget(), b, contractExpected().Marker)
 	_, found, err := f.Find(context.Background(), contractTarget(), contractExpected())
-	if found || err == nil || ClassOf(err) != ClassAmbiguous {
-		t.Fatalf("multiple provider writes collapsed into one: found=%v err=%v", found, err)
-	}
+	contractAmbiguous(t, found, err)
 }
 
 func TestReviewForgeAcceptanceMarkerSafelyEncodesRequestIdentity(t *testing.T) {
@@ -94,9 +87,9 @@ func TestReviewForgeAcceptanceMarkerSafelyEncodesRequestIdentity(t *testing.T) {
 				t.Fatal("different review/attempt/intent shared marker")
 			}
 			seen[marker] = true
-			if strings.Count(marker, "<!--") != 1 || strings.Count(marker, "-->") != 1 || !strings.HasSuffix(marker, " -->") {
-				t.Fatalf("request ID escaped comment: %q", marker)
-			}
+			contractEqual(t, "one comment opening", strings.Count(marker, "<!--"), 1)
+			contractEqual(t, "one comment closing", strings.Count(marker, "-->"), 1)
+			contractEqual(t, "closing delimiter retained", strings.HasSuffix(marker, " -->"), true)
 			if marker != Marker(id, tuple[0], tuple[1]) {
 				t.Fatal("marker not stable for recovery")
 			}
@@ -114,11 +107,31 @@ func TestReviewForgeAcceptancePinnedDiffRemainsAvailableAfterHeadMoves(t *testin
 	f.SetRevisions(contractTarget(), moved)
 	f.SetChanges(contractTarget(), []FileChange{{Path: "new.go", Lines: []LineRange{{From: 1, To: 2}}}})
 	files, err := f.Changes(context.Background(), contractTarget(), pins)
-	if err != nil || len(files) != 1 || files[0].Path != "old.go" {
-		t.Fatalf("pinned diff silently replaced or lost: %+v err=%v", files, err)
-	}
+	contractNoError(t, err)
+	contractEqual(t, "pinned diff file count", len(files), 1)
+	contractEqual(t, "original diff path retained", files[0].Path, "old.go")
 	current, err := f.Resolve(context.Background(), contractTarget())
-	if err != nil || current != moved {
-		t.Fatalf("current revisions not independently available: %+v %v", current, err)
+	contractNoError(t, err)
+	contractEqual(t, "current revisions independent of pinned diff", current, moved)
+}
+
+func contractEqual[T comparable](t *testing.T, label string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %v, want %v", label, got, want)
 	}
+}
+
+func contractNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func contractAmbiguous(t *testing.T, found bool, err error) {
+	t.Helper()
+	contractEqual(t, "ambiguous review not adopted", found, false)
+	contractEqual(t, "ambiguity reported as error", err != nil, true)
+	contractEqual(t, "ambiguity class", ClassOf(err), ClassAmbiguous)
 }

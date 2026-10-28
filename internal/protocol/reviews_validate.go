@@ -214,13 +214,21 @@ func needsReason(u *PublicationUpdate) error {
 	return nil
 }
 
+// receiptEvent is what a forge recorded a review as, when it says.
+func receiptEvent(event string) error {
+	if event != "" && !oneOf(event, reviewOutcomes) {
+		return errors.New("receipt event must be approve, changes_requested or comment")
+	}
+	return nil
+}
+
 func validReceipt(r *PublicationReceipt) error {
 	errReceipt := errors.New("published needs a receipt with review_id, identity and the recorded revision")
 	if r == nil || !revision.MatchString(r.Revision) {
 		return errReceipt
 	}
-	if r.Event != "" && !oneOf(r.Event, reviewOutcomes) {
-		return errors.New("receipt event must be approve, changes_requested or comment")
+	if err := receiptEvent(r.Event); err != nil {
+		return err
 	}
 	for _, required := range []string{r.ReviewID, r.Identity} {
 		if required == "" {
