@@ -111,6 +111,27 @@ codes are never stored. `awaiting_acceptance` means the inviter recorded it
 and has yet to decide; it is not a contact. `outcome_unknown` means our final
 confirmation may have arrived without a receipt.
 
+Once the inviter decides, the joiner's broker settles the redemption. It
+dials the same destination; the connection is TLS pinned to the inviter's
+fingerprint, with ALPN `pairtask-contact/1`, and only an identity with a
+pairing request there is accepted. Over it, the joiner's broker asks what
+became of its exact redemption, records the decision and acknowledges it.
+The inviter's broker records the delivery, and only then is the contact
+confirmed on both sides. The broker settles in the background every 5
+minutes, for redemptions up to 7 days old. Each redemption gets at most 12
+automatic passes, and failures back off from 1 minute to 1 hour.
+
+`pairtask operator pair settle [OPERATION_ID] [--wait 45s]` queues one
+redemption, or every one that needs it, at once, and resets its automatic
+budget. With an ID it follows that redemption, and exits 0 only once its
+decision is confirmed. `status` lists contacts, each `confirming` until both
+sides confirmed it. An accepted request shows `accepted, awaiting peer
+confirmation` until the joiner acknowledged it. In chat, each contact has
+its own `⇄ workspace` conversation, keyed by its fingerprint, never by the
+name it chose. Nothing can be sent from it yet. `/pair settle
+[OPERATION_ID]` works as above, and chat follows background changes as
+they happen.
+
 Broker settings, all off by default:
 
 - `PAIRTASK_PAIRING_SOCKET=PATH` accepts pairing connections on a Unix socket.

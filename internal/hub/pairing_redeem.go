@@ -39,6 +39,9 @@ type PairingConfig struct {
 	Exchanger peer.Exchanger
 	Name      string // the name we pair under; "workspace" if empty
 	Clock     func() time.Time
+	// SettleTick drives automatic settlement passes; nil ticks every
+	// SettleInterval. Tests send on it instead of waiting.
+	SettleTick <-chan time.Time
 }
 
 // PairingEndpoint is what an inbound pairing connection needs, read as one
@@ -46,7 +49,17 @@ type PairingConfig struct {
 type PairingEndpoint struct {
 	Identity *peer.WorkspaceIdentity
 	Inviter  *peer.Inviter
+	Joiner   *peer.Joiner
 	Clock    func() time.Time
+	// ContactPins accepts a contact connection only from an identity with a
+	// pairing request here.
+	ContactPins func(fingerprint string) bool
+	// Changed reports durable pairing state changed by an inbound
+	// connection; safe from any goroutine.
+	Changed func()
+	// RequestMark is the durable state of fingerprint's request, to compare
+	// around an inbound settlement.
+	RequestMark func(fingerprint string) string
 }
 
 // pairingWiring is the hub's pairing state beyond the invitation itself.
@@ -59,6 +72,8 @@ type pairingWiring struct {
 	redeeming atomic.Bool
 	workers   sync.WaitGroup
 	runCtx    context.Context
+	settle    settleState
+	changed   chan struct{} // one pending pairing_changed, coalescing the rest
 }
 
 func defaultPairingConfig() PairingConfig {
@@ -108,8 +123,28 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 		return
 	}
 	if inviter, err := peer.NewInviter(cfg.Exchanger, h.pairing, id); err == nil {
-		h.pair.endpoint.Store(&PairingEndpoint{Identity: id, Inviter: inviter, Clock: cfg.Clock})
+		h.pair.endpoint.Store(&PairingEndpoint{Identity: id, Inviter: inviter, Joiner: h.pair.joiner, Clock: cfg.Clock,
+			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark})
 	}
+}
+
+// contactPins reports a pairing request held for fingerprint, in any state.
+func (h *Hub) contactPins(fingerprint string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
+	defer cancel()
+	_, found, err := h.store.Request(ctx, fingerprint)
+	return err == nil && found
+}
+
+// requestMark is a request's state and delivery, or why it can't be read.
+func (h *Hub) requestMark(fingerprint string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
+	defer cancel()
+	r, found, err := h.store.Request(ctx, fingerprint)
+	if err != nil || !found {
+		return "unread"
+	}
+	return string(r.State) + " " + r.DeliveredAt.UTC().Format(time.RFC3339Nano)
 }
 
 // beginPairing runs at Run's start. With pairing wired, loading the
@@ -119,6 +154,9 @@ func (h *Hub) beginPairing(ctx context.Context) {
 	h.pair.runCtx = ctx
 	if h.pair.cfg.Exchanger != nil {
 		h.loadIdentity(ctx)
+	}
+	if h.redeemAvailable() {
+		h.startSettleWorker(ctx)
 	}
 }
 
@@ -240,7 +278,23 @@ func joinResult(messageID string, r peer.JoinRecord) protocol.Message {
 
 func joinView(r peer.JoinRecord) protocol.PairingJoinView {
 	return protocol.PairingJoinView{OperationID: r.OperationID, State: string(r.State), Destination: r.Destination, Name: r.JoinerName,
-		Peer: r.Peer, InvitationID: r.InvitationID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+		Peer: r.Peer, InvitationID: r.InvitationID, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		DecisionConfirmedAt: timeOrNil(r.DecisionConfirmedAt)}
+}
+
+// timeOrNil omits a timestamp that is still unset.
+func timeOrNil(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
+// settledJoinView adds the last settlement's fixed cause.
+func (h *Hub) settledJoinView(r peer.JoinRecord) protocol.PairingJoinView {
+	view := joinView(r)
+	view.SettleError = h.pair.settle.failure(r.OperationID)
+	return view
 }
 
 // startRedeem runs one redemption off the Run goroutine. Its network work is
@@ -263,6 +317,7 @@ func (h *Hub) startRedeem(pending *peer.PendingJoin, destination string) {
 			h.log.Warn("pairing redemption not settled", "cause", PairingCause(err))
 			return
 		}
+		h.PairingChanged()
 		h.log.Info("pairing redemption ended", "operation", rec.OperationID, "state", rec.State, "cause", PairingCause(err))
 	}()
 }
@@ -340,7 +395,7 @@ func (h *Hub) joinsSnapshot(ctx context.Context, snapshot *protocol.PairingSnaps
 		joins, snapshot.JoinsTruncated = joins[:protocol.ListedPairingJoins], true
 	}
 	for _, j := range joins {
-		snapshot.Joins = append(snapshot.Joins, joinView(j))
+		snapshot.Joins = append(snapshot.Joins, h.settledJoinView(j))
 	}
 	snapshot.RedeemAvailable = h.redeemAvailable()
 	return nil
@@ -362,6 +417,6 @@ func (h *Hub) joinStatus(ctx context.Context, opID string) (*protocol.PairingJoi
 	if !found {
 		return nil, &routingError{protocol.ErrPairing, "no_join"}
 	}
-	view := joinView(r)
+	view := h.settledJoinView(r)
 	return &view, nil
 }

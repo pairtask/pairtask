@@ -259,9 +259,12 @@ func (m *Model) mainArea(l frameLayout) []string {
 		return nil
 	}
 	var lines []string
-	if m.panel != nil {
+	switch {
+	case m.panel != nil:
 		lines = m.panelRows(l.transcript)
-	} else {
+	case m.conv.selected.isContact():
+		lines = m.contactCard(m.conv.selected, l.transcript)
+	default:
 		lines = m.transcriptWindow(l.transcript)
 	}
 	for len(lines) < l.transcript {

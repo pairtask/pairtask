@@ -26,6 +26,7 @@ type viewKey struct {
 	agentID string // a 1:1; empty otherwise
 	members string // a group: its sorted, unique member IDs as JSON; empty otherwise
 	room    string // a room (#153); empty otherwise
+	contact string // a paired workspace's identity fingerprint (#178); empty otherwise
 }
 
 var allKey = viewKey{}
@@ -68,6 +69,8 @@ func (k viewKey) label() string {
 		return "All"
 	case k.isRoom():
 		return "#" + safe(k.room)
+	case k.isContact():
+		return contactLabel(k.contact)
 	case k.isGroup():
 		names := k.group()
 		for i, id := range names {
@@ -114,6 +117,9 @@ type ConversationView struct {
 	Unread   int
 	Selected bool
 	Draft    bool
+	// Contact is a paired workspace's full identity fingerprint, set only
+	// for its conversation; no message is ever sent there yet.
+	Contact string
 }
 
 // refreshDirectory keeps the directory in step with presence and the loaded
@@ -172,7 +178,7 @@ func (s *keySet) addAll(keys []viewKey) {
 // nameless keys never get a conversation of their own: All, and 1:1s with a
 // reserved ID.
 func nameless(key viewKey) bool {
-	if key.isGroup() || key.isRoom() {
+	if key.isGroup() || key.isRoom() || key.isContact() {
 		return false
 	}
 	return reservedID(key.agentID)
@@ -199,6 +205,7 @@ func (m *Model) liveViews() keySet {
 	for _, r := range m.rooms {
 		live.add(roomKey(r.ID))
 	}
+	live.addAll(m.contactViews())
 	live.add(m.conv.selected)
 	live.addAll(m.protectedViews())
 	return live
@@ -212,7 +219,9 @@ func (m *Model) protectedViews() []viewKey {
 			keys = append(keys, key)
 		}
 	}
-	slices.SortFunc(keys, func(a, b viewKey) int { return strings.Compare(a.agentID+"\x00"+a.members, b.agentID+"\x00"+b.members) })
+	slices.SortFunc(keys, func(a, b viewKey) int {
+		return strings.Compare(a.agentID+"\x00"+a.members+"\x00"+a.contact, b.agentID+"\x00"+b.members+"\x00"+b.contact)
+	})
 	return keys
 }
 
@@ -341,6 +350,9 @@ func (m *Model) freshComposer() composer {
 func (m *Model) placeholder() string {
 	if m.conv.selected.common() {
 		return "Message everyone · @agent for one · / for commands"
+	}
+	if m.conv.selected.isContact() {
+		return "nothing is sent to a workspace yet · / for commands"
 	}
 	return "Message " + m.conv.selected.label() + " · / for commands"
 }

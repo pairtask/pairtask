@@ -69,6 +69,9 @@ func parsePrefix(draft string) prefix {
 // draft goes to everyone unless it mentions agents or carries a reply or /to
 // audience; in a 1:1 it goes to that agent, and mentions of anyone else block.
 func (m *Model) resolveAudience() audience {
+	if key := m.conv.selected; key.isContact() {
+		return audience{err: m.contactNotice(key)}
+	}
 	c := &m.compose
 	if c.pasted {
 		return m.explicitAudience()

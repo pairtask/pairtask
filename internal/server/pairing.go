@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/pairtask/pairtask/internal/hub"
+	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
 	"github.com/pairtask/pairtask/internal/peer/shared"
 )
@@ -98,15 +99,41 @@ func (p *PairingServer) serve(ctx context.Context, raw net.Conn) {
 	defer cancelNet()
 	storeCtx, cancelStore := context.WithTimeout(context.WithoutCancel(ctx), hub.AttemptBudget+hub.PairingGrace)
 	defer cancelStore()
-	conn, err := firstcontact.Server(netCtx, raw, ep.Identity, ep.Clock)
+	conn, err := firstcontact.ServerWith(netCtx, raw, ep.Identity, ep.Clock, firstcontact.ServerOptions{ContactPins: ep.ContactPins})
 	if err != nil {
 		p.log.Info("pairing first contact failed", "cause", hub.PairingCause(err))
 		return
 	}
 	defer conn.Close()
-	if _, err := ep.Inviter.Serve(storeCtx, conn.Frames(netCtx), conn.Connection()); err != nil {
+	if conn.Protocol() == firstcontact.ContactALPN {
+		p.settle(storeCtx, conn.Frames(netCtx), conn, ep)
+		return
+	}
+	request, err := ep.Inviter.Serve(storeCtx, conn.Frames(netCtx), conn.Connection())
+	if request.IdentityKey != "" {
+		ep.Changed() // a new or repeated request, committed whatever followed
+	}
+	if err != nil {
 		p.log.Info("pairing attempt ended", "cause", hub.PairingCause(err))
 		return
 	}
 	p.log.Info("pairing request committed")
+}
+
+// settle answers a paired workspace's settlement on a pinned contact
+// connection.
+func (p *PairingServer) settle(storeCtx context.Context, frames peer.Frames, conn *firstcontact.Conn, ep hub.PairingEndpoint) {
+	// A delivery may be recorded even when a later step fails.
+	peerKey := conn.Connection().PeerLeaf
+	before := ep.RequestMark(peerKey)
+	defer func() {
+		if ep.RequestMark(peerKey) != before {
+			ep.Changed()
+		}
+	}()
+	if err := ep.Inviter.ServeSettle(storeCtx, frames, conn.Connection()); err != nil {
+		p.log.Info("pairing settlement ended", "cause", hub.PairingCause(err))
+		return
+	}
+	p.log.Info("pairing settlement answered")
 }
