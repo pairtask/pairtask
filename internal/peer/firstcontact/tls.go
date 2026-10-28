@@ -113,11 +113,15 @@ func serverRole(opts ServerOptions) tlsRole {
 }
 
 // contactRole is a contact connection to the one identity it pins.
-func contactRole(pin string) tlsRole { return pinnedRole(ContactALPN, pin) }
+func contactRole(pin string) tlsRole { return pinned{ContactALPN, pin}.role() }
 
-// pinnedRole offers one protocol to the one identity it pins.
-func pinnedRole(protocol, pin string) tlsRole {
-	return tlsRole{protocols: []string{protocol}, accept: func(_, fingerprint string) error {
+// pinned is one protocol offered to the one identity it pins.
+type pinned struct{ protocol, fingerprint string }
+
+// role offers the protocol and accepts only the pinned identity.
+func (p pinned) role() tlsRole {
+	pin := p.fingerprint
+	return tlsRole{protocols: []string{p.protocol}, accept: func(_, fingerprint string) error {
 		if subtle.ConstantTimeCompare([]byte(fingerprint), []byte(pin)) != 1 {
 			return fmt.Errorf("%w: %w", ErrFirstContact, peer.ErrPeerMismatch)
 		}

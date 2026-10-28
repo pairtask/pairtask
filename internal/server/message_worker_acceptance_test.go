@@ -41,7 +41,7 @@ func awaitMessageDelivery(t *testing.T, s messaging.Store, contact, id string) {
 		rows, _, err := s.Page(context.Background(), contact, 0, 64)
 		operatorNoError(t, err)
 		for _, row := range rows {
-			if row.ID == id && row.Direction == messaging.DirOut && row.State == messaging.StateDelivered {
+			if messageIsDelivered(row, id) {
 				return
 			}
 		}
@@ -80,4 +80,14 @@ func TestMessageWorkerAcceptanceInviterWithoutAddressSendsOnJoinerSync(t *testin
 		operatorEqual(t, "contact traffic not local messages", f.count("messages"), 0)
 		operatorEqual(t, "contact traffic not agent inbox", f.count("durable_inbox"), 0)
 	}
+}
+
+func messageIsDelivered(row messaging.Row, id string) bool {
+	if row.ID != id {
+		return false
+	}
+	if row.Direction != messaging.DirOut {
+		return false
+	}
+	return row.State == messaging.StateDelivered
 }
