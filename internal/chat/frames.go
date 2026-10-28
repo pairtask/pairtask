@@ -68,12 +68,21 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		m.statuses.presence(ev)
 	case protocol.EventSendRefused:
 		return m.sendRefused(ev)
-	case protocol.EventStatusChanged, protocol.EventClaimsChanged, protocol.EventRoomsChanged:
-		return m.refreshStatuses() // the snapshot carries statuses, claims and rooms
-	case protocol.EventPairingChanged:
-		return m.pairingChanged()
+	}
+	if refresh := refreshEvents[ev.Kind]; refresh != nil {
+		return refresh(m)
 	}
 	return nil
+}
+
+// refreshEvents read again what changed; they carry nothing to apply.
+var refreshEvents = map[string]func(*Model) tea.Cmd{
+	// The snapshot carries statuses, claims and rooms.
+	protocol.EventStatusChanged:  (*Model).refreshStatuses,
+	protocol.EventClaimsChanged:  (*Model).refreshStatuses,
+	protocol.EventRoomsChanged:   (*Model).refreshStatuses,
+	protocol.EventPairingChanged: (*Model).pairingChanged,
+	protocol.EventReviewsChanged: (*Model).reviewsChanged,
 }
 
 func (m *Model) conversationChanged(ev *protocol.SessionEvent) tea.Cmd {
@@ -137,6 +146,8 @@ var responseHandlers = map[string]responseHandler{
 	kindRoomDelete:   (*Model).roomDeleted,
 	kindPairing:      (*Model).pairingResult,
 	kindPairingQuiet: (*Model).quietPairingResult,
+	kindReview:       (*Model).reviewResult,
+	kindReviewQuiet:  (*Model).quietReviewResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
@@ -200,7 +211,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 		}
 	}
 	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
-		m.refreshContacts())
+		m.refreshContacts(), m.reviewsReconnected())
 }
 
 func validSnapshot(resp protocol.Message) bool {

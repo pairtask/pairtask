@@ -45,6 +45,9 @@ type StateView struct {
 	Cutoff            uint64
 	Status            string
 	Help              bool
+	Panel             string                // the open panel\'s kind, "" for none
+	Reviews           []protocol.ReviewView // the last reviews listed or requested (#201)
+	ReviewSelected    string                // the review shown in detail
 	TooSmall          bool
 	KeyDisambiguation bool
 	ExitCode          int
@@ -122,7 +125,11 @@ func (m *Model) State() StateView {
 		InFlight: m.inFlight(), Queued: len(m.outbox), InboxUsage: m.usage, BulkAck: m.bulkView(), Draft: c.editor.Value(), Pasted: c.pasted,
 		Audience: m.audienceView(), Hint: m.hintText(), ScrollOffset: m.scrollOffset(), Cutoff: m.cutoff,
 		Status: m.status, Help: m.panel != nil && m.panel.kind == panelHelp, TooSmall: m.tooSmall(),
+		Reviews: append([]protocol.ReviewView(nil), m.reviews.list...), ReviewSelected: m.reviews.selected,
 		KeyDisambiguation: m.keyboard, ExitCode: m.exitCode, Fatal: m.fatal,
+	}
+	if m.panel != nil {
+		v.Panel = m.panel.kind
 	}
 	m.composeState(&v)
 	v.HiddenViews, v.HiddenUnread = m.hiddenCounts()

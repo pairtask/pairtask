@@ -118,6 +118,7 @@ type Model struct {
 	rooms    []protocol.RoomInfo // rooms and members, from the snapshot (bounded)
 	roomsCut bool                // the snapshot left rooms out
 	pairing  pairingView         // the last /pair snapshot, never its code
+	reviews  reviewState         // review requests (#201): the last list and a request in flight
 
 	compose    composer
 	conv       conversations
@@ -367,6 +368,7 @@ func (m *Model) closed(gen uint64, err error) tea.Cmd {
 	m.inbox.disconnected()
 	m.history.disconnected()
 	m.send.disconnected()
+	m.reviewsDisconnected()
 	m.bulkDisconnected()
 	m.dropPairingCode()
 	if isMalformed(err) {

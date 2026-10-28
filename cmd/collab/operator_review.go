@@ -6,12 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/url"
-	"regexp"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/review"
 )
 
 const operatorReviewUsage = `usage: pairtask operator review request --reviewer AGENT [--scope TEXT] [--no-publish] [--no-formal] [--message-id ID] TARGET
@@ -138,8 +136,6 @@ func reviewSpec(rf reviewFlags, rest []string) (protocol.ReviewSpec, error) {
 	return spec, protocol.ValidateReviewSpec(spec)
 }
 
-var shortTarget = regexp.MustCompile(`^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+)$`)
-
 // reviewTarget reads TARGET, or --forge, --repository and --change.
 func reviewTarget(rf reviewFlags, rest []string) (protocol.ReviewTarget, error) {
 	if rf.forge+rf.repository+rf.change != "" {
@@ -151,32 +147,7 @@ func reviewTarget(rf reviewFlags, rest []string) (protocol.ReviewTarget, error) 
 	if len(rest) != 1 {
 		return protocol.ReviewTarget{}, errors.New("review request takes one TARGET")
 	}
-	if m := shortTarget.FindStringSubmatch(rest[0]); m != nil {
-		return protocol.ReviewTarget{Forge: "github", Repository: "github.com/" + m[1] + "/" + m[2], Change: m[3]}, nil
-	}
-	return pullRequestURL(rest[0])
-}
-
-// pullRequestURL reads https://github.com/OWNER/REPO/pull/N.
-func pullRequestURL(raw string) (protocol.ReviewTarget, error) {
-	parts, ok := githubPullPath(raw)
-	if !ok {
-		return protocol.ReviewTarget{}, fmt.Errorf("TARGET %q is neither a GitHub pull request URL nor OWNER/REPO#N", raw)
-	}
-	return protocol.ReviewTarget{Forge: "github", Repository: "github.com/" + parts[0] + "/" + parts[1], Change: parts[3]}, nil
-}
-
-// githubPullPath is OWNER, REPO, "pull" and N from a pull request URL.
-func githubPullPath(raw string) ([]string, bool) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme+"://"+u.Host != "https://github.com" {
-		return nil, false
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 4 {
-		return nil, false
-	}
-	return parts, parts[2] == "pull"
+	return review.ParseTarget(rest[0])
 }
 
 // writeReviewResult prints one review or a list, every peer-chosen string
