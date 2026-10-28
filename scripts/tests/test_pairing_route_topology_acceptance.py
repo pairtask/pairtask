@@ -191,7 +191,7 @@ class PairingRouteTopologyAcceptanceTests(unittest.TestCase):
                 for name in required:
                     path = "infra/image/" + name
                     with self.subTest(path=path):
-                        self.assertIn(path, source.getnames())
+                        self.assertTrue(path in source.getnames(), "image source is missing " + path)
                         contents = source.extractfile(path).read()
                         self.assertEqual(hashlib.sha256(contents).hexdigest(), provenance["files_sha256"][path])
 
