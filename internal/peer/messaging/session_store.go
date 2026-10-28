@@ -22,8 +22,8 @@ func storeErr(err error) error {
 // sessionStore marks every error of the store calls a session makes.
 type sessionStore struct{ Store }
 
-func (s sessionStore) Offer(ctx context.Context, contact string, now time.Time, maxCount, maxBytes int) ([]Row, error) {
-	rows, err := s.Store.Offer(ctx, contact, now, maxCount, maxBytes)
+func (s sessionStore) Offer(ctx context.Context, contact string, now time.Time, l Limit) ([]Row, error) {
+	rows, err := s.Store.Offer(ctx, contact, now, l)
 	return rows, storeErr(err)
 }
 
@@ -31,8 +31,8 @@ func (s sessionStore) Delivered(ctx context.Context, contact, id string, at time
 	return storeErr(s.Store.Delivered(ctx, contact, id, at))
 }
 
-func (s sessionStore) Refused(ctx context.Context, contact, id string, r Refusal, at time.Time) error {
-	return storeErr(s.Store.Refused(ctx, contact, id, r, at))
+func (s sessionStore) Refused(ctx context.Context, contact string, r Refused) error {
+	return storeErr(s.Store.Refused(ctx, contact, r))
 }
 
 func (s sessionStore) Accept(ctx context.Context, contact string, m Message, now time.Time) (Answer, error) {
