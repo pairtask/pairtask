@@ -178,11 +178,11 @@ func (s *keySet) addAll(keys []viewKey) {
 // nameless keys never get a conversation of their own: All, and 1:1s with a
 // reserved ID.
 func nameless(key viewKey) bool {
-	if key.isGroup() || key.isRoom() || key.isContact() {
-		return false
-	}
-	return reservedID(key.agentID)
+	return key.oneToOne() && reservedID(key.agentID)
 }
+
+// oneToOne reports All or a 1:1: no group, room or contact.
+func (k viewKey) oneToOne() bool { return k.members+k.room+k.contact == "" }
 
 // reservedID is an ID that never names a conversation.
 func reservedID(id string) bool {

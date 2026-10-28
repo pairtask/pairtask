@@ -41,8 +41,7 @@ type Inbound struct {
 // Hub routes messages between connected clients. All state mutations happen
 // in the single Run goroutine, so no locking is required.
 type Hub struct {
-	register   chan *Client
-	unregister chan *Client
+	membership chan membership
 	inbound    chan Inbound
 	store      *store.Store
 	seq        uint64
@@ -66,8 +65,7 @@ type Hub struct {
 // (from store.LastSeq), so the global order survives broker restarts.
 func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 	h := &Hub{
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		membership: make(chan membership),
 		inbound:    make(chan Inbound, 64),
 		store:      st,
 		seq:        startSeq,
@@ -93,7 +91,7 @@ func (h *Hub) Register(ctx context.Context, c *Client) bool {
 		return false
 	case <-ctx.Done():
 		return false
-	case h.register <- c:
+	case h.membership <- membership{c, true}:
 		return true
 	}
 }
@@ -102,7 +100,7 @@ func (h *Hub) Register(ctx context.Context, c *Client) bool {
 func (h *Hub) Unregister(c *Client) {
 	select {
 	case <-h.done:
-	case h.unregister <- c:
+	case h.membership <- membership{c, false}:
 	}
 }
 
@@ -142,11 +140,8 @@ func (h *Hub) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 
-		case c := <-h.register:
-			h.connect(clients, c)
-
-		case c := <-h.unregister:
-			h.disconnect(clients, c)
+		case m := <-h.membership:
+			h.member(clients, m)
 
 		case in := <-h.inbound:
 			h.route(ctx, clients, in)
@@ -161,6 +156,20 @@ func (h *Hub) Run(ctx context.Context) {
 			h.emit(protocol.SessionEvent{Kind: protocol.EventPairingChanged})
 		}
 	}
+}
+
+// membership is a client joining or leaving the hub.
+type membership struct {
+	c      *Client
+	joined bool
+}
+
+func (h *Hub) member(clients map[string]*Client, m membership) {
+	if m.joined {
+		h.connect(clients, m.c)
+		return
+	}
+	h.disconnect(clients, m.c)
 }
 
 func (h *Hub) disconnectAll(clients map[string]*Client) {

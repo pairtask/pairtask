@@ -215,11 +215,20 @@ func (h *Hub) queueAutomatic(ctx context.Context) {
 	now := h.pair.cfg.Clock()
 	var ids []string
 	for _, r := range joins {
-		if settleCandidate(r) && now.Sub(r.CreatedAt) <= SettleWindow && h.pair.settle.due(r.OperationID, now) {
+		if h.automaticDue(r, now) {
 			ids = append(ids, r.OperationID)
 		}
 	}
 	h.pair.settle.enqueue(ids, true)
+}
+
+// automaticDue reports a candidate within SettleWindow, its budget and its
+// backoff.
+func (h *Hub) automaticDue(r peer.JoinRecord, now time.Time) bool {
+	if !settleCandidate(r) || now.Sub(r.CreatedAt) > SettleWindow {
+		return false
+	}
+	return h.pair.settle.due(r.OperationID, now)
 }
 
 func (h *Hub) drainSettle(ctx context.Context) {
@@ -247,16 +256,25 @@ func (h *Hub) settleOne(runCtx context.Context, id string) (bool, error) {
 	}
 	storeCtx, cancelStore := context.WithTimeout(context.WithoutCancel(runCtx), AttemptBudget+PairingGrace)
 	defer cancelStore()
-	r, found, err := h.store.GetJoin(storeCtx, id)
-	if err != nil || !found {
-		return false, errors.Join(peer.ErrNoJoin, err)
-	}
-	if r.Destination == "" || r.Peer == "" {
-		return false, errNoDestination
+	r, err := h.settleableJoin(storeCtx, id)
+	if err != nil {
+		return false, err
 	}
 	err = h.settleWith(runCtx, storeCtx, ep, r)
 	after, found, readErr := h.store.GetJoin(storeCtx, id)
 	return readErr == nil && found && joinMoved(r, after), err
+}
+
+// settleableJoin is the stored join, if it has somewhere to settle.
+func (h *Hub) settleableJoin(ctx context.Context, id string) (peer.JoinRecord, error) {
+	r, found, err := h.store.GetJoin(ctx, id)
+	if err != nil || !found {
+		return r, errors.Join(peer.ErrNoJoin, err)
+	}
+	if r.Destination == "" || r.Peer == "" {
+		return r, errNoDestination
+	}
+	return r, nil
 }
 
 func (h *Hub) settleWith(runCtx, storeCtx context.Context, ep *PairingEndpoint, r peer.JoinRecord) error {
@@ -353,17 +371,7 @@ func (h *Hub) operatorSettle(ctx context.Context, req operatorRequest) protocol.
 // current candidate regardless of window and backoff.
 func (h *Hub) settleTargets(ctx context.Context, target string) ([]string, *routingError) {
 	if target != "" {
-		r, found, err := h.store.GetJoin(ctx, target)
-		if err != nil {
-			return nil, &routingError{protocol.ErrInternal, "pairing state unavailable"}
-		}
-		if !found {
-			return nil, &routingError{protocol.ErrPairing, "no_join"}
-		}
-		if r.Destination == "" || r.Peer == "" {
-			return nil, &routingError{protocol.ErrPairing, "no_destination"}
-		}
-		return []string{target}, nil
+		return h.settleTarget(ctx, target)
 	}
 	joins, err := h.store.Joins(ctx)
 	if err != nil {
@@ -376,6 +384,20 @@ func (h *Hub) settleTargets(ctx context.Context, target string) ([]string, *rout
 		}
 	}
 	return ids, nil
+}
+
+// settleTarget is the named join, if it can be settled.
+func (h *Hub) settleTarget(ctx context.Context, target string) ([]string, *routingError) {
+	r, found, err := h.store.GetJoin(ctx, target)
+	switch {
+	case err != nil:
+		return nil, &routingError{protocol.ErrInternal, "pairing state unavailable"}
+	case !found:
+		return nil, &routingError{protocol.ErrPairing, "no_join"}
+	case r.Destination == "" || r.Peer == "":
+		return nil, &routingError{protocol.ErrPairing, "no_destination"}
+	}
+	return []string{target}, nil
 }
 
 // contactsSnapshot lists contacts newest first, each confirmed from the full
@@ -409,14 +431,18 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 func confirmedIdentities(requests []peer.PairingRequest, joins []peer.JoinRecord) map[string]bool {
 	out := map[string]bool{}
 	for _, r := range requests {
-		if r.State == peer.PairingAccepted && !r.DeliveredAt.IsZero() {
-			out[r.IdentityKey] = true
-		}
+		out[r.IdentityKey] = out[r.IdentityKey] || deliveredAcceptance(r)
 	}
 	for _, j := range joins {
-		if j.State == peer.JoinContact && !j.DecisionConfirmedAt.IsZero() {
-			out[j.Peer] = true
-		}
+		out[j.Peer] = out[j.Peer] || confirmedContact(j)
 	}
 	return out
+}
+
+func deliveredAcceptance(r peer.PairingRequest) bool {
+	return r.State == peer.PairingAccepted && !r.DeliveredAt.IsZero()
+}
+
+func confirmedContact(j peer.JoinRecord) bool {
+	return j.State == peer.JoinContact && !j.DecisionConfirmedAt.IsZero()
 }

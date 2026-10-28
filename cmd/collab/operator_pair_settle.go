@@ -82,11 +82,16 @@ func settleSupported(ctx context.Context, call operatorCall, stderr io.Writer) b
 	if err != nil {
 		return false
 	}
-	if resp.PairingResult == nil || resp.PairingResult.Contacts == nil || !resp.PairingResult.RedeemAvailable {
+	if resp.PairingResult == nil || !canSettle(*resp.PairingResult) {
 		fmt.Fprintln(stderr, "this broker cannot settle pairings: it is older, or redemption is not configured")
 		return false
 	}
 	return true
+}
+
+// canSettle reports a broker that lists contacts and can reach peers.
+func canSettle(s protocol.PairingSnapshot) bool {
+	return s.Contacts != nil && s.RedeemAvailable
 }
 
 func reportQueued(stdout, stderr io.Writer, asJSON bool, resp protocol.Message) int {

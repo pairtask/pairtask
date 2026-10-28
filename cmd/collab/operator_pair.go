@@ -38,11 +38,8 @@ var pairTargets = map[string]func(s *protocol.PairingSnapshot, typed string) (st
 // runOperatorPair manages pairing invitations and requests (#178). Only open
 // prints the code, on stdout.
 func runOperatorPair(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == protocol.PairingOpRedeem {
-		return runOperatorPairRedeem(ctx, args[1:], stdout, stderr)
-	}
-	if len(args) > 0 && args[0] == protocol.PairingOpSettle {
-		return runOperatorPairSettle(ctx, args[1:], stdout, stderr)
+	if run, rest, ok := pairSubcommand(args); ok {
+		return run(ctx, rest, stdout, stderr)
 	}
 	call, req, code := parseOperatorPair(args, stderr)
 	if code != -1 {
@@ -61,6 +58,20 @@ func runOperatorPair(ctx context.Context, args []string, stdout, stderr io.Write
 	writeJoin(stdout, resp.PairingJoin)
 	writePairing(stdout, resp.PairingResult)
 	return 0
+}
+
+// pairSubcommands are the pair verbs with flags and follow-up of their own.
+var pairSubcommands = map[string]func(ctx context.Context, args []string, stdout, stderr io.Writer) int{
+	protocol.PairingOpRedeem: runOperatorPairRedeem,
+	protocol.PairingOpSettle: runOperatorPairSettle,
+}
+
+func pairSubcommand(args []string) (func(context.Context, []string, io.Writer, io.Writer) int, []string, bool) {
+	if len(args) == 0 {
+		return nil, nil, false
+	}
+	run, ok := pairSubcommands[args[0]]
+	return run, args[1:], ok
 }
 
 // writeJoin prints the redemption a targeted status named.

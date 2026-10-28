@@ -169,10 +169,14 @@ func (h *chatHarness) take(kind string) protocol.Message {
 
 // intake records a request, noting the quiet pairing read.
 func (h *chatHarness) intake(req protocol.Message) {
-	if h.quiet.armed && req.Type == protocol.TypeOperatorPairing && req.PairingOp == protocol.PairingOpList {
+	if h.quiet.armed && pairingList(req) {
 		h.quiet.armed, h.quiet.id = false, req.RequestID
 	}
 	h.requests = append(h.requests, req)
+}
+
+func pairingList(req protocol.Message) bool {
+	return req.Type == protocol.TypeOperatorPairing && req.PairingOp == protocol.PairingOpList
 }
 
 // serveQuiet answers a pending quiet pairing read with no contacts, and

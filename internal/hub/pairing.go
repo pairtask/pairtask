@@ -115,11 +115,8 @@ func (h *Hub) operatorPairing(ctx context.Context, _ map[string]*Client, req ope
 	if rerr := redeemFields(msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}
-	if msg.PairingOp == protocol.PairingOpRedeem {
-		return h.operatorRedeem(ctx, req)
-	}
-	if msg.PairingOp == protocol.PairingOpSettle {
-		return h.operatorSettle(ctx, req)
+	if queued, ok := queuedPairingOps[msg.PairingOp]; ok {
+		return queued(h, ctx, req)
 	}
 	op, ok := pairingOps[msg.PairingOp]
 	if !ok {
@@ -140,10 +137,22 @@ func (h *Hub) operatorPairing(ctx context.Context, _ map[string]*Client, req ope
 		return rerr.frame(msg.MessageID)
 	}
 	h.finishAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditAccepted})
-	if msg.PairingOp != protocol.PairingOpStatus && msg.PairingOp != protocol.PairingOpList {
-		h.PairingChanged() // another operator client may be showing pairing state
-	}
+	h.pairingApplied(msg.PairingOp)
 	return fitPairing(resp)
+}
+
+// queuedPairingOps hand work to a background worker, with their own audit.
+var queuedPairingOps = map[string]func(h *Hub, ctx context.Context, req operatorRequest) protocol.Message{
+	protocol.PairingOpRedeem: (*Hub).operatorRedeem,
+	protocol.PairingOpSettle: (*Hub).operatorSettle,
+}
+
+// pairingApplied tells the operator session about a change another operator
+// client made; reads change nothing.
+func (h *Hub) pairingApplied(op string) {
+	if op != protocol.PairingOpStatus && op != protocol.PairingOpList {
+		h.PairingChanged()
+	}
 }
 
 // checkTarget enforces each operation's target; status may name one join.
