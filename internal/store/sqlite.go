@@ -68,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -84,9 +84,11 @@ func Open(path string) (*Store, error) {
 var addedColumns = []struct{ table, column, decl string }{
 	{"message_metadata", "origin", "TEXT"},
 	{"durable_agents", "protocol_version", "INTEGER"},
-	{"message_metadata", "room", "TEXT"},     // NULL is the Square
-	{"message_metadata", "mentions", "TEXT"}, // a JSON array; NULL is none (#164)
-	{"peer_joins", "destination", "TEXT"},    // NULL for joins before operator redemption (#178)
+	{"message_metadata", "room", "TEXT"},              // NULL is the Square
+	{"message_metadata", "mentions", "TEXT"},          // a JSON array; NULL is none (#164)
+	{"peer_joins", "destination", "TEXT"},             // NULL for joins before operator redemption (#178)
+	{"peer_joins", "decision_confirmed_at", "TEXT"},   // NULL until the inviter confirms (#178)
+	{"peer_pairing_requests", "delivered_at", "TEXT"}, // NULL until the joiner acknowledges (#178)
 }
 
 func migrate(db *sql.DB) error {

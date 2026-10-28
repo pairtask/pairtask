@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 )
 
 // Pairing frames (#178) carry what surrounds the code exchange: the hellos
@@ -24,6 +25,17 @@ const (
 	FrameInviterHello byte = 2
 	FrameRefusal      byte = 3
 	FrameReceipt      byte = 4
+	// Settlement, on a contact connection.
+	FrameSettle      byte = 5
+	FrameSettleReply byte = 6
+	FrameAck         byte = 7
+	FrameAckReceipt  byte = 8
+)
+
+// Receipt answers in a SettleReply.
+const (
+	ReceiptUnknown byte = 0
+	ReceiptMatched byte = 1
 )
 
 // ErrPairingProtocol is a malformed, unexpected or oversized frame.
@@ -56,7 +68,7 @@ func FrameKind(frame []byte) (byte, error) {
 }
 
 func knownFrame(kind byte) bool {
-	return kind >= FrameJoinerHello && kind <= FrameReceipt
+	return kind >= FrameJoinerHello && kind <= FrameAckReceipt
 }
 
 func EncodeJoinerHello(h JoinerHello) ([]byte, error) {
@@ -157,4 +169,87 @@ func nextField(b []byte) (field, rest []byte, err error) {
 		return nil, nil, fmt.Errorf("%w: truncated field", ErrPairingProtocol)
 	}
 	return append([]byte(nil), b[2:2+size]...), b[2+size:], nil
+}
+
+// Settle asks the inviter, over a contact connection, what became of one
+// join.
+type Settle struct {
+	JoinerOperationID, InviterOperationID, InvitationID string
+	TranscriptID                                        []byte
+}
+
+// SettleReply is the inviter's durable answer: whether it holds the exact
+// outcome, and the request's decision.
+type SettleReply struct {
+	Receipt  byte
+	Decision PairingState
+}
+
+// Ack acknowledges a decision; AckReceipt confirms the ack was recorded.
+type Ack struct {
+	JoinerOperationID string
+	Decision          PairingState
+}
+
+type AckReceipt Ack
+
+func EncodeSettle(m Settle) ([]byte, error) {
+	return encodeFrame(FrameSettle, []byte(m.JoinerOperationID), []byte(m.InviterOperationID), []byte(m.InvitationID), m.TranscriptID)
+}
+
+func DecodeSettle(frame []byte) (Settle, error) {
+	f, err := decodeFrame(frame, FrameSettle, 4)
+	if err != nil {
+		return Settle{}, err
+	}
+	return Settle{JoinerOperationID: string(f[0]), InviterOperationID: string(f[1]), InvitationID: string(f[2]), TranscriptID: f[3]}, nil
+}
+
+var replyDecisions = []PairingState{PairingPending, PairingAccepted, PairingRejected}
+
+func EncodeSettleReply(m SettleReply) ([]byte, error) {
+	return encodeFrame(FrameSettleReply, []byte{m.Receipt}, []byte(m.Decision))
+}
+
+func DecodeSettleReply(frame []byte) (SettleReply, error) {
+	f, err := decodeFrame(frame, FrameSettleReply, 2)
+	if err != nil {
+		return SettleReply{}, err
+	}
+	reply := SettleReply{Decision: PairingState(f[1])}
+	if len(f[0]) != 1 || f[0][0] > ReceiptMatched || !slices.Contains(replyDecisions, reply.Decision) {
+		return SettleReply{}, fmt.Errorf("%w: bad settle reply", ErrPairingProtocol)
+	}
+	reply.Receipt = f[0][0]
+	return reply, nil
+}
+
+func EncodeAck(m Ack) ([]byte, error) {
+	return encodeFrame(FrameAck, []byte(m.JoinerOperationID), []byte(m.Decision))
+}
+
+func DecodeAck(frame []byte) (Ack, error) {
+	return decodeAckFrame(frame, FrameAck)
+}
+
+func EncodeAckReceipt(m AckReceipt) ([]byte, error) {
+	return encodeFrame(FrameAckReceipt, []byte(m.JoinerOperationID), []byte(m.Decision))
+}
+
+func DecodeAckReceipt(frame []byte) (AckReceipt, error) {
+	ack, err := decodeAckFrame(frame, FrameAckReceipt)
+	return AckReceipt(ack), err
+}
+
+// decodeAckFrame accepts only a final decision.
+func decodeAckFrame(frame []byte, kind byte) (Ack, error) {
+	f, err := decodeFrame(frame, kind, 2)
+	if err != nil {
+		return Ack{}, err
+	}
+	ack := Ack{JoinerOperationID: string(f[0]), Decision: PairingState(f[1])}
+	if _, final := decisionStates[ack.Decision]; !final {
+		return Ack{}, fmt.Errorf("%w: ack of a non-final decision", ErrPairingProtocol)
+	}
+	return ack, nil
 }

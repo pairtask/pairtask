@@ -31,10 +31,10 @@ CREATE TABLE IF NOT EXISTS peer_joins (
 
 var _ peer.JoinStore = (*Store)(nil)
 
-const joinInsertColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, destination`
+const joinInsertColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, destination, decision_confirmed_at`
 
 // destination came later: older rows have NULL, read as empty.
-const joinColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, COALESCE(destination, '')`
+const joinColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, COALESCE(destination, ''), COALESCE(decision_confirmed_at, '')`
 
 // BeginJoin records a join's intent; see peer.JoinStore.
 func (s *Store) BeginJoin(ctx context.Context, start peer.JoinStart) (peer.JoinRecord, error) {
@@ -64,8 +64,10 @@ func replayJoin(known peer.JoinRecord, start peer.JoinStart, err error) (peer.Jo
 
 func joinCounts(ctx context.Context, tx *sql.Tx) (peer.JoinCounts, error) {
 	var c peer.JoinCounts
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(*) FILTER (WHERE state NOT IN (?, ?)) FROM peer_joins`,
-		string(peer.JoinFailed), string(peer.JoinUnverified)).Scan(&c.Total, &c.Open)
+	// The open states are exactly peer.JoinState.Open's.
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(*) FILTER (WHERE state IN (?, ?, ?, ?)) FROM peer_joins`,
+		string(peer.JoinIntent), string(peer.JoinExchanging), string(peer.JoinOutcomeUnknown),
+		string(peer.JoinAwaitingAcceptance)).Scan(&c.Total, &c.Open)
 	return c, err
 }
 
@@ -83,7 +85,7 @@ func (s *Store) RecordVerified(ctx context.Context, opID string, res peer.Exchan
 
 func (s *Store) RecordReceipt(ctx context.Context, opID string, receipt peer.JoinReceipt, at time.Time) (peer.JoinRecord, error) {
 	return s.updateJoin(ctx, opID, func(r peer.JoinRecord) (peer.JoinRecord, bool, error) {
-		return peer.Settle(r, receipt, at)
+		return peer.ApplyReceipt(r, receipt, at)
 	})
 }
 
@@ -161,11 +163,12 @@ func (s *Store) inJoinTx(ctx context.Context, apply func(*sql.Tx) (peer.JoinReco
 }
 
 func putJoin(ctx context.Context, tx *sql.Tx, r peer.JoinRecord) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO peer_joins (`+joinInsertColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_joins (`+joinInsertColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(operation_id) DO UPDATE SET invitation_id = excluded.invitation_id, inviter_operation_id = excluded.inviter_operation_id,
-    peer = excluded.peer, transcript_id = excluded.transcript_id, state = excluded.state, updated_at = excluded.updated_at`,
+    peer = excluded.peer, transcript_id = excluded.transcript_id, state = excluded.state, updated_at = excluded.updated_at,
+    decision_confirmed_at = excluded.decision_confirmed_at`,
 		r.OperationID, r.Joiner, r.JoinerName, r.InvitationID, r.InviterOperationID, r.Peer, r.TranscriptID,
-		string(r.State), stamp(r.CreatedAt), stamp(r.UpdatedAt), r.Destination)
+		string(r.State), stamp(r.CreatedAt), stamp(r.UpdatedAt), r.Destination, optionalStamp(r.DecisionConfirmedAt))
 	if err != nil {
 		return fmt.Errorf("store join: %w", err)
 	}
@@ -178,9 +181,9 @@ func getJoin(ctx context.Context, q rowQuerier, opID string) (peer.JoinRecord, b
 
 func scanJoin(row rowScanner) (peer.JoinRecord, bool, error) {
 	var r peer.JoinRecord
-	var state, created, updated string
+	var state, created, updated, confirmed string
 	err := row.Scan(&r.OperationID, &r.Joiner, &r.JoinerName, &r.InvitationID, &r.InviterOperationID, &r.Peer,
-		&r.TranscriptID, &state, &created, &updated, &r.Destination)
+		&r.TranscriptID, &state, &created, &updated, &r.Destination, &confirmed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.JoinRecord{}, false, nil
 	}
@@ -188,9 +191,42 @@ func scanJoin(row rowScanner) (peer.JoinRecord, bool, error) {
 		return peer.JoinRecord{}, false, err
 	}
 	r.State, r.TranscriptID = peer.JoinState(state), bytes.Clone(r.TranscriptID)
+	if r.DecisionConfirmedAt, err = optionalTime(confirmed); err != nil {
+		return peer.JoinRecord{}, false, err
+	}
 	if r.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
 		return peer.JoinRecord{}, false, err
 	}
 	r.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
 	return r, err == nil, err
+}
+
+// RecordDecision records the inviter's decision on a join awaiting it; an
+// acceptance makes the contact in the same transaction. See peer.JoinStore.
+func (s *Store) RecordDecision(ctx context.Context, opID string, decision peer.PairingState, at time.Time) (peer.JoinRecord, error) {
+	return s.inJoinTx(ctx, func(tx *sql.Tx) (peer.JoinRecord, error) {
+		r, found, err := getJoin(ctx, tx, opID)
+		if err != nil {
+			return peer.JoinRecord{}, err
+		}
+		if !found {
+			return peer.JoinRecord{}, peer.ErrNoJoin
+		}
+		next, changed, err := peer.Decide(r, decision, at)
+		if err != nil || !changed {
+			return next, err
+		}
+		if next.State == peer.JoinContact {
+			if err := upsertContact(ctx, tx, peer.JoinerContact(next)); err != nil {
+				return peer.JoinRecord{}, err
+			}
+		}
+		return next, putJoin(ctx, tx, next)
+	})
+}
+
+func (s *Store) RecordDecisionConfirmed(ctx context.Context, opID string, decision peer.PairingState, at time.Time) (peer.JoinRecord, error) {
+	return s.updateJoin(ctx, opID, func(r peer.JoinRecord) (peer.JoinRecord, bool, error) {
+		return peer.ConfirmDecision(r, decision, at)
+	})
 }

@@ -161,7 +161,7 @@ FROM peer_pairing_outcomes WHERE operation_id = ?`, operationID).
 
 func pairingRequest(ctx context.Context, q rowQuerier, identityKey string) (peer.PairingRequest, error) {
 	request, found, err := scanPairingRequest(q.QueryRowContext(ctx,
-		`SELECT identity_key, name, state, first_paired_at FROM peer_pairing_requests WHERE identity_key = ?`, identityKey))
+		`SELECT identity_key, name, state, first_paired_at, COALESCE(delivered_at, '') FROM peer_pairing_requests WHERE identity_key = ?`, identityKey))
 	if err == nil && !found {
 		err = peer.ErrNoPairingRequest
 	}
@@ -172,8 +172,8 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 func scanPairingRequest(row rowScanner) (peer.PairingRequest, bool, error) {
 	var request peer.PairingRequest
-	var state, first string
-	err := row.Scan(&request.IdentityKey, &request.Name, &state, &first)
+	var state, first, delivered string
+	err := row.Scan(&request.IdentityKey, &request.Name, &state, &first, &delivered)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.PairingRequest{}, false, nil
 	}
@@ -181,8 +181,61 @@ func scanPairingRequest(row rowScanner) (peer.PairingRequest, bool, error) {
 		return peer.PairingRequest{}, false, err
 	}
 	request.State = peer.PairingState(state)
+	if request.DeliveredAt, err = optionalTime(delivered); err != nil {
+		return peer.PairingRequest{}, false, err
+	}
 	request.FirstPairedAt, err = time.Parse(time.RFC3339Nano, first)
 	return request, err == nil, err
+}
+
+// optionalTime reads a timestamp column that is empty until set.
+func optionalTime(text string) (time.Time, error) {
+	if text == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339Nano, text)
+}
+
+// optionalStamp writes a timestamp, or NULL while it is unset.
+func optionalStamp(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return stamp(t)
+}
+
+// Deliver records the joiner's acknowledgement of a request's decision; see
+// peer.PairingStore. An accepted one becomes a contact in the same
+// transaction.
+func (s *Store) Deliver(ctx context.Context, identityKey string, decision peer.PairingState, at time.Time) (peer.PairingRequest, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return peer.PairingRequest{}, err
+	}
+	defer tx.Rollback()
+	request, err := pairingRequest(ctx, tx, identityKey)
+	if err != nil {
+		return peer.PairingRequest{}, err
+	}
+	next, changed, err := peer.DeliverDecision(request, decision, at)
+	if err != nil || !changed {
+		return next, err
+	}
+	if err := deliver(ctx, tx, next); err != nil {
+		return request, err
+	}
+	return next, tx.Commit()
+}
+
+func deliver(ctx context.Context, tx *sql.Tx, r peer.PairingRequest) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE peer_pairing_requests SET delivered_at = ? WHERE identity_key = ?`,
+		stamp(r.DeliveredAt), r.IdentityKey); err != nil {
+		return err
+	}
+	if r.State != peer.PairingAccepted {
+		return nil
+	}
+	return upsertContact(ctx, tx, peer.InviterContact(r))
 }
 
 // Outcome looks up a committed operation.
@@ -227,12 +280,12 @@ func (s *Store) Reject(ctx context.Context, identityKey string) (peer.PairingReq
 // Request is the identity's pairing request, if any.
 func (s *Store) Request(ctx context.Context, identityKey string) (peer.PairingRequest, bool, error) {
 	return scanPairingRequest(s.db.QueryRowContext(ctx,
-		`SELECT identity_key, name, state, first_paired_at FROM peer_pairing_requests WHERE identity_key = ?`, identityKey))
+		`SELECT identity_key, name, state, first_paired_at, COALESCE(delivered_at, '') FROM peer_pairing_requests WHERE identity_key = ?`, identityKey))
 }
 
 // Requests lists every pairing request by identity key.
 func (s *Store) Requests(ctx context.Context) ([]peer.PairingRequest, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT identity_key, name, state, first_paired_at FROM peer_pairing_requests ORDER BY identity_key`)
+	rows, err := s.db.QueryContext(ctx, `SELECT identity_key, name, state, first_paired_at, COALESCE(delivered_at, '') FROM peer_pairing_requests ORDER BY identity_key`)
 	if err != nil {
 		return nil, err
 	}
