@@ -98,29 +98,60 @@ func readHunk(lines []string, i int) ([]forge.LineRange, int, bool) {
 	if !ok {
 		return nil, 0, false
 	}
-	var ranges []forge.LineRange
-	oldSeen, newSeen := 0, 0
+	c := hunkCount{header: h}
 	j := i + 1
 	for ; j < len(lines) && !strings.HasPrefix(lines[j], "@@"); j++ {
-		line := lines[j]
-		switch {
-		case strings.HasPrefix(line, "\\"): // "\ No newline at end of file"
-		case strings.HasPrefix(line, "-"):
-			oldSeen++
-		case strings.HasPrefix(line, "+"):
-			ranges = addLine(ranges, h.newStart+newSeen)
-			newSeen++
-		case strings.HasPrefix(line, " ") || line == "":
-			ranges = addLine(ranges, h.newStart+newSeen)
-			oldSeen, newSeen = oldSeen+1, newSeen+1
-		default:
+		if !c.add(lines[j]) {
 			return nil, 0, false
 		}
 	}
-	if oldSeen != h.oldCount || newSeen != h.newCount {
+	if !c.complete() {
 		return nil, 0, false // truncated or malformed: nothing from it is trusted
 	}
-	return ranges, j, true
+	return c.ranges, j, true
+}
+
+// lineKind is how far a patch line moves each side, and whether it shows a
+// new-side line.
+type lineKind struct {
+	old, new int
+	shown    bool
+}
+
+// lineKinds by a patch line's first byte; "\" is "\ No newline at end of
+// file", and an empty line is context whose space was trimmed.
+var lineKinds = map[byte]lineKind{
+	'\\': {},
+	'-':  {old: 1},
+	'+':  {new: 1, shown: true},
+	' ':  {old: 1, new: 1, shown: true},
+}
+
+// hunkCount counts one hunk's lines against its header.
+type hunkCount struct {
+	header           hunkHeader
+	oldSeen, newSeen int
+	ranges           []forge.LineRange
+}
+
+// add counts one line; a line of no known kind fails the hunk.
+func (c *hunkCount) add(line string) bool {
+	kind, ok := lineKinds[' ']
+	if line != "" {
+		kind, ok = lineKinds[line[0]]
+	}
+	if !ok {
+		return false
+	}
+	if kind.shown {
+		c.ranges = addLine(c.ranges, c.header.newStart+c.newSeen)
+	}
+	c.oldSeen, c.newSeen = c.oldSeen+kind.old, c.newSeen+kind.new
+	return true
+}
+
+func (c *hunkCount) complete() bool {
+	return c.oldSeen == c.header.oldCount && c.newSeen == c.header.newCount
 }
 
 func addLine(ranges []forge.LineRange, line int) []forge.LineRange {

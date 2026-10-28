@@ -42,13 +42,21 @@ type review struct {
 // anything that isn't a complete, submitted review.
 func (r review) receipt() (forge.Receipt, bool) {
 	event, ok := recordedStates[r.State]
-	if !ok || r.ID <= 0 || r.User.Login == "" || !fullRevision(r.CommitID) {
+	if !ok || !r.complete() {
 		return forge.Receipt{}, false
 	}
 	out := forge.Receipt{Event: event}
 	out.ReviewID, out.URL, out.Identity, out.Revision = strconv.FormatInt(r.ID, 10), r.HTMLURL, r.User.Login, r.CommitID
 	out.Formal = event != forge.EventComment
 	return out, true
+}
+
+// complete: an ID, an account and the full commit it was recorded on.
+func (r review) complete() bool {
+	if r.ID <= 0 || r.User.Login == "" {
+		return false
+	}
+	return fullRevision(r.CommitID)
 }
 
 type reviewComment struct {
@@ -79,7 +87,7 @@ func (a *Adapter) Publish(ctx context.Context, s forge.Submission) (forge.Receip
 	}
 	body := reviewRequest{CommitID: s.Pinned.Head, Event: event, Body: reviewBody(s), Comments: lineComments(s.Findings)}
 	var answer review
-	if _, err := a.do(ctx, http.MethodPost, path, nil, body, &answer); err != nil {
+	if _, err := a.do(ctx, call{method: http.MethodPost, path: path, body: body}, &answer); err != nil {
 		return forge.Receipt{}, err
 	}
 	receipt, ok := answer.receipt()
@@ -144,6 +152,19 @@ func (a *Adapter) Find(ctx context.Context, t forge.Target, e forge.Expected) (f
 	return forge.Receipt{}, false, nil
 }
 
+// collectMarked adds the reviews carrying marker, by review ID, so the same
+// review seen twice counts once.
+func collectMarked(matches map[int64]review, reviews []review, marker string) {
+	if marker == "" {
+		return
+	}
+	for _, r := range reviews {
+		if strings.Contains(r.Body, marker) {
+			matches[r.ID] = r
+		}
+	}
+}
+
 // marked is every review on the pull request whose body carries marker, by
 // review ID.
 func (a *Adapter) marked(ctx context.Context, path, marker string) (map[int64]review, error) {
@@ -155,14 +176,10 @@ func (a *Adapter) marked(ctx context.Context, path, marker string) (map[int64]re
 		if err != nil {
 			return nil, err
 		}
-		for _, r := range reviews {
-			if marker != "" && strings.Contains(r.Body, marker) {
-				matches[r.ID] = r
-			}
-		}
+		collectMarked(matches, reviews, marker)
 		if !more {
 			return matches, nil
 		}
 	}
-	return nil, pageCapReached("reviews", a.cfg.MaxPages)
+	return nil, forge.Errorf(forge.ClassUnavailable, "more reviews than %d pages; can't tell they were all seen", a.cfg.MaxPages)
 }
