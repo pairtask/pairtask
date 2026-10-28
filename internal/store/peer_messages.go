@@ -332,5 +332,5 @@ func (p *PeerMessages) Page(ctx context.Context, contact string, before int64, l
 // Confirmed reports a confirmed contact: the only identities a message
 // session is accepted from or dialed to.
 func (p *PeerMessages) Confirmed(ctx context.Context, contact string) (bool, error) {
-	return confirmedContact(ctx, p.db, contact)
+	return confirmedContact(ctx, p.db, contactKey(contact))
 }
