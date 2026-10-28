@@ -134,12 +134,7 @@ func (h *Hub) Run(ctx context.Context) {
 	defer close(h.done)
 	defer h.settlePairing()
 	defer h.disconnectAll(clients)
-	h.pair.runCtx = ctx
-	// With pairing wired, loading now lets inbound pairing work before any
-	// operator request; otherwise the first pairing request loads it.
-	if h.pair.cfg.Exchanger != nil {
-		h.loadIdentity(ctx)
-	}
+	h.beginPairing(ctx)
 
 	for {
 		select {

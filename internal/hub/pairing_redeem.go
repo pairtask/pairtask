@@ -112,6 +112,16 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 	}
 }
 
+// beginPairing runs at Run's start. With pairing wired, loading the
+// identity now lets inbound pairing work before any operator request;
+// otherwise the first pairing request loads it.
+func (h *Hub) beginPairing(ctx context.Context) {
+	h.pair.runCtx = ctx
+	if h.pair.cfg.Exchanger != nil {
+		h.loadIdentity(ctx)
+	}
+}
+
 // settlePairing ends redemption workers at shutdown: their network work is
 // already cancelled with Run's context, and settling gets PairingGrace.
 func (h *Hub) settlePairing() {
@@ -248,7 +258,7 @@ func (h *Hub) startRedeem(pending *peer.PendingJoin, destination string) {
 		defer cancelNet()
 		storeCtx, cancelStore := context.WithTimeout(context.WithoutCancel(runCtx), AttemptBudget+PairingGrace)
 		defer cancelStore()
-		rec, err := redeem(netCtx, storeCtx, cfg, ep, pending, destination)
+		rec, err := redemption{cfg: cfg, ep: ep, pending: pending, destination: destination}.run(netCtx, storeCtx)
 		if rec.OperationID == "" {
 			h.log.Warn("pairing redemption not settled", "cause", PairingCause(err))
 			return
@@ -294,20 +304,28 @@ func PairingCause(err error) string {
 	return "other"
 }
 
-func redeem(netCtx, storeCtx context.Context, cfg PairingConfig, ep *PairingEndpoint, pending *peer.PendingJoin, destination string) (peer.JoinRecord, error) {
-	if ep == nil {
-		return pending.Abandon(storeCtx, peer.ErrIdentityUnavailable)
+// redemption is one worker's redemption: where to dial and as whom.
+type redemption struct {
+	cfg         PairingConfig
+	ep          *PairingEndpoint
+	pending     *peer.PendingJoin
+	destination string
+}
+
+func (r redemption) run(netCtx, storeCtx context.Context) (peer.JoinRecord, error) {
+	if r.ep == nil {
+		return r.pending.Abandon(storeCtx, peer.ErrIdentityUnavailable)
 	}
-	raw, err := cfg.Dial(netCtx, destination)
+	raw, err := r.cfg.Dial(netCtx, r.destination)
 	if err != nil {
-		return pending.Abandon(storeCtx, err)
+		return r.pending.Abandon(storeCtx, err)
 	}
-	conn, err := firstcontact.Client(netCtx, raw, ep.Identity, ep.Clock)
+	conn, err := firstcontact.Client(netCtx, raw, r.ep.Identity, r.ep.Clock)
 	if err != nil {
-		return pending.Abandon(storeCtx, err)
+		return r.pending.Abandon(storeCtx, err)
 	}
 	defer conn.Close()
-	return pending.Run(storeCtx, conn.Frames(netCtx), conn.Connection())
+	return r.pending.Run(storeCtx, conn.Frames(netCtx), conn.Connection())
 }
 
 // joinsSnapshot adds this workspace's redemptions, newest first.

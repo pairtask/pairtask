@@ -153,7 +153,15 @@ func CheckDestination(d string) error {
 	if err != nil || host == "" {
 		return ErrInvalidDestination
 	}
-	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+	return checkPort(port)
+}
+
+func checkPort(port string) error {
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return ErrInvalidDestination
+	}
+	if n < 1 || n > 65535 {
 		return ErrInvalidDestination
 	}
 	return nil
@@ -174,7 +182,8 @@ func validPairingID(id string) bool {
 
 // ReplayJoin answers BeginJoin for a known operation.
 func ReplayJoin(r JoinRecord, s JoinStart) (JoinRecord, error) {
-	if r.Joiner != s.Joiner || r.JoinerName != s.Name || r.Destination != s.Destination {
+	same := []bool{r.Joiner == s.Joiner, r.JoinerName == s.Name, r.Destination == s.Destination}
+	if slices.Contains(same, false) {
 		return JoinRecord{}, ErrJoinConflict
 	}
 	return r, nil

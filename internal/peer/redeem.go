@@ -228,7 +228,7 @@ func (p *PendingJoin) Run(ctx context.Context, f Frames, c Connection) (JoinReco
 	if err := c.check(p.start.Joiner); err != nil {
 		return p.j.fail(ctx, p.start.OperationID, err)
 	}
-	return p.j.run(ctx, boundedFrames{f}, c, p.start, digits)
+	return p.exchangeOn(ctx, boundedFrames{f}, c, digits)
 }
 
 // Abandon fails a redemption that never reached its inviter, such as a
@@ -243,8 +243,9 @@ func (p *PendingJoin) Abandon(ctx context.Context, cause error) (JoinRecord, err
 	return p.j.fail(ctx, p.start.OperationID, cause)
 }
 
-// run is the exchange after the intent was written.
-func (j *Joiner) run(ctx context.Context, f Frames, c Connection, start JoinStart, digits []byte) (JoinRecord, error) {
+// exchangeOn is the exchange after the intent was written.
+func (p *PendingJoin) exchangeOn(ctx context.Context, f Frames, c Connection, digits []byte) (JoinRecord, error) {
+	j, start := p.j, p.start
 	opID := start.OperationID
 	hello, err := j.correlate(ctx, f, start)
 	if err != nil {

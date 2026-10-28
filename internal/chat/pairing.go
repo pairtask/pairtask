@@ -37,8 +37,11 @@ var pairVerbArgs = map[string][]int{
 	protocol.PairingOpRedeem: {3, 4},
 }
 
+// pairWords are a /pair command's words, the verb first.
+type pairWords []string
+
 func pairArg(a argument) error {
-	fields := strings.Fields(string(a))
+	fields := pairWords(strings.Fields(string(a)))
 	if len(fields) > 0 && !slices.Contains(pairVerbArgs[fields[0]], len(fields)) {
 		return errors.New(pairUsage)
 	}
@@ -50,7 +53,7 @@ func pairArg(a argument) error {
 
 // redeemArg checks a redemption before anything is sent; its error never
 // repeats the code.
-func redeemArg(fields []string) error {
+func redeemArg(fields pairWords) error {
 	req := redeemRequest(fields)
 	req.OperationID = "check"
 	if req.Name == "" {
@@ -62,7 +65,7 @@ func redeemArg(fields []string) error {
 	return nil
 }
 
-func redeemRequest(fields []string) peer.JoinRequest {
+func redeemRequest(fields pairWords) peer.JoinRequest {
 	req := peer.JoinRequest{Destination: fields[1], Code: []byte(fields[2])}
 	if len(fields) == 4 {
 		req.Name = fields[3]
@@ -89,9 +92,9 @@ func (m *Model) pairCommand(arg argument) tea.Cmd {
 		m.status = "not connected; /pair again once reconnected"
 		return nil
 	}
-	fields := strings.Fields(string(arg))
+	fields := pairWords(strings.Fields(string(arg)))
 	if len(fields) == 0 {
-		fields = []string{protocol.PairingOpList}
+		fields = pairWords{protocol.PairingOpList}
 	}
 	if fields[0] == protocol.PairingOpRedeem {
 		return m.redeemCommand(fields)
@@ -105,7 +108,7 @@ func (m *Model) pairCommand(arg argument) tea.Cmd {
 	return m.request(kindPairing, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: fields[0], PairingTarget: target}, fields[0])
 }
 
-func (m *Model) pairingTarget(fields []string) (string, string) {
+func (m *Model) pairingTarget(fields pairWords) (string, string) {
 	switch fields[0] {
 	case protocol.PairingOpCancel:
 		return m.invitationTarget(fields[1:])
@@ -117,7 +120,7 @@ func (m *Model) pairingTarget(fields []string) (string, string) {
 
 // invitationTarget is the invitation to cancel: the one named, or the last
 // one seen.
-func (m *Model) invitationTarget(named []string) (string, string) {
+func (m *Model) invitationTarget(named pairWords) (string, string) {
 	if len(named) == 1 {
 		return named[0], ""
 	}
@@ -143,7 +146,7 @@ func (m *Model) requestTarget(prefix string) (string, string) {
 
 // redeemCommand sends a redemption under a fresh, stable message ID. The
 // code goes only into that one request; nothing here keeps it.
-func (m *Model) redeemCommand(fields []string) tea.Cmd {
+func (m *Model) redeemCommand(fields pairWords) tea.Cmd {
 	if !m.session.HasCapability(protocol.CapabilityPairingRedeem) {
 		m.status = "this broker doesn't support redeeming a pairing code; upgrade it"
 		return nil
@@ -162,7 +165,7 @@ func (m *Model) pairingResult(req pendingRequest, resp protocol.Message) tea.Cmd
 		m.redeemResult(*resp.PairingJoin)
 	}
 	if resp.Type != protocol.TypeOperatorPairingResult || resp.PairingResult == nil {
-		m.pairingRefused(op, resp)
+		m.pairingRefused(req, resp)
 		return nil
 	}
 	snapshot := *resp.PairingResult
@@ -257,7 +260,8 @@ func (m *Model) redeemResult(j protocol.PairingJoinView) {
 }
 
 // pairingRefused reports a refusal, unless a redemption was just reported.
-func (m *Model) pairingRefused(op string, resp protocol.Message) {
+func (m *Model) pairingRefused(req pendingRequest, resp protocol.Message) {
+	op := req.ids[0]
 	if resp.Type == protocol.TypeOperatorPairingResult && resp.PairingJoin != nil {
 		return
 	}

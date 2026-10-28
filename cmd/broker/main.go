@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,8 +14,6 @@ import (
 
 	settings "github.com/pairtask/pairtask/internal/config"
 	"github.com/pairtask/pairtask/internal/hub"
-	"github.com/pairtask/pairtask/internal/peer"
-	"github.com/pairtask/pairtask/internal/peer/pake"
 	"github.com/pairtask/pairtask/internal/server"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -84,47 +81,24 @@ func loadOperator(lookup settings.LookupFunc, cfg *config) error {
 	return nil
 }
 
-// loadPairing reads the experimental pairing settings; all are off by
-// default.
-func loadPairing(lookup settings.LookupFunc, cfg *config) error {
-	cfg.PairingSocketPath, _, _ = settings.LookupIn(lookup, "PAIRING_SOCKET")
-	cfg.PairingEgress, _, _ = settings.LookupIn(lookup, "PAIRING_EGRESS")
-	cfg.PairingName, _, _ = settings.LookupIn(lookup, "PAIRING_NAME")
-	if cfg.PairingEgress != "" && cfg.PairingEgress != "direct" {
-		return errors.New(settings.Name("PAIRING_EGRESS") + " must be empty or \"direct\"")
+// openHub loads the state and prepares the hub, pairing included, before
+// it runs.
+func openHub(ctx context.Context, cfg config, st *store.Store, log *slog.Logger) (*hub.Hub, error) {
+	lastSeq, err := st.LastSeq(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.PairingName != "" && peer.CheckPairingName(cfg.PairingName) != nil {
-		return errors.New(settings.Name("PAIRING_NAME") + " must be at most 64 printable bytes")
+	log.Info("state loaded", "db", cfg.DBPath, "last_seq", lastSeq)
+	h := hub.New(st, lastSeq, log)
+	h.SetPairing(pairingConfig(cfg))
+	n, err := h.RecoverJoins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("recover pairing redemptions: %w", err)
 	}
-	if cfg.PairingSocketPath == "" {
-		return nil
+	if n > 0 {
+		log.Info("pairing redemptions interrupted before verification marked unverified", "count", n)
 	}
-	pairing := filepath.Clean(cfg.PairingSocketPath)
-	for _, other := range []string{cfg.SocketPath, cfg.OperatorSocketPath} {
-		if other != "" && pairing == filepath.Clean(other) {
-			return errors.New("the pairing socket must differ from the agent and operator sockets")
-		}
-	}
-	return nil
-}
-
-// pairingConfig wires the experimental CPace pairing only when inbound or
-// egress is configured, so a broker that doesn't pair never creates a
-// workspace key at startup. Direct egress dials TCP from this broker, which
-// suits a standalone broker only.
-func pairingConfig(cfg config) hub.PairingConfig {
-	pc := hub.PairingConfig{Name: cfg.PairingName}
-	if cfg.PairingSocketPath == "" && cfg.PairingEgress == "" {
-		return pc
-	}
-	pc.Exchanger = pake.New()
-	if cfg.PairingEgress == "direct" {
-		pc.Dial = func(ctx context.Context, destination string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "tcp", destination)
-		}
-	}
-	return pc
+	return h, nil
 }
 
 func run(cfg config, log *slog.Logger) error {
@@ -137,18 +111,9 @@ func run(cfg config, log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	lastSeq, err := st.LastSeq(ctx)
+	h, err := openHub(ctx, cfg, st, log)
 	if err != nil {
 		return err
-	}
-	log.Info("state loaded", "db", cfg.DBPath, "last_seq", lastSeq)
-
-	h := hub.New(st, lastSeq, log)
-	h.SetPairing(pairingConfig(cfg))
-	if n, err := h.RecoverJoins(ctx); err != nil {
-		return fmt.Errorf("recover pairing redemptions: %w", err)
-	} else if n > 0 {
-		log.Info("pairing redemptions interrupted before verification marked unverified", "count", n)
 	}
 	go h.Run(ctx)
 	defer func() {
@@ -172,7 +137,7 @@ func run(cfg config, log *slog.Logger) error {
 		}()
 	}
 
-	pairingDone := startPairing(ctx, cfg, h, log, stop)
+	pairingDone := pairingEndpoint{cfg: cfg, h: h, log: log}.start(ctx, stop)
 
 	srv := server.New(cfg.SocketPath, h, log)
 	defer srv.Close()
@@ -183,25 +148,4 @@ func run(cfg config, log *slog.Logger) error {
 	<-h.Done()
 	log.Info("shutdown complete")
 	return err
-}
-
-// startPairing runs the inbound pairing socket when configured; a broken
-// one stops the broker, as a broken operator endpoint does.
-func startPairing(ctx context.Context, cfg config, h *hub.Hub, log *slog.Logger, stop func()) <-chan error {
-	done := make(chan error, 1)
-	if cfg.PairingSocketPath == "" {
-		done <- nil
-		return done
-	}
-	p := server.NewPairing(cfg.PairingSocketPath, h, log)
-	go func() {
-		defer p.Close()
-		err := p.Listen(ctx)
-		if err != nil {
-			err = fmt.Errorf("pairing endpoint: %w", err)
-			stop()
-		}
-		done <- err
-	}()
-	return done
 }
