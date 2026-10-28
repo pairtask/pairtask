@@ -58,8 +58,11 @@ type Refusal struct {
 	Reason string
 }
 
+// Frame is one encoded pairing frame, as read from the wire.
+type Frame []byte
+
 // FrameKind is a frame's type, after checking its version and size.
-func FrameKind(frame []byte) (byte, error) {
+func FrameKind(frame Frame) (byte, error) {
 	if len(frame) < 2 || len(frame) > MaxFrameBytes {
 		return 0, fmt.Errorf("%w: frame size", ErrPairingProtocol)
 	}
@@ -77,8 +80,8 @@ func EncodeJoinerHello(h JoinerHello) ([]byte, error) {
 	return encodeFrame(FrameJoinerHello, []byte(h.OperationID), []byte(h.Name))
 }
 
-func DecodeJoinerHello(frame []byte) (JoinerHello, error) {
-	f, err := decodeFrame(frame, FrameJoinerHello, 2)
+func DecodeJoinerHello(frame Frame) (JoinerHello, error) {
+	f, err := decodeFrame(frame, frameShape{FrameJoinerHello, 2})
 	if err != nil {
 		return JoinerHello{}, err
 	}
@@ -89,8 +92,8 @@ func EncodeInviterHello(h InviterHello) ([]byte, error) {
 	return encodeFrame(FrameInviterHello, []byte(h.InvitationID), []byte(h.OperationID))
 }
 
-func DecodeInviterHello(frame []byte) (InviterHello, error) {
-	f, err := decodeFrame(frame, FrameInviterHello, 2)
+func DecodeInviterHello(frame Frame) (InviterHello, error) {
+	f, err := decodeFrame(frame, frameShape{FrameInviterHello, 2})
 	if err != nil {
 		return InviterHello{}, err
 	}
@@ -101,8 +104,8 @@ func EncodeRefusal(r Refusal) ([]byte, error) {
 	return encodeFrame(FrameRefusal, []byte(r.Reason))
 }
 
-func DecodeRefusal(frame []byte) (Refusal, error) {
-	f, err := decodeFrame(frame, FrameRefusal, 1)
+func DecodeRefusal(frame Frame) (Refusal, error) {
+	f, err := decodeFrame(frame, frameShape{FrameRefusal, 1})
 	if err != nil {
 		return Refusal{}, err
 	}
@@ -113,8 +116,8 @@ func EncodeReceipt(r JoinReceipt) ([]byte, error) {
 	return encodeFrame(FrameReceipt, []byte(r.InvitationID), []byte(r.InviterOperationID), []byte(r.Joiner), r.TranscriptID)
 }
 
-func DecodeReceipt(frame []byte) (JoinReceipt, error) {
-	f, err := decodeFrame(frame, FrameReceipt, 4)
+func DecodeReceipt(frame Frame) (JoinReceipt, error) {
+	f, err := decodeFrame(frame, frameShape{FrameReceipt, 4})
 	if err != nil {
 		return JoinReceipt{}, err
 	}
@@ -136,19 +139,25 @@ func encodeFrame(kind byte, fields ...[]byte) ([]byte, error) {
 	return frame, nil
 }
 
-// decodeFrame splits a frame of the wanted type into exactly n fields, each
-// a copy.
-func decodeFrame(frame []byte, kind byte, n int) ([][]byte, error) {
+// frameShape is a frame type and its exact number of fields.
+type frameShape struct {
+	kind   byte
+	fields int
+}
+
+// decodeFrame splits a frame of the wanted shape into its fields, each a
+// copy.
+func decodeFrame(frame Frame, want frameShape) ([][]byte, error) {
 	got, err := FrameKind(frame)
 	if err != nil {
 		return nil, err
 	}
-	if got != kind {
+	if got != want.kind {
 		return nil, fmt.Errorf("%w: unexpected frame type %d", ErrPairingProtocol, got)
 	}
 	rest := frame[2:]
-	fields := make([][]byte, 0, n)
-	for range n {
+	fields := make([][]byte, 0, want.fields)
+	for range want.fields {
 		var field []byte
 		field, rest, err = nextField(rest)
 		if err != nil {
@@ -162,7 +171,7 @@ func decodeFrame(frame []byte, kind byte, n int) ([][]byte, error) {
 	return fields, nil
 }
 
-func nextField(b []byte) (field, rest []byte, err error) {
+func nextField(b Frame) (field []byte, rest Frame, err error) {
 	if len(b) < 2 {
 		return nil, nil, fmt.Errorf("%w: truncated frame", ErrPairingProtocol)
 	}
@@ -199,8 +208,8 @@ func EncodeSettle(m Settle) ([]byte, error) {
 	return encodeFrame(FrameSettle, []byte(m.JoinerOperationID), []byte(m.InviterOperationID), []byte(m.InvitationID), m.TranscriptID)
 }
 
-func DecodeSettle(frame []byte) (Settle, error) {
-	f, err := decodeFrame(frame, FrameSettle, 4)
+func DecodeSettle(frame Frame) (Settle, error) {
+	f, err := decodeFrame(frame, frameShape{FrameSettle, 4})
 	if err != nil {
 		return Settle{}, err
 	}
@@ -213,8 +222,8 @@ func EncodeSettleReply(m SettleReply) ([]byte, error) {
 	return encodeFrame(FrameSettleReply, []byte{byte(m.Receipt)}, []byte(m.Decision))
 }
 
-func DecodeSettleReply(frame []byte) (SettleReply, error) {
-	f, err := decodeFrame(frame, FrameSettleReply, 2)
+func DecodeSettleReply(frame Frame) (SettleReply, error) {
+	f, err := decodeFrame(frame, frameShape{FrameSettleReply, 2})
 	if err != nil {
 		return SettleReply{}, err
 	}
@@ -241,7 +250,7 @@ func EncodeAck(m Ack) ([]byte, error) {
 	return encodeFrame(FrameAck, []byte(m.JoinerOperationID), []byte(m.Decision))
 }
 
-func DecodeAck(frame []byte) (Ack, error) {
+func DecodeAck(frame Frame) (Ack, error) {
 	return decodeAckFrame(frame, FrameAck)
 }
 
@@ -249,14 +258,14 @@ func EncodeAckReceipt(m AckReceipt) ([]byte, error) {
 	return encodeFrame(FrameAckReceipt, []byte(m.JoinerOperationID), []byte(m.Decision))
 }
 
-func DecodeAckReceipt(frame []byte) (AckReceipt, error) {
+func DecodeAckReceipt(frame Frame) (AckReceipt, error) {
 	ack, err := decodeAckFrame(frame, FrameAckReceipt)
 	return AckReceipt(ack), err
 }
 
 // decodeAckFrame accepts only a final decision.
-func decodeAckFrame(frame []byte, kind byte) (Ack, error) {
-	f, err := decodeFrame(frame, kind, 2)
+func decodeAckFrame(frame Frame, kind byte) (Ack, error) {
+	f, err := decodeFrame(frame, frameShape{kind, 2})
 	if err != nil {
 		return Ack{}, err
 	}
