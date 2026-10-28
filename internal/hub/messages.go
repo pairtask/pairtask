@@ -3,6 +3,9 @@ package hub
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"syscall"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -40,7 +43,9 @@ const (
 	SyncRefused     = "refused" // the handshake failed otherwise
 	SyncBusy        = "busy"    // a session with this contact was already running
 	SyncProtocol    = "protocol"
-	SyncStore       = "store"
+	SyncClosed      = "closed" // the peer ended the session; the wire carries no reason
+	SyncStore       = "store"  // this side's own store failed
+	SyncOther       = "other"
 )
 
 // MessageSync is what this side knows of syncing with one contact.
@@ -129,23 +134,51 @@ func dials(c peer.Contact, own string) bool {
 	return c.Destination != "" && (!c.Invited || own < c.IdentityKey)
 }
 
+// syncClasses name why a session failed, first match wins: this side's
+// store, a deadline, the dial, then the version, identity, framing and the
+// peer closing.
+var syncClasses = []struct {
+	class string
+	match func(error) bool
+}{
+	{SyncStore, func(err error) bool { return errors.As(err, new(messaging.StoreError)) }},
+	{SyncTimeout, timedOut}, // a dial that timed out is a timeout, not merely unreachable
+	{SyncUnreachable, func(err error) bool { return errors.As(err, new(errUnreachable)) }},
+	{SyncUnsupported, func(err error) bool {
+		return firstcontact.NoCommonProtocol(err) || errors.Is(err, messaging.ErrUnsupported)
+	}},
+	{SyncPinMismatch, func(err error) bool { return errors.Is(err, peer.ErrPeerMismatch) }},
+	{SyncProtocol, func(err error) bool {
+		return errors.Is(err, messaging.ErrProtocol) || errors.Is(err, peer.ErrPairingProtocol)
+	}},
+	{SyncClosed, closedByPeer},
+	{SyncRefused, func(err error) bool { return errors.Is(err, firstcontact.ErrFirstContact) }},
+}
+
 // classifySync names why a session failed.
 func classifySync(err error) string {
-	switch {
-	case firstcontact.NoCommonProtocol(err), errors.Is(err, messaging.ErrUnsupported):
-		return SyncUnsupported
-	case errors.Is(err, peer.ErrPeerMismatch):
-		return SyncPinMismatch
-	case errors.Is(err, context.DeadlineExceeded):
-		return SyncTimeout
-	case errors.As(err, new(errUnreachable)):
-		return SyncUnreachable
-	case errors.Is(err, messaging.ErrProtocol):
-		return SyncProtocol
-	case errors.Is(err, firstcontact.ErrFirstContact):
-		return SyncRefused
+	for _, c := range syncClasses {
+		if c.match(err) {
+			return c.class
+		}
 	}
-	return SyncStore
+	return SyncOther
+}
+
+// timedOut: a deadline, of the context or of the connection.
+func timedOut(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout()
+}
+
+// closedByPeer: the connection ended under the session.
+func closedByPeer(err error) bool {
+	for _, end := range []error{io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET, syscall.EPIPE, net.ErrClosed} {
+		if errors.Is(err, end) {
+			return true
+		}
+	}
+	return false
 }
 
 // backoff is the wait after failures in a row: from a minute, doubling, up

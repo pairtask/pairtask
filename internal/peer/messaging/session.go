@@ -39,6 +39,7 @@ type Session struct {
 // Dial runs the dialing side: its hello, its messages, the peer's, then the
 // receipts the same way.
 func (s Session) Dial(ctx context.Context) (Result, error) {
+	s.Store = sessionStore{s.Store}
 	if err := s.offerHello(); err != nil {
 		return Result{}, err
 	}
@@ -47,6 +48,7 @@ func (s Session) Dial(ctx context.Context) (Result, error) {
 
 // Serve runs the side that was dialed.
 func (s Session) Serve(ctx context.Context) (Result, error) {
+	s.Store = sessionStore{s.Store}
 	if err := s.answerHello(); err != nil {
 		return Result{}, err
 	}
