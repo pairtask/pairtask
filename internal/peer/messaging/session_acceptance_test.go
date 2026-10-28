@@ -175,6 +175,10 @@ func TestMessageSessionAcceptanceStoreErrorNeverAnswersStored(t *testing.T) {
 	if !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("store error lost: %v", err)
 	}
+	var storeError messaging.StoreError
+	if !errors.As(err, &storeError) {
+		t.Fatalf("store origin lost: %v", err)
+	}
 	if len(frames.sent) != 1 {
 		t.Fatalf("store failure sent extra answer: %x", frames.sent)
 	}

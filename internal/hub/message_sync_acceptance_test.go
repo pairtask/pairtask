@@ -3,7 +3,10 @@ package hub
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -96,7 +99,17 @@ func TestMessageSyncAcceptanceFailureClassesStayDistinct(t *testing.T) {
 		{context.DeadlineExceeded, SyncTimeout},
 		{errUnreachable{errors.New("connection refused")}, SyncUnreachable},
 		{messaging.ErrProtocol, SyncProtocol},
-		{errors.New("database unavailable"), SyncStore},
+		{messaging.StoreError{Err: errors.New("database unavailable")}, SyncStore},
+		{messaging.StoreError{Err: context.DeadlineExceeded}, SyncStore},
+		{errors.New("unclassified failure"), SyncOther},
+		{io.EOF, SyncClosed},
+		{io.ErrUnexpectedEOF, SyncClosed},
+		{syscall.ECONNRESET, SyncClosed},
+		{syscall.EPIPE, SyncClosed},
+		{net.ErrClosed, SyncClosed},
+		{&net.OpError{Op: "read", Err: os.ErrDeadlineExceeded}, SyncTimeout},
+		{errUnreachable{context.DeadlineExceeded}, SyncTimeout},
+		{peer.ErrPairingProtocol, SyncProtocol},
 		{&net.OpError{Op: "remote error", Err: errors.New("tls: no application protocol")}, SyncUnsupported},
 	} {
 		if got := classifySync(tc.err); got != tc.want {
