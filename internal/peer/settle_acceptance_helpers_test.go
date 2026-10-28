@@ -133,6 +133,42 @@ func settleContactCount(t *testing.T, source any, want int) {
 
 var errSettleDisk = errors.New("injected settlement write failure")
 
+type settleDurability struct {
+	r  *redeemFixture
+	op string
+}
+
+func (d settleDurability) beforeAck(frame []byte) ([]byte, error) {
+	if frame[1] != peer.FrameAck {
+		return frame, nil
+	}
+	saved, _, err := d.r.joins.GetJoin(context.Background(), d.op)
+	if err != nil {
+		return nil, err
+	}
+	if saved.State == peer.JoinAwaitingAcceptance {
+		return nil, errors.New("ack preceded decision")
+	}
+	if !saved.DecisionConfirmedAt.IsZero() {
+		return nil, errors.New("confirmation preceded receipt")
+	}
+	return frame, nil
+}
+
+func (d settleDurability) beforeReceipt(frame []byte) ([]byte, error) {
+	if frame[1] != peer.FrameAckReceipt {
+		return frame, nil
+	}
+	saved, _, err := d.r.inv.store.Request(context.Background(), d.r.bob.Fingerprint())
+	if err != nil {
+		return nil, err
+	}
+	if saved.DeliveredAt.IsZero() {
+		return nil, errors.New("receipt preceded delivery commit")
+	}
+	return frame, nil
+}
+
 type settleFaultJoins struct {
 	peer.JoinStore
 	failDecision, failConfirmation bool

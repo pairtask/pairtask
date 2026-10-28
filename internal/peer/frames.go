@@ -216,12 +216,23 @@ func DecodeSettleReply(frame []byte) (SettleReply, error) {
 	if err != nil {
 		return SettleReply{}, err
 	}
-	reply := SettleReply{Decision: PairingState(f[1])}
-	if len(f[0]) != 1 || f[0][0] > ReceiptMatched || !slices.Contains(replyDecisions, reply.Decision) {
-		return SettleReply{}, fmt.Errorf("%w: bad settle reply", ErrPairingProtocol)
+	receipt, err := parseReceipt(f[0])
+	if err != nil {
+		return SettleReply{}, err
 	}
-	reply.Receipt = f[0][0]
-	return reply, nil
+	decision := PairingState(f[1])
+	if !slices.Contains(replyDecisions, decision) {
+		return SettleReply{}, fmt.Errorf("%w: bad settle decision", ErrPairingProtocol)
+	}
+	return SettleReply{Receipt: receipt, Decision: decision}, nil
+}
+
+// parseReceipt accepts exactly one byte naming a known receipt.
+func parseReceipt(field []byte) (byte, error) {
+	if len(field) != 1 || field[0] > ReceiptMatched {
+		return 0, fmt.Errorf("%w: bad settle receipt", ErrPairingProtocol)
+	}
+	return field[0], nil
 }
 
 func EncodeAck(m Ack) ([]byte, error) {

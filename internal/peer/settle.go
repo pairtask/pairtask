@@ -173,7 +173,15 @@ func (i *Inviter) ServeSettle(ctx context.Context, f Frames, c Connection) error
 	if reply.Receipt != ReceiptMatched || reply.Decision == PairingPending {
 		return nil
 	}
-	return i.recordAck(ctx, f, request, reply, c.PeerLeaf)
+	return i.recordAck(ctx, f, servedDecision{joinerOperationID: request.JoinerOperationID, decision: reply.Decision, peer: c.PeerLeaf})
+}
+
+// servedDecision is the one decision this connection answered, and so the
+// only one its ack may name.
+type servedDecision struct {
+	joinerOperationID string
+	decision          PairingState
+	peer              string
 }
 
 func readSettle(f Frames) (Settle, error) {
@@ -221,7 +229,7 @@ func sendReply(f Frames, reply SettleReply) error {
 
 // recordAck takes the joiner's ack of the decision just served, records the
 // delivery, and only then confirms it.
-func (i *Inviter) recordAck(ctx context.Context, f Frames, m Settle, reply SettleReply, peer string) error {
+func (i *Inviter) recordAck(ctx context.Context, f Frames, served servedDecision) error {
 	frame, err := f.Recv()
 	if err != nil {
 		return err
@@ -230,10 +238,10 @@ func (i *Inviter) recordAck(ctx context.Context, f Frames, m Settle, reply Settl
 	if err != nil {
 		return err
 	}
-	if ack != (Ack{JoinerOperationID: m.JoinerOperationID, Decision: reply.Decision}) {
+	if ack != (Ack{JoinerOperationID: served.joinerOperationID, Decision: served.decision}) {
 		return fmt.Errorf("%w: ack for another join or decision", ErrPairingProtocol)
 	}
-	if _, err := i.inv.store.Deliver(ctx, peer, ack.Decision, i.inv.clock()); err != nil {
+	if _, err := i.inv.store.Deliver(ctx, served.peer, ack.Decision, i.inv.clock()); err != nil {
 		return errors.Join(errors.New("peer: delivery not recorded"), err)
 	}
 	frame, err = EncodeAckReceipt(AckReceipt(ack))

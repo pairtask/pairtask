@@ -18,34 +18,8 @@ func TestSettleAcceptanceDecisionDurableBeforeAckAndConfirmation(t *testing.T) {
 		t.Run(string(decision), func(t *testing.T) {
 			r, row := settleReady(t, decision)
 			beforeJoin, beforeInvite := r.joinEx.confirmations, r.inviteEx.invites
-			joinCheck := func(frame []byte) ([]byte, error) {
-				if frame[1] == peer.FrameAck {
-					saved, _, err := r.joins.GetJoin(context.Background(), row.OperationID)
-					if err != nil {
-						return nil, err
-					}
-					if saved.State == peer.JoinAwaitingAcceptance {
-						return nil, errors.New("ack preceded decision")
-					}
-					if !saved.DecisionConfirmedAt.IsZero() {
-						return nil, errors.New("confirmation preceded receipt")
-					}
-				}
-				return frame, nil
-			}
-			inviteCheck := func(frame []byte) ([]byte, error) {
-				if frame[1] == peer.FrameAckReceipt {
-					saved, _, err := r.inv.store.Request(context.Background(), r.bob.Fingerprint())
-					if err != nil {
-						return nil, err
-					}
-					if saved.DeliveredAt.IsZero() {
-						return nil, errors.New("receipt preceded delivery commit")
-					}
-				}
-				return frame, nil
-			}
-			result := settlePair(t, r, row.OperationID, joinCheck, inviteCheck)
+			order := settleDurability{r: r, op: row.OperationID}
+			result := settlePair(t, r, row.OperationID, order.beforeAck, order.beforeReceipt)
 			invOK(t, result.joinErr)
 			invOK(t, result.inviteErr)
 			invEqual(t, result.row.DecisionConfirmedAt.IsZero(), false)

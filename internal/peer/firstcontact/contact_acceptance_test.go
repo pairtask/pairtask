@@ -12,16 +12,21 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
 )
 
-func contactHandshake(t *testing.T, alice, bob *peer.WorkspaceIdentity, pin string, allowed func(string) bool) (connResult, connResult) {
+type contactPolicy struct {
+	serverPin     string
+	clientAllowed func(string) bool
+}
+
+func contactHandshake(t *testing.T, alice, bob *peer.WorkspaceIdentity, policy contactPolicy) (connResult, connResult) {
 	t.Helper()
 	ctx := testContext(t)
 	a, b := tcpPipe(t)
 	result := make(chan connResult, 1)
 	go func() {
-		conn, err := firstcontact.ServerWith(ctx, a, alice, time.Now, firstcontact.ServerOptions{ContactPins: allowed})
+		conn, err := firstcontact.ServerWith(ctx, a, alice, time.Now, firstcontact.ServerOptions{ContactPins: policy.clientAllowed})
 		result <- connResult{conn, err}
 	}()
-	client, err := firstcontact.ContactClient(ctx, b, bob, time.Now, pin)
+	client, err := firstcontact.ContactClient(ctx, b, bob, time.Now, policy.serverPin)
 	server := <-result
 	t.Cleanup(func() {
 		a.Close()
@@ -38,7 +43,7 @@ func contactHandshake(t *testing.T, alice, bob *peer.WorkspaceIdentity, pin stri
 
 func TestContactAcceptanceMutualPinsAndSeparateProtocol(t *testing.T) {
 	alice, bob := identity(t), identity(t)
-	server, client := contactHandshake(t, alice, bob, alice.Fingerprint(), func(fp string) bool { return fp == bob.Fingerprint() })
+	server, client := contactHandshake(t, alice, bob, contactPolicy{alice.Fingerprint(), func(fp string) bool { return fp == bob.Fingerprint() }})
 	mustOK(t, server.err)
 	mustOK(t, client.err)
 	equal(t, server.conn.Protocol(), firstcontact.ContactALPN)
@@ -54,7 +59,7 @@ func TestContactAcceptanceMutualPinsAndSeparateProtocol(t *testing.T) {
 
 func TestContactAcceptanceChangedServerKeyCannotInheritPin(t *testing.T) {
 	alice, bob, replacement := identity(t), identity(t), identity(t)
-	_, client := contactHandshake(t, replacement, bob, alice.Fingerprint(), func(string) bool { return true })
+	_, client := contactHandshake(t, replacement, bob, contactPolicy{alice.Fingerprint(), func(string) bool { return true }})
 	if !errors.Is(client.err, peer.ErrPeerMismatch) {
 		t.Fatalf("changed server key: got %v, want peer mismatch", client.err)
 	}
@@ -65,7 +70,7 @@ func TestContactAcceptanceChangedServerKeyCannotInheritPin(t *testing.T) {
 
 func TestContactAcceptanceUnknownClientRejectedByServer(t *testing.T) {
 	alice, bob, stranger := identity(t), identity(t), identity(t)
-	server, _ := contactHandshake(t, alice, stranger, alice.Fingerprint(), func(fp string) bool { return fp == bob.Fingerprint() })
+	server, _ := contactHandshake(t, alice, stranger, contactPolicy{alice.Fingerprint(), func(fp string) bool { return fp == bob.Fingerprint() }})
 	mustFail(t, server.err)
 	if server.conn != nil {
 		t.Fatal("unknown client reached contact protocol")
@@ -74,12 +79,12 @@ func TestContactAcceptanceUnknownClientRejectedByServer(t *testing.T) {
 
 func TestContactAcceptanceNeverFallsBackToPairing(t *testing.T) {
 	alice, bob := identity(t), identity(t)
-	server, client := contactHandshake(t, alice, bob, alice.Fingerprint(), nil)
+	server, client := contactHandshake(t, alice, bob, contactPolicy{alice.Fingerprint(), nil})
 	mustFail(t, server.err)
 	mustFail(t, client.err)
 	for _, pin := range []string{"", "sha256:wrong"} {
 		t.Run(pin, func(t *testing.T) {
-			_, client := contactHandshake(t, alice, bob, pin, func(string) bool { return true })
+			_, client := contactHandshake(t, alice, bob, contactPolicy{pin, func(string) bool { return true }})
 			mustFail(t, client.err)
 		})
 	}
