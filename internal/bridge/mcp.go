@@ -25,6 +25,7 @@ type messagingClient interface {
 	statusClient
 	claimClient
 	roomClient
+	reviewClient
 }
 
 // NewMCP exposes messaging tools without opening a connection during discovery.
@@ -51,6 +52,7 @@ func newMCP(c messagingClient, options *mcp.ServerOptions) *mcp.Server {
 	addStatusTools(s, c)
 	addClaimTools(s, c)
 	addRoomTools(s, c)
+	addReviewTools(s, c)
 	additive := false
 	mcp.AddTool(s, &mcp.Tool{Name: "send", Description: sendDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args SendRequest) (*mcp.CallToolResult, any, error) {

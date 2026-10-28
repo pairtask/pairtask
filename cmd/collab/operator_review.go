@@ -250,9 +250,20 @@ func writePublication(w io.Writer, p protocol.Publication) {
 		fmt.Fprintf(w, " (%s)", p.Reason)
 	}
 	if rc := p.Receipt; rc != nil {
-		fmt.Fprintf(w, " as %q at %s, review %q", rc.Identity, short(rc.Revision), rc.ReviewID)
+		fmt.Fprintf(w, " as %q at %s, review %q recorded as %s", rc.Identity, short(rc.Revision), rc.ReviewID, recordedEvent(*rc))
 	}
 	fmt.Fprintln(w)
+}
+
+// recordedEvent is what the forge recorded the review as.
+func recordedEvent(rc protocol.PublicationReceipt) string {
+	if rc.Event != "" {
+		return rc.Event
+	}
+	if rc.Formal {
+		return "a formal review"
+	}
+	return "a comment"
 }
 
 func short(revision string) string {

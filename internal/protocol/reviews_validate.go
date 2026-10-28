@@ -196,7 +196,10 @@ var stepChecks = map[string]func(*PublicationUpdate) error{
 		if u.Token == "" || len(u.Token) > 128 {
 			return errors.New("a step to submitting needs a token of at most 128 bytes")
 		}
-		return nil
+		if u.Identity == "" {
+			return errors.New("a step to submitting needs the identity it will publish as")
+		}
+		return boundedText(u.Identity, ReviewFindingBytes, false)
 	},
 	PublicationPublished: func(u *PublicationUpdate) error { return validReceipt(u.Receipt) },
 	PublicationFailed:    needsReason,
@@ -215,6 +218,9 @@ func validReceipt(r *PublicationReceipt) error {
 	errReceipt := errors.New("published needs a receipt with review_id, identity and the recorded revision")
 	if r == nil || !revision.MatchString(r.Revision) {
 		return errReceipt
+	}
+	if r.Event != "" && !oneOf(r.Event, reviewOutcomes) {
+		return errors.New("receipt event must be approve, changes_requested or comment")
 	}
 	for _, required := range []string{r.ReviewID, r.Identity} {
 		if required == "" {

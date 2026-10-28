@@ -158,6 +158,7 @@ func apply(r Record, u protocol.PublicationUpdate, now time.Time) Record {
 	switch u.To {
 	case protocol.PublicationSubmitting:
 		p.Intent++
+		p.Identity, p.Receipt = u.Identity, nil
 		r.Token = u.Token
 	case protocol.PublicationPublished:
 		receipt := *u.Receipt

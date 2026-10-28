@@ -157,6 +157,7 @@ type PublicationUpdate struct {
 	From     string              `json:"from"`
 	To       string              `json:"to"`
 	Token    string              `json:"token,omitempty"`    // to submitting: the caller's own, at most 128 bytes
+	Identity string              `json:"identity,omitempty"` // to submitting: the account the write will publish as, pinned with the intent
 	Intent   int                 `json:"intent,omitempty"`   // out of submitting: the generation it holds
 	Receipt  *PublicationReceipt `json:"receipt,omitempty"`  // with published
 	Reason   string              `json:"reason,omitempty"`   // a fixed class: forbidden, self_review, rate_limited, unavailable, moved, ...
@@ -167,18 +168,20 @@ type PublicationUpdate struct {
 type PublicationReceipt struct {
 	ReviewID string `json:"review_id"` // the forge's own ID
 	URL      string `json:"url,omitempty"`
-	Identity string `json:"identity"` // the account that published
-	Revision string `json:"revision"` // the head the forge recorded
-	Formal   bool   `json:"formal"`   // a formal approval or change request, not only a comment
+	Identity string `json:"identity"`        // the account that published
+	Revision string `json:"revision"`        // the head the forge recorded
+	Formal   bool   `json:"formal"`          // a formal approval or change request, not only a comment
+	Event    string `json:"event,omitempty"` // what the forge recorded it as: approve, changes_requested or comment
 }
 
 // Publication is a review's publication record.
 type Publication struct {
-	State   string              `json:"state"`
-	Intent  int                 `json:"intent"` // the newest write intent's generation, 0 before any
-	Receipt *PublicationReceipt `json:"receipt,omitempty"`
-	Reason  string              `json:"reason,omitempty"`
-	Updated *time.Time          `json:"updated_at,omitempty"`
+	State    string              `json:"state"`
+	Intent   int                 `json:"intent"`             // the newest write intent's generation, 0 before any
+	Identity string              `json:"identity,omitempty"` // the account the current intent publishes as
+	Receipt  *PublicationReceipt `json:"receipt,omitempty"`
+	Reason   string              `json:"reason,omitempty"`
+	Updated  *time.Time          `json:"updated_at,omitempty"`
 }
 
 // ReviewView is one review request as the broker holds it.

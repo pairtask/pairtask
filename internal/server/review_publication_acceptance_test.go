@@ -24,6 +24,9 @@ func (p *sessionProbe) reviewPublication(id, from, to string, extra map[string]a
 		extra = map[string]any{}
 	}
 	extra["from"], extra["to"] = from, to
+	if to == "submitting" {
+		extra["identity"] = "reviewer-account"
+	}
 	return reviewTestCall(p, "review_publication", id, map[string]any{"attempt": 1, "publication": extra})
 }
 
@@ -185,7 +188,7 @@ func TestReviewAcceptanceObservationFencesOldAttemptAndBlocksStaleWrite(t *testi
 	moved.Base = strings.Repeat("c", 40)
 	operatorEqual(t, "superseded observer refused", reviewTestCall(p, "review_observe", "observe-before-write", map[string]any{"attempt": 1, "revisions": moved}).text("code"), "review_conflict")
 	reviewTestView(t, reviewTestCall(p, "review_observe", "observe-before-write", map[string]any{"attempt": 2, "revisions": moved}), "review_result")
-	r := reviewTestCall(p, "review_publication", "observe-before-write", map[string]any{"attempt": 2, "publication": map[string]any{"from": "pending", "to": "submitting", "token": "stale-write"}})
+	r := reviewTestCall(p, "review_publication", "observe-before-write", map[string]any{"attempt": 2, "publication": map[string]any{"from": "pending", "to": "submitting", "identity": "reviewer-account", "token": "stale-write"}})
 	operatorEqual(t, "observed drift blocks new provider write", r.text("code"), "review_conflict")
 	operatorEqual(t, "no stale write authorized", reviewTestIntentAcquired(t, r), false)
 }
