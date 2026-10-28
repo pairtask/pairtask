@@ -23,7 +23,7 @@ func TestPeerMessagesAcceptanceFailedInsertRollsBackSequence(t *testing.T) {
 	defer raw.Close()
 	_, err = raw.Exec("CREATE TRIGGER fail_message BEFORE INSERT ON peer_messages BEGIN SELECT RAISE(ABORT, 'injected message failure'); END")
 	pairOK(t, err)
-	_, err = s.Queue(context.Background(), contact, "failed", "text", messageAt)
+	_, err = s.Queue(context.Background(), messaging.Outgoing{Contact: contact, ID: "failed", Text: "text", Now: messageAt})
 	if err == nil {
 		t.Fatal("queue succeeded without durable insertion")
 	}
@@ -33,7 +33,7 @@ func TestPeerMessagesAcceptanceFailedInsertRollsBackSequence(t *testing.T) {
 	}
 	_, err = raw.Exec("DROP TRIGGER fail_message")
 	pairOK(t, err)
-	next, err := s.Queue(context.Background(), contact, "first", "text", messageAt)
+	next, err := s.Queue(context.Background(), messaging.Outgoing{Contact: contact, ID: "first", Text: "text", Now: messageAt})
 	pairOK(t, err)
 	pairEqual(t, next.N, uint64(1))
 	pairEqual(t, len(messagePage(t, s, contact)), 1)
@@ -44,7 +44,7 @@ func TestPeerMessagesAcceptanceConcurrentQueueEnforcesQuota(t *testing.T) {
 	s := db.PeerMessages()
 	ctx := context.Background()
 	for i := 0; i < 63; i++ {
-		_, err := s.Queue(ctx, contact, fmt.Sprintf("seed-%d", i), "text", messageAt)
+		_, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: fmt.Sprintf("seed-%d", i), Text: "text", Now: messageAt})
 		pairOK(t, err)
 	}
 	start := make(chan struct{})
@@ -55,7 +55,7 @@ func TestPeerMessagesAcceptanceConcurrentQueueEnforcesQuota(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			<-start
-			_, err := s.Queue(ctx, contact, fmt.Sprintf("race-%d", n), "text", messageAt)
+			_, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: fmt.Sprintf("race-%d", n), Text: "text", Now: messageAt})
 			results <- err
 		}(i)
 	}
@@ -98,7 +98,7 @@ func TestPeerMessagesAcceptanceExpiryUsesChronologicalSubseconds(t *testing.T) {
 	db, contact := messageFixture(t)
 	s := db.PeerMessages()
 	ctx := context.Background()
-	_, err := s.Queue(ctx, contact, "old", "text", messageAt)
+	_, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: "old", Text: "text", Now: messageAt})
 	pairOK(t, err)
 	// The cutoff is half a second after creation. RFC3339Nano strings are
 	// not lexically ordered when one timestamp omits fractional seconds.
@@ -113,7 +113,7 @@ func TestPeerMessagesAcceptanceOfferClampsAndPreservesOrder(t *testing.T) {
 	s := db.PeerMessages()
 	ctx := context.Background()
 	for i := 0; i < 20; i++ {
-		_, err := s.Queue(ctx, contact, fmt.Sprintf("out-%d", i), "1234", messageAt)
+		_, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: fmt.Sprintf("out-%d", i), Text: "1234", Now: messageAt})
 		pairOK(t, err)
 	}
 	rows, err := s.Offer(ctx, contact, messageAt, 1000, 1<<30)

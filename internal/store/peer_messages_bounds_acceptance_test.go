@@ -45,7 +45,7 @@ func TestPeerMessagesAcceptanceTextCollectionKeepsReplayIdentity(t *testing.T) {
 				_, err = s.MarkRead(ctx, contact, []string{original.ID}, messageAt)
 				pairOK(t, err)
 			} else {
-				row, err := s.Queue(ctx, contact, original.ID, original.Text, messageAt)
+				row, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: original.ID, Text: original.Text, Now: messageAt})
 				pairOK(t, err)
 				original = row.Message
 				pairOK(t, s.Delivered(ctx, contact, original.ID, messageAt))
@@ -64,7 +64,7 @@ func TestPeerMessagesAcceptanceTextCollectionKeepsReplayIdentity(t *testing.T) {
 				pairOK(t, err)
 				pairEqual(t, answer.Refusal, messaging.Refuse(messaging.ReasonConflict))
 			} else {
-				row, err := s.Queue(ctx, contact, original.ID, original.Text, messageAt)
+				row, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: original.ID, Text: original.Text, Now: messageAt})
 				pairOK(t, err)
 				pairEqual(t, row.N, original.N)
 				pairEqual(t, row.Text, "")
@@ -128,7 +128,7 @@ func TestPeerMessagesAcceptanceContactTextNeverEntersAgentInbox(t *testing.T) {
 		answer, err := s.Accept(ctx, key, m, messageAt)
 		pairOK(t, err)
 		pairEqual(t, answer.Stored, true)
-		_, err = s.Queue(ctx, key, m.ID, "local text", messageAt)
+		_, err = s.Queue(ctx, messaging.Outgoing{Contact: key, ID: m.ID, Text: "local text", Now: messageAt})
 		pairOK(t, err)
 		pairEqual(t, len(messagePage(t, s, key)), 2)
 	}

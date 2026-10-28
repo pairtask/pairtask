@@ -82,7 +82,7 @@ func TestMessageSessionAcceptanceBothDirectionsOverOneDial(t *testing.T) {
 		store messaging.Store
 		id    string
 	}{{left.PeerMessages(), "left"}, {right.PeerMessages(), "right"}} {
-		if _, err := side.store.Queue(ctx, sessionContact, side.id, "hello", sessionAt); err != nil {
+		if _, err := side.store.Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: side.id, Text: "hello", Now: sessionAt}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -110,7 +110,7 @@ func TestMessageSessionAcceptanceLostReadStoredRetriesAfterRestart(t *testing.T)
 	left, path := sessionFixture(t)
 	right, _ := sessionFixture(t)
 	ctx := context.Background()
-	if _, err := right.PeerMessages().Queue(ctx, sessionContact, "right", "hello", sessionAt); err != nil {
+	if _, err := right.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: "right", Text: "hello", Now: sessionAt}); err != nil {
 		t.Fatal(err)
 	}
 	sessionSuccess(t, sessionExchange(t, left.PeerMessages(), right.PeerMessages(), 0))
