@@ -4,6 +4,7 @@ package hub
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -56,14 +57,15 @@ type Hub struct {
 	revision uint64
 	gen      uint64
 	statuses statusState
-	pairing  *peer.Invitations       // operator pairing (#178); memory only, created on first use
-	identity *peer.WorkspaceIdentity // loaded on first pairing use; never replaced
+	pairing  *peer.Invitations       // operator pairing (#178); memory only
+	identity *peer.WorkspaceIdentity // loaded at Run's start or on a pairing request; never replaced
+	pair     pairingWiring           // redemption and the inbound endpoint
 }
 
 // New creates a Hub. startSeq is the last persisted sequence number
 // (from store.LastSeq), so the global order survives broker restarts.
 func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
-	return &Hub{
+	h := &Hub{
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		inbound:    make(chan Inbound, 64),
@@ -76,6 +78,11 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 		startedAt:  time.Now().UTC(),
 		epoch:      uuid.NewString(),
 	}
+	h.pair.cfg = defaultPairingConfig()
+	// The invitation manager does no I/O; it fails only on a missing store,
+	// which leaves pairing unavailable rather than the hub.
+	h.pairing, _ = peer.NewInvitations(peer.DefaultInvitationPolicy(), time.Now, rand.Reader, st)
+	return h
 }
 
 // Register adds a client to the hub. Must be called before sending Inbound.
@@ -125,7 +132,9 @@ func (h *Hub) Done() <-chan struct{} { return h.done }
 func (h *Hub) Run(ctx context.Context) {
 	clients := make(map[string]*Client)
 	defer close(h.done)
+	defer h.settlePairing()
 	defer h.disconnectAll(clients)
+	h.beginPairing(ctx)
 
 	for {
 		select {

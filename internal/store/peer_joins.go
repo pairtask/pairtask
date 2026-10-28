@@ -31,7 +31,10 @@ CREATE TABLE IF NOT EXISTS peer_joins (
 
 var _ peer.JoinStore = (*Store)(nil)
 
-const joinColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at`
+const joinInsertColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, destination`
+
+// destination came later: older rows have NULL, read as empty.
+const joinColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, COALESCE(destination, '')`
 
 // BeginJoin records a join's intent; see peer.JoinStore.
 func (s *Store) BeginJoin(ctx context.Context, start peer.JoinStart) (peer.JoinRecord, error) {
@@ -158,11 +161,11 @@ func (s *Store) inJoinTx(ctx context.Context, apply func(*sql.Tx) (peer.JoinReco
 }
 
 func putJoin(ctx context.Context, tx *sql.Tx, r peer.JoinRecord) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO peer_joins (`+joinColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_joins (`+joinInsertColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(operation_id) DO UPDATE SET invitation_id = excluded.invitation_id, inviter_operation_id = excluded.inviter_operation_id,
     peer = excluded.peer, transcript_id = excluded.transcript_id, state = excluded.state, updated_at = excluded.updated_at`,
 		r.OperationID, r.Joiner, r.JoinerName, r.InvitationID, r.InviterOperationID, r.Peer, r.TranscriptID,
-		string(r.State), stamp(r.CreatedAt), stamp(r.UpdatedAt))
+		string(r.State), stamp(r.CreatedAt), stamp(r.UpdatedAt), r.Destination)
 	if err != nil {
 		return fmt.Errorf("store join: %w", err)
 	}
@@ -177,7 +180,7 @@ func scanJoin(row rowScanner) (peer.JoinRecord, bool, error) {
 	var r peer.JoinRecord
 	var state, created, updated string
 	err := row.Scan(&r.OperationID, &r.Joiner, &r.JoinerName, &r.InvitationID, &r.InviterOperationID, &r.Peer,
-		&r.TranscriptID, &state, &created, &updated)
+		&r.TranscriptID, &state, &created, &updated, &r.Destination)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.JoinRecord{}, false, nil
 	}

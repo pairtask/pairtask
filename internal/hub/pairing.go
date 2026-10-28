@@ -7,7 +7,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -92,17 +91,6 @@ var pairingOps = map[string]pairingOp{
 
 func noPairingChange(*Hub, context.Context, string) (string, error) { return "", nil }
 
-// ensurePairing creates the invitation manager on first use; the hub's Run
-// goroutine serializes operator requests, so this needs no lock.
-func (h *Hub) ensurePairing() error {
-	if h.pairing != nil {
-		return nil
-	}
-	manager, err := peer.NewInvitations(peer.DefaultInvitationPolicy(), time.Now, rand.Reader, h.store)
-	h.pairing = manager
-	return err
-}
-
 // loadIdentity loads, or for a new workspace creates, the identity key; a
 // failure is retried on the next request, never repaired by replacing a key.
 func (h *Hub) loadIdentity(ctx context.Context) string {
@@ -115,6 +103,7 @@ func (h *Hub) loadIdentity(ctx context.Context) string {
 		return identityProblem(err)
 	}
 	h.identity = id
+	h.publishIdentity(id)
 	return ""
 }
 
@@ -123,12 +112,18 @@ func (h *Hub) operatorPairing(ctx context.Context, _ map[string]*Client, req ope
 	if len(msg.MessageID) > 128 {
 		return (&routingError{protocol.ErrMalformedFrame, "message_id must be at most 128 bytes"}).frame("")
 	}
+	if rerr := redeemFields(msg); rerr != nil {
+		return rerr.frame(msg.MessageID)
+	}
+	if msg.PairingOp == protocol.PairingOpRedeem {
+		return h.operatorRedeem(ctx, req)
+	}
 	op, ok := pairingOps[msg.PairingOp]
 	if !ok {
-		return (&routingError{protocol.ErrMalformedFrame, "pairing_op must be open, cancel, status, list, accept or reject"}).frame(msg.MessageID)
+		return (&routingError{protocol.ErrMalformedFrame, "pairing_op must be open, cancel, status, list, accept, reject or redeem"}).frame(msg.MessageID)
 	}
-	if op.target != (msg.PairingTarget != "") {
-		return (&routingError{protocol.ErrMalformedFrame, "cancel, accept and reject need pairing_target; the others take none"}).frame(msg.MessageID)
+	if rerr := checkTarget(op, msg); rerr != nil {
+		return rerr.frame(msg.MessageID)
 	}
 	// The audit names the operation and its target, never the code.
 	auditID, err := h.store.RecordOperatorAudit(ctx, store.OperatorAudit{Action: "pairing " + msg.PairingOp, PrincipalUID: req.uid,
@@ -136,32 +131,66 @@ func (h *Hub) operatorPairing(ctx context.Context, _ map[string]*Client, req ope
 	if err != nil {
 		return (&routingError{protocol.ErrInternal, "operator audit unavailable; pairing unchanged"}).frame(msg.MessageID)
 	}
-	snapshot, rerr := h.applyPairing(ctx, op, msg.PairingTarget)
+	resp, rerr := h.pairingResponse(ctx, op, msg)
 	if rerr != nil {
 		h.finishAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditRejected, Detail: rerr.detail})
 		return rerr.frame(msg.MessageID)
 	}
 	h.finishAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditAccepted})
-	return fitPairing(protocol.Message{Type: protocol.TypeOperatorPairingResult, MessageID: msg.MessageID, PairingResult: snapshot})
+	return fitPairing(resp)
 }
 
-// fitPairing keeps whole requests, in order, while the response frame fits:
-// a key or name is never shortened, and the total and the truncation flag
-// keep the omission visible. The invitation, and open's code, always fit.
+// checkTarget enforces each operation's target; status may name one join.
+func checkTarget(op pairingOp, msg protocol.Message) *routingError {
+	if msg.PairingOp == protocol.PairingOpStatus || op.target == (msg.PairingTarget != "") {
+		return nil
+	}
+	return &routingError{protocol.ErrMalformedFrame, "cancel, accept and reject need pairing_target; open and list take none"}
+}
+
+// pairingResponse applies op and answers with the snapshot, plus the named
+// join for a targeted status.
+func (h *Hub) pairingResponse(ctx context.Context, op pairingOp, msg protocol.Message) (protocol.Message, *routingError) {
+	resp := protocol.Message{Type: protocol.TypeOperatorPairingResult, MessageID: msg.MessageID}
+	if msg.PairingOp == protocol.PairingOpStatus && msg.PairingTarget != "" {
+		view, rerr := h.joinStatus(ctx, msg.PairingTarget)
+		if rerr != nil {
+			return resp, rerr
+		}
+		resp.PairingJoin = view
+		msg.PairingTarget = ""
+	}
+	snapshot, rerr := h.applyPairing(ctx, op, msg.PairingTarget)
+	resp.PairingResult = snapshot
+	return resp, rerr
+}
+
+// fitPairing keeps whole joins, then whole requests, in order, while the
+// response frame fits: a key, name or destination is never shortened, and
+// the totals and truncation flags keep omissions visible. The invitation,
+// open's code and a named join always fit.
 func fitPairing(resp protocol.Message) protocol.Message {
 	snapshot := resp.PairingResult
-	requests := snapshot.Requests
-	snapshot.Requests = []protocol.PairingRequestView{}
+	if snapshot == nil {
+		return resp
+	}
+	joins, requests := snapshot.Joins, snapshot.Requests
+	snapshot.Joins, snapshot.Requests = []protocol.PairingJoinView{}, []protocol.PairingRequestView{}
 	size := encodedLen(resp) + snapshotReserve
-	for i, r := range requests {
+	snapshot.Joins, snapshot.JoinsTruncated, size = fitRows(joins, snapshot.JoinsTruncated, size)
+	snapshot.Requests, snapshot.RequestsTruncated, _ = fitRows(requests, snapshot.RequestsTruncated, size)
+	return resp
+}
+
+// fitRows keeps the leading rows that fit in what remains of the frame.
+func fitRows[T any](rows []T, truncated bool, size int) ([]T, bool, int) {
+	for i, r := range rows {
 		size += encodedLen(r) + 1 // and its comma
 		if size > protocol.MaxFrameBytes {
-			snapshot.RequestsTruncated = true
-			break
+			return rows[:i], true, size
 		}
-		snapshot.Requests = requests[:i+1]
 	}
-	return resp
+	return rows, truncated, size
 }
 
 // encodedLen is v's JSON size; what can't be encoded never fits.
@@ -174,7 +203,7 @@ func encodedLen(v any) int {
 }
 
 func (h *Hub) applyPairing(ctx context.Context, op pairingOp, target string) (*protocol.PairingSnapshot, *routingError) {
-	if err := h.ensurePairing(); err != nil {
+	if h.pairing == nil {
 		return nil, &routingError{protocol.ErrInternal, "pairing unavailable"}
 	}
 	problem := h.loadIdentity(ctx)
@@ -213,6 +242,9 @@ func (h *Hub) pairingSnapshot(ctx context.Context) (*protocol.PairingSnapshot, e
 	for _, r := range requests {
 		snapshot.Requests = append(snapshot.Requests, protocol.PairingRequestView{IdentityKey: r.IdentityKey, Name: r.Name,
 			State: string(r.State), FirstPairedAt: r.FirstPairedAt})
+	}
+	if err := h.joinsSnapshot(ctx, snapshot); err != nil {
+		return nil, err
 	}
 	if status, ok := h.pairing.Status(); ok {
 		snapshot.Invitation = &protocol.InvitationView{ID: status.ID, ExpiresAt: status.ExpiresAt, AttemptsLeft: status.AttemptsLeft,

@@ -37,6 +37,11 @@ type config struct {
 	// OperatorSocketPath is empty when the operator endpoint is disabled.
 	OperatorSocketPath string
 	OperatorUID        int
+	// Pairing (#178, experimental): an empty socket path disables inbound
+	// pairing; an empty egress disables redeeming other workspaces' codes.
+	PairingSocketPath string
+	PairingEgress     string
+	PairingName       string
 }
 
 func loadConfig(lookup settings.LookupFunc) (config, error) {
@@ -48,25 +53,52 @@ func loadConfig(lookup settings.LookupFunc) (config, error) {
 	if cfg.DBPath, err = settings.Required(lookup, "DB_PATH", "./collab-ai.db"); err != nil {
 		return cfg, err
 	}
+	if err := loadOperator(lookup, &cfg); err != nil {
+		return cfg, err
+	}
+	return cfg, loadPairing(lookup, &cfg)
+}
+
+func loadOperator(lookup settings.LookupFunc, cfg *config) error {
 	// The operator endpoint is optional: unset or empty disables it.
 	cfg.OperatorSocketPath, _, _ = settings.LookupIn(lookup, "OPERATOR_SOCKET_PATH")
 	uid, _, _ := settings.LookupIn(lookup, "OPERATOR_UID")
 	if cfg.OperatorSocketPath == "" {
 		if uid != "" {
-			return cfg, errors.New(settings.Name("OPERATOR_UID") + " requires " + settings.Name("OPERATOR_SOCKET_PATH"))
+			return errors.New(settings.Name("OPERATOR_UID") + " requires " + settings.Name("OPERATOR_SOCKET_PATH"))
 		}
-		return cfg, nil
+		return nil
 	}
 	parsed, err := strconv.Atoi(uid)
 	if err != nil || parsed < 0 {
-		return cfg, errors.New(settings.Name("OPERATOR_SOCKET_PATH") + " requires " + settings.Name("OPERATOR_UID") +
+		return errors.New(settings.Name("OPERATOR_SOCKET_PATH") + " requires " + settings.Name("OPERATOR_UID") +
 			", a non-negative numeric UID")
 	}
 	cfg.OperatorUID = parsed
 	if filepath.Clean(cfg.OperatorSocketPath) == filepath.Clean(cfg.SocketPath) {
-		return cfg, errors.New("the operator socket must differ from the agent socket")
+		return errors.New("the operator socket must differ from the agent socket")
 	}
-	return cfg, nil
+	return nil
+}
+
+// openHub loads the state and prepares the hub, pairing included, before
+// it runs.
+func openHub(ctx context.Context, cfg config, st *store.Store, log *slog.Logger) (*hub.Hub, error) {
+	lastSeq, err := st.LastSeq(ctx)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("state loaded", "db", cfg.DBPath, "last_seq", lastSeq)
+	h := hub.New(st, lastSeq, log)
+	h.SetPairing(pairingConfig(cfg))
+	n, err := h.RecoverJoins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("recover pairing redemptions: %w", err)
+	}
+	if n > 0 {
+		log.Info("pairing redemptions interrupted before verification marked unverified", "count", n)
+	}
+	return h, nil
 }
 
 func run(cfg config, log *slog.Logger) error {
@@ -79,13 +111,10 @@ func run(cfg config, log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	lastSeq, err := st.LastSeq(ctx)
+	h, err := openHub(ctx, cfg, st, log)
 	if err != nil {
 		return err
 	}
-	log.Info("state loaded", "db", cfg.DBPath, "last_seq", lastSeq)
-
-	h := hub.New(st, lastSeq, log)
 	go h.Run(ctx)
 	defer func() {
 		stop()
@@ -108,12 +137,14 @@ func run(cfg config, log *slog.Logger) error {
 		}()
 	}
 
+	pairingDone := pairingEndpoint{cfg: cfg, h: h, log: log}.start(ctx, stop)
+
 	srv := server.New(cfg.SocketPath, h, log)
 	defer srv.Close()
 
 	err = srv.Listen(ctx)
 	stop()
-	err = errors.Join(err, <-operatorDone)
+	err = errors.Join(err, <-operatorDone, <-pairingDone)
 	<-h.Done()
 	log.Info("shutdown complete")
 	return err

@@ -41,6 +41,9 @@ type command struct {
 	check     func(argument) error
 	run       func(m *Model, arg argument) tea.Cmd
 	available func(m *Model) bool
+	// secret commands may carry a secret: the command line is cleared
+	// however the command ends, a refused check included.
+	secret bool
 }
 
 func noArgs(a argument) error {
@@ -129,7 +132,7 @@ var commands = []command{
 	{name: "history", help: "load older messages", check: noArgs, run: (*Model).historyCommand},
 	{name: "chat", usage: `all|id|@a @b|"id"|["a","b"]`, help: "switch conversation: all, an agent, a group of agents, or JSON for any IDs", check: chatArg, run: (*Model).chatCommand},
 	{name: "room", aliases: []string{"rooms"}, usage: "[NAME | add NAME @a | remove NAME @a | delete NAME]", help: "rooms: list, open (creating) a room's tab, add or remove members, delete a room", check: roomArg, run: (*Model).roomsCommand},
-	{name: "pair", usage: "[open | status | cancel | accept KEY | reject KEY]", help: "pairing preview: open or cancel an invitation code, decide pairing requests (joining isn't connected yet)", check: pairArg, run: (*Model).pairCommand},
+	{name: "pair", usage: "[open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME]]", help: "experimental pairing: open or cancel an invitation code, decide requests, redeem another workspace's code", check: pairArg, run: (*Model).pairCommand, secret: true},
 	{name: "close", help: "hide this conversation from the bar (nothing is deleted; new messages reopen it)", check: noArgs, run: (*Model).closeCommand},
 	{name: "forget", help: "remove this group or 1:1 from the bar until /chat reopens it (its messages stay in All)", check: noArgs, run: (*Model).forgetCommand},
 	{name: "stages", usage: "#n", help: "delivery stages of a sent message", check: targetArg, run: (*Model).stagesCommand, available: (*Model).hasSent},
@@ -214,6 +217,9 @@ func (m *Model) runCommand(name, arg argument) tea.Cmd {
 func (m *Model) runChecked(c command, arg argument) tea.Cmd {
 	if err := c.check(arg); err != nil {
 		m.status = "/" + c.name + " " + err.Error()
+		if c.secret {
+			m.closeCommandLine()
+		}
 		return nil
 	}
 	m.closeCommandLine()

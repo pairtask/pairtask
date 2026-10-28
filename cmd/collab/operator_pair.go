@@ -12,7 +12,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorPairUsage = "usage: pairtask operator pair [list | open | status | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] [--timeout 5s]"
+const operatorPairUsage = "usage: pairtask operator pair [list | open | status [OPERATION_ID] | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] (the code is read from stdin)"
 
 // pairVerbs are the pairing operations, how many positional arguments each
 // takes, and the read that resolves a missing or prefixed target first.
@@ -22,7 +22,7 @@ var pairVerbs = map[string]struct {
 }{
 	protocol.PairingOpList:   {[]int{0}, ""},
 	protocol.PairingOpOpen:   {[]int{0}, ""},
-	protocol.PairingOpStatus: {[]int{0}, ""},
+	protocol.PairingOpStatus: {[]int{0, 1}, ""}, // optional: one redemption's operation ID
 	protocol.PairingOpCancel: {[]int{0, 1}, protocol.PairingOpStatus},
 	protocol.PairingOpAccept: {[]int{1}, protocol.PairingOpList},
 	protocol.PairingOpReject: {[]int{1}, protocol.PairingOpList},
@@ -38,6 +38,9 @@ var pairTargets = map[string]func(s *protocol.PairingSnapshot, typed string) (st
 // runOperatorPair manages pairing invitations and requests (#178). Only open
 // prints the code, on stdout.
 func runOperatorPair(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == protocol.PairingOpRedeem {
+		return runOperatorPairRedeem(ctx, args[1:], stdout, stderr)
+	}
 	call, req, code := parseOperatorPair(args, stderr)
 	if code != -1 {
 		return code
@@ -52,8 +55,17 @@ func runOperatorPair(ctx context.Context, args []string, stdout, stderr io.Write
 	if call.asJSON {
 		return encodeJSON(stdout, stderr, resp)
 	}
+	writeJoin(stdout, resp.PairingJoin)
 	writePairing(stdout, resp.PairingResult)
 	return 0
+}
+
+// writeJoin prints the redemption a targeted status named.
+func writeJoin(w io.Writer, j *protocol.PairingJoinView) {
+	if j == nil {
+		return
+	}
+	fmt.Fprintf(w, "Redemption %q to %q: %s\n", j.OperationID, j.Destination, j.State)
 }
 
 func parseOperatorPair(args []string, stderr io.Writer) (operatorCall, protocol.Message, int) {
@@ -70,7 +82,10 @@ func parseOperatorPair(args []string, stderr io.Writer) (operatorCall, protocol.
 	req := protocol.Message{Type: protocol.TypeOperatorPairing, MessageID: uuid.NewString(), PairingOp: op}
 	flags := flag.NewFlagSet("operator pair", flag.ContinueOnError)
 	call.register(flags)
+	// Positional arguments may come before or after the flags.
+	leading, args := splitLeading(args)
 	code := parseFlags(flags, args, operatorPairUsage, stderr, func(rest []string) error {
+		rest = append(leading, rest...)
 		if !slices.Contains(verb.args, len(rest)) {
 			return fmt.Errorf("pair %s: wrong number of arguments", op)
 		}
@@ -83,6 +98,15 @@ func parseOperatorPair(args []string, stderr io.Writer) (operatorCall, protocol.
 		return call.validate()
 	})
 	return call, req, code
+}
+
+// splitLeading separates the arguments before the first flag.
+func splitLeading(args []string) (leading, rest []string) {
+	i := slices.IndexFunc(args, func(a string) bool { return strings.HasPrefix(a, "-") })
+	if i < 0 {
+		return args, nil
+	}
+	return args[:i], args[i:]
 }
 
 // resolvePairTarget fills the full target before a mutation: cancel without
@@ -134,6 +158,21 @@ func writePairing(w io.Writer, s *protocol.PairingSnapshot) {
 	}
 	if s.RequestsTruncated {
 		fmt.Fprintf(w, "(showing %d of %d requests; pending ones list first, so deciding these brings the rest into view)\n", len(s.Requests), s.RequestsTotal)
+	}
+	writeJoins(w, s)
+}
+
+// writeJoins lists this workspace's redemptions, newest first.
+func writeJoins(w io.Writer, s *protocol.PairingSnapshot) {
+	if s.JoinsTotal == 0 {
+		return
+	}
+	fmt.Fprintf(w, "Redemptions (%d):\n", s.JoinsTotal)
+	for _, j := range s.Joins {
+		fmt.Fprintf(w, "%q  %q  %s\n", j.OperationID, j.Destination, j.State)
+	}
+	if s.JoinsTruncated {
+		fmt.Fprintf(w, "(showing the newest %d of %d; status OPERATION_ID shows any one)\n", len(s.Joins), s.JoinsTotal)
 	}
 }
 

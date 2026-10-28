@@ -18,12 +18,16 @@ const pairingTestCode = "739-281"
 
 func pairingChatHarness(t *testing.T, supported bool) *chatHarness {
 	t.Helper()
-	s := newChatScript()
-	h := &chatHarness{t: t, wire: s, results: make(chan tea.Msg, 128), done: make(chan struct{}), dials: make(chan chatDialResult, 8)}
 	caps := slices.Clone(protocol.SessionCapabilities)
 	if !supported {
 		caps = slices.DeleteFunc(caps, func(cap string) bool { return cap == "pairing" })
 	}
+	return pairingChatCapabilities(t, caps)
+}
+func pairingChatCapabilities(t *testing.T, caps []string) *chatHarness {
+	t.Helper()
+	s := newChatScript()
+	h := &chatHarness{t: t, wire: s, results: make(chan tea.Msg, 128), done: make(chan struct{}), dials: make(chan chatDialResult, 8)}
 	h.dials <- chatDialResult{wire: s, session: protocol.SessionInfo{SessionID: "owner", Epoch: "epoch", Capabilities: caps, OpenedAt: time.Now()}}
 	h.m = chat.New(chat.Options{Backoff: chat.BackoffPolicy{Base: time.Millisecond, Max: 5 * time.Millisecond}, Dial: func(context.Context) (chat.Transport, protocol.SessionInfo, error) {
 		select {
