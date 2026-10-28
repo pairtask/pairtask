@@ -101,9 +101,8 @@ func (p identityPaths) ensureDir() error {
 	err := os.Mkdir(p.dir, 0o700)
 	switch {
 	case err == nil:
-		// A umask such as 0117 would leave the new directory unsearchable.
-		if err := os.Chmod(p.dir, 0o700); err != nil {
-			return fmt.Errorf("create identity directory: %w", err)
+		if err := p.restoreDirMode(); err != nil {
+			return err
 		}
 	case !errors.Is(err, fs.ErrExist):
 		return fmt.Errorf("create identity directory: %w", err)
@@ -114,6 +113,28 @@ func (p identityPaths) ensureDir() error {
 	}
 	if !info.IsDir() || !private(info) || info.Mode().Perm() != 0o700 {
 		return fmt.Errorf("%w: %s must be a directory of ours with mode 0700", ErrIdentityUnsafe, p.dir)
+	}
+	return nil
+}
+
+// restoreDirMode gives a directory we just created the 0700 a umask such as
+// 0117 took away. It changes only the directory it opened, without following
+// a symlink, and only when that is a directory of ours.
+func (p identityPaths) restoreDirMode() error {
+	fd, err := syscall.Open(p.dir, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("%w: %s changed while it was created: %v", ErrIdentityUnsafe, p.dir, err)
+	}
+	defer syscall.Close(fd)
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("identity directory: %w", err)
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFDIR || int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("%w: %s must be a directory of ours", ErrIdentityUnsafe, p.dir)
+	}
+	if err := syscall.Fchmod(fd, 0o700); err != nil {
+		return fmt.Errorf("create identity directory: %w", err)
 	}
 	return nil
 }
