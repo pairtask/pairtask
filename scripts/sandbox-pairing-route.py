@@ -46,6 +46,7 @@ SECURED_OPERATOR = "/run/collab-ai-operator/operator.sock"
 SECURED_DB = "/var/lib/collab-ai-secured/broker/broker.db"
 JOIN_QUERY = ("SELECT operation_id, invitation_id, inviter_operation_id, peer, joiner, hex(transcript_id), state "
               "FROM peer_joins WHERE operation_id = ?")
+SETTLED_QUERY = "SELECT state, COALESCE(decision_confirmed_at, '') FROM peer_joins WHERE operation_id = ?"
 OUTCOME_QUERY = "SELECT operation_id, invitation_id, identity_key, hex(transcript_id) FROM peer_pairing_outcomes WHERE operation_id = ?"
 READ_ROW = """import json, sqlite3, sys
 db = sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True)
@@ -308,12 +309,18 @@ def inbound(deployment, host, connector_ip, request_state):
     return code, join["operation_id"]
 
 
-def settled(result, side):
-    """A followed settlement that ended with the decision confirmed."""
+def settled(result, operation_id, side):
+    """A followed settlement of exactly operation_id that ended with its
+    decision confirmed."""
     require(result.returncode == 0, f"{side}'s settlement was not confirmed: {result.stdout} {result.stderr}")
     join = json.loads(result.stdout)
+    require(join["operation_id"] == operation_id, f"{side} reported {join['operation_id']}, not {operation_id}")
     require(join["state"] == "contact" and join.get("decision_confirmed_at"), f"{side}'s settled join: {join}")
-    return join
+
+
+def require_settled_row(row, side):
+    """The stored join is a contact with its decision confirmed."""
+    require(row is not None and row[0] == "contact" and row[1], f"{side}'s stored join is not a confirmed contact: {row}")
 
 
 def settle_outbound(deployment, host, operation_id, accept):
@@ -323,8 +330,8 @@ def settle_outbound(deployment, host, operation_id, accept):
     if accept:
         result = host.pair("accept", secured_identity)
         require(result.returncode == 0, f"the host could not accept secured: {result.stderr}")
-    settled(deployment.operator("settle", operation_id, "--wait", WAIT, "--json"), "secured")
-    require(deployment.row(JOIN_QUERY, operation_id)[6] == "contact", "secured's stored join is not a contact")
+    settled(deployment.operator("settle", operation_id, "--wait", WAIT, "--json"), operation_id, "secured")
+    require_settled_row(deployment.row(SETTLED_QUERY, operation_id), "secured")
     host_snap = snapshot(host.pair("status", "--json"))
     require_delivered(host_snap, secured_identity, "the host")
     require_contact(host_snap, secured_identity, "the host")
@@ -339,8 +346,8 @@ def settle_inbound(deployment, host, operation_id, accept):
     if accept:
         result = deployment.operator("accept", host_identity)
         require(result.returncode == 0, f"secured could not accept the host: {result.stderr}")
-    settled(host.pair("settle", operation_id, "--wait", WAIT, "--json"), "the host")
-    require(host.row(JOIN_QUERY, operation_id)[6] == "contact", "the host's stored join is not a contact")
+    settled(host.pair("settle", operation_id, "--wait", WAIT, "--json"), operation_id, "the host")
+    require_settled_row(host.row(SETTLED_QUERY, operation_id), "the host")
     secured_snap = snapshot(deployment.operator("status", "--json"))
     require_delivered(secured_snap, host_identity, "secured")
     require_contact(secured_snap, host_identity, "secured")
