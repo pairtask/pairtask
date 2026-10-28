@@ -37,7 +37,10 @@ type FileChange struct {
 }
 
 // Caps are what an adapter can do. Nothing is published as a formal event
-// the adapter can't make.
+// the adapter can't make. Without LineComments, an adapter puts the
+// findings in the review's body, each with its path and line, and never
+// presents them as inline comments. Without Reconcile, a write that may
+// have landed stays uncertain: there is no way to look for it.
 type Caps struct {
 	FormalApprove        bool
 	FormalRequestChanges bool

@@ -139,7 +139,8 @@ func publishReview(ctx context.Context, c reviewClient, id string) (ReviewResult
 }
 
 // publish takes the next step the publication allows: a write under a
-// fresh intent, or a lookup of one in flight. It never writes twice.
+// fresh intent, or a lookup of a write that may have landed, which is never
+// written again.
 func publish(ctx context.Context, c reviewClient, f forge.Forge, v protocol.ReviewView) ReviewResult {
 	switch v.Publication.State {
 	case protocol.PublicationPending, protocol.PublicationFailed:
@@ -275,6 +276,9 @@ func definiteRefusal(err error) bool {
 // reconcile settles a write in flight by looking for it, with every fact
 // it must match. A miss or a partial match never leads to a second write.
 func reconcile(ctx context.Context, c reviewClient, f forge.Forge, v protocol.ReviewView) ReviewResult {
+	if !f.Capabilities().Reconcile {
+		return notWritten(v, forge.Errorf(forge.ClassUnsupported, "this forge adapter can't look up published reviews; the publication stays %s and nothing is written", v.Publication.State))
+	}
 	ev, err := event(v, f.Capabilities())
 	if err != nil {
 		return notWritten(v, err)
