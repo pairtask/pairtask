@@ -144,7 +144,8 @@ jobs:
 
   images:
     # On pushes, wait for base-mirror so images build from the just-published mirror; elsewhere it is skipped.
-    # Both matrix checks always run. A docs-only pull request skips their steps
+    # Both matrix checks always run. A pull request the classifier lets skip
+    # (docs only, or docs and the chat TUI by policy) skips their steps
     # instead of the job, so the two per-architecture check names still report.
     # A failed classify job stops this job, so no image proof turns green.
     # A successful classify with a missing or unexpected output builds: only
@@ -171,7 +172,7 @@ jobs:
         if: needs.classify.outputs.images == 'false'
         env:
           REASON: ${{ needs.classify.outputs.reason }}
-        run: echo "No image input changed ($REASON); the image proofs are skipped for this pull request."
+        run: echo "Skipped by policy ($REASON) - this pull request changes only docs or the chat TUI; main and release tags still build the images."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.classify.outputs.images != 'false'
         with:
@@ -270,7 +271,7 @@ jobs:
           compression-level: 0
           retention-days: 7
       - name: Remove this job's prepared operator images
-        # Only once Incus setup started; a docs-only run or an earlier failure skips it.
+        # Only once Incus setup started; a policy skip or an earlier failure skips it.
         if: always() && steps.incus.outcome != 'skipped' && steps.incus.outcome != ''
         run: sudo python3 scripts/sandbox_operator_prepared.py cleanup --remote local --token "$PAIRTASK_OPERATOR_PREPARED"
 
@@ -285,8 +286,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.14'
+          go-version: '1.26.10'
       - run: go test ./... -timeout=300s
+        env:
+          GOTOOLCHAIN: local # the pinned toolchain, never a download
 
   base-mirror:
     # Every published workspace must have its base images retained, whatever upstream prunes.
