@@ -111,7 +111,7 @@ func (p identityPaths) ensureDir() error {
 	if err != nil {
 		return fmt.Errorf("identity directory: %w", err)
 	}
-	if !info.IsDir() || !private(info) || info.Mode().Perm() != 0o700 {
+	if !info.IsDir() || !privateDir(info) {
 		return fmt.Errorf("%w: %s must be a directory of ours with mode 0700", ErrIdentityUnsafe, p.dir)
 	}
 	return nil
@@ -137,6 +137,11 @@ func (p identityPaths) restoreDirMode() error {
 		return fmt.Errorf("create identity directory: %w", err)
 	}
 	return nil
+}
+
+// privateDir reports a directory of ours that only we can use, and can.
+func privateDir(info fs.FileInfo) bool {
+	return private(info) && info.Mode().Perm() == 0o700
 }
 
 // private reports a file owned by us that no one else can use.
