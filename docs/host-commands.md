@@ -148,9 +148,28 @@ between the brokers. Neither starts by default:
   and tailnet addresses are allowed: they are where other workspaces live.
 
 Both take `--max-conns`, `--max-bytes` and `--idle` (16 connections, 1 MiB
-per direction and 30 s by default). The route's code is here; installing
-these as services in the images, the shared volumes and a native end-to-end
-proof come next (#178), so don't expect home-to-work redemption yet.
+per direction and 30 s by default).
+
+The Incus deployment installs the route with `pairing_route = true` (it
+needs `secured_runtime`, and can't be on together with the validation-only
+`peer_connector_probe`). It adds a `connector` container on the dev bridge
+and two one-way volumes:
+
+- `/mnt/pairtask-pairing`: read-write in secured (the broker's pairing
+  socket), read-only in connector;
+- `/mnt/pairtask-egress`: read-write in connector (the egress socket),
+  read-only in secured.
+
+secured keeps no network. The image's units start only in their role:
+`pairtask-pairing-setup` (root) prepares secured's side and the broker's
+route settings in `/run/pairtask/pairing.env`. In connector,
+`pairtask-connector-setup` (root) prepares the egress volume, and
+`pairtask-peer-egress` and `pairtask-peer-relay` (listening on port 7445)
+run as the `peer` user (UID 1052, group `collab-peer`, GID 1050). Stop secured (and connector) before turning the route on, off or
+changing it: the apply refuses otherwise. CI proves the installed route in a
+disposable project with redemptions both ways, crash restarts included;
+reaching a colleague's workspace on another machine still depends on your
+LAN or tailnet reaching connector's port, which isn't claimed here.
 
 With the socket or an egress set, the broker loads or creates its workspace
 key at startup and marks redemptions interrupted before verification

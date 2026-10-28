@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -114,6 +115,45 @@ func TestIdentityAcceptancePersistentPrivateKeyAndRedaction(t *testing.T) {
 		invEqual(t, strings.Contains(text, fmt.Sprint([]byte(key))), false)
 		invEqual(t, strings.Contains(text, fmt.Sprintf("%x", []byte(key))), false)
 	}
+}
+
+func TestIdentityAcceptanceInstalledServiceUmaskKeepsDirectoryTraversable(t *testing.T) {
+	const child = "PAIRTASK_IDENTITY_UMASK_ACCEPTANCE"
+	if os.Getenv(child) != "1" {
+		command := exec.Command(os.Args[0], "-test.run=^TestIdentityAcceptanceInstalledServiceUmaskKeepsDirectoryTraversable$")
+		command.Env = append(os.Environ(), child+"=1")
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("identity under installed service umask: %v\n%s", err, output)
+		}
+		return
+	}
+	// Isolate the process-wide umask from every other test in the suite.
+	dir := filepath.Join(t.TempDir(), "peer")
+	mask := syscall.Umask(0117)
+	defer syscall.Umask(mask)
+	marker := &identityMarker{}
+	id := identityLoad(t, dir, marker, rand.Reader)
+	info, err := os.Stat(dir)
+	invOK(t, err)
+	invEqual(t, info.Mode().Perm(), os.FileMode(0700))
+	key, err := os.Stat(filepath.Join(dir, "identity.key"))
+	invOK(t, err)
+	invEqual(t, key.Mode().Perm(), os.FileMode(0600))
+	invEqual(t, identityLoad(t, dir, marker, bytes.NewReader(nil)).Fingerprint(), id.Fingerprint())
+}
+
+func TestIdentityAcceptanceExistingInaccessibleDirectoryIsRefusedWithoutRepair(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "peer")
+	invOK(t, os.Mkdir(dir, 0700))
+	invOK(t, os.Chmod(dir, 0600))
+	t.Cleanup(func() { os.Chmod(dir, 0700) })
+	marker := &identityMarker{}
+	identityRefused(t, dir, marker, peer.ErrIdentityUnsafe)
+	info, err := os.Stat(dir)
+	invOK(t, err)
+	invEqual(t, info.Mode().Perm(), os.FileMode(0600))
+	invEqual(t, marker.fp, "")
 }
 
 func TestIdentityAcceptanceMissingCorruptAndChangedKeysNeverRegenerate(t *testing.T) {

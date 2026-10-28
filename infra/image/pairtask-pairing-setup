@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Prepare the opt-in pairing route (#178): the shared sockets' directories,
+stale sockets left by a stopped daemon, and the secured broker's route
+settings. Never touches broker state, the database or the workspace key."""
+
+import grp
+import os
+from pathlib import Path
+import pwd
+import socket
+import stat
+import sys
+
+
+STATE = Path("/var/lib/collab-ai-secured")
+INGRESS = Path("/mnt/pairtask-pairing")
+EGRESS = Path("/mnt/pairtask-egress")
+ENV = Path("/run/pairtask/pairing.env")
+PEER_GROUP, PEER_GID = "collab-peer", 1050
+PEER_USER, PEER_UID = "peer", 1052
+ENV_KEYS = ("PAIRTASK_PAIRING_SOCKET", "PAIRTASK_PAIRING_SOCKET_GROUP", "PAIRTASK_PAIRING_EGRESS")
+
+
+def check_role(role, state=STATE, ingress=INGRESS, egress=EGRESS, mounted=os.path.ismount):
+    """secured has its state and both route mounts; connector has both route
+    mounts and no secured state. Mounts decide, never mere directories."""
+    if not (mounted(str(ingress)) and mounted(str(egress))):
+        raise ValueError("the pairing route needs both route mounts")
+    expected = {"secured": True, "connector": False}
+    if role not in expected:
+        raise ValueError(f"unknown role: {role}")
+    if mounted(str(state)) != expected[role]:
+        raise ValueError(f"this instance is not the {role}")
+
+
+def require_ids():
+    """The image's route identities must be exactly the expected ones."""
+    group = grp.getgrnam(PEER_GROUP)
+    user = pwd.getpwnam(PEER_USER)
+    if group.gr_gid != PEER_GID:
+        raise ValueError(f"{PEER_GROUP} must be GID {PEER_GID}")
+    if (user.pw_uid, user.pw_gid) != (PEER_UID, PEER_GID):
+        raise ValueError(f"{PEER_USER} must be UID {PEER_UID} in GID {PEER_GID}")
+
+
+def prepare_shared_dir(path, uid, gid):
+    """A shared socket directory: real, owned uid:gid, 0750. Its contents are
+    left alone."""
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError(f"Refusing a non-directory route mount: {path}")
+    os.chown(path, uid, gid)
+    path.chmod(0o750)
+
+
+def remove_stale_socket(path, uid):
+    """Removes a socket this owner left behind, only when nothing answers."""
+    if not path.exists() and not path.is_symlink():
+        return
+    info = path.lstat()
+    if not owned_socket(info, uid):
+        raise ValueError(f"Refusing unexpected pairing endpoint: {path}")
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(2)
+        try:
+            connection.connect(str(path))
+        except ConnectionRefusedError:
+            unlink_if_same(path, info, uid)
+            return
+    raise ValueError(f"Pairing endpoint is already active: {path}")
+
+
+def owned_socket(info, uid):
+    return stat.S_ISSOCK(info.st_mode) and info.st_uid == uid
+
+
+def unlink_if_same(path, before, uid):
+    """Unlinks only the socket that refused, not one put in its place."""
+    after = path.lstat()
+    same = (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+    if not same or not owned_socket(after, uid):
+        raise ValueError(f"Pairing endpoint changed while probing: {path}")
+    path.unlink()
+
+
+def env_line(key, value):
+    if key not in ENV_KEYS:
+        raise ValueError(f"unexpected setting: {key}")
+    if any(c in value for c in "\n\r\0"):
+        raise ValueError(f"unsafe value for {key}")
+    return f"{key}={value}\n"
+
+
+def write_env(path, gid, values):
+    """Writes the broker's route settings atomically, root:gid 0640."""
+    temporary = path.with_name(path.name + ".tmp")
+    for candidate in (path, temporary):
+        if candidate.is_symlink():
+            raise ValueError(f"Refusing a symlinked settings path: {candidate}")
+    text = "".join(env_line(key, value) for key, value in values.items())
+    temporary.unlink(missing_ok=True)
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chown(temporary, 0, gid)
+        temporary.chmod(0o640)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)  # the old settings stay as they were
+        raise
+
+
+def clear_env(path=ENV):
+    """Removes the route settings if they are a regular file; anything else,
+    a symlink included, is refused and kept."""
+    if not path.exists() and not path.is_symlink():
+        return
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError(f"Refusing unexpected settings path: {path}")
+    path.unlink()
+
+
+def private_parent(path, uid=0):
+    """The settings' directory: real, owned by uid, writable by no one else.
+    Created 0755 when missing."""
+    path.mkdir(mode=0o755, exist_ok=True)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o022:
+        raise ValueError(f"Refusing an unsafe settings directory: {path}")
+
+
+def secured(state=STATE, ingress=INGRESS, egress=EGRESS, env=ENV):
+    """Root: the ingress directory and the broker's route settings."""
+    check_role("secured", state, ingress, egress)
+    require_ids()
+    broker = pwd.getpwnam("broker")
+    prepare_shared_dir(ingress, broker.pw_uid, PEER_GID)
+    private_parent(env.parent)
+    write_env(env, broker.pw_gid, {
+        "PAIRTASK_PAIRING_SOCKET": str(ingress / "pairing.sock"),
+        "PAIRTASK_PAIRING_SOCKET_GROUP": PEER_GROUP,
+        "PAIRTASK_PAIRING_EGRESS": "socket:" + str(egress / "egress.sock"),
+    })
+
+
+def connector(state=STATE, ingress=INGRESS, egress=EGRESS):
+    """Root: the egress directory."""
+    check_role("connector", state, ingress, egress)
+    require_ids()
+    prepare_shared_dir(egress, PEER_UID, PEER_GID)
+
+
+def clean_endpoint(socket_path, mounted=os.path.ismount):
+    """As the socket's owner before its daemon starts: removes only that
+    daemon's own stale socket. Without the route mount it does nothing."""
+    if not mounted(str(socket_path.parent)):
+        return
+    remove_stale_socket(socket_path, os.geteuid())
+
+
+def clean_ingress(ingress=INGRESS):
+    clean_endpoint(ingress / "pairing.sock")
+
+
+def clean_egress(egress=EGRESS):
+    clean_endpoint(egress / "egress.sock")
+
+
+def disable(env=ENV):
+    clear_env(env)
+
+
+COMMANDS = {"secured": secured, "connector": connector, "clean-ingress": clean_ingress,
+            "clean-egress": clean_egress, "disable": disable}
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] not in COMMANDS:
+        print("usage: pairtask-pairing-setup secured|connector|clean-ingress|clean-egress|disable", file=sys.stderr)
+        return 2
+    try:
+        COMMANDS[argv[1]]()
+    except (OSError, KeyError, ValueError) as error:
+        print(f"pairtask-pairing-setup: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

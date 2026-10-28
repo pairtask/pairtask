@@ -153,18 +153,34 @@ def await_event(lines, name, process, timeout=30):
     raise ValueError(f"timed out waiting for {name}: {''.join(process.stderr_lines[-20:])}")
 
 
+# The image now carries collab-peer and peer for the pairing route (#178);
+# the probe reuses them only with exactly these IDs, and creates them on an
+# older image that lacks them.
+ENSURE_GROUP = f"""
+if getent group collab-peer >/dev/null; then
+    test "$(getent group collab-peer | cut -d: -f3)" = {PEER_GID} || {{ echo "collab-peer is not GID {PEER_GID}" >&2; exit 1; }}
+else
+    groupadd --gid {PEER_GID} collab-peer
+fi
+"""
+ENSURE_PEER = f"""
+if id -u peer >/dev/null 2>&1; then
+    test "$(id -u peer):$(id -g peer)" = {CONNECTOR_UID}:{PEER_GID} || {{ echo "peer is not {CONNECTOR_UID}:{PEER_GID}" >&2; exit 1; }}
+else
+    useradd --system --uid {CONNECTOR_UID} --gid collab-peer --no-create-home --shell /usr/sbin/nologin peer
+fi
+"""
+
+
 def prepare_users(deployment):
-    """Fixture users, created for this run only; nothing is baked into images."""
-    deployment.sh("secured", f"""
-groupadd --gid {PEER_GID} collab-peer
+    """Fixture users for this run: peergate is the probe's own; collab-peer
+    and peer are reused from the image when it has them, with exact IDs."""
+    deployment.sh("secured", ENSURE_GROUP + f"""
 useradd --system --uid {GATE_UID} --gid collab-peer --no-create-home --shell /usr/sbin/nologin peergate
 install -d -o peergate -g collab-peer -m 0750 {PEER_DIR}
 install -d -o peergate -g collab-peer -m 0700 /var/lib/peerprobe
 """)
-    deployment.sh("connector", f"""
-groupadd --gid {PEER_GID} collab-peer
-useradd --system --uid {CONNECTOR_UID} --gid collab-peer --no-create-home --shell /usr/sbin/nologin peer
-""")
+    deployment.sh("connector", ENSURE_GROUP + ENSURE_PEER)
 
 
 class Client:

@@ -1,0 +1,21 @@
+[Unit]
+Description=Pairing relay into secured (#178, experimental)
+Requires=pairtask-connector-setup.service
+After=pairtask-connector-setup.service
+ConditionPathIsMountPoint=!/var/lib/collab-ai-secured
+ConditionPathIsMountPoint=/mnt/pairtask-pairing
+ConditionPathIsMountPoint=/mnt/pairtask-egress
+
+[Service]
+User=peer
+Group=collab-peer
+ExecStart=/usr/local/bin/pairtask peer relay --listen 0.0.0.0:7445 --dial-unix /mnt/pairtask-pairing/pairing.sock
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

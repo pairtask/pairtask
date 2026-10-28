@@ -95,20 +95,53 @@ func (p identityPaths) adoptOrCreate(random io.Reader) (*WorkspaceIdentity, erro
 	return id, p.syncPublished()
 }
 
-// ensureDir creates the directory 0700 if missing and checks it is a private
-// directory of ours, not a symlink.
+// ensureDir creates the directory 0700 if missing, whatever the umask, and
+// checks it is a private directory of ours that we can use, not a symlink.
 func (p identityPaths) ensureDir() error {
-	if err := os.Mkdir(p.dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+	err := os.Mkdir(p.dir, 0o700)
+	switch {
+	case err == nil:
+		if err := p.restoreDirMode(); err != nil {
+			return err
+		}
+	case !errors.Is(err, fs.ErrExist):
 		return fmt.Errorf("create identity directory: %w", err)
 	}
 	info, err := os.Lstat(p.dir)
 	if err != nil {
 		return fmt.Errorf("identity directory: %w", err)
 	}
-	if !info.IsDir() || !private(info) {
+	if !info.IsDir() || !privateDir(info) {
 		return fmt.Errorf("%w: %s must be a directory of ours with mode 0700", ErrIdentityUnsafe, p.dir)
 	}
 	return nil
+}
+
+// restoreDirMode gives a directory we just created the 0700 a umask such as
+// 0117 took away. It changes only the directory it opened, without following
+// a symlink, and only when that is a directory of ours.
+func (p identityPaths) restoreDirMode() error {
+	fd, err := syscall.Open(p.dir, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("%w: %s changed while it was created: %v", ErrIdentityUnsafe, p.dir, err)
+	}
+	defer syscall.Close(fd)
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("identity directory: %w", err)
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFDIR || int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("%w: %s must be a directory of ours", ErrIdentityUnsafe, p.dir)
+	}
+	if err := syscall.Fchmod(fd, 0o700); err != nil {
+		return fmt.Errorf("create identity directory: %w", err)
+	}
+	return nil
+}
+
+// privateDir reports a directory of ours that only we can use, and can.
+func privateDir(info fs.FileInfo) bool {
+	return private(info) && info.Mode().Perm() == 0o700
 }
 
 // private reports a file owned by us that no one else can use.

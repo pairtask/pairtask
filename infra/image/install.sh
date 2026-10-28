@@ -34,6 +34,9 @@ addgroup --gid 1002 broker
 addgroup --gid 1003 collab-clients
 adduser --uid 1002 --gid 1002 --disabled-password --gecos '' --no-create-home --home /nonexistent --shell /usr/sbin/nologin broker
 usermod -aG collab-clients agent
+# The pairing route's connector identities (#178); the old peer probe reuses them.
+addgroup --gid 1050 collab-peer
+adduser --uid 1052 --gid 1050 --disabled-password --gecos '' --no-create-home --home /nonexistent --shell /usr/sbin/nologin peer
 # Keep subordinate IDs inside the workspace's 131072-ID Incus mapping.
 sed -i '/^agent:/d' /etc/subuid /etc/subgid
 printf 'agent:65536:65536\n' >>/etc/subuid
@@ -82,6 +85,11 @@ cp infra/image/secured-codex.toml infra/image/secured-environments.toml /etc/pai
 install -m 0755 infra/image/pairtask-executor-connect /usr/local/lib/pairtask/pairtask-executor-connect
 install -m 0755 infra/image/pairtask-supervised-codex /usr/local/bin/pairtask-supervised-codex
 install -m 0755 infra/image/pairtask-broker-setup /usr/local/lib/pairtask/pairtask-broker-setup
+install -m 0755 infra/image/pairtask-pairing-setup /usr/local/lib/pairtask/pairtask-pairing-setup
+install -m 0644 infra/image/pairtask-pairing-setup.service infra/image/pairtask-connector-setup.service \
+    infra/image/pairtask-peer-egress.service infra/image/pairtask-peer-relay.service /etc/systemd/system/
+install -d /etc/systemd/system/pairtask-secured-broker.service.d
+install -m 0644 infra/image/pairtask-secured-broker.service.d/pairing.conf /etc/systemd/system/pairtask-secured-broker.service.d/
 install -m 0755 infra/image/pairtask-workspace-setup /usr/local/lib/pairtask/pairtask-workspace-setup
 install -m 0755 infra/image/pairtask-rtk-setup /usr/local/lib/pairtask/pairtask-rtk-setup
 install -m 0644 infra/image/pairtask-rtk-setup.service /etc/systemd/system/
@@ -108,6 +116,9 @@ systemctl enable pairtask-workspace-setup.service
 systemctl enable pairtask-tools-setup.service pairtask-tools-ready.service
 systemctl enable pairtask-rtk-setup.service
 systemctl enable pairtask-docker-session.service pairtask-docker-setup.service
+# The pairing route's units run only where its mounts are (see their conditions).
+systemctl enable pairtask-pairing-setup.service pairtask-connector-setup.service
+systemctl enable pairtask-peer-egress.service pairtask-peer-relay.service
 dpkg-query -W >/usr/local/share/pairtask/os-packages.txt
 # Last: certify the layout only once everything above has succeeded.
 python3 infra/image/install-layout.py finalize --root / --layout infra/image/layout-v2.json

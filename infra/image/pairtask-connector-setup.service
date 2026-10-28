@@ -1,0 +1,15 @@
+[Unit]
+Description=Prepare the connector side of the opt-in pairing route (#178)
+After=local-fs.target
+# Only connector: both route mounts, and no secured state.
+ConditionPathIsMountPoint=!/var/lib/collab-ai-secured
+ConditionPathIsMountPoint=/mnt/pairtask-pairing
+ConditionPathIsMountPoint=/mnt/pairtask-egress
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pairtask/pairtask-pairing-setup connector
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
