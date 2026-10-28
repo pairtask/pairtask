@@ -87,23 +87,46 @@ type Unsupported struct{ Min, Max byte }
 
 // Kind is a frame's type, after checking its version and size.
 func Kind(frame []byte) (byte, error) {
-	if !sized(len(frame)) {
+	f := wireFrame(frame)
+	if !f.sized() {
 		return 0, fmt.Errorf("%w: frame size", ErrProtocol)
 	}
-	if frame[0] != frameVersion || !knownFrame(frame[1]) {
+	if !f.known() {
 		return 0, fmt.Errorf("%w: unknown frame version or type", ErrProtocol)
 	}
 	return frame[1], nil
 }
 
-func sized(n int) bool { return n >= 2 && n <= MaxFrameBytes }
+// wireFrame is one frame as it arrived.
+type wireFrame []byte
 
-func knownFrame(kind byte) bool { return kind >= FrameHello && kind <= FrameUnsupported }
+func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
+
+func (f wireFrame) known() bool {
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameUnsupported
+}
+
+// shape is a frame type and its exact number of fields.
+type shape struct {
+	kind   byte
+	fields int
+}
+
+var (
+	helloShape       = shape{FrameHello, 2}
+	unsupportedShape = shape{FrameUnsupported, 2}
+	messageShape     = shape{FrameMessage, 4}
+	storedShape      = shape{FrameStored, 1}
+	refusedShape     = shape{FrameRefused, 3}
+	endShape         = shape{FrameEnd, 0}
+	readShape        = shape{FrameRead, 1}
+	readStoredShape  = shape{FrameReadStored, 1}
+)
 
 func EncodeHello(h Hello) ([]byte, error) { return encode(FrameHello, []byte{h.Min}, []byte{h.Max}) }
 
 func DecodeHello(frame []byte) (Hello, error) {
-	min, max, err := decodeVersions(frame, FrameHello)
+	min, max, err := decodeVersions(frame, helloShape)
 	return Hello{Min: min, Max: max}, err
 }
 
@@ -112,27 +135,28 @@ func EncodeUnsupported(u Unsupported) ([]byte, error) {
 }
 
 func DecodeUnsupported(frame []byte) (Unsupported, error) {
-	min, max, err := decodeVersions(frame, FrameUnsupported)
+	min, max, err := decodeVersions(frame, unsupportedShape)
 	return Unsupported{Min: min, Max: max}, err
 }
 
-func decodeVersions(frame []byte, kind byte) (byte, byte, error) {
-	f, err := decode(frame, kind, 2)
+func decodeVersions(frame []byte, want shape) (byte, byte, error) {
+	f, err := decode(frame, want)
 	if err != nil {
 		return 0, 0, err
 	}
-	if !versionRange(f[0], f[1]) {
+	if !versionRange(f) {
 		return 0, 0, fmt.Errorf("%w: versions", ErrProtocol)
 	}
 	return f[0][0], f[1][0], nil
 }
 
-// versionRange: one byte each, the lowest not above the highest.
-func versionRange(low, high []byte) bool {
-	if len(low) != 1 || len(high) != 1 {
+// versionRange: two fields of one byte each, the lowest not above the
+// highest.
+func versionRange(f [][]byte) bool {
+	if len(f[0]) != 1 || len(f[1]) != 1 {
 		return false
 	}
-	return low[0] <= high[0]
+	return f[0][0] <= f[1][0]
 }
 
 func EncodeMessage(m Message) ([]byte, error) {
@@ -141,7 +165,7 @@ func EncodeMessage(m Message) ([]byte, error) {
 }
 
 func DecodeMessage(frame []byte) (Message, error) {
-	f, err := decode(frame, FrameMessage, 4)
+	f, err := decode(frame, messageShape)
 	if err != nil {
 		return Message{}, err
 	}
@@ -158,7 +182,7 @@ func DecodeMessage(frame []byte) (Message, error) {
 func EncodeStored(s Stored) ([]byte, error) { return encode(FrameStored, []byte(s.ID)) }
 
 func DecodeStored(frame []byte) (Stored, error) {
-	id, err := decodeID(frame, FrameStored)
+	id, err := decodeID(frame, storedShape)
 	return Stored{ID: id}, err
 }
 
@@ -167,7 +191,7 @@ func EncodeRefused(r Refused) ([]byte, error) {
 }
 
 func DecodeRefused(frame []byte) (Refused, error) {
-	f, err := decode(frame, FrameRefused, 3)
+	f, err := decode(frame, refusedShape)
 	if err != nil {
 		return Refused{}, err
 	}
@@ -181,26 +205,26 @@ func DecodeRefused(frame []byte) (Refused, error) {
 func EncodeEnd() ([]byte, error) { return encode(FrameEnd) }
 
 func DecodeEnd(frame []byte) error {
-	_, err := decode(frame, FrameEnd, 0)
+	_, err := decode(frame, endShape)
 	return err
 }
 
 func EncodeRead(r Read) ([]byte, error) { return encode(FrameRead, []byte(r.ID)) }
 
 func DecodeRead(frame []byte) (Read, error) {
-	id, err := decodeID(frame, FrameRead)
+	id, err := decodeID(frame, readShape)
 	return Read{ID: id}, err
 }
 
 func EncodeReadStored(r ReadStored) ([]byte, error) { return encode(FrameReadStored, []byte(r.ID)) }
 
 func DecodeReadStored(frame []byte) (ReadStored, error) {
-	id, err := decodeID(frame, FrameReadStored)
+	id, err := decodeID(frame, readStoredShape)
 	return ReadStored{ID: id}, err
 }
 
-func decodeID(frame []byte, kind byte) (string, error) {
-	f, err := decode(frame, kind, 1)
+func decodeID(frame []byte, want shape) (string, error) {
+	f, err := decode(frame, want)
 	if err != nil {
 		return "", err
 	}
@@ -222,33 +246,41 @@ func encode(kind byte, fields ...[]byte) ([]byte, error) {
 	return frame, nil
 }
 
-// decode splits a frame of the wanted type into exactly count fields, each
+// decode splits a frame of the wanted shape into exactly its fields, each
 // a copy.
-func decode(frame []byte, kind byte, count int) ([][]byte, error) {
+func decode(frame []byte, want shape) ([][]byte, error) {
 	got, err := Kind(frame)
 	if err != nil {
 		return nil, err
 	}
-	if got != kind {
+	if got != want.kind {
 		return nil, fmt.Errorf("%w: unexpected frame type %d", ErrProtocol, got)
 	}
 	rest := frame[2:]
-	fields := make([][]byte, 0, count)
-	for range count {
-		if len(rest) < 2 {
-			return nil, fmt.Errorf("%w: truncated frame", ErrProtocol)
+	fields := make([][]byte, 0, want.fields)
+	for range want.fields {
+		var field []byte
+		if field, rest, err = nextField(rest); err != nil {
+			return nil, err
 		}
-		size := int(binary.BigEndian.Uint16(rest))
-		if len(rest)-2 < size {
-			return nil, fmt.Errorf("%w: truncated field", ErrProtocol)
-		}
-		fields = append(fields, append([]byte(nil), rest[2:2+size]...))
-		rest = rest[2+size:]
+		fields = append(fields, field)
 	}
 	if len(rest) != 0 {
 		return nil, fmt.Errorf("%w: trailing bytes", ErrProtocol)
 	}
 	return fields, nil
+}
+
+// nextField is one length-prefixed field, copied, and what follows it.
+func nextField(rest []byte) ([]byte, []byte, error) {
+	if len(rest) < 2 {
+		return nil, nil, fmt.Errorf("%w: truncated frame", ErrProtocol)
+	}
+	size := int(binary.BigEndian.Uint16(rest))
+	if len(rest)-2 < size {
+		return nil, nil, fmt.Errorf("%w: truncated field", ErrProtocol)
+	}
+	return append([]byte(nil), rest[2:2+size]...), rest[2+size:], nil
 }
 
 // stamp is a time as messages carry and hash it.
