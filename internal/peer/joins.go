@@ -166,14 +166,22 @@ func SplitDestination(d string) (string, uint16, error) {
 
 // parsePort accepts digits only, no sign, from 1 to 65535.
 func parsePort(port string) (uint16, error) {
-	if port == "" || strings.ContainsFunc(port, func(r rune) bool { return r < '0' || r > '9' }) {
+	if !decimal(port) {
 		return 0, ErrInvalidDestination
 	}
 	n, err := strconv.ParseUint(port, 10, 16)
-	if err != nil || n == 0 {
+	if err != nil {
+		return 0, ErrInvalidDestination
+	}
+	if n == 0 {
 		return 0, ErrInvalidDestination
 	}
 	return uint16(n), nil
+}
+
+// decimal reports a non-empty string of ASCII digits.
+func decimal(s string) bool {
+	return s != "" && !strings.ContainsFunc(s, func(r rune) bool { return r < '0' || r > '9' })
 }
 
 // validDestination accepts the empty destination of a direct join; an

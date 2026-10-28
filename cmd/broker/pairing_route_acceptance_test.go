@@ -53,6 +53,11 @@ func TestPairingRouteAcceptanceConfigResolvesGroupAndSocket(t *testing.T) {
 	if pc := pairingConfig(cfg); pc.Dial == nil || pc.Exchanger == nil {
 		t.Fatal("socket route not wired")
 	}
+	assertRouteDisabledByDefault(t)
+}
+
+func assertRouteDisabledByDefault(t *testing.T) {
+	t.Helper()
 	disabled, err := loadConfig(func(string) (string, bool) { return "", false })
 	if err != nil {
 		t.Fatal(err)

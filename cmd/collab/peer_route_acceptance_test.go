@@ -44,14 +44,7 @@ func TestPeerRouteCLIAcceptanceRunsEgressWithGroupModeAndStops(t *testing.T) {
 	}()
 	t.Cleanup(func() {
 		cancel()
-		select {
-		case code := <-done:
-			if code != 0 {
-				t.Errorf("egress exit=%d: %s", code, stderr.String())
-			}
-		case <-time.After(2 * time.Second):
-			t.Error("egress CLI did not stop")
-		}
+		awaitRouteCLIExit(t, done, &stderr)
 	})
 	awaitRouteCLISocket(t, path)
 	callCtx, stop := context.WithTimeout(context.Background(), time.Second)
@@ -70,6 +63,18 @@ func TestPeerRouteCLIAcceptanceRunsEgressWithGroupModeAndStops(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0660 || int(info.Sys().(*syscall.Stat_t).Gid) != os.Getegid() {
 		t.Fatal("CLI socket did not get configured group permissions")
+	}
+}
+
+func awaitRouteCLIExit(t *testing.T, done <-chan int, stderr *bytes.Buffer) {
+	t.Helper()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("egress exit=%d: %s", code, stderr.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("egress CLI did not stop")
 	}
 }
 

@@ -48,68 +48,94 @@ func runPeer(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return commands[args[0]](ctx, args[1:], stderr)
 }
 
+// relayArgs are peer relay's settings.
+type relayArgs struct {
+	listen, dial string
+	bounds       peerBounds
+}
+
+func (a relayArgs) check(rest []string) error {
+	if len(rest) != 0 {
+		return errors.New("peer relay takes no arguments")
+	}
+	if a.listen == "" {
+		return errors.New("peer relay needs --listen")
+	}
+	if !filepath.IsAbs(a.dial) {
+		return errors.New("peer relay needs an absolute --dial-unix")
+	}
+	return nil
+}
+
 // runPeerRelay forwards inbound pairing connections, sealed, to the
 // broker's shared pairing socket.
 func runPeerRelay(ctx context.Context, args []string, stderr io.Writer) int {
-	var listen, dial string
-	var bounds peerBounds
+	var a relayArgs
 	flags := flag.NewFlagSet("peer relay", flag.ContinueOnError)
-	flags.StringVar(&listen, "listen", "", "TCP address to accept pairing connections on")
-	flags.StringVar(&dial, "dial-unix", "", "the broker's pairing socket")
-	bounds.register(flags)
-	code := parseFlags(flags, args, peerUsage, stderr, func(rest []string) error {
-		if len(rest) != 0 || listen == "" || !filepath.IsAbs(dial) {
-			return errors.New("peer relay needs --listen and an absolute --dial-unix")
-		}
-		return nil
-	})
-	if code != -1 {
+	flags.StringVar(&a.listen, "listen", "", "TCP address to accept pairing connections on")
+	flags.StringVar(&a.dial, "dial-unix", "", "the broker's pairing socket")
+	a.bounds.register(flags)
+	// A closure, not a.check: a method value would copy a before parsing.
+	if code := parseFlags(flags, args, peerUsage, stderr, func(rest []string) error { return a.check(rest) }); code != -1 {
 		return code
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := net.Listen("tcp", a.listen)
 	if err != nil {
-		fmt.Fprintln(stderr, "peer relay:", err)
-		return 1
+		return failed(stderr, daemonRelay, err)
 	}
+	dial := a.dial
 	relay := peer.NewRelay(peer.RelayConfig{Dial: func(ctx context.Context) (net.Conn, error) {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", dial)
-	}, MaxConns: bounds.maxConns, MaxBytes: bounds.maxBytes, IdleTimeout: bounds.idle})
-	return served(stderr, "peer relay", relay.Serve(ctx, ln))
+	}, MaxConns: a.bounds.maxConns, MaxBytes: a.bounds.maxBytes, IdleTimeout: a.bounds.idle})
+	return served(stderr, daemonRelay, relay.Serve(ctx, ln))
+}
+
+// egressArgs are peer egress's settings.
+type egressArgs struct {
+	socket, group string
+	bounds        peerBounds
+}
+
+func (a egressArgs) check(rest []string) error {
+	if len(rest) != 0 {
+		return errors.New("peer egress takes no arguments")
+	}
+	if !filepath.IsAbs(a.socket) {
+		return errors.New("peer egress needs an absolute --socket")
+	}
+	if a.group == "" {
+		return errors.New("peer egress needs --group")
+	}
+	return nil
 }
 
 // runPeerEgress serves the broker's outbound pairing connections on a
 // group-shared socket this user owns.
 func runPeerEgress(ctx context.Context, args []string, stderr io.Writer) int {
-	var socket, group string
-	var bounds peerBounds
+	var a egressArgs
 	flags := flag.NewFlagSet("peer egress", flag.ContinueOnError)
-	flags.StringVar(&socket, "socket", "", "the egress socket to create")
-	flags.StringVar(&group, "group", "", "the group that may connect")
-	bounds.register(flags)
-	code := parseFlags(flags, args, peerUsage, stderr, func(rest []string) error {
-		if len(rest) != 0 || !filepath.IsAbs(socket) || group == "" {
-			return errors.New("peer egress needs an absolute --socket and --group")
-		}
-		return nil
-	})
-	if code != -1 {
+	flags.StringVar(&a.socket, "socket", "", "the egress socket to create")
+	flags.StringVar(&a.group, "group", "", "the group that may connect")
+	a.bounds.register(flags)
+	// A closure, not a.check: a method value would copy a before parsing.
+	if code := parseFlags(flags, args, peerUsage, stderr, func(rest []string) error { return a.check(rest) }); code != -1 {
 		return code
 	}
-	ln, bound, err := listenShared(socket, group)
+	ln, bound, err := listenShared(a)
 	if err != nil {
-		fmt.Fprintln(stderr, "peer egress:", err)
-		return 1
+		return failed(stderr, daemonEgress, err)
 	}
-	defer removeOwnSocket(socket, ln, bound)
-	forwarder := egress.NewForwarder(egress.Config{MaxConns: bounds.maxConns, MaxBytes: bounds.maxBytes, IdleTimeout: bounds.idle})
-	return served(stderr, "peer egress", forwarder.Serve(ctx, ln))
+	defer removeOwnSocket(a.socket, ln, bound)
+	forwarder := egress.NewForwarder(egress.Config{MaxConns: a.bounds.maxConns, MaxBytes: a.bounds.maxBytes, IdleTimeout: a.bounds.idle})
+	return served(stderr, daemonEgress, forwarder.Serve(ctx, ln))
 }
 
 // listenShared binds a group-shared socket: its directory must be ours with
 // the group and mode 0750, and an existing path is never removed.
-func listenShared(path, groupName string) (*net.UnixListener, os.FileInfo, error) {
-	gid, err := groupID(groupName)
+func listenShared(a egressArgs) (*net.UnixListener, os.FileInfo, error) {
+	path := a.socket
+	gid, err := groupID(a.group)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -152,10 +178,22 @@ func removeOwnSocket(path string, ln *net.UnixListener, bound os.FileInfo) {
 	}
 }
 
-func served(stderr io.Writer, name string, err error) int {
+// daemon names a peer command in its messages.
+type daemon string
+
+const (
+	daemonRelay  daemon = "peer relay"
+	daemonEgress daemon = "peer egress"
+)
+
+func failed(stderr io.Writer, d daemon, err error) int {
+	fmt.Fprintf(stderr, "%s: %v\n", d, err)
+	return 1
+}
+
+func served(stderr io.Writer, d daemon, err error) int {
 	if err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", name, err)
-		return 1
+		return failed(stderr, d, err)
 	}
 	return 0
 }
