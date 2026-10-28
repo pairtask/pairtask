@@ -102,7 +102,7 @@ func TestPeerMessagesAcceptanceExpiryUsesChronologicalSubseconds(t *testing.T) {
 	pairOK(t, err)
 	// The cutoff is half a second after creation. RFC3339Nano strings are
 	// not lexically ordered when one timestamp omits fractional seconds.
-	rows, err := s.Offer(ctx, contact, messageAt.Add(messaging.QueuedExpiry+500*time.Millisecond), 16, 512<<10)
+	rows, err := s.Offer(ctx, contact, messageAt.Add(messaging.QueuedExpiry+500*time.Millisecond), messaging.Limit{Count: 16, Bytes: 512 << 10})
 	pairOK(t, err)
 	pairEqual(t, len(rows), 0)
 	pairEqual(t, messagePage(t, s, contact)[0].State, messaging.StateExpired)
@@ -116,19 +116,19 @@ func TestPeerMessagesAcceptanceOfferClampsAndPreservesOrder(t *testing.T) {
 		_, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: fmt.Sprintf("out-%d", i), Text: "1234", Now: messageAt})
 		pairOK(t, err)
 	}
-	rows, err := s.Offer(ctx, contact, messageAt, 1000, 1<<30)
+	rows, err := s.Offer(ctx, contact, messageAt, messaging.Limit{Count: 1000, Bytes: 1 << 30})
 	pairOK(t, err)
 	pairEqual(t, len(rows), messaging.SessionMessages)
 	for i, row := range rows {
 		pairEqual(t, row.N, uint64(i+1))
 	}
-	rows, err = s.Offer(ctx, contact, messageAt, 16, 7)
+	rows, err = s.Offer(ctx, contact, messageAt, messaging.Limit{Count: 16, Bytes: 7})
 	pairOK(t, err)
 	pairEqual(t, len(rows), 1)
-	rows, err = s.Offer(ctx, contact, messageAt, -1, 100)
+	rows, err = s.Offer(ctx, contact, messageAt, messaging.Limit{Count: -1, Bytes: 100})
 	pairOK(t, err)
 	pairEqual(t, len(rows), 0)
-	rows, err = s.Offer(ctx, contact, messageAt, 16, -1)
+	rows, err = s.Offer(ctx, contact, messageAt, messaging.Limit{Count: 16, Bytes: -1})
 	pairOK(t, err)
 	pairEqual(t, len(rows), 0)
 }

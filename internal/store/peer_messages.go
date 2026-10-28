@@ -230,8 +230,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 // Offer is the oldest queued messages that fit the session bounds; queued
 // messages past QueuedExpiry are expired first and never offered.
-func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, maxCount, maxBytes int) ([]messaging.Row, error) {
-	limit := sessionBudget.clamp(budget{maxCount, maxBytes})
+func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
+	limit := sessionBudget.clamp(budget{l.Count, l.Bytes})
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -286,7 +286,8 @@ WHERE contact = ? AND direction = 'out' AND message_id = ? AND state IN ('queued
 
 // Refused records a refusal of a queued message: a terminal one ends it, a
 // transient one keeps it queued with the reason.
-func (p *PeerMessages) Refused(ctx context.Context, contact, id string, r messaging.Refusal, _ time.Time) error {
+func (p *PeerMessages) Refused(ctx context.Context, contact string, refused messaging.Refused) error {
+	id, r := refused.ID, refused.Refusal
 	if !r.Valid() {
 		return fmt.Errorf("%w: refusal", messaging.ErrInvalid)
 	}

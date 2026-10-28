@@ -19,7 +19,7 @@ func (s *countingSessionStore) Accept(context.Context, string, messaging.Message
 	s.accepted++
 	return messaging.Answer{Stored: true}, nil
 }
-func (*countingSessionStore) Offer(context.Context, string, time.Time, int, int) ([]messaging.Row, error) {
+func (*countingSessionStore) Offer(context.Context, string, time.Time, messaging.Limit) ([]messaging.Row, error) {
 	return nil, nil
 }
 func (*countingSessionStore) PendingReads(context.Context, string, int) ([]string, error) {

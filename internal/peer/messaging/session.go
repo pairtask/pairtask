@@ -132,7 +132,7 @@ func (s Session) send(frame []byte, err error) error {
 // sendMessages offers this side's oldest queued messages and records each
 // answer before sending the next.
 func (s Session) sendMessages(ctx context.Context, r *Result) error {
-	rows, err := s.Store.Offer(ctx, s.Contact, s.Now(), SessionMessages, SessionBytes)
+	rows, err := s.Store.Offer(ctx, s.Contact, s.Now(), SessionLimit)
 	if err != nil {
 		return err
 	}
@@ -179,7 +179,7 @@ func (s Session) recordRefusal(ctx context.Context, id string, frame []byte) err
 	if refusal.ID != id {
 		return fmt.Errorf("%w: answer for another message", ErrProtocol)
 	}
-	return s.Store.Refused(ctx, s.Contact, id, refusal.Refusal, s.Now())
+	return s.Store.Refused(ctx, s.Contact, refusal)
 }
 
 // receiveMessages stores the peer's messages and answers each one, within
