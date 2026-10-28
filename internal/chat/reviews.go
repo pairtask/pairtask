@@ -334,10 +334,13 @@ func (m *Model) reviewsDisconnected() {
 	}
 }
 
+// lost: a request is in flight and its answer was lost.
+func (r *reviewState) lost() bool { return r.intent != nil && r.unknown }
+
 // resendReview resends a request whose answer was lost: the same message ID
 // and specification, so the broker returns the review it already made.
 func (m *Model) resendReview() tea.Cmd {
-	if m.reviews.intent == nil || !m.reviews.unknown || !m.session.HasCapability(protocol.CapabilityReviews) {
+	if !m.reviews.lost() || !m.session.HasCapability(protocol.CapabilityReviews) {
 		return nil
 	}
 	m.reviews.unknown = false
