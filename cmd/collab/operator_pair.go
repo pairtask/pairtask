@@ -12,7 +12,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorPairUsage = "usage: pairtask operator pair [list | open | status [OPERATION_ID] | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] (the code is read from stdin)"
+const operatorPairUsage = "usage: pairtask operator pair [list | open | status [OPERATION_ID] | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] (the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [OPERATION_ID]"
 
 // pairVerbs are the pairing operations, how many positional arguments each
 // takes, and the read that resolves a missing or prefixed target first.
@@ -38,8 +38,8 @@ var pairTargets = map[string]func(s *protocol.PairingSnapshot, typed string) (st
 // runOperatorPair manages pairing invitations and requests (#178). Only open
 // prints the code, on stdout.
 func runOperatorPair(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == protocol.PairingOpRedeem {
-		return runOperatorPairRedeem(ctx, args[1:], stdout, stderr)
+	if run, rest, ok := pairSubcommand(args); ok {
+		return run(ctx, rest, stdout, stderr)
 	}
 	call, req, code := parseOperatorPair(args, stderr)
 	if code != -1 {
@@ -58,6 +58,20 @@ func runOperatorPair(ctx context.Context, args []string, stdout, stderr io.Write
 	writeJoin(stdout, resp.PairingJoin)
 	writePairing(stdout, resp.PairingResult)
 	return 0
+}
+
+// pairSubcommands are the pair verbs with flags and follow-up of their own.
+var pairSubcommands = map[string]func(ctx context.Context, args []string, stdout, stderr io.Writer) int{
+	protocol.PairingOpRedeem: runOperatorPairRedeem,
+	protocol.PairingOpSettle: runOperatorPairSettle,
+}
+
+func pairSubcommand(args []string) (func(context.Context, []string, io.Writer, io.Writer) int, []string, bool) {
+	if len(args) == 0 {
+		return nil, nil, false
+	}
+	run, ok := pairSubcommands[args[0]]
+	return run, args[1:], ok
 }
 
 // writeJoin prints the redemption a targeted status named.
@@ -154,12 +168,32 @@ func writePairing(w io.Writer, s *protocol.PairingSnapshot) {
 		fmt.Fprintln(w, "No pairing requests.")
 	}
 	for _, r := range s.Requests {
-		fmt.Fprintf(w, "%q  %q  %s\n", r.IdentityKey, r.Name, protocol.PairingStateLabel(r.State))
+		fmt.Fprintf(w, "%q  %q  %s\n", r.IdentityKey, r.Name, r.Label())
 	}
 	if s.RequestsTruncated {
 		fmt.Fprintf(w, "(showing %d of %d requests; pending ones list first, so deciding these brings the rest into view)\n", len(s.Requests), s.RequestsTotal)
 	}
 	writeJoins(w, s)
+	writeContacts(w, s)
+}
+
+// writeContacts lists paired workspaces; confirming ones aren't yet
+// confirmed on both sides.
+func writeContacts(w io.Writer, s *protocol.PairingSnapshot) {
+	if s.ContactsTotal == 0 {
+		return
+	}
+	fmt.Fprintf(w, "Contacts (%d):\n", s.ContactsTotal)
+	for _, c := range s.Contacts {
+		state := "confirmed"
+		if !c.Confirmed {
+			state = "confirming"
+		}
+		fmt.Fprintf(w, "%q  %q  %s\n", c.IdentityKey, c.Name, state)
+	}
+	if s.ContactsTruncated {
+		fmt.Fprintf(w, "(showing the newest %d of %d)\n", len(s.Contacts), s.ContactsTotal)
+	}
 }
 
 // writeJoins lists this workspace's redemptions, newest first.
@@ -169,7 +203,7 @@ func writeJoins(w io.Writer, s *protocol.PairingSnapshot) {
 	}
 	fmt.Fprintf(w, "Redemptions (%d):\n", s.JoinsTotal)
 	for _, j := range s.Joins {
-		fmt.Fprintf(w, "%q  %q  %s\n", j.OperationID, j.Destination, j.State)
+		fmt.Fprintf(w, "%q  %q  %s%s\n", j.OperationID, j.Destination, j.State, confirmation(j))
 	}
 	if s.JoinsTruncated {
 		fmt.Fprintf(w, "(showing the newest %d of %d; status OPERATION_ID shows any one)\n", len(s.Joins), s.JoinsTotal)

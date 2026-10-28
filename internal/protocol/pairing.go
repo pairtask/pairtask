@@ -27,6 +27,9 @@ const (
 	// pairing_code and an optional pairing_name; it answers with pairing_join
 	// as soon as the redemption is recorded, before any network wait.
 	PairingOpRedeem = "redeem"
+	// PairingOpSettle queues settlement of one join (pairing_target, its
+	// operation ID) or of every candidate, and answers with what it queued.
+	PairingOpSettle = "settle"
 
 	// ErrPairing is a refused pairing operation; the detail names why.
 	ErrPairing = "pairing_refused"
@@ -35,12 +38,20 @@ const (
 	CapabilityPairing = "pairing"
 	// CapabilityPairingRedeem: the broker serves operator_pairing redeem.
 	CapabilityPairingRedeem = "pairing_redeem"
+	// CapabilityPairingContacts: the broker settles joins and reports contacts.
+	CapabilityPairingContacts = "pairing_contacts"
+	// EventPairingChanged tells the operator session that durable pairing
+	// state changed in the background; it carries nothing, so a client
+	// reads the pairing state again.
+	EventPairingChanged = "pairing_changed"
 
 	// ListedPairingRequests bounds a pairing listing: pending first, then
 	// by identity key. Totals and the truncation flag keep omissions visible.
 	ListedPairingRequests = 64
 	// ListedPairingJoins bounds the joins in a pairing snapshot, newest first.
 	ListedPairingJoins = 16
+	// ListedPairingContacts bounds the contacts in a pairing snapshot.
+	ListedPairingContacts = 64
 
 	// PairingPreview says what pairing can and can't do yet, wherever a code
 	// is shown.
@@ -62,6 +73,31 @@ type PairingSnapshot struct {
 	JoinsTotal      int               `json:"joins_total"`
 	JoinsTruncated  bool              `json:"joins_truncated"`
 	RedeemAvailable bool              `json:"redeem_available"`
+	// Contacts are the workspaces paired in either direction, newest first.
+	Contacts          []PairingContactView `json:"contacts"`
+	ContactsTotal     int                  `json:"contacts_total"`
+	ContactsTruncated bool                 `json:"contacts_truncated"`
+}
+
+// PairingContactView is one paired workspace. Confirmed means both sides
+// durably hold the decision: this side's delivery as inviter, or a confirmed
+// join as joiner; until then it is still confirming.
+type PairingContactView struct {
+	IdentityKey   string    `json:"identity_key"`
+	Name          string    `json:"name"`
+	Destination   string    `json:"destination"`
+	EstablishedAt time.Time `json:"established_at"`
+	Joined        bool      `json:"joined"`
+	Invited       bool      `json:"invited"`
+	Confirmed     bool      `json:"confirmed"`
+}
+
+// PairingSettleView is what a settle request scheduled locally; nothing in
+// it says the peer was reached.
+type PairingSettleView struct {
+	Queued        int `json:"queued"`
+	AlreadyQueued int `json:"already_queued"`
+	NotQueued     int `json:"not_queued"`
 }
 
 // PairingJoinView is one redemption as stored. awaiting_acceptance means the
@@ -75,6 +111,10 @@ type PairingJoinView struct {
 	InvitationID string    `json:"invitation_id"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// DecisionConfirmedAt is set once the inviter confirmed our receipt of
+	// its decision; SettleError is the last settlement's fixed cause.
+	DecisionConfirmedAt *time.Time `json:"decision_confirmed_at,omitempty"`
+	SettleError         string     `json:"settle_error,omitempty"`
 }
 
 // InvitationView describes the open invitation. Code is set only in the
@@ -96,6 +136,8 @@ type PairingRequestView struct {
 	Name          string    `json:"name"`
 	State         string    `json:"state"`
 	FirstPairedAt time.Time `json:"first_paired_at"`
+	// DeliveredAt is when the joiner acknowledged the decision.
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
 }
 
 var (
@@ -159,6 +201,15 @@ var pairingStateLabels = map[string]string{
 	"pending_acceptance": "waiting for your decision",
 	"accepted":           "accepted",
 	"rejected":           "rejected",
+}
+
+// Label names the request's state for people: an acceptance the joiner has
+// not yet acknowledged is not a contact on both sides.
+func (v PairingRequestView) Label() string {
+	if v.State == "accepted" && v.DeliveredAt == nil {
+		return "accepted, awaiting peer confirmation"
+	}
+	return PairingStateLabel(v.State)
 }
 
 // PairingStateLabel names a request state for people; an unknown one is

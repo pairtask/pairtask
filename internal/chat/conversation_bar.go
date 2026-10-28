@@ -19,7 +19,7 @@ func (m *Model) conversationViews() []ConversationView {
 	position := 1
 	for _, key := range m.conv.order {
 		v := ConversationView{ID: viewID(key), Group: key.group(), Hidden: m.conv.hidden[key], Unread: m.unreadIn(key),
-			Selected: m.conv.selected == key, Draft: m.savedDraft(key)}
+			Selected: m.conv.selected == key, Draft: m.savedDraft(key), Contact: key.contact}
 		if !v.Hidden {
 			position++
 			v.Position = position
@@ -32,6 +32,9 @@ func (m *Model) conversationViews() []ConversationView {
 // viewID is a conversation's ID in the state view: the agent ID of a 1:1, or
 // the raw member IDs of a group joined by ", ".
 func viewID(key viewKey) string {
+	if key.isContact() {
+		return key.label() // "⇄ workspace …"; never a valid agent ID
+	}
 	if key.isRoom() {
 		return key.label() // "#room"; never a valid agent ID
 	}

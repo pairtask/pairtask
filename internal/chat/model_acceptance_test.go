@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,6 +61,19 @@ type chatHarness struct {
 	done     chan struct{}
 	requests []protocol.Message
 	dials    chan chatDialResult
+	quiet    chatQuietContacts
+}
+
+// chatQuietContacts serves the quiet pairing read that follows a snapshot
+// when the broker lists contacts, with no contacts, so generic tests need
+// not. A test that takes operator_pairing itself, like the contact fixture,
+// gets it instead: nothing is served inside baseline or such a take.
+type chatQuietContacts struct {
+	armed    bool        // the next pairing list is the quiet read
+	expected bool        // its batch was seen, so it was issued
+	wire     *chatScript // the connection it was issued on
+	id       string      // its request ID, until served or taken
+	hold     int         // > 0 while serving is suspended
 }
 
 type chatDialResult struct {
@@ -119,12 +133,12 @@ func (h *chatHarness) await(want func() bool) {
 	h.t.Helper()
 	timer := time.NewTimer(4 * time.Second)
 	defer timer.Stop()
-	for !want() {
+	for h.serveQuiet(); !want() || h.quietDue(); h.serveQuiet() {
 		select {
 		case msg := <-h.results:
 			h.input(msg)
 		case req := <-h.wire.writes:
-			h.requests = append(h.requests, req)
+			h.intake(req)
 		case <-timer.C:
 			h.t.Fatalf("chat did not reach expected state; requests=%v state=%+v", h.requests, h.m.State())
 		}
@@ -133,6 +147,10 @@ func (h *chatHarness) await(want func() bool) {
 
 func (h *chatHarness) take(kind string) protocol.Message {
 	h.t.Helper()
+	if kind == protocol.TypeOperatorPairing {
+		h.quiet.hold++
+		defer func() { h.quiet.hold-- }()
+	}
 	index := -1
 	h.await(func() bool {
 		for i, req := range h.requests {
@@ -145,10 +163,68 @@ func (h *chatHarness) take(kind string) protocol.Message {
 	})
 	req := h.requests[index]
 	h.requests = append(h.requests[:index], h.requests[index+1:]...)
+	if req.RequestID == h.quiet.id {
+		h.quiet.id = ""
+	}
 	return req
 }
 
+// intake records a request, noting the quiet pairing read and the batch
+// that issues it with the baseline's inbox and history reads.
+func (h *chatHarness) intake(req protocol.Message) {
+	switch {
+	case !h.quiet.armed:
+	case pairingList(req):
+		h.quiet.armed, h.quiet.expected, h.quiet.id = false, false, req.RequestID
+	case req.Type == protocol.TypeOperatorReceive || req.Type == protocol.TypeOperatorHistory:
+		h.quiet.expected = true
+	}
+	h.requests = append(h.requests, req)
+}
+
+// quietDue reports a quiet read already issued, written and on its way, so
+// a generic wait never ends with it unseen in flight. One queued behind the
+// in-flight bound, or on a connection since replaced, is not waited for.
+func (h *chatHarness) quietDue() bool {
+	q := h.quiet
+	if !q.armed || !q.expected {
+		return false
+	}
+	if q.hold > 0 || q.wire != h.wire {
+		return false
+	}
+	return h.m.State().Queued == 0
+}
+
+func pairingList(req protocol.Message) bool {
+	return req.Type == protocol.TypeOperatorPairing && req.PairingOp == protocol.PairingOpList
+}
+
+// serveQuiet answers a pending quiet pairing read with no contacts, and
+// applies the answer.
+func (h *chatHarness) serveQuiet() {
+	if h.quiet.id == "" || h.quiet.hold > 0 {
+		return
+	}
+	for i, req := range h.requests {
+		if req.RequestID == h.quiet.id {
+			h.requests = append(h.requests[:i], h.requests[i+1:]...)
+			h.quiet.id = ""
+			// Applied before anything else, so it is never left in flight.
+			h.launch(h.holdResponse(req, protocol.Message{Type: protocol.TypeOperatorPairingResult,
+				PairingResult: &protocol.PairingSnapshot{Contacts: []protocol.PairingContactView{}}}))
+			return
+		}
+	}
+}
+
 func (h *chatHarness) reply(req, response protocol.Message) {
+	if response.Type == protocol.TypeOperatorSnapshot {
+		// The session that asked for this snapshot decides whether a quiet
+		// pairing read follows it.
+		h.quiet = chatQuietContacts{armed: slices.Contains(h.m.State().Session.Capabilities, protocol.CapabilityPairingContacts),
+			wire: h.wire, hold: h.quiet.hold}
+	}
 	response.RequestID = req.RequestID
 	h.wire.in <- response
 }
@@ -168,7 +244,7 @@ func (h *chatHarness) holdResponse(req, response protocol.Message) tea.Cmd {
 			}
 			h.input(msg)
 		case request := <-h.wire.writes:
-			h.requests = append(h.requests, request)
+			h.intake(request)
 		case <-timer.C:
 			h.t.Fatal("response was not delivered to the model")
 		}
@@ -177,6 +253,8 @@ func (h *chatHarness) holdResponse(req, response protocol.Message) tea.Cmd {
 
 func (h *chatHarness) baseline() (protocol.Message, protocol.Message) {
 	h.t.Helper()
+	h.quiet.hold++
+	defer func() { h.quiet.hold-- }()
 	req := h.take(protocol.TypeOperatorSnapshot)
 	h.reply(req, protocol.Message{Type: protocol.TypeOperatorSnapshot, Snapshot: &protocol.OperatorSnapshot{Watermark: protocol.Watermark{Epoch: "epoch", Revision: 1}}})
 	return h.take(protocol.TypeOperatorReceive), h.take(protocol.TypeOperatorHistory)

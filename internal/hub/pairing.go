@@ -115,12 +115,12 @@ func (h *Hub) operatorPairing(ctx context.Context, _ map[string]*Client, req ope
 	if rerr := redeemFields(msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}
-	if msg.PairingOp == protocol.PairingOpRedeem {
-		return h.operatorRedeem(ctx, req)
+	if queued, ok := queuedPairingOps[msg.PairingOp]; ok {
+		return queued(h, ctx, req)
 	}
 	op, ok := pairingOps[msg.PairingOp]
 	if !ok {
-		return (&routingError{protocol.ErrMalformedFrame, "pairing_op must be open, cancel, status, list, accept, reject or redeem"}).frame(msg.MessageID)
+		return (&routingError{protocol.ErrMalformedFrame, "pairing_op must be open, cancel, status, list, accept, reject, redeem or settle"}).frame(msg.MessageID)
 	}
 	if rerr := checkTarget(op, msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
@@ -137,7 +137,22 @@ func (h *Hub) operatorPairing(ctx context.Context, _ map[string]*Client, req ope
 		return rerr.frame(msg.MessageID)
 	}
 	h.finishAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditAccepted})
+	h.pairingApplied(msg.PairingOp)
 	return fitPairing(resp)
+}
+
+// queuedPairingOps hand work to a background worker, with their own audit.
+var queuedPairingOps = map[string]func(h *Hub, ctx context.Context, req operatorRequest) protocol.Message{
+	protocol.PairingOpRedeem: (*Hub).operatorRedeem,
+	protocol.PairingOpSettle: (*Hub).operatorSettle,
+}
+
+// pairingApplied tells the operator session about a change another operator
+// client made; reads change nothing.
+func (h *Hub) pairingApplied(op string) {
+	if op != protocol.PairingOpStatus && op != protocol.PairingOpList {
+		h.PairingChanged()
+	}
 }
 
 // checkTarget enforces each operation's target; status may name one join.
@@ -174,9 +189,11 @@ func fitPairing(resp protocol.Message) protocol.Message {
 	if snapshot == nil {
 		return resp
 	}
-	joins, requests := snapshot.Joins, snapshot.Requests
+	joins, requests, contacts := snapshot.Joins, snapshot.Requests, snapshot.Contacts
 	snapshot.Joins, snapshot.Requests = []protocol.PairingJoinView{}, []protocol.PairingRequestView{}
+	snapshot.Contacts = []protocol.PairingContactView{}
 	size := encodedLen(resp) + snapshotReserve
+	snapshot.Contacts, snapshot.ContactsTruncated, size = fitRows(contacts, snapshot.ContactsTruncated, size)
 	snapshot.Joins, snapshot.JoinsTruncated, size = fitRows(joins, snapshot.JoinsTruncated, size)
 	snapshot.Requests, snapshot.RequestsTruncated, _ = fitRows(requests, snapshot.RequestsTruncated, size)
 	return resp
@@ -236,12 +253,15 @@ func (h *Hub) pairingSnapshot(ctx context.Context) (*protocol.PairingSnapshot, e
 	}
 	slices.SortFunc(requests, pendingFirst)
 	snapshot := &protocol.PairingSnapshot{Requests: []protocol.PairingRequestView{}, RequestsTotal: len(requests)}
+	if err := h.contactsSnapshot(ctx, snapshot, requests); err != nil {
+		return nil, err
+	}
 	if len(requests) > protocol.ListedPairingRequests {
 		requests, snapshot.RequestsTruncated = requests[:protocol.ListedPairingRequests], true
 	}
 	for _, r := range requests {
 		snapshot.Requests = append(snapshot.Requests, protocol.PairingRequestView{IdentityKey: r.IdentityKey, Name: r.Name,
-			State: string(r.State), FirstPairedAt: r.FirstPairedAt})
+			State: string(r.State), FirstPairedAt: r.FirstPairedAt, DeliveredAt: timeOrNil(r.DeliveredAt)})
 	}
 	if err := h.joinsSnapshot(ctx, snapshot); err != nil {
 		return nil, err

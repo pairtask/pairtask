@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/google/uuid"
 
 	"github.com/pairtask/pairtask/internal/peer"
@@ -22,19 +23,20 @@ import (
 const (
 	kindPairing  = "pairing"
 	panelPairing = "pairing"
-	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME]]"
+	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID]]"
 )
 
 // pairingView is the last pairing snapshot, its code removed.
 type pairingView struct {
 	snapshot *protocol.PairingSnapshot
+	stale    bool // pairing changed while a quiet read was in flight
 }
 
 // pairVerbArgs is how many words each /pair verb takes, itself included.
 var pairVerbArgs = map[string][]int{
 	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1}, protocol.PairingOpStatus: {1},
 	protocol.PairingOpCancel: {1, 2}, protocol.PairingOpAccept: {2}, protocol.PairingOpReject: {2},
-	protocol.PairingOpRedeem: {3, 4},
+	protocol.PairingOpRedeem: {3, 4}, protocol.PairingOpSettle: {1, 2},
 }
 
 // pairWords are a /pair command's words, the verb first.
@@ -99,6 +101,10 @@ func (m *Model) pairCommand(arg argument) tea.Cmd {
 	if fields[0] == protocol.PairingOpRedeem {
 		return m.redeemCommand(fields)
 	}
+	if fields[0] == protocol.PairingOpSettle && !m.session.HasCapability(protocol.CapabilityPairingContacts) {
+		m.status = "this broker can't settle pairings; upgrade it to use /pair settle"
+		return nil
+	}
 	target, problem := m.pairingTarget(fields)
 	if problem != "" {
 		m.status = problem
@@ -114,6 +120,9 @@ func (m *Model) pairingTarget(fields pairWords) (string, string) {
 		return m.invitationTarget(fields[1:])
 	case protocol.PairingOpAccept, protocol.PairingOpReject:
 		return m.requestTarget(fields[1])
+	case protocol.PairingOpSettle:
+		// The exact operation, or every redemption still settling.
+		return strings.Join(fields[1:], ""), ""
 	}
 	return "", ""
 }
@@ -179,8 +188,13 @@ func (m *Model) pairingResult(req pendingRequest, resp protocol.Message) tea.Cmd
 		code = ""
 	}
 	m.pairing.snapshot = &snapshot
+	m.refreshDirectory() // contact conversations follow the snapshot
 	m.panel = &panel{kind: panelPairing, code: code}
 	m.status = pairingStatus[op]
+	if v := resp.PairingSettle; v != nil {
+		m.status = fmt.Sprintf("settlement queued here: %d, already queued: %d, not queued (queue full): %d; /pair status shows progress",
+			v.Queued, v.AlreadyQueued, v.NotQueued)
+	}
 	return nil
 }
 
@@ -210,7 +224,7 @@ func (m *Model) pairingRows() []string {
 	rows = append(rows, m.invitationRows()...)
 	rows = append(rows, m.pairingRequestRows()...)
 	rows = append(rows, m.pairingJoinRows()...)
-	return append(rows, mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY"))
+	return append(rows, mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY · /pair settle"))
 }
 
 // identityRow is this workspace's fingerprint, for the operators to compare
@@ -246,12 +260,22 @@ func (m *Model) pairingRequestRows() []string {
 	}
 	rows := []string{fmt.Sprintf("  requests (%d)", s.RequestsTotal)}
 	for _, r := range s.Requests {
-		rows = append(rows, fmt.Sprintf("  %s  %s  %s", safe(r.IdentityKey), safe(r.Name), protocol.PairingStateLabel(r.State)))
+		rows = append(rows, m.requestRow(r)...)
 	}
 	if s.RequestsTruncated {
 		rows = append(rows, fmt.Sprintf("  (list is partial: %d more not shown; pending requests list first, so deciding these brings the rest into view)", s.RequestsTotal-len(s.Requests)))
 	}
 	return rows
+}
+
+// requestRow is one request on a line, or its state on a line of its own
+// when the full identity key leaves no room for it.
+func (m *Model) requestRow(r protocol.PairingRequestView) []string {
+	row := fmt.Sprintf("  %s  %s  %s", safe(r.IdentityKey), safe(r.Name), r.Label())
+	if ansi.StringWidth(row) <= m.width {
+		return []string{row}
+	}
+	return []string{fmt.Sprintf("  %s  %s", safe(r.IdentityKey), safe(r.Name)), "    " + r.Label()}
 }
 
 // redeemResult reports a recorded redemption; /pair shows its progress.

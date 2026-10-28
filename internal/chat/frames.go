@@ -70,6 +70,8 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		return m.sendRefused(ev)
 	case protocol.EventStatusChanged, protocol.EventClaimsChanged, protocol.EventRoomsChanged:
 		return m.refreshStatuses() // the snapshot carries statuses, claims and rooms
+	case protocol.EventPairingChanged:
+		return m.pairingChanged()
 	}
 	return nil
 }
@@ -121,19 +123,20 @@ type responseHandler func(*Model, pendingRequest, protocol.Message) tea.Cmd
 
 // responseHandlers route a response by the kind of request it answers.
 var responseHandlers = map[string]responseHandler{
-	kindSnapshot:    func(m *Model, _ pendingRequest, resp protocol.Message) tea.Cmd { return m.snapshotLoaded(resp) },
-	kindReceive:     (*Model).receiveResponse,
-	kindReceived:    (*Model).receiptsConfirmed,
-	kindAck:         (*Model).acknowledged,
-	kindCatchup:     (*Model).catchupResponse,
-	kindOlder:       (*Model).olderResponse,
-	kindStages:      (*Model).stagesPage,
-	kindSend:        (*Model).sendResult,
-	kindInboxStatus: (*Model).inboxStatusResponse,
-	kindAckMany:     (*Model).ackManyResponse,
-	kindRoom:        (*Model).roomResult,
-	kindRoomDelete:  (*Model).roomDeleted,
-	kindPairing:     (*Model).pairingResult,
+	kindSnapshot:     func(m *Model, _ pendingRequest, resp protocol.Message) tea.Cmd { return m.snapshotLoaded(resp) },
+	kindReceive:      (*Model).receiveResponse,
+	kindReceived:     (*Model).receiptsConfirmed,
+	kindAck:          (*Model).acknowledged,
+	kindCatchup:      (*Model).catchupResponse,
+	kindOlder:        (*Model).olderResponse,
+	kindStages:       (*Model).stagesPage,
+	kindSend:         (*Model).sendResult,
+	kindInboxStatus:  (*Model).inboxStatusResponse,
+	kindAckMany:      (*Model).ackManyResponse,
+	kindRoom:         (*Model).roomResult,
+	kindRoomDelete:   (*Model).roomDeleted,
+	kindPairing:      (*Model).pairingResult,
+	kindPairingQuiet: (*Model).quietPairingResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
@@ -196,7 +199,8 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 			e.stagesTruncated = s.ReceiptsTruncated
 		}
 	}
-	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker())
+	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
+		m.refreshContacts())
 }
 
 func validSnapshot(resp protocol.Message) bool {
