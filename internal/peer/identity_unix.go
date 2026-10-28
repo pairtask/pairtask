@@ -95,17 +95,24 @@ func (p identityPaths) adoptOrCreate(random io.Reader) (*WorkspaceIdentity, erro
 	return id, p.syncPublished()
 }
 
-// ensureDir creates the directory 0700 if missing and checks it is a private
-// directory of ours, not a symlink.
+// ensureDir creates the directory 0700 if missing, whatever the umask, and
+// checks it is a private directory of ours that we can use, not a symlink.
 func (p identityPaths) ensureDir() error {
-	if err := os.Mkdir(p.dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+	err := os.Mkdir(p.dir, 0o700)
+	switch {
+	case err == nil:
+		// A umask such as 0117 would leave the new directory unsearchable.
+		if err := os.Chmod(p.dir, 0o700); err != nil {
+			return fmt.Errorf("create identity directory: %w", err)
+		}
+	case !errors.Is(err, fs.ErrExist):
 		return fmt.Errorf("create identity directory: %w", err)
 	}
 	info, err := os.Lstat(p.dir)
 	if err != nil {
 		return fmt.Errorf("identity directory: %w", err)
 	}
-	if !info.IsDir() || !private(info) {
+	if !info.IsDir() || !private(info) || info.Mode().Perm() != 0o700 {
 		return fmt.Errorf("%w: %s must be a directory of ours with mode 0700", ErrIdentityUnsafe, p.dir)
 	}
 	return nil
