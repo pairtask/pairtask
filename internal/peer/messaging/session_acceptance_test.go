@@ -145,7 +145,7 @@ func TestMessageSessionAcceptanceLostStoredRetriesAfterRestart(t *testing.T) {
 
 func TestMessageSessionAcceptanceWrongStoredDoesNotDeliver(t *testing.T) {
 	db, _ := sessionFixture(t)
-	if _, err := db.PeerMessages().Queue(context.Background(), sessionContact, "wanted", "text", sessionAt); err != nil {
+	if _, err := db.PeerMessages().Queue(context.Background(), messaging.Outgoing{Contact: sessionContact, ID: "wanted", Text: "text", Now: sessionAt}); err != nil {
 		t.Fatal(err)
 	}
 	ack, err := messaging.EncodeStored(messaging.Stored{ID: "other"})
