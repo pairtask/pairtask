@@ -57,6 +57,13 @@ func TestMessageSyncAcceptanceInboundOutboundExclusionAndRelease(t *testing.T) {
 	again(false)
 }
 
+func messageSyncEqual[T comparable](t *testing.T, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
 func TestMessageSyncAcceptanceStatusIntervalsAndRecovery(t *testing.T) {
 	h := newTestHub(t)
 	now := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
@@ -64,29 +71,24 @@ func TestMessageSyncAcceptanceStatusIntervalsAndRecovery(t *testing.T) {
 	h.msgs.init()
 	h.recordSync("contact", "", true)
 	status := h.MessageSyncStatus("contact")
-	if status.NextAt.Sub(now) != 30*time.Second || !status.LastSuccess.Equal(now) {
-		t.Fatalf("active status %+v", status)
-	}
+	messageSyncEqual(t, status.NextAt.Sub(now), 30*time.Second)
+	messageSyncEqual(t, status.LastSuccess.Equal(now), true)
 	h.recordSync("contact", "", false)
-	if got := h.MessageSyncStatus("contact").NextAt.Sub(now); got != 5*time.Minute {
-		t.Fatalf("idle interval %v", got)
-	}
+	messageSyncEqual(t, h.MessageSyncStatus("contact").NextAt.Sub(now), 5*time.Minute)
 	now = now.Add(time.Minute)
 	h.recordSync("contact", SyncUnreachable, false)
 	status = h.MessageSyncStatus("contact")
-	if status.Failures != 1 || status.LastFailure != SyncUnreachable {
-		t.Fatalf("failure status %+v", status)
-	}
+	messageSyncEqual(t, status.Failures, 1)
+	messageSyncEqual(t, status.LastFailure, SyncUnreachable)
 	delay := status.NextAt.Sub(now)
-	if delay < 48*time.Second || delay > 72*time.Second {
-		t.Fatalf("unbounded first backoff %v", delay)
-	}
+	messageSyncEqual(t, delay >= 48*time.Second, true)
+	messageSyncEqual(t, delay <= 72*time.Second, true)
 	now = now.Add(time.Minute)
 	h.recordSync("contact", "", true)
 	status = h.MessageSyncStatus("contact")
-	if status.Failures != 0 || status.LastFailure != "" || !status.LastSuccess.Equal(now) {
-		t.Fatalf("success did not clear failure %+v", status)
-	}
+	messageSyncEqual(t, status.Failures, 0)
+	messageSyncEqual(t, status.LastFailure, "")
+	messageSyncEqual(t, status.LastSuccess.Equal(now), true)
 }
 
 func TestMessageSyncAcceptanceFailureClassesStayDistinct(t *testing.T) {

@@ -145,15 +145,23 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 
 // dialedContact is the contact when it is confirmed and this side dials it.
 func (h *Hub) dialedContact(ctx context.Context, contact string) (peer.Contact, bool) {
-	if h.identity == nil || h.pair.cfg.Dial == nil || !h.messagePins(contact) {
+	if !h.canDial() || !h.messagePins(contact) {
 		return peer.Contact{}, false
 	}
 	c, found, err := h.store.Contact(ctx, contact)
-	if err != nil || !found || !dials(c, h.identity.Fingerprint()) {
+	if err != nil || !found {
+		return peer.Contact{}, false
+	}
+	if !dials(c, h.identity.Fingerprint()) {
 		return peer.Contact{}, false
 	}
 	h.markDialed(contact)
 	return c, true
+}
+
+// canDial: an identity to present and a way to reach a destination.
+func (h *Hub) canDial() bool {
+	return h.identity != nil && h.pair.cfg.Dial != nil
 }
 
 // dialSession reaches the contact, pins its identity and runs the dialing

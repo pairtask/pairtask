@@ -113,7 +113,7 @@ func ContactClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity
 // MessageClient opens a message session's connection to the contact whose
 // identity is pin, refusing any other; raw is owned as by Client.
 func MessageClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
-	return handshake(ctx, raw, id, clock, pinnedRole(MessageALPN, pin))
+	return handshake(ctx, raw, id, clock, pinned{MessageALPN, pin}.role())
 }
 
 // NoCommonProtocol reports a handshake the peer refused for want of a

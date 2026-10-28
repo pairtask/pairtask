@@ -74,72 +74,73 @@ func sessionSuccess(t *testing.T, outcomes []sessionOutcome) {
 	}
 }
 
+func sessionQueue(t *testing.T, s messaging.Store, id string) {
+	t.Helper()
+	_, err := s.Queue(context.Background(), messaging.Outgoing{Contact: sessionContact, ID: id, Text: "hello", Now: sessionAt})
+	sessionOK(t, err)
+}
+
+func sessionRows(t *testing.T, s messaging.Store, want int) []messaging.Row {
+	t.Helper()
+	rows, _, err := s.Page(context.Background(), sessionContact, 0, 64)
+	sessionOK(t, err)
+	sessionEqual(t, len(rows), want)
+	return rows
+}
+
+func sessionDelivered(t *testing.T, s messaging.Store) {
+	t.Helper()
+	for _, row := range sessionRows(t, s, 2) {
+		if row.Direction == messaging.DirOut {
+			sessionEqual(t, row.State, messaging.StateDelivered)
+		}
+	}
+}
+
+func sessionPending(t *testing.T, s messaging.Store, want int) {
+	t.Helper()
+	pending, err := s.PendingReads(context.Background(), sessionContact, 16)
+	sessionOK(t, err)
+	sessionEqual(t, len(pending), want)
+}
+
+func sessionLostReadAck(t *testing.T, outcomes []sessionOutcome) {
+	t.Helper()
+	for _, outcome := range outcomes {
+		if errors.Is(outcome.err, io.ErrUnexpectedEOF) {
+			return
+		}
+	}
+	t.Fatalf("lost ReadStored not injected: %+v", outcomes)
+}
+
 func TestMessageSessionAcceptanceBothDirectionsOverOneDial(t *testing.T) {
 	left, _ := sessionFixture(t)
 	right, _ := sessionFixture(t)
-	ctx := context.Background()
-	for _, side := range []struct {
-		store messaging.Store
-		id    string
-	}{{left.PeerMessages(), "left"}, {right.PeerMessages(), "right"}} {
-		if _, err := side.store.Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: side.id, Text: "hello", Now: sessionAt}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	sessionQueue(t, left.PeerMessages(), "left")
+	sessionQueue(t, right.PeerMessages(), "right")
 	outcomes := sessionExchange(t, left.PeerMessages(), right.PeerMessages(), 0)
 	sessionSuccess(t, outcomes)
 	for _, outcome := range outcomes {
-		if outcome.result.Sent != 1 || outcome.result.Received != 1 {
-			t.Fatalf("not bidirectional: %+v", outcome.result)
-		}
+		sessionEqual(t, outcome.result.Sent, 1)
+		sessionEqual(t, outcome.result.Received, 1)
 	}
-	for _, s := range []messaging.Store{left.PeerMessages(), right.PeerMessages()} {
-		rows, _, err := s.Page(ctx, sessionContact, 0, 64)
-		if err != nil || len(rows) != 2 {
-			t.Fatalf("rows %+v, %v", rows, err)
-		}
-		for _, row := range rows {
-			if row.Direction == messaging.DirOut && row.State != messaging.StateDelivered {
-				t.Fatalf("outbound not delivered: %+v", row)
-			}
-		}
-	}
+	sessionDelivered(t, left.PeerMessages())
+	sessionDelivered(t, right.PeerMessages())
 }
 
 func TestMessageSessionAcceptanceLostReadStoredRetriesAfterRestart(t *testing.T) {
 	left, path := sessionFixture(t)
 	right, _ := sessionFixture(t)
-	ctx := context.Background()
-	if _, err := right.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: "right", Text: "hello", Now: sessionAt}); err != nil {
-		t.Fatal(err)
-	}
+	sessionQueue(t, right.PeerMessages(), "right")
 	sessionSuccess(t, sessionExchange(t, left.PeerMessages(), right.PeerMessages(), 0))
-	if _, err := left.PeerMessages().MarkRead(ctx, sessionContact, []string{"right"}, sessionAt); err != nil {
-		t.Fatal(err)
-	}
-	outcomes := sessionExchange(t, left.PeerMessages(), right.PeerMessages(), messaging.FrameReadStored)
-	found := false
-	for _, outcome := range outcomes {
-		found = found || errors.Is(outcome.err, io.ErrUnexpectedEOF)
-	}
-	if !found {
-		t.Fatalf("lost ReadStored not injected: %+v", outcomes)
-	}
-	if err := left.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_, err := left.PeerMessages().MarkRead(context.Background(), sessionContact, []string{"right"}, sessionAt)
+	sessionOK(t, err)
+	sessionLostReadAck(t, sessionExchange(t, left.PeerMessages(), right.PeerMessages(), messaging.FrameReadStored))
+	sessionOK(t, left.Close())
 	left = sessionDB(t, path)
-	pending, err := left.PeerMessages().PendingReads(ctx, sessionContact, 16)
-	if err != nil || len(pending) != 1 {
-		t.Fatalf("lost ack erased pending receipt: %v %v", pending, err)
-	}
+	sessionPending(t, left.PeerMessages(), 1)
 	sessionSuccess(t, sessionExchange(t, left.PeerMessages(), right.PeerMessages(), 0))
-	pending, err = left.PeerMessages().PendingReads(ctx, sessionContact, 16)
-	if err != nil || len(pending) != 0 {
-		t.Fatalf("confirmed receipt still pending: %v %v", pending, err)
-	}
-	rows, _, err := right.PeerMessages().Page(ctx, sessionContact, 0, 64)
-	if err != nil || len(rows) != 1 || rows[0].State != messaging.StateRead {
-		t.Fatalf("read state lost/duplicated: %+v %v", rows, err)
-	}
+	sessionPending(t, left.PeerMessages(), 0)
+	sessionEqual(t, sessionRows(t, right.PeerMessages(), 1)[0].State, messaging.StateRead)
 }

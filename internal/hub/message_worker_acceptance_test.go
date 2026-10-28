@@ -48,50 +48,33 @@ func awaitMessageWorkerDial(t *testing.T, started <-chan string) string {
 	}
 }
 
-func TestMessageWorkerAcceptanceBoundedParallelDialsAndDeferredWake(t *testing.T) {
-	h := newTestHub(t)
-	started := make(chan string, 8)
-	release := make(chan struct{})
-	var active atomic.Int32
-	h.SetPairing(PairingConfig{Clock: time.Now, Dial: func(ctx context.Context, destination string) (net.Conn, error) {
-		active.Add(1)
-		defer active.Add(-1)
-		started <- destination
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-release:
-			return nil, context.Canceled
-		}
-	}})
-	if problem := h.loadIdentity(context.Background()); problem != "" {
-		t.Fatal(problem)
-	}
-	h.msgs.init()
-	keys := make([]string, 5)
-	for i := range keys {
-		keys[i] = messageWorkerContact(t, h, i+1)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	pool := syncPool{slots: make(chan struct{}, 4)}
-	defer func() { cancel(); pool.wg.Wait() }()
-	for i := 0; i < 4; i++ {
-		h.spawnSync(ctx, &pool, keys[i])
-		awaitMessageWorkerDial(t, started)
-	}
-	if active.Load() != 4 {
-		t.Fatalf("not four parallel sessions: %d", active.Load())
-	}
-	h.spawnSync(ctx, &pool, keys[4])
-	if len(pool.slots) != 4 || active.Load() != 4 {
-		t.Fatal("worker exceeded four-session admission")
-	}
+type blockedMessageDials struct {
+	started chan string
+	release chan struct{}
+	active  atomic.Int32
+}
+
+func (d *blockedMessageDials) dial(ctx context.Context, destination string) (net.Conn, error) {
+	d.active.Add(1)
+	defer d.active.Add(-1)
+	d.started <- destination
 	select {
-	case destination := <-started:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-d.release:
+		return nil, context.Canceled
+	}
+}
+func (d *blockedMessageDials) requireNoDial(t *testing.T) {
+	t.Helper()
+	select {
+	case destination := <-d.started:
 		t.Fatalf("fifth dial started early: %s", destination)
 	default:
 	}
-	release <- struct{}{}
+}
+func awaitMessageSlot(t *testing.T, pool *syncPool) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for len(pool.slots) == 4 {
 		if time.Now().After(deadline) {
@@ -99,10 +82,38 @@ func TestMessageWorkerAcceptanceBoundedParallelDialsAndDeferredWake(t *testing.T
 		}
 		time.Sleep(time.Millisecond)
 	}
-	h.spawnSync(ctx, &pool, keys[4])
-	if got := awaitMessageWorkerDial(t, started); got != "peer-5:443" {
-		t.Fatalf("wrong deferred contact dialed: %s", got)
+}
+func fiveMessageContacts(t *testing.T, h *Hub) []string {
+	t.Helper()
+	keys := make([]string, 5)
+	for i := range keys {
+		keys[i] = messageWorkerContact(t, h, i+1)
 	}
+	return keys
+}
+func TestMessageWorkerAcceptanceBoundedParallelDialsAndDeferredWake(t *testing.T) {
+	h := newTestHub(t)
+	d := &blockedMessageDials{started: make(chan string, 8), release: make(chan struct{})}
+	h.SetPairing(PairingConfig{Clock: time.Now, Dial: d.dial})
+	messageSyncEqual(t, h.loadIdentity(context.Background()), "")
+	h.msgs.init()
+	keys := fiveMessageContacts(t, h)
+	ctx, cancel := context.WithCancel(context.Background())
+	pool := syncPool{slots: make(chan struct{}, 4)}
+	defer func() { cancel(); pool.wg.Wait() }()
+	for i := 0; i < 4; i++ {
+		h.spawnSync(ctx, &pool, keys[i])
+		awaitMessageWorkerDial(t, d.started)
+	}
+	messageSyncEqual(t, d.active.Load(), int32(4))
+	h.spawnSync(ctx, &pool, keys[4])
+	messageSyncEqual(t, len(pool.slots), 4)
+	messageSyncEqual(t, d.active.Load(), int32(4))
+	d.requireNoDial(t)
+	d.release <- struct{}{}
+	awaitMessageSlot(t, &pool)
+	h.spawnSync(ctx, &pool, keys[4])
+	messageSyncEqual(t, awaitMessageWorkerDial(t, d.started), "peer-5:443")
 }
 
 func TestMessageWorkerAcceptanceStartTickBackoffAndExplicitWake(t *testing.T) {
