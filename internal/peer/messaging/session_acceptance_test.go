@@ -164,10 +164,7 @@ func TestMessageSessionAcceptanceWrongStoredDoesNotDeliver(t *testing.T) {
 	if !errors.Is(err, messaging.ErrProtocol) {
 		t.Fatalf("wrong ID accepted: %v", err)
 	}
-	rows, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 64)
-	if err != nil || len(rows) != 1 || rows[0].State != messaging.StateQueued {
-		t.Fatalf("wrong ID changed delivery: %+v %v", rows, err)
-	}
+	sessionEqual(t, sessionRows(t, db.PeerMessages(), 1)[0].State, messaging.StateQueued)
 }
 
 type failingAcceptStore struct{ messaging.Store }
