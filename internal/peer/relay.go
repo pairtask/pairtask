@@ -20,7 +20,11 @@ type Relay struct {
 
 // RelayConfig is what a relay needs: how to reach the gate, and bounds.
 type RelayConfig struct {
-	Dial        func(ctx context.Context) (net.Conn, error) // into secured, typically a Unix socket
+	Dial func(ctx context.Context) (net.Conn, error) // into secured, typically a Unix socket
+	// Connect, when set, replaces Dial for a forwarder that first learns
+	// where to go from the accepted connection itself, reading from and
+	// writing to it before the copying starts.
+	Connect     func(ctx context.Context, outside net.Conn) (net.Conn, error)
 	MaxConns    int
 	MaxBytes    int64 // per direction per connection; 0 for the default
 	IdleTimeout time.Duration
@@ -35,7 +39,7 @@ const (
 // NewRelay applies defaults. A relay without a Dial refuses every
 // connection, since it has nowhere to forward to.
 func NewRelay(cfg RelayConfig) *Relay {
-	if cfg.Dial == nil {
+	if cfg.Dial == nil && cfg.Connect == nil {
 		cfg.Dial = func(context.Context) (net.Conn, error) { return nil, errors.New("the relay has no dial target") }
 	}
 	if cfg.MaxConns <= 0 {
@@ -61,7 +65,7 @@ func (r *Relay) Serve(ctx context.Context, ln net.Listener) error {
 // its byte bound, or no bytes move for the idle timeout.
 func (r *Relay) forward(ctx context.Context, outside net.Conn) {
 	defer outside.Close()
-	inside, err := r.cfg.Dial(ctx)
+	inside, err := r.connect(ctx, outside)
 	if err != nil {
 		return
 	}
@@ -74,6 +78,13 @@ func (r *Relay) forward(ctx context.Context, outside net.Conn) {
 	go func() { copyBounded(inside, outside, r.cfg.MaxBytes, idle); done <- struct{}{} }()
 	go func() { copyBounded(outside, inside, r.cfg.MaxBytes, idle); done <- struct{}{} }()
 	<-done
+}
+
+func (r *Relay) connect(ctx context.Context, outside net.Conn) (net.Conn, error) {
+	if r.cfg.Connect != nil {
+		return r.cfg.Connect(ctx, outside)
+	}
+	return r.cfg.Dial(ctx)
 }
 
 // copyBounded copies up to limit bytes, extending the pair's idle deadline

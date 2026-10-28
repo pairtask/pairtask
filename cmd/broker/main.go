@@ -42,6 +42,11 @@ type config struct {
 	PairingSocketPath string
 	PairingEgress     string
 	PairingName       string
+	// The secured/connector route: a group-shared pairing socket (GID -1
+	// when unset) and connector's egress socket.
+	PairingSocketGroup  string
+	PairingSocketGID    int
+	PairingEgressSocket string
 }
 
 func loadConfig(lookup settings.LookupFunc) (config, error) {

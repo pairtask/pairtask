@@ -144,27 +144,36 @@ const MaxDestinationBytes = 255
 var ErrInvalidDestination = errors.New("peer: invalid destination")
 
 // CheckDestination accepts an operator's destination: host:port, with a
-// non-empty host and a port from 1 to 65535.
+// non-empty host and a decimal port from 1 to 65535.
 func CheckDestination(d string) error {
+	_, _, err := SplitDestination(d)
+	return err
+}
+
+// SplitDestination checks a destination and returns its host and port, so
+// every user of it reads the port the check accepted.
+func SplitDestination(d string) (string, uint16, error) {
 	if d == "" || validDestination(d) != nil {
-		return ErrInvalidDestination
+		return "", 0, ErrInvalidDestination
 	}
 	host, port, err := net.SplitHostPort(d)
 	if err != nil || host == "" {
-		return ErrInvalidDestination
+		return "", 0, ErrInvalidDestination
 	}
-	return checkPort(port)
+	n, err := parsePort(port)
+	return host, n, err
 }
 
-func checkPort(port string) error {
-	n, err := strconv.Atoi(port)
-	if err != nil {
-		return ErrInvalidDestination
+// parsePort accepts digits only, no sign, from 1 to 65535.
+func parsePort(port string) (uint16, error) {
+	if port == "" || strings.ContainsFunc(port, func(r rune) bool { return r < '0' || r > '9' }) {
+		return 0, ErrInvalidDestination
 	}
-	if n < 1 || n > 65535 {
-		return ErrInvalidDestination
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || n == 0 {
+		return 0, ErrInvalidDestination
 	}
-	return nil
+	return uint16(n), nil
 }
 
 // validDestination accepts the empty destination of a direct join; an

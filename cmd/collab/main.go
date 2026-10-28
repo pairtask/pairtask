@@ -39,6 +39,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDashboard(ctx, args[1:], stdout, stderr)
 	case "operator":
 		return runOperator(ctx, args[1:], stdout, stderr)
+	case "peer":
+		return runPeer(ctx, args[1:], stdout, stderr)
 	case "start":
 		return runStart(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec,
 			Status: status.Fetch, Chdir: os.Chdir})
