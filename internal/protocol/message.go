@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = RoomVersion
+	Version                = ReviewVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -186,19 +186,30 @@ type Message struct {
 	Topic              string             `json:"topic,omitempty"`               // claim_set: display label
 	Role               string             `json:"role,omitempty"`                // claim_set, claim_release: owner or reviewer
 	*ClaimPage                            // claim_result, claim_conflict: claims, claims_total, claims_truncated
-	Client             string             `json:"client,omitempty"`      // operator_session_open
-	Session            *SessionInfo       `json:"session,omitempty"`     // operator_session
-	Owner              *SessionInfo       `json:"owner,omitempty"`       // owner_busy
-	Snapshot           *OperatorSnapshot  `json:"snapshot,omitempty"`    // operator_snapshot response
-	Stages             *StagePage         `json:"stages,omitempty"`      // operator_message_stages response
-	Event              *SessionEvent      `json:"event,omitempty"`       // event
-	AfterAgent         string             `json:"after_agent,omitempty"` // operator_message_stages
-	Limit              int                `json:"limit,omitempty"`       // operator_message_stages
-	History            *HistoryPage       `json:"history,omitempty"`     // operator_history response
-	Payload            json.RawMessage    `json:"payload,omitempty"`     // msg: opaque JSON
-	Code               string             `json:"code,omitempty"`        // error
-	Detail             string             `json:"detail,omitempty"`      // error
-	TS                 *time.Time         `json:"ts,omitempty"`          // msg (broker -> client), UTC; pointer so zero is omitted
+	ReviewID           string             `json:"review_id,omitempty"`       // review frames (#201): the review concerned
+	ReviewOp           string             `json:"review_op,omitempty"`       // operator_review: what to do
+	ReviewSpec         *ReviewSpec        `json:"review_spec,omitempty"`     // operator_review request
+	Revisions          *Revisions         `json:"revisions,omitempty"`       // review_prepare: the revisions resolved
+	Attempt            int                `json:"attempt,omitempty"`         // review_restart, review_submit, review_publication: the current attempt
+	Verdict            *Verdict           `json:"verdict,omitempty"`         // review_submit
+	PublicationStep    *PublicationUpdate `json:"publication,omitempty"`     // review_publication
+	IntentAcquired     *bool              `json:"intent_acquired,omitempty"` // review_result for a step to submitting: this call took the intent, so it may write
+	ReviewReason       string             `json:"review_reason,omitempty"`   // review_decline, operator_review cancel
+	Review             *ReviewView        `json:"review,omitempty"`          // review_result, operator_review_result: one review
+	ReviewPage         *ReviewPage        `json:"review_page,omitempty"`     // review_result, operator_review_result: a list of reviews
+	Client             string             `json:"client,omitempty"`          // operator_session_open
+	Session            *SessionInfo       `json:"session,omitempty"`         // operator_session
+	Owner              *SessionInfo       `json:"owner,omitempty"`           // owner_busy
+	Snapshot           *OperatorSnapshot  `json:"snapshot,omitempty"`        // operator_snapshot response
+	Stages             *StagePage         `json:"stages,omitempty"`          // operator_message_stages response
+	Event              *SessionEvent      `json:"event,omitempty"`           // event
+	AfterAgent         string             `json:"after_agent,omitempty"`     // operator_message_stages
+	Limit              int                `json:"limit,omitempty"`           // operator_message_stages
+	History            *HistoryPage       `json:"history,omitempty"`         // operator_history response
+	Payload            json.RawMessage    `json:"payload,omitempty"`         // msg: opaque JSON
+	Code               string             `json:"code,omitempty"`            // error
+	Detail             string             `json:"detail,omitempty"`          // error
+	TS                 *time.Time         `json:"ts,omitempty"`              // msg (broker -> client), UTC; pointer so zero is omitted
 }
 
 // Operator inbox paging limits.

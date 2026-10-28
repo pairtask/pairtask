@@ -22,6 +22,7 @@ const (
 type statusState struct {
 	buckets  bucketMap
 	claims   bucketMap // claim changes, a separate budget per agent
+	reviews  bucketMap // review changes (#201), a separate budget per agent
 	activity map[string]sessionActivity
 }
 
@@ -40,6 +41,7 @@ func (s *statusState) init() {
 	if s.buckets == nil {
 		s.buckets = bucketMap{}
 		s.claims = bucketMap{}
+		s.reviews = bucketMap{}
 		s.activity = map[string]sessionActivity{}
 	}
 }
@@ -50,6 +52,7 @@ func (s *statusState) forget(c *Client) {
 	s.init()
 	delete(s.buckets, c.ID)
 	delete(s.claims, c.ID)
+	delete(s.reviews, c.ID)
 	if a, ok := s.activity[c.ID]; ok && a.session == c.SessionID {
 		delete(s.activity, c.ID)
 	}
@@ -75,6 +78,12 @@ func (s *statusState) take(agent string, now time.Time) bool {
 func (s *statusState) takeClaim(c *Client, now time.Time) bool {
 	s.init()
 	return s.claims.of(c.ID, now).spend(now)
+}
+
+// takeReview spends a review token for the client's agent.
+func (s *statusState) takeReview(c *Client, now time.Time) bool {
+	s.init()
+	return s.reviews.of(c.ID, now).spend(now)
 }
 
 // spend takes one token: a burst of statusBurst, then one every statusRefill.

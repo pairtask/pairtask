@@ -21,7 +21,7 @@ import (
 // The operator endpoint exists only in secured and serves only the operator UID.
 const defaultOperatorSocket = "/run/collab-ai-operator/operator.sock"
 
-const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] [--timeout 5s] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask operator pair [list | open | status | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] (experimental)\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] [--socket PATH] (experimental; the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [--socket PATH] [OPERATION_ID] (experimental)"
+const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] [--timeout 5s] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask operator pair [list | open | status | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] (experimental)\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] [--socket PATH] (experimental; the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [--socket PATH] [OPERATION_ID] (experimental)\n       pairtask operator review (request --reviewer AGENT TARGET | list | status REVIEW_ID | cancel REVIEW_ID) [--socket PATH] [--json]"
 
 type operatorSend struct {
 	socket, to, group, messageID string
@@ -42,6 +42,7 @@ var operatorCommands = map[string]operatorCommand{
 	"inbox":   runOperatorInbox,
 	"room":    runOperatorRoom,
 	"pair":    runOperatorPair,
+	"review":  runOperatorReview,
 }
 
 func runOperator(ctx context.Context, args []string, stdout, stderr io.Writer) int {
