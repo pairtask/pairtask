@@ -25,23 +25,33 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 		return messaging.Answer{}, err
 	}
 	defer tx.Rollback()
-	if err := requireContact(ctx, tx, contact); err != nil {
-		return messaging.Answer{}, err
-	}
-	if answer, known, err := replay(ctx, tx, contact, m); known || err != nil {
-		return answer, err // a replay is answered as before and stores nothing
-	}
-	answer, err := decideInbound(ctx, tx, contact, m)
-	if err != nil || !answer.Stored {
+	answer, inserted, err := acceptIn(ctx, tx, contact, m, now)
+	if err != nil || !inserted {
 		return answer, err
-	}
-	if err := insertMessage(ctx, tx, messageKey{contact, messaging.DirIn, m.ID}, m, now); err != nil {
-		return messaging.Answer{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return messaging.Answer{}, err // never Stored unless it committed
 	}
 	return stored, nil
+}
+
+// acceptIn is Accept inside its transaction; inserted reports a new row to
+// commit. A replay is answered as before and stores nothing.
+func acceptIn(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message, now time.Time) (messaging.Answer, bool, error) {
+	if err := requireContact(ctx, tx, contact); err != nil {
+		return messaging.Answer{}, false, err
+	}
+	if answer, known, err := replay(ctx, tx, contact, m); known || err != nil {
+		return answer, false, err
+	}
+	answer, err := decideInbound(ctx, tx, contact, m)
+	if err != nil || !answer.Stored {
+		return answer, false, err
+	}
+	if err := insertMessage(ctx, tx, messageKey{contact, messaging.DirIn, m.ID}, m, now); err != nil {
+		return messaging.Answer{}, false, err // never Stored when the insert failed
+	}
+	return stored, true, nil
 }
 
 // inboundCheck refuses a message for one reason, or passes it on.

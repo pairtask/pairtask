@@ -31,13 +31,23 @@ func codecRoundTrip[T any](t *testing.T, value T, codec codecPair[T]) {
 	if err != nil || !reflect.DeepEqual(got, value) {
 		t.Fatalf("round trip: %+v, %v; want %+v", got, err, value)
 	}
+	codecRejectsTruncation(t, frame, codec.decode)
+	codecRejectsMalformed(t, frame, codec.decode)
+}
+
+func codecRejectsTruncation[T any](t *testing.T, frame []byte, decode func([]byte) (T, error)) {
+	t.Helper()
 	for cut := 0; cut < len(frame); cut++ {
-		if _, err := codec.decode(frame[:cut]); !errors.Is(err, messaging.ErrProtocol) {
+		if _, err := decode(frame[:cut]); !errors.Is(err, messaging.ErrProtocol) {
 			t.Fatalf("truncation at %d accepted: %v", cut, err)
 		}
 	}
+}
+
+func codecRejectsMalformed[T any](t *testing.T, frame []byte, decode func([]byte) (T, error)) {
+	t.Helper()
 	for _, bad := range [][]byte{append(append([]byte{}, frame...), 0), append([]byte{2}, frame[1:]...), append([]byte{1, 255}, frame[2:]...)} {
-		if _, err := codec.decode(bad); !errors.Is(err, messaging.ErrProtocol) {
+		if _, err := decode(bad); !errors.Is(err, messaging.ErrProtocol) {
 			t.Fatalf("malformed frame accepted: %x (%v)", bad, err)
 		}
 	}
