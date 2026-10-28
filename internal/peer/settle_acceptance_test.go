@@ -154,7 +154,7 @@ func assertSettleUnknown(t *testing.T, r *redeemFixture, frame []byte, pin strin
 	invEqual(t, len(frames.sent), 1)
 	reply, err := peer.DecodeSettleReply(frames.sent[0])
 	invOK(t, err)
-	invEqual(t, reply.Receipt, byte(peer.ReceiptUnknown))
+	invEqual(t, reply.Receipt, peer.ReceiptUnknown)
 }
 
 func TestSettleAcceptanceAckMustMatchThisConnectionDecision(t *testing.T) {
