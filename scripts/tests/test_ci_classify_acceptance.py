@@ -170,11 +170,19 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                      "infra/image/install.sh", "scripts/ci-incus.sh",
                      ".github/workflows/ci.yml", "go.mod", "go.sum",
                      "internal/chatty/view.go", "internal/chat.go",
-                     "internal/Chat/view.go", "docs/nested/guide.md"):
+                     "docs/nested/guide.md"):
             with self.subTest(path=name):
                 self.git("reset", "--hard", chat)
                 self.write(name)
                 self.assert_builds(self.base, self.commit())
+
+    def test_case_lookalike_is_not_the_tui_directory(self):
+        # No lowercase chat directory in this fixture: on macOS it would
+        # absorb this write and Git would correctly report the lowercase path.
+        self.write("internal/Chat/view.go")
+        head = self.commit()
+        self.assertIn("internal/Chat/view.go", self.git("ls-tree", "-r", "--name-only", head))
+        self.assert_builds(self.base, head)
 
     def test_tui_deletion_is_classified_by_deleted_path(self):
         self.write("internal/chat/view.go")

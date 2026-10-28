@@ -82,13 +82,14 @@ def changed_paths(repo, base, head):
     return [name.decode("utf-8", "surrogateescape") for name in out.split(b"\0") if name]
 
 
-def decide(repo, event, base, head, force_full=False):
-    if event != "pull_request":
+def decide(run):
+    """The decision for one run: its event, refs, repository and force flag."""
+    if run.event != "pull_request":
         return ALWAYS
-    if force_full:
+    if run.force_full:
         return FORCED
     try:
-        paths = changed_paths(repo, base, head)
+        paths = changed_paths(run.repo, run.base, run.head)
     except (subprocess.CalledProcessError, OSError, ValueError):
         return FAILED
     return skip_for(paths)
@@ -111,7 +112,7 @@ def main(argv=None):
     parser.add_argument("--head", default="")
     parser.add_argument("--force-full", action="store_true", help="build images whatever the diff (the ci:full-images label)")
     args = parser.parse_args(argv)
-    images, reason = decide(args.repo, args.event, args.base, args.head, args.force_full)
+    images, reason = decide(args)
     sys.stdout.write("images=%s\nreason=%s\n" % (images, reason))
     return 0
 
