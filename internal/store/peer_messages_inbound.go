@@ -25,7 +25,7 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 		return messaging.Answer{}, err
 	}
 	defer tx.Rollback()
-	answer, inserted, err := acceptIn(ctx, tx, contact, m, now)
+	answer, inserted, err := acceptIn(ctx, tx, newRow{messageKey{contact, messaging.DirIn, m.ID}, m, now})
 	if err != nil || !inserted {
 		return answer, err
 	}
@@ -37,7 +37,8 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 
 // acceptIn is Accept inside its transaction; inserted reports a new row to
 // commit. A replay is answered as before and stores nothing.
-func acceptIn(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message, now time.Time) (messaging.Answer, bool, error) {
+func acceptIn(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool, error) {
+	contact, m := r.key.contact, r.m
 	if err := requireContact(ctx, tx, contact); err != nil {
 		return messaging.Answer{}, false, err
 	}
@@ -48,7 +49,7 @@ func acceptIn(ctx context.Context, tx *sql.Tx, contact string, m messaging.Messa
 	if err != nil || !answer.Stored {
 		return answer, false, err
 	}
-	if err := insertMessage(ctx, tx, messageKey{contact, messaging.DirIn, m.ID}, m, now); err != nil {
+	if err := insertMessage(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err // never Stored when the insert failed
 	}
 	return stored, true, nil
@@ -151,7 +152,7 @@ FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unrea
 	if err != nil {
 		return false, err
 	}
-	return !fits(unread, unreadBytes+size, messaging.UnreadMessages, messaging.UnreadBytes) || held >= messaging.Tombstones, nil
+	return !unreadBudget.holds(unread, unreadBytes+size) || held >= messaging.Tombstones, nil
 }
 
 // MarkRead marks inbound messages read as shown here, and queues a receipt

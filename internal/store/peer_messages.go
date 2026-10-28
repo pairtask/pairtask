@@ -97,7 +97,7 @@ func (p *PeerMessages) Queue(ctx context.Context, contact, id, text string, now 
 	}
 	defer tx.Rollback()
 	key := messageKey{contact, messaging.DirOut, id}
-	row, err := queueIn(ctx, tx, key, text, now)
+	row, err := queueIn(ctx, tx, outgoing{key, text, now})
 	if err != nil {
 		return messaging.Row{}, err
 	}
@@ -107,9 +107,17 @@ func (p *PeerMessages) Queue(ctx context.Context, contact, id, text string, now 
 	return row, nil
 }
 
+// outgoing is one message the operator queues.
+type outgoing struct {
+	key  messageKey
+	text string
+	now  time.Time
+}
+
 // queueIn is Queue inside its transaction: the existing row for a replay,
 // or a new one with the next sequence.
-func queueIn(ctx context.Context, tx *sql.Tx, key messageKey, text string, now time.Time) (messaging.Row, error) {
+func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
+	key, text, now := o.key, o.text, o.now
 	if err := requireContact(ctx, tx, key.contact); err != nil {
 		return messaging.Row{}, err
 	}
@@ -125,7 +133,7 @@ func queueIn(ctx context.Context, tx *sql.Tx, key messageKey, text string, now t
 		return messaging.Row{}, err
 	}
 	m := messaging.Message{ID: key.id, N: n, CreatedAt: now.UTC(), Text: text}
-	if err := insertMessage(ctx, tx, key, m, now); err != nil {
+	if err := insertMessage(ctx, tx, newRow{key, m, now}); err != nil {
 		return messaging.Row{}, err
 	}
 	row, _, err = messageRow(ctx, tx, key)
@@ -152,15 +160,24 @@ WHERE contact = ? AND direction = 'out' AND state = 'queued'`, contact).Scan(&co
 	if err != nil {
 		return err
 	}
-	if !fits(count, bytes+size, messaging.OutboxMessages, messaging.OutboxBytes) {
+	if !outboxBudget.holds(count, bytes+size) {
 		return messaging.ErrOutboxFull
 	}
 	return nil
 }
 
-// fits: a count below its bound and bytes within theirs.
-func fits(count, bytes, maxCount, maxBytes int) bool {
-	return count < maxCount && bytes <= maxBytes
+// budget is a bound on messages and on their bytes.
+type budget struct{ count, bytes int }
+
+var (
+	outboxBudget    = budget{messaging.OutboxMessages, messaging.OutboxBytes}
+	unreadBudget    = budget{messaging.UnreadMessages, messaging.UnreadBytes}
+	retentionBudget = budget{messaging.RetainedText, messaging.RetainedTextBytes}
+)
+
+// holds: a count below the bound and bytes within it.
+func (b budget) holds(count, bytes int) bool {
+	return count < b.count && bytes <= b.bytes
 }
 
 // nextSequence takes the contact's next sequence, from 1; it is never
@@ -182,7 +199,15 @@ ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, contact, next+1)
 // initialState is a new row's state by direction.
 var initialState = map[string]string{messaging.DirOut: messaging.StateQueued, messaging.DirIn: messaging.StateReceived}
 
-func insertMessage(ctx context.Context, tx *sql.Tx, key messageKey, m messaging.Message, now time.Time) error {
+// newRow is a message to insert: its key, the message and when.
+type newRow struct {
+	key messageKey
+	m   messaging.Message
+	now time.Time
+}
+
+func insertMessage(ctx context.Context, tx *sql.Tx, r newRow) error {
+	key, m, now := r.key, r.m, r.now
 	hash := m.Hash()
 	contact, direction, state := key.contact, key.direction, initialState[key.direction]
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
@@ -208,20 +233,20 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 	if err != nil {
 		return nil, err
 	}
-	out := within(rows, maxCount, maxBytes)
+	out := within(rows, budget{maxCount + 1, maxBytes})
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// within is the leading rows that fit maxCount and maxBytes of text.
-func within(rows []storedRow, maxCount, maxBytes int) []messaging.Row {
+// within is the leading rows whose count and text the budget holds.
+func within(rows []storedRow, b budget) []messaging.Row {
 	var out []messaging.Row
 	bytes := 0
 	for _, r := range rows {
 		bytes += len(r.Text)
-		if !fits(len(out), bytes, maxCount, maxBytes) {
+		if !b.holds(len(out)+1, bytes) {
 			break
 		}
 		out = append(out, r.Row)
