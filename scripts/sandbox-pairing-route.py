@@ -8,7 +8,13 @@ real redemptions both ways against a standalone broker on this host:
 - outbound: secured's operator redeems the host's code, through connector's
   egress forwarder;
 - inbound: the host redeems secured's code, through connector's relay into
-  secured's shared pairing socket.
+  secured's shared pairing socket;
+- settlement: each inviter accepts, each joiner settles its exact
+  redemption over a pinned contact connection on the same route, and both
+  sides then hold one confirmed contact for the other.
+
+Both directions run again after crash restarts: the repeated redemptions
+find the requests already accepted, settle, and leave one contact each.
 
 It then runs pairing_route_checks on the deployment and checks that neither
 code reached a journal or log. It never touches an operator sandbox and
@@ -236,9 +242,23 @@ def snapshot(result):
     return json.loads(result.stdout)["pairing_result"]
 
 
-def require_pending(snap, identity, side):
+def require_request(snap, identity, state, side):
     keys = {r["identity_key"]: r["state"] for r in snap["requests"]}
-    require(keys.get(identity) == "pending_acceptance", f"{side} has no pending request from {identity}: {keys}")
+    require(keys.get(identity) == state, f"{side} has no {state} request from {identity}: {keys}")
+
+
+def require_contact(snap, identity, side):
+    """Exactly one contact for identity, confirmed on both sides."""
+    contacts = [c for c in snap["contacts"] if c["identity_key"] == identity]
+    require(len(contacts) == 1, f"{side} holds {len(contacts)} contacts for {identity}")
+    require(contacts[0]["confirmed"], f"{side}'s contact for {identity} is not confirmed")
+
+
+def require_delivered(snap, identity, side):
+    """The inviter recorded the joiner's acknowledgment of its acceptance."""
+    request = next((r for r in snap["requests"] if r["identity_key"] == identity), {})
+    require(request.get("state") == "accepted" and request.get("delivered_at"),
+            f"{side}'s acceptance of {identity} was not delivered: {request}")
 
 
 def require_receipt(join, outcome, joiner):
@@ -252,8 +272,9 @@ def require_receipt(join, outcome, joiner):
     require(join_joiner == joiner, "the join names a different joiner")
 
 
-def outbound(deployment, host):
-    """secured redeems the host's code through connector's egress."""
+def outbound(deployment, host, request_state):
+    """secured redeems the host's code through connector's egress; the host
+    then holds secured's request in request_state."""
     code, host_identity = opened_code(host.pair("open", "--json"))
     result = deployment.operator("redeem", host.relay_address, "--name", "secured", "--wait", WAIT, "--json", stdin=code + "\n")
     require(result.returncode == 0, f"secured's redemption did not settle: {result.stdout} {result.stderr}")
@@ -261,15 +282,17 @@ def outbound(deployment, host):
     require(join["state"] == "awaiting_acceptance", f"secured's redemption is {join['state']}")
     require(join["peer"] == host_identity, "secured authenticated a different inviter")
     secured = snapshot(deployment.operator("status", "--json"))
-    require_pending(snapshot(host.pair("status", "--json")), secured["self_identity"], "the host")
+    require_request(snapshot(host.pair("status", "--json")), secured["self_identity"], request_state, "the host")
     stored = deployment.row(JOIN_QUERY, join["operation_id"])
     require_receipt(stored, host.row(OUTCOME_QUERY, stored[2]), secured["self_identity"])
-    print("PASS: secured redeemed through connector's egress; the host holds its pending request and matching outcome.", flush=True)
-    return code
+    print(f"PASS: secured redeemed through connector's egress; the host holds its {request_state} request and matching outcome.",
+          flush=True)
+    return code, join["operation_id"]
 
 
-def inbound(deployment, host, connector_ip):
-    """The host redeems secured's code through connector's relay."""
+def inbound(deployment, host, connector_ip, request_state):
+    """The host redeems secured's code through connector's relay; secured
+    then holds the host's request in request_state."""
     code, secured_identity = opened_code(deployment.operator("open", "--json"))
     result = host.pair("redeem", f"{connector_ip}:{RELAY_PORT}", "--wait", WAIT, "--json", stdin=code + "\n")
     require(result.returncode == 0, f"the host's redemption did not settle: {result.stdout} {result.stderr}")
@@ -277,11 +300,63 @@ def inbound(deployment, host, connector_ip):
     require(join["state"] == "awaiting_acceptance", f"the host's redemption is {join['state']}")
     require(join["peer"] == secured_identity, "the host authenticated a different inviter")
     host_identity = snapshot(host.pair("status", "--json"))["self_identity"]
-    require_pending(snapshot(deployment.operator("status", "--json")), host_identity, "secured")
+    require_request(snapshot(deployment.operator("status", "--json")), host_identity, request_state, "secured")
     stored = host.row(JOIN_QUERY, join["operation_id"])
     require_receipt(stored, deployment.row(OUTCOME_QUERY, stored[2]), host_identity)
-    print("PASS: the host redeemed through connector's relay into secured; secured holds its pending request and matching outcome.", flush=True)
-    return code
+    print(f"PASS: the host redeemed through connector's relay into secured; secured holds its {request_state} request and "
+          "matching outcome.", flush=True)
+    return code, join["operation_id"]
+
+
+def settled(result, side):
+    """A followed settlement that ended with the decision confirmed."""
+    require(result.returncode == 0, f"{side}'s settlement was not confirmed: {result.stdout} {result.stderr}")
+    join = json.loads(result.stdout)
+    require(join["state"] == "contact" and join.get("decision_confirmed_at"), f"{side}'s settled join: {join}")
+    return join
+
+
+def settle_outbound(deployment, host, operation_id, accept):
+    """The host accepts secured (once), and secured settles its exact
+    redemption through connector's egress."""
+    secured_identity = snapshot(deployment.operator("status", "--json"))["self_identity"]
+    if accept:
+        result = host.pair("accept", secured_identity)
+        require(result.returncode == 0, f"the host could not accept secured: {result.stderr}")
+    settled(deployment.operator("settle", operation_id, "--wait", WAIT, "--json"), "secured")
+    require(deployment.row(JOIN_QUERY, operation_id)[6] == "contact", "secured's stored join is not a contact")
+    host_snap = snapshot(host.pair("status", "--json"))
+    require_delivered(host_snap, secured_identity, "the host")
+    require_contact(host_snap, secured_identity, "the host")
+    require_contact(snapshot(deployment.operator("status", "--json")), host_snap["self_identity"], "secured")
+    print("PASS: secured settled through connector's egress; both sides hold one confirmed contact.", flush=True)
+
+
+def settle_inbound(deployment, host, operation_id, accept):
+    """secured accepts the host (once), and the host settles its exact
+    redemption through connector's relay."""
+    host_identity = snapshot(host.pair("status", "--json"))["self_identity"]
+    if accept:
+        result = deployment.operator("accept", host_identity)
+        require(result.returncode == 0, f"secured could not accept the host: {result.stderr}")
+    settled(host.pair("settle", operation_id, "--wait", WAIT, "--json"), "the host")
+    require(host.row(JOIN_QUERY, operation_id)[6] == "contact", "the host's stored join is not a contact")
+    secured_snap = snapshot(deployment.operator("status", "--json"))
+    require_delivered(secured_snap, host_identity, "secured")
+    require_contact(secured_snap, host_identity, "secured")
+    require_contact(snapshot(host.pair("status", "--json")), secured_snap["self_identity"], "the host")
+    print("PASS: the host settled through connector's relay into secured; both sides hold one confirmed contact.", flush=True)
+
+
+def both_ways(deployment, host, connector_ip, first):
+    """Redeem and settle in both directions; the first round accepts, the
+    repeat finds the requests already accepted."""
+    state = "pending_acceptance" if first else "accepted"
+    code_out, op_out = outbound(deployment, host, state)
+    code_in, op_in = inbound(deployment, host, connector_ip, state)
+    settle_outbound(deployment, host, op_out, accept=first)
+    settle_inbound(deployment, host, op_in, accept=first)
+    return [code_out, code_in]
 
 
 def codes_absent(deployment, host, codes):
@@ -305,15 +380,15 @@ def exercise(args, deployment, binaries, workdir):
     bridge_ip = connector_ip.rsplit(".", 1)[0] + ".1"
     host = HostBroker(binaries, workdir, bridge_ip)
     try:
-        codes = [outbound(deployment, host), inbound(deployment, host, connector_ip)]
+        codes = both_ways(deployment, host, connector_ip, first=True)
         # Crashes leave the broker's and the forwarder's sockets behind; the
         # installed units must clean their own and serve again.
         deployment.crash("secured", "pairtask-secured-broker.service")
         deployment.crash("connector", "pairtask-peer-egress.service")
         deployment.output("connector", "systemctl", "restart", "pairtask-peer-relay.service")
         deployment.await_active("connector", "pairtask-peer-relay.service")
-        codes += [outbound(deployment, host), inbound(deployment, host, connector_ip)]
-        print("PASS: both directions again after crashing the broker and the forwarder.", flush=True)
+        codes += both_ways(deployment, host, connector_ip, first=False)
+        print("PASS: both directions, settlement included, again after crashing the broker and the forwarder.", flush=True)
         pairing_route_checks.check_all(args.remote, deployment.base[2])
         codes_absent(deployment, host, codes)
     finally:
