@@ -83,6 +83,7 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 	// which leaves pairing unavailable rather than the hub.
 	h.pairing, _ = peer.NewInvitations(peer.DefaultInvitationPolicy(), time.Now, rand.Reader, st)
 	h.pair.changed = make(chan struct{}, 1)
+	h.msgs.init()
 	return h
 }
 
@@ -156,6 +157,9 @@ func (h *Hub) Run(ctx context.Context) {
 
 		case <-h.pair.changed:
 			h.emit(protocol.SessionEvent{Kind: protocol.EventPairingChanged})
+
+		case <-h.msgs.changed:
+			h.announceMessages()
 		}
 	}
 }
@@ -616,6 +620,12 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 	case in.Msg.Type == protocol.TypeOperatorPairing:
 		// Pairing is operator-socket only (#178); an agent gets a correlated refusal.
 		refusal := statusError(in.Msg.RequestID, protocol.ErrForbidden, "pairing is operator-only")
+		refusal.MessageID = in.Msg.MessageID
+		h.enqueue(clients, in.From, refusal)
+	case in.Msg.Type == protocol.TypeOperatorContact:
+		// Contact messages are operator-socket only (#210): refused before any
+		// lookup, audit or change, and nothing about a contact in the answer.
+		refusal := statusError(in.Msg.RequestID, protocol.ErrForbidden, "contact messages are operator-only")
 		refusal.MessageID = in.Msg.MessageID
 		h.enqueue(clients, in.From, refusal)
 	case in.Msg.Type == protocol.TypeAck:

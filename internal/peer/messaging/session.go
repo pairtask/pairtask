@@ -25,7 +25,14 @@ var ErrUnsupported = errors.New("messaging: no common protocol version")
 // Result is what one session moved.
 type Result struct {
 	Sent, Received         int // messages answered Stored, either way
+	Refused                int // this side's messages the peer refused, recorded
 	ReadsSent, ReadsStored int // read receipts confirmed and received
+}
+
+// Moved reports durable progress: anything stored, refused or confirmed,
+// even in a session that then failed.
+func (r Result) Moved() bool {
+	return r.Sent+r.Received+r.Refused+r.ReadsSent+r.ReadsStored > 0
 }
 
 // Session is one side of one session with one contact.
@@ -136,6 +143,8 @@ func (s Session) sendMessages(ctx context.Context, r *Result) error {
 		}
 		if stored {
 			r.Sent++
+		} else {
+			r.Refused++
 		}
 	}
 	return s.send(EncodeEnd())

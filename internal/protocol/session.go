@@ -24,7 +24,7 @@ const (
 )
 
 // SessionCapabilities are advertised in the operator_session response.
-var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityReviews}
+var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityReviews, CapabilityContactMessages}
 
 // CapabilityMentions: operator_send to a room or group may carry mentions
 // (#164); a broker without it would drop them, so the chat refuses such a
@@ -128,6 +128,7 @@ type SessionEvent struct {
 	Detail            string    `json:"detail,omitempty"`              // send_refused: the bound that refused
 	OperatorMessageID string    `json:"operator_message_id,omitempty"` // claims_changed
 	ReviewID          string    `json:"review_id,omitempty"`           // reviews_changed (#201)
+	ContactKey        string    `json:"contact_key,omitempty"`         // contact_messages_changed (#210)
 }
 
 // Operator history limits. New operator payloads are capped so every new

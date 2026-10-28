@@ -153,6 +153,18 @@ func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []strin
 		return 0, err
 	}
 	defer tx.Rollback()
+	marked, err := markReadIn(ctx, tx, contact, ids, at)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return marked, nil
+}
+
+// markReadIn is MarkRead inside a transaction.
+func markReadIn(ctx context.Context, tx *sql.Tx, contact string, ids []string, at time.Time) (int, error) {
 	marked := 0
 	for _, id := range ids {
 		res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'read', read_at = ?1, receipt = 'pending', receipt_at = ?1
@@ -164,9 +176,6 @@ WHERE contact = ?2 AND direction = 'in' AND message_id = ?3 AND state = 'receive
 		marked += int(n)
 	}
 	if err := dropReceiptsOver(ctx, tx, contact); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return marked, nil

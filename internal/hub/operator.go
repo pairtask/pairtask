@@ -75,6 +75,7 @@ var operatorHandlers = map[string]operatorHandler{
 	protocol.TypeOperatorRoom:     (*Hub).operatorRoom,
 	protocol.TypeOperatorPairing:  (*Hub).operatorPairing,
 	protocol.TypeOperatorReview:   (*Hub).operatorReview,
+	protocol.TypeOperatorContact:  (*Hub).operatorContact,
 	protocol.TypeOperatorReceived: (*Hub).operatorReceived,
 	protocol.TypeOperatorAck:      (*Hub).operatorAck,
 	protocol.TypeOperatorAckMany:  (*Hub).operatorAckMany,

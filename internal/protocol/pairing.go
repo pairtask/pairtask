@@ -55,7 +55,7 @@ const (
 
 	// PairingPreview says what pairing can and can't do yet, wherever a code
 	// is shown.
-	PairingPreview = "experimental, unaudited CPace: a code is redeemable only through a broker's pairing socket, and contact messaging isn't connected"
+	PairingPreview = "experimental, unaudited CPace: a code is redeemable only through a broker's pairing socket, and contact messages (pairtask operator peer) are experimental too"
 )
 
 // PairingSnapshot is the open invitation, if any, and the pairing requests.
