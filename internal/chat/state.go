@@ -35,10 +35,12 @@ type StateView struct {
 	HiddenUnread      int // unread messages in hidden conversations
 	Draft             string
 	Pasted            bool
+	SendGuard         string // the draft text held as command-like; Enter again sends it (#208)
 	Audience          AudienceView
 	InReplyTo         string
 	ReplySender       string
 	CommandLine       *CommandLineView
+	CommandTrusted    bool // the open command line's name was typed, so Enter may run it (#208)
 	Picker            *PickerView
 	Hint              string
 	ScrollOffset      int
@@ -157,7 +159,9 @@ func (m *Model) composeState(v *StateView) {
 	if r := c.reply; r != nil {
 		v.InReplyTo, v.ReplySender = r.messageID, r.sender
 	}
+	v.SendGuard = c.guard
 	if c.cmd != nil {
+		v.CommandTrusted = c.cmd.trusted()
 		v.CommandLine = &CommandLineView{Text: c.cmd.input.Value(), Error: m.status}
 		if p := c.openPicker(PickerCommand); p != nil {
 			v.CommandLine.Candidates = append([]string(nil), p.items...)

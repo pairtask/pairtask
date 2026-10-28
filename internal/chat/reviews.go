@@ -20,7 +20,7 @@ const (
 	kindReview      = "review"
 	kindReviewQuiet = "review quiet"
 	panelReviews    = "reviews"
-	reviewUsage     = "usage: /review [--no-publish] [--no-formal] TARGET AGENT [SCOPE] | /review status ID | /review cancel ID [REASON]"
+	reviewUsage     = "usage: /review [--no-publish] [--no-formal] TARGET AGENT [SCOPE] | /review status [ID] | /review cancel [ID [REASON]]"
 )
 
 // reviewState is what chat knows of reviews: the last list, the selected
@@ -37,6 +37,18 @@ type reviewState struct {
 	refreshAfter bool                 // reconnected while a request was resent: read the reviews once it is answered
 	intent       *protocol.Message    // a request in flight, resent unchanged after a reconnect if its answer was lost
 	unknown      bool                 // the intent's answer was lost
+	pending      *pendingReview       // the request this session made last, shown in the panel until the broker answers it
+	pick         string               // what the review picker does with its choice: status or cancel
+}
+
+// pendingReview is a request shown in the panel before it is a review
+// (#208): requesting, unknown while its answer is lost, or refused, with
+// the command kept so it can be fixed and run again.
+type pendingReview struct {
+	id      string
+	spec    protocol.ReviewSpec
+	line    string // the command as run, without its "/"
+	refused string // the broker's reason, once refused
 }
 
 func reviewArg(a argument) error {
@@ -46,9 +58,9 @@ func reviewArg(a argument) error {
 	}
 	switch fields[0] {
 	case "status":
-		return wantFields(fields, 2, 2)
+		return wantFields(fields, 1, 2)
 	case "cancel":
-		return wantFields(fields, 2, -1)
+		return wantFields(fields, 1, -1)
 	}
 	_, _, err := parseReviewRequest(fields)
 	return err
@@ -114,10 +126,12 @@ func (m *Model) reviewCommand(arg argument) tea.Cmd {
 		return nil
 	}
 	fields := strings.Fields(string(arg))
-	switch fields[0] {
-	case "status":
+	switch {
+	case len(fields) == 1 && (fields[0] == "status" || fields[0] == "cancel"):
+		return m.pickReview(fields[0])
+	case fields[0] == "status":
 		return m.reviewStatus(fields[1])
-	case "cancel":
+	case fields[0] == "cancel":
 		return m.reviewCancel(fields[1], strings.Join(fields[2:], " "))
 	}
 	if in := m.reviews.intent; in != nil {
@@ -128,6 +142,9 @@ func (m *Model) reviewCommand(arg argument) tea.Cmd {
 	spec, reviewer, _ := parseReviewRequest(fields)
 	msg := protocol.Message{Type: protocol.TypeOperatorReview, MessageID: uuid.NewString(), ReviewOp: protocol.ReviewOpRequest, ReviewSpec: &spec}
 	m.reviews.intent, m.reviews.unknown, m.reviews.loaded = &msg, false, true
+	m.reviews.pending = &pendingReview{id: msg.MessageID, spec: spec, line: "review " + string(arg)}
+	m.reviews.selected, m.reviews.detail = msg.MessageID, nil
+	m.panel = &panel{kind: panelReviews} // the request shows at once, not only in the status line
 	m.status = "requesting a review from " + safe(reviewer) + "…"
 	return m.request(kindReview, msg, protocol.ReviewOpRequest, msg.MessageID)
 }
@@ -192,15 +209,26 @@ func (m *Model) reviewID(ref string) (string, string) {
 func (m *Model) reviewResult(req pendingRequest, resp protocol.Message) tea.Cmd {
 	op := req.ids[0]
 	var follow tea.Cmd
-	if op == protocol.ReviewOpRequest && m.settles(req) {
+	settled := op == protocol.ReviewOpRequest && m.settles(req)
+	if settled {
 		m.reviews.intent, m.reviews.unknown = nil, false
 		follow = m.refreshAfterResend()
 	}
 	if resp.Type != protocol.TypeOperatorReviewResult {
-		m.status = "review " + op + " refused: " + brokerReason(resp)
+		m.status = "review " + op + " refused: " + refusalReason(resp)
+		m.reviews.pick = ""
+		if settled {
+			m.requestRefused(resp)
+		}
 		return follow
 	}
+	if settled {
+		m.requestAnswered(resp)
+	}
 	m.applyReviews(resp)
+	if op == protocol.ReviewOpList {
+		m.pickAfterList()
+	}
 	if resp.Review != nil {
 		m.status = reviewStatusLine(op, *resp.Review)
 		if op == protocol.ReviewOpRequest {
@@ -208,6 +236,44 @@ func (m *Model) reviewResult(req pendingRequest, resp protocol.Message) tea.Cmd 
 		}
 	}
 	return follow
+}
+
+// requestRefused keeps the refusal in the panel and gives the command back
+// on the command line, unless another command is being typed there.
+func (m *Model) requestRefused(resp protocol.Message) {
+	p := m.reviews.pending
+	if p == nil {
+		return
+	}
+	p.refused = refusalReason(resp)
+	m.status = "review request refused: " + p.refused
+	if m.compose.cmd == nil {
+		m.openCommandLine()
+		m.compose.cmd.set(p.line)
+		m.compose.picker = nil
+	}
+}
+
+// requestAnswered turns the pending request into its review: still shown,
+// now from the broker's record.
+func (m *Model) requestAnswered(resp protocol.Message) {
+	p := m.reviews.pending
+	m.reviews.pending = nil
+	if p != nil && resp.Review != nil && m.reviews.selected == p.id {
+		m.reviews.selected = resp.Review.ID
+	}
+}
+
+// refusalReason is the broker's reason in words, its code after it.
+func refusalReason(resp protocol.Message) string {
+	if resp.Detail == "" {
+		return brokerReason(resp)
+	}
+	reason := safe(resp.Detail)
+	if resp.Code != "" {
+		reason += " (" + safe(resp.Code) + ")"
+	}
+	return reason
 }
 
 // refreshAfterResend reads the reviews a reconnect deferred behind a resend.

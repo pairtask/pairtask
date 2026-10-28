@@ -133,7 +133,7 @@ var commands = []command{
 	{name: "chat", usage: `all|id|@a @b|"id"|["a","b"]`, help: "switch conversation: all, an agent, a group of agents, or JSON for any IDs", check: chatArg, run: (*Model).chatCommand},
 	{name: "room", aliases: []string{"rooms"}, usage: "[NAME | add NAME @a | remove NAME @a | delete NAME]", help: "rooms: list, open (creating) a room's tab, add or remove members, delete a room", check: roomArg, run: (*Model).roomsCommand},
 	{name: "pair", usage: "[open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME]]", help: "experimental pairing: open or cancel an invitation code, decide requests, redeem another workspace's code", check: pairArg, run: (*Model).pairCommand, secret: true},
-	{name: "review", usage: "[--no-publish] [--no-formal] TARGET AGENT [SCOPE] | status ID | cancel ID [REASON]", help: "ask an agent to review a pull request (OWNER/REPO#N or its URL), or follow or cancel one", check: reviewArg, run: (*Model).reviewCommand},
+	{name: "review", usage: "[--no-publish] [--no-formal] TARGET AGENT [SCOPE] | status [ID] | cancel [ID [REASON]]", help: "ask an agent to review a pull request (OWNER/REPO#N or its link), or follow or cancel one (no ID picks it)", check: reviewArg, run: (*Model).reviewCommand},
 	{name: "reviews", help: "list review requests and their verdicts", check: noArgs, run: (*Model).reviewsCommand},
 	{name: "close", help: "hide this conversation from the bar (nothing is deleted; new messages reopen it)", check: noArgs, run: (*Model).closeCommand},
 	{name: "forget", help: "remove this group or 1:1 from the bar until /chat reopens it (its messages stay in All)", check: noArgs, run: (*Model).forgetCommand},
@@ -187,11 +187,12 @@ func byName(name string) command {
 	return command{}
 }
 
-// runCommandLine runs the typed command. Pasted command text is inert.
+// runCommandLine runs the typed command. A command name that was pasted,
+// in whole or in part, is inert; pasted arguments after a typed name run.
 func (m *Model) runCommandLine() tea.Cmd {
 	line := m.compose.cmd
-	if line.pasted {
-		m.status = "type the command; pasted text doesn't run"
+	if !line.trusted() {
+		m.status = "type the command name; pasted text doesn't run as a command"
 		return nil
 	}
 	text := strings.TrimSpace(line.input.Value())

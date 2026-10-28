@@ -110,6 +110,12 @@ func TestChatV2PasteCannotAddressOrExecuteCommands(t *testing.T) {
 			h.input(tea.PasteMsg{Content: body})
 			chatEqual(t, "paste does not send", h.m.State().Intent, nil)
 			chatEqual(t, "full paste retained", h.m.State().Draft, body)
+			if body == "/ack #1" || body == "/quit" {
+				h.input(chatKey(tea.KeyEnter, 0))
+				chatEqual(t, "first Enter guards command-looking text", h.m.State().Intent, nil)
+				chatEqual(t, "guard identifies exact draft", h.m.State().SendGuard, body)
+				v3Contains(t, h.m.State().Status, "Enter again")
+			}
 			req := v2Send(h)
 			chatEqual(t, "paste default audience", req.To, protocol.Broadcast)
 			chatEqual(t, "paste preserved literally", v2Body(t, req), body)
