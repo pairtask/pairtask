@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
-	"syscall"
 	"math/rand/v2"
+	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
