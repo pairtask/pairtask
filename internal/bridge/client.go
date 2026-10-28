@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pairtask/pairtask/internal/forge"
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
@@ -44,6 +45,7 @@ type Client struct {
 	protocolVersion int
 	pending         map[string]chan protocol.Message // status requests by request_id
 	lastActivity    time.Time                        // last agent_activity written
+	forges          forge.Registry                   // review adapters on this side (#201); none means reviews are refused before any forge work
 }
 
 type Inbox struct {
@@ -62,7 +64,8 @@ type ClientConfig struct {
 	AgentID    string
 	Harness    string
 	Model      string
-	Rooms      []string // v9: rooms to join on registration
+	Rooms      []string       // v9: rooms to join on registration
+	Forges     forge.Registry // #201: the forge adapters reviews may use on this side
 }
 
 // Dial registers the agent before returning. The caller must call Close.
@@ -93,7 +96,8 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Client, error) {
 		return nil, fmt.Errorf("unexpected welcome: type=%s code=%s detail=%s", welcome.Type, welcome.Code, welcome.Detail)
 	}
 	conn.SetDeadline(time.Time{})
-	c := &Client{conn: conn, writeGate: make(chan struct{}, 1), notify: make(chan struct{}, 1), done: make(chan struct{}), readDone: make(chan struct{})}
+	c := &Client{conn: conn, writeGate: make(chan struct{}, 1), notify: make(chan struct{}, 1), done: make(chan struct{}), readDone: make(chan struct{}),
+		forges: cfg.Forges}
 	c.sessionID = welcome.SessionID
 	c.protocolVersion = welcome.ProtocolVersion
 	go c.readLoop(r)
