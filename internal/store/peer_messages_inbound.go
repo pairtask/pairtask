@@ -35,7 +35,7 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 	if err != nil || !answer.Stored {
 		return answer, err
 	}
-	if err := insertMessage(ctx, tx, contact, messaging.DirIn, m, messaging.StateReceived, now); err != nil {
+	if err := insertMessage(ctx, tx, messageKey{contact, messaging.DirIn, m.ID}, m, now); err != nil {
 		return messaging.Answer{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -44,42 +44,57 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 	return stored, nil
 }
 
+// inboundCheck refuses a message for one reason, or passes it on.
+type inboundCheck struct {
+	reason  string
+	refuses func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error)
+}
+
+// inboundChecks run in order after the replay lookup: identity, the replay
+// floor, the text, then the quota.
+var inboundChecks = []inboundCheck{
+	{messaging.ReasonInvalid, func(_ context.Context, _ *sql.Tx, _ string, m messaging.Message) (bool, error) {
+		return !validSequence(m.N) || !messaging.ValidID(m.ID), nil
+	}},
+	{messaging.ReasonTooOld, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+		return belowFloor(ctx, tx, contact, m.N)
+	}},
+	{messaging.ReasonTooLarge, func(_ context.Context, _ *sql.Tx, _ string, m messaging.Message) (bool, error) {
+		return len(m.Text) > messaging.TextBytes, nil
+	}},
+	{messaging.ReasonInvalid, func(_ context.Context, _ *sql.Tx, _ string, m messaging.Message) (bool, error) {
+		return !messaging.ValidText(m.Text), nil
+	}},
+	{messaging.ReasonInboxFull, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+		return peerInboxFull(ctx, tx, contact, len(m.Text))
+	}},
+}
+
 // decideInbound is the answer to a message that is not a replay; Stored
 // means it may be inserted.
 func decideInbound(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (messaging.Answer, error) {
-	if m.N == 0 || m.N >= math.MaxInt64 || !messaging.ValidID(m.ID) {
-		return refused(messaging.ReasonInvalid), nil
-	}
-	if old, err := belowFloor(ctx, tx, contact, m.N); old || err != nil {
-		return refused(messaging.ReasonTooOld), err
-	}
-	if len(m.Text) > messaging.TextBytes {
-		return refused(messaging.ReasonTooLarge), nil
-	}
-	if !messaging.ValidText(m.Text) {
-		return refused(messaging.ReasonInvalid), nil
-	}
-	if full, err := peerInboxFull(ctx, tx, contact, len(m.Text)); full || err != nil {
-		return refused(messaging.ReasonInboxFull), err
+	for _, check := range inboundChecks {
+		if refuses, err := check.refuses(ctx, tx, contact, m); refuses || err != nil {
+			return refused(check.reason), err
+		}
 	}
 	return stored, nil
 }
 
+// validSequence: from 1, within what the store can hold.
+func validSequence(n uint64) bool { return n != 0 && n < math.MaxInt64 }
+
 // replay answers a message whose ID or sequence is already held: the same
 // message is Stored again, anything else is a conflict.
 func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (messaging.Answer, bool, error) {
-	row, found, err := messageRow(ctx, tx, contact, messaging.DirIn, m.ID)
+	row, found, err := messageRow(ctx, tx, messageKey{contact, messaging.DirIn, m.ID})
 	if err != nil {
 		return messaging.Answer{}, false, err
 	}
-	hash := m.Hash()
-	if found && string(row.hash) == string(hash[:]) {
-		return stored, true, nil
-	}
 	if found {
-		return refused(messaging.ReasonConflict), true, nil
+		return sameMessage(row, m), true, nil
 	}
-	if m.N == 0 || m.N >= math.MaxInt64 {
+	if !validSequence(m.N) {
 		return messaging.Answer{}, false, nil
 	}
 	var other int
@@ -89,6 +104,16 @@ func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message
 		return messaging.Answer{}, false, err
 	}
 	return refused(messaging.ReasonConflict), true, nil
+}
+
+// sameMessage answers a message whose ID is held: Stored again when it is
+// the very same message, a conflict otherwise.
+func sameMessage(row storedRow, m messaging.Message) messaging.Answer {
+	hash := m.Hash()
+	if string(row.hash) == string(hash[:]) {
+		return stored
+	}
+	return refused(messaging.ReasonConflict)
 }
 
 // belowFloor: the sequence is older than anything this side still
@@ -116,7 +141,7 @@ FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unrea
 	if err != nil {
 		return false, err
 	}
-	return unread >= messaging.UnreadMessages || unreadBytes+size > messaging.UnreadBytes || held >= messaging.Tombstones, nil
+	return !fits(unread, unreadBytes+size, messaging.UnreadMessages, messaging.UnreadBytes) || held >= messaging.Tombstones, nil
 }
 
 // MarkRead marks inbound messages read as shown here, and queues a receipt

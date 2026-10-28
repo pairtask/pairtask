@@ -96,31 +96,40 @@ func (p *PeerMessages) Queue(ctx context.Context, contact, id, text string, now 
 		return messaging.Row{}, err
 	}
 	defer tx.Rollback()
-	if err := requireContact(ctx, tx, contact); err != nil {
-		return messaging.Row{}, err
-	}
-	row, found, err := messageRow(ctx, tx, contact, messaging.DirOut, id)
-	if err != nil || found {
-		return replayed(row, text, err)
-	}
-	if err := outboxRoom(ctx, tx, contact, len(text)); err != nil {
-		return messaging.Row{}, err
-	}
-	n, err := nextSequence(ctx, tx, contact)
+	key := messageKey{contact, messaging.DirOut, id}
+	row, err := queueIn(ctx, tx, key, text, now)
 	if err != nil {
-		return messaging.Row{}, err
-	}
-	m := messaging.Message{ID: id, N: n, CreatedAt: now.UTC(), Text: text}
-	if err := insertMessage(ctx, tx, contact, messaging.DirOut, m, messaging.StateQueued, now); err != nil {
-		return messaging.Row{}, err
-	}
-	if row, _, err = messageRow(ctx, tx, contact, messaging.DirOut, id); err != nil {
 		return messaging.Row{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return messaging.Row{}, err
 	}
-	return row.Row, nil
+	return row, nil
+}
+
+// queueIn is Queue inside its transaction: the existing row for a replay,
+// or a new one with the next sequence.
+func queueIn(ctx context.Context, tx *sql.Tx, key messageKey, text string, now time.Time) (messaging.Row, error) {
+	if err := requireContact(ctx, tx, key.contact); err != nil {
+		return messaging.Row{}, err
+	}
+	row, found, err := messageRow(ctx, tx, key)
+	if err != nil || found {
+		return replayed(row, text, err)
+	}
+	if err := outboxRoom(ctx, tx, key.contact, len(text)); err != nil {
+		return messaging.Row{}, err
+	}
+	n, err := nextSequence(ctx, tx, key.contact)
+	if err != nil {
+		return messaging.Row{}, err
+	}
+	m := messaging.Message{ID: key.id, N: n, CreatedAt: now.UTC(), Text: text}
+	if err := insertMessage(ctx, tx, key, m, now); err != nil {
+		return messaging.Row{}, err
+	}
+	row, _, err = messageRow(ctx, tx, key)
+	return row.Row, err
 }
 
 // replayed answers a Queue of an ID already queued: the same text is the
@@ -143,10 +152,15 @@ WHERE contact = ? AND direction = 'out' AND state = 'queued'`, contact).Scan(&co
 	if err != nil {
 		return err
 	}
-	if count >= messaging.OutboxMessages || bytes+size > messaging.OutboxBytes {
+	if !fits(count, bytes+size, messaging.OutboxMessages, messaging.OutboxBytes) {
 		return messaging.ErrOutboxFull
 	}
 	return nil
+}
+
+// fits: a count below its bound and bytes within theirs.
+func fits(count, bytes, maxCount, maxBytes int) bool {
+	return count < maxCount && bytes <= maxBytes
 }
 
 // nextSequence takes the contact's next sequence, from 1; it is never
@@ -165,8 +179,12 @@ ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, contact, next+1)
 	return uint64(next), err
 }
 
-func insertMessage(ctx context.Context, tx *sql.Tx, contact, direction string, m messaging.Message, state string, now time.Time) error {
+// initialState is a new row's state by direction.
+var initialState = map[string]string{messaging.DirOut: messaging.StateQueued, messaging.DirIn: messaging.StateReceived}
+
+func insertMessage(ctx context.Context, tx *sql.Tx, key messageKey, m messaging.Message, now time.Time) error {
 	hash := m.Hash()
+	contact, direction, state := key.contact, key.direction, initialState[key.direction]
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
 (contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -190,18 +208,25 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 	if err != nil {
 		return nil, err
 	}
-	var out []messaging.Row
-	bytes := 0
-	for _, r := range rows {
-		if len(out) == maxCount || bytes+len(r.Text) > maxBytes {
-			break
-		}
-		out, bytes = append(out, r.Row), bytes+len(r.Text)
-	}
+	out := within(rows, maxCount, maxBytes)
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// within is the leading rows that fit maxCount and maxBytes of text.
+func within(rows []storedRow, maxCount, maxBytes int) []messaging.Row {
+	var out []messaging.Row
+	bytes := 0
+	for _, r := range rows {
+		bytes += len(r.Text)
+		if !fits(len(out), bytes, maxCount, maxBytes) {
+			break
+		}
+		out = append(out, r.Row)
+	}
+	return out
 }
 
 // clamp keeps a caller's limit within [0, bound].

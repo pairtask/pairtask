@@ -71,37 +71,58 @@ WHERE contact = ? AND direction = 'in' AND receipt = 'pending' AND receipt_at < 
 // retention bounds: inbound ones read here, outbound ones no longer queued.
 // The row, its sequence and its hashes stay.
 func collectText(ctx context.Context, tx *sql.Tx, contact string, _ time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT cursor, text_bytes FROM peer_messages
-WHERE contact = ? AND text IS NOT NULL AND (
-    (direction = 'in' AND state = 'read') OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')))
-ORDER BY cursor DESC`, contact)
+	texts, err := settledTexts(ctx, tx, contact)
 	if err != nil {
 		return err
 	}
-	var drop []int64
-	kept, bytes := 0, 0
-	for rows.Next() {
-		var cursor int64
-		var size int
-		if err := rows.Scan(&cursor, &size); err != nil {
-			rows.Close()
-			return err
-		}
-		if kept < messaging.RetainedText && bytes+size <= messaging.RetainedTextBytes {
-			kept, bytes = kept+1, bytes+size
-			continue
-		}
-		drop = append(drop, cursor)
-	}
-	if err := closeRows(rows); err != nil {
-		return err // an incomplete read collects nothing
-	}
-	for _, cursor := range drop {
+	for _, cursor := range beyondRetention(texts) {
 		if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET text = NULL WHERE cursor = ?`, cursor); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// heldText is one stored text: its row and size.
+type heldText struct {
+	cursor int64
+	size   int
+}
+
+// settledTexts are the texts that may be collected, newest first.
+func settledTexts(ctx context.Context, tx *sql.Tx, contact string) ([]heldText, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT cursor, text_bytes FROM peer_messages
+WHERE contact = ? AND text IS NOT NULL AND (
+    (direction = 'in' AND state = 'read') OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')))
+ORDER BY cursor DESC`, contact)
+	if err != nil {
+		return nil, err
+	}
+	var out []heldText
+	for rows.Next() {
+		var t heldText
+		if err := rows.Scan(&t.cursor, &t.size); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, closeRows(rows) // an incomplete read collects nothing
+}
+
+// beyondRetention are the rows past the newest RetainedText texts within
+// RetainedTextBytes.
+func beyondRetention(texts []heldText) []int64 {
+	var drop []int64
+	kept, bytes := 0, 0
+	for _, t := range texts {
+		if fits(kept, bytes+t.size, messaging.RetainedText, messaging.RetainedTextBytes) {
+			kept, bytes = kept+1, bytes+t.size
+			continue
+		}
+		drop = append(drop, t.cursor)
+	}
+	return drop
 }
 
 // raiseFloor forgets the oldest inbound tombstones, lowest sequence first,
@@ -110,26 +131,8 @@ ORDER BY cursor DESC`, contact)
 // refused as too old rather than taken as new. It stops at the first row
 // that must stay, so it never passes a retained message.
 func raiseFloor(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND state = 'read' AND receipt != 'pending'
-FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(now.Add(-messaging.TombstoneAge)), contact)
-	if err != nil {
-		return err
-	}
-	var forget []int64
-	var last int64
-	for rows.Next() {
-		var cursor, n int64
-		var old bool
-		if err := rows.Scan(&cursor, &n, &old); err != nil {
-			rows.Close()
-			return err
-		}
-		if !old {
-			break
-		}
-		forget, last = append(forget, cursor), n
-	}
-	if err := closeRows(rows); err != nil || len(forget) == 0 {
+	forget, last, err := forgettable(ctx, tx, contact, now)
+	if err != nil || len(forget) == 0 {
 		return err // an incomplete read forgets nothing
 	}
 	for _, cursor := range forget {
@@ -140,6 +143,34 @@ FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(
 	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_floors (contact, floor) VALUES (?, ?)
 ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact, last+1)
 	return err
+}
+
+// forgettable is the leading run of inbound rows, by sequence, that may be
+// forgotten, and the last one's sequence.
+func forgettable(ctx context.Context, tx *sql.Tx, contact string, now time.Time) ([]int64, int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND state = 'read' AND receipt != 'pending'
+FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(now.Add(-messaging.TombstoneAge)), contact)
+	if err != nil {
+		return nil, 0, err
+	}
+	var forget []int64
+	var last int64
+	for rows.Next() {
+		var cursor, n int64
+		var old bool
+		if err := rows.Scan(&cursor, &n, &old); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		if !old {
+			break
+		}
+		forget, last = append(forget, cursor), n
+	}
+	if err := closeRows(rows); err != nil {
+		return nil, 0, err
+	}
+	return forget, last, nil
 }
 
 // closeRows ends a read, reporting an iteration error before a close one.

@@ -87,14 +87,18 @@ type Unsupported struct{ Min, Max byte }
 
 // Kind is a frame's type, after checking its version and size.
 func Kind(frame []byte) (byte, error) {
-	if len(frame) < 2 || len(frame) > MaxFrameBytes {
+	if !sized(len(frame)) {
 		return 0, fmt.Errorf("%w: frame size", ErrProtocol)
 	}
-	if frame[0] != frameVersion || frame[1] < FrameHello || frame[1] > FrameUnsupported {
+	if frame[0] != frameVersion || !knownFrame(frame[1]) {
 		return 0, fmt.Errorf("%w: unknown frame version or type", ErrProtocol)
 	}
 	return frame[1], nil
 }
+
+func sized(n int) bool { return n >= 2 && n <= MaxFrameBytes }
+
+func knownFrame(kind byte) bool { return kind >= FrameHello && kind <= FrameUnsupported }
 
 func EncodeHello(h Hello) ([]byte, error) { return encode(FrameHello, []byte{h.Min}, []byte{h.Max}) }
 
@@ -117,10 +121,18 @@ func decodeVersions(frame []byte, kind byte) (byte, byte, error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	if len(f[0]) != 1 || len(f[1]) != 1 || f[0][0] > f[1][0] {
+	if !versionRange(f[0], f[1]) {
 		return 0, 0, fmt.Errorf("%w: versions", ErrProtocol)
 	}
 	return f[0][0], f[1][0], nil
+}
+
+// versionRange: one byte each, the lowest not above the highest.
+func versionRange(low, high []byte) bool {
+	if len(low) != 1 || len(high) != 1 {
+		return false
+	}
+	return low[0] <= high[0]
 }
 
 func EncodeMessage(m Message) ([]byte, error) {
