@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # labeled: adding ci:full-images re-runs the pull request with the image proofs.
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
     tags: ['workspace-v*']
@@ -113,7 +115,8 @@ jobs:
 
   classify:
     # Decides whether this run needs the image proofs. Only a pull request that
-    # touches nothing but unshipped top-level docs may skip them; see
+    # touches nothing but unshipped top-level docs and the operator chat TUI
+    # may skip them, and its ci:full-images label forces them; see
     # scripts/ci-classify.py. Outputs are fixed tokens, never file names.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -132,11 +135,17 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.sha }}
-        run: python3 scripts/ci-classify.py --event "$EVENT" --base "$BASE" --head "$HEAD" | tee -a "$GITHUB_OUTPUT"
+          # A fixed true/false from the expression; no label text reaches the shell.
+          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full-images') }}
+        run: |
+          force=()
+          if [[ "$FORCE_FULL" == true ]]; then force=(--force-full); fi
+          python3 scripts/ci-classify.py --event "$EVENT" --base "$BASE" --head "$HEAD" "${force[@]}" | tee -a "$GITHUB_OUTPUT"
 
   images:
     # On pushes, wait for base-mirror so images build from the just-published mirror; elsewhere it is skipped.
-    # Both matrix checks always run. A docs-only pull request skips their steps
+    # Both matrix checks always run. A pull request the classifier lets skip
+    # (docs only, or docs and the chat TUI by policy) skips their steps
     # instead of the job, so the two per-architecture check names still report.
     # A failed classify job stops this job, so no image proof turns green.
     # A successful classify with a missing or unexpected output builds: only
@@ -159,11 +168,11 @@ jobs:
       # Reuse one prepared operator image within this job; see scripts/sandbox_operator_prepared.py.
       PAIRTASK_OPERATOR_PREPARED: run-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
-      - name: Skip the image proofs for unshipped documentation
+      - name: Skip the image proofs for documentation or the chat TUI
         if: needs.classify.outputs.images == 'false'
         env:
           REASON: ${{ needs.classify.outputs.reason }}
-        run: echo "No image input changed ($REASON); the image proofs are skipped for this pull request."
+        run: echo "Skipped by policy ($REASON) - this pull request changes only docs or the chat TUI; main and release tags still build the images."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.classify.outputs.images != 'false'
         with:
@@ -262,9 +271,25 @@ jobs:
           compression-level: 0
           retention-days: 7
       - name: Remove this job's prepared operator images
-        # Only once Incus setup started; a docs-only run or an earlier failure skips it.
+        # Only once Incus setup started; a policy skip or an earlier failure skips it.
         if: always() && steps.incus.outcome != 'skipped' && steps.incus.outcome != ''
         run: sudo python3 scripts/sandbox_operator_prepared.py cleanup --remote local --token "$PAIRTASK_OPERATOR_PREPARED"
+
+  go-arm64:
+    # The full Go suite natively on arm64, on every run: a pull request that
+    # skips the image proofs still tests arm64. checks covers amd64 with -race.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+      - run: go test ./... -timeout=300s
+        env:
+          GOTOOLCHAIN: local # the pinned toolchain, never a download
 
   base-mirror:
     # Every published workspace must have its base images retained, whatever upstream prunes.
@@ -319,7 +344,7 @@ jobs:
     if: >-
       github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
       needs.classify.outputs.images == 'true'
-    needs: [checks, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish]
+    needs: [checks, go-arm64, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
