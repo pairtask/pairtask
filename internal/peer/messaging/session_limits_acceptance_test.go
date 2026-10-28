@@ -76,7 +76,7 @@ func TestMessageSessionAcceptanceUnexpectedPhaseCannotBecomeMessage(t *testing.T
 	frames := &scriptFrames{input: [][]byte{sessionHello(t), receipt}}
 	s := &countingSessionStore{}
 	_, err = sessionSide(frames, s).Serve(context.Background())
-	if !errors.Is(err, messaging.ErrProtocol) || s.accepted != 0 || s.reads != 0 {
-		t.Fatalf("unexpected phase acted: %+v %v", s, err)
-	}
+	sessionErrorIs(t, err, messaging.ErrProtocol)
+	sessionEqual(t, s.accepted, 0)
+	sessionEqual(t, s.reads, 0)
 }

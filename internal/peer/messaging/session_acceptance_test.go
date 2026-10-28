@@ -113,34 +113,41 @@ func TestMessageSessionAcceptanceNegotiatesUnsupportedBeforeStore(t *testing.T) 
 	}
 }
 
+func sessionOK(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+func sessionEqual[T comparable](t *testing.T, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+func sessionErrorIs(t *testing.T, got, want error) {
+	t.Helper()
+	if !errors.Is(got, want) {
+		t.Fatalf("got error %v want %v", got, want)
+	}
+}
+
 func TestMessageSessionAcceptanceLostStoredRetriesAfterRestart(t *testing.T) {
 	db, path := sessionFixture(t)
 	m := messaging.Message{ID: "lost-ack", N: 1, CreatedAt: sessionAt, Text: "one durable message"}
 	frames := &scriptFrames{input: [][]byte{sessionHello(t), sessionMessage(t, m)}, failKind: messaging.FrameStored}
 	_, err := sessionSide(frames, db.PeerMessages()).Serve(context.Background())
-	if !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("missing injected lost Stored: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	sessionErrorIs(t, err, io.ErrUnexpectedEOF)
+	sessionOK(t, db.Close())
 	db = sessionDB(t, path)
 	retry := &scriptFrames{input: [][]byte{sessionHello(t), sessionMessage(t, m)}}
 	_, err = sessionSide(retry, db.PeerMessages()).Serve(context.Background())
-	if !errors.Is(err, io.EOF) {
-		t.Fatalf("expected end of scripted input: %v", err)
-	}
-	if len(retry.sent) != 2 {
-		t.Fatalf("expected hello and Stored, got %d", len(retry.sent))
-	}
+	sessionErrorIs(t, err, io.EOF)
+	sessionEqual(t, len(retry.sent), 2)
 	ack, err := messaging.DecodeStored(retry.sent[1])
-	if err != nil || ack.ID != m.ID {
-		t.Fatalf("retry acknowledgment %+v, %v", ack, err)
-	}
-	rows, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 64)
-	if err != nil || len(rows) != 1 || rows[0].Text != m.Text {
-		t.Fatalf("retry duplicated/lost message: %+v %v", rows, err)
-	}
+	sessionOK(t, err)
+	sessionEqual(t, ack.ID, m.ID)
+	sessionEqual(t, sessionRows(t, db.PeerMessages(), 1)[0].Text, m.Text)
 }
 
 func TestMessageSessionAcceptanceWrongStoredDoesNotDeliver(t *testing.T) {
