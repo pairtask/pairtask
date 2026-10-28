@@ -64,16 +64,19 @@ func (s *Store) PeerMessages() *PeerMessages { return &PeerMessages{db: s.db} }
 // confirmedContact: a contact row and a confirmed decision, as the inviter
 // (a delivered acceptance) or as the joiner (a confirmed contact join). A
 // pending or rejected pairing never counts.
-func confirmedContact(ctx context.Context, q rowQuerier, contact string) (bool, error) {
+func confirmedContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, error) {
 	var ok bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1) AND (
     EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?1 AND state = 'accepted' AND delivered_at IS NOT NULL)
     OR EXISTS (SELECT 1 FROM peer_joins WHERE peer = ?1 AND state = 'contact' AND decision_confirmed_at IS NOT NULL))`,
-		contact).Scan(&ok)
+		string(contact)).Scan(&ok)
 	return ok, err
 }
 
-func requireContact(ctx context.Context, q rowQuerier, contact string) error {
+// contactKey is a contact's identity key.
+type contactKey string
+
+func requireContact(ctx context.Context, q rowQuerier, contact contactKey) error {
 	ok, err := confirmedContact(ctx, q, contact)
 	if err == nil && !ok {
 		err = messaging.ErrUnknownContact
@@ -118,17 +121,17 @@ type outgoing struct {
 // or a new one with the next sequence.
 func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
 	key, text, now := o.key, o.text, o.now
-	if err := requireContact(ctx, tx, key.contact); err != nil {
+	if err := requireContact(ctx, tx, contactKey(key.contact)); err != nil {
 		return messaging.Row{}, err
 	}
 	row, found, err := messageRow(ctx, tx, key)
 	if err != nil || found {
-		return replayed(row, text, err)
+		return replayed(row, o, err)
 	}
-	if err := outboxRoom(ctx, tx, key.contact, len(text)); err != nil {
+	if err := outboxRoom(ctx, tx, o); err != nil {
 		return messaging.Row{}, err
 	}
-	n, err := nextSequence(ctx, tx, key.contact)
+	n, err := nextSequence(ctx, tx, contactKey(key.contact))
 	if err != nil {
 		return messaging.Row{}, err
 	}
@@ -142,25 +145,25 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 
 // replayed answers a Queue of an ID already queued: the same text is the
 // same message, other text a conflict.
-func replayed(row storedRow, text string, err error) (messaging.Row, error) {
+func replayed(row storedRow, o outgoing, err error) (messaging.Row, error) {
 	switch {
 	case err != nil:
 		return messaging.Row{}, err
-	case string(textHash(text)) != string(row.textHash):
+	case string(textHash(o.text)) != string(row.textHash):
 		return messaging.Row{}, messaging.ErrConflict
 	}
 	return row.Row, nil
 }
 
 // outboxRoom refuses a message the contact's queued messages leave no room for.
-func outboxRoom(ctx context.Context, tx *sql.Tx, contact string, size int) error {
-	var count, bytes int
+func outboxRoom(ctx context.Context, tx *sql.Tx, o outgoing) error {
+	var held budget
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(text_bytes), 0) FROM peer_messages
-WHERE contact = ? AND direction = 'out' AND state = 'queued'`, contact).Scan(&count, &bytes)
+WHERE contact = ? AND direction = 'out' AND state = 'queued'`, o.key.contact).Scan(&held.count, &held.bytes)
 	if err != nil {
 		return err
 	}
-	if !outboxBudget.holds(count, bytes+size) {
+	if !outboxBudget.holds(budget{held.count, held.bytes + len(o.text)}) {
 		return messaging.ErrOutboxFull
 	}
 	return nil
@@ -176,15 +179,23 @@ var (
 )
 
 // holds: a count below the bound and bytes within it.
-func (b budget) holds(count, bytes int) bool {
-	return count < b.count && bytes <= b.bytes
+func (b budget) holds(used budget) bool {
+	return used.count < b.count && used.bytes <= b.bytes
 }
+
+// clamp is a caller's budget kept within this one, never negative.
+func (b budget) clamp(asked budget) budget {
+	return budget{max(0, min(asked.count, b.count)), max(0, min(asked.bytes, b.bytes))}
+}
+
+// sessionBudget is what one session may carry each way.
+var sessionBudget = budget{messaging.SessionMessages, messaging.SessionBytes}
 
 // nextSequence takes the contact's next sequence, from 1; it is never
 // reused and never wraps.
-func nextSequence(ctx context.Context, tx *sql.Tx, contact string) (uint64, error) {
+func nextSequence(ctx context.Context, tx *sql.Tx, contact contactKey) (uint64, error) {
 	var next int64 = 1
-	err := tx.QueryRowContext(ctx, `SELECT next FROM peer_message_sequences WHERE contact = ?`, contact).Scan(&next)
+	err := tx.QueryRowContext(ctx, `SELECT next FROM peer_message_sequences WHERE contact = ?`, string(contact)).Scan(&next)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
@@ -192,7 +203,7 @@ func nextSequence(ctx context.Context, tx *sql.Tx, contact string) (uint64, erro
 		return 0, errors.New("messaging: sequence exhausted for this contact")
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_sequences (contact, next) VALUES (?, ?)
-ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, contact, next+1)
+ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, string(contact), next+1)
 	return uint64(next), err
 }
 
@@ -220,7 +231,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 // Offer is the oldest queued messages that fit the session bounds; queued
 // messages past QueuedExpiry are expired first and never offered.
 func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, maxCount, maxBytes int) ([]messaging.Row, error) {
-	maxCount, maxBytes = clamp(maxCount, messaging.SessionMessages), clamp(maxBytes, messaging.SessionBytes)
+	limit := sessionBudget.clamp(budget{maxCount, maxBytes})
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -233,7 +244,7 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 	if err != nil {
 		return nil, err
 	}
-	out := within(rows, budget{maxCount + 1, maxBytes})
+	out := within(rows, budget{limit.count + 1, limit.bytes})
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -246,16 +257,13 @@ func within(rows []storedRow, b budget) []messaging.Row {
 	bytes := 0
 	for _, r := range rows {
 		bytes += len(r.Text)
-		if !b.holds(len(out)+1, bytes) {
+		if !b.holds(budget{len(out) + 1, bytes}) {
 			break
 		}
 		out = append(out, r.Row)
 	}
 	return out
 }
-
-// clamp keeps a caller's limit within [0, bound].
-func clamp(n, bound int) int { return max(0, min(n, bound)) }
 
 func expireQueued(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'expired'

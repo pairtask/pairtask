@@ -116,7 +116,7 @@ func beyondRetention(texts []heldText) []int64 {
 	var drop []int64
 	kept, bytes := 0, 0
 	for _, t := range texts {
-		if retentionBudget.holds(kept, bytes+t.size) {
+		if retentionBudget.holds(budget{kept, bytes + t.size}) {
 			kept, bytes = kept+1, bytes+t.size
 			continue
 		}

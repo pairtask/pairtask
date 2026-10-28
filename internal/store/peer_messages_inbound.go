@@ -39,7 +39,7 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 // commit. A replay is answered as before and stores nothing.
 func acceptIn(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool, error) {
 	contact, m := r.key.contact, r.m
-	if err := requireContact(ctx, tx, contact); err != nil {
+	if err := requireContact(ctx, tx, contactKey(contact)); err != nil {
 		return messaging.Answer{}, false, err
 	}
 	if answer, known, err := replay(ctx, tx, contact, m); known || err != nil {
@@ -152,7 +152,7 @@ FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unrea
 	if err != nil {
 		return false, err
 	}
-	return !unreadBudget.holds(unread, unreadBytes+size) || held >= messaging.Tombstones, nil
+	return !unreadBudget.holds(budget{unread, unreadBytes + size}) || held >= messaging.Tombstones, nil
 }
 
 // MarkRead marks inbound messages read as shown here, and queues a receipt
@@ -195,7 +195,7 @@ WHERE cursor IN (SELECT cursor FROM peer_messages WHERE contact = ?1 AND directi
 func (p *PeerMessages) PendingReads(ctx context.Context, contact string, max int) ([]string, error) {
 	rows, err := p.db.QueryContext(ctx, `SELECT message_id FROM peer_messages
 WHERE contact = ? AND direction = 'in' AND receipt = 'pending' ORDER BY receipt_at, cursor LIMIT ?`,
-		contact, clamp(max, messaging.SessionMessages))
+		contact, sessionBudget.clamp(budget{max, 0}).count)
 	if err != nil {
 		return nil, err
 	}
