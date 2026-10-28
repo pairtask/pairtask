@@ -130,6 +130,15 @@ func ValidNewOutcome(o PairingOutcome) error {
 	return nil
 }
 
+// CheckPairingName accepts a display name of at most MaxPairingNameBytes
+// printable UTF-8 bytes.
+func CheckPairingName(name string) error {
+	if !validPairingName(name) {
+		return ErrInvalidPairingName
+	}
+	return nil
+}
+
 func validPairingName(name string) bool {
 	if len(name) > MaxPairingNameBytes || !utf8.ValidString(name) {
 		return false

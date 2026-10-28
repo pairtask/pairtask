@@ -35,7 +35,7 @@ draft. `#n` is a message's number.
 | `/agents` | Agents online/offline, protocol, last seen, status and claims |
 | `/chat @a @b` | Open a conversation with those agents |
 | `/room`, `/room NAME`, `/room add NAME @a`, `/room remove NAME @a`, `/room delete NAME` | List rooms; open one (creating it if unknown); add or remove members; delete a room (its messages stay in All, an unsent draft stays with its hidden tab, and an agent that joins it again re-creates it) |
-| `/pair`, `/pair open`, `/pair status`, `/pair cancel`, `/pair accept KEY`, `/pair reject KEY` | Pairing preview (#178): list requests; open a one-time code, shown only in the panel until Esc or a disconnect; cancel the invitation; decide a request by a unique prefix of a listed key. Nothing redeems a code yet: joining another workspace isn't connected |
+| `/pair`, `/pair open`, `/pair status`, `/pair cancel`, `/pair accept KEY`, `/pair reject KEY`, `/pair redeem HOST:PORT CODE [NAME]` | Experimental pairing (#178): list requests and redemptions; open a one-time code, shown only in the panel until Esc or a disconnect; cancel the invitation; decide a request by a unique prefix of a listed key; redeem another workspace's code. The redeem command line is cleared however it ends and the code is never shown, kept or recalled. The exchange is unaudited CPace, and contact messaging isn't connected |
 | `/reply [#n]` (Ctrl+R) | Reply; acknowledges the answered message once the broker accepts the reply |
 | `/ack`, `/ack all`, `/ack from id` | Acknowledge messages ("seen, no reply needed") |
 | `/claims #n` | Task claims on a message with topics and ages |

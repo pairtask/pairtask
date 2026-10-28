@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -54,6 +55,7 @@ func refusalReason(err error) string {
 
 // Joiner redeems other workspaces' codes.
 type Joiner struct {
+	mu     sync.Mutex // serialises Begin's lookup and write
 	ex     Exchanger
 	store  JoinStore
 	self   *WorkspaceIdentity
@@ -62,6 +64,8 @@ type Joiner struct {
 }
 
 // NewJoiner returns a joiner; with a nil Exchanger every join is refused.
+// A store must have exactly one Joiner: Begin's replay guarantee holds only
+// among calls on that one instance.
 func NewJoiner(ex Exchanger, store JoinStore, self *WorkspaceIdentity, clock func() time.Time, random io.Reader) (*Joiner, error) {
 	if slices.Contains([]bool{store != nil, self != nil, clock != nil, random != nil}, false) {
 		return nil, errors.New("peer: a joiner needs a store, an identity, a clock and randomness")
@@ -87,25 +91,167 @@ func (in JoinInput) GoString() string { return in.String() }
 // anything, and the authenticated inviter and transcript before our final
 // confirmation can leave. With ErrJoinOutcomeUnknown the record is returned.
 func (j *Joiner) Join(ctx context.Context, f Frames, in JoinInput) (JoinRecord, error) {
-	digits, err := j.admit(in)
-	if err != nil {
+	if j.ex == nil {
+		return JoinRecord{}, ErrExchangeUnavailable
+	}
+	if err := in.Connection.check(j.self.Fingerprint()); err != nil {
 		return JoinRecord{}, err
 	}
-	f = boundedFrames{f}
 	opID, err := randomOperationID(j.random)
 	if err != nil {
 		return JoinRecord{}, err
 	}
-	start := JoinStart{OperationID: opID, Joiner: j.self.Fingerprint(), Name: in.Name, At: j.clock()}
-	if _, err := j.store.BeginJoin(ctx, start); err != nil {
+	pending, known, err := j.begin(ctx, JoinRequest{OperationID: opID, Name: in.Name, Code: in.Code})
+	if err != nil {
 		return JoinRecord{}, err
 	}
+	if pending == nil {
+		// A drawn ID that already exists: never run someone else's join.
+		return known, ErrJoinConflict
+	}
+	return pending.Run(ctx, f, in.Connection)
+}
+
+// JoinRequest is an operator's redemption, before any connection exists.
+// OperationID is the operator's stable request ID; the code is never
+// formatted, encoded or stored.
+type JoinRequest struct {
+	OperationID, Destination, Name string
+	Code                           []byte `json:"-"`
+}
+
+func (r JoinRequest) String() string {
+	return fmt.Sprintf("peer.JoinRequest{OperationID: %q, Destination: %q, Name: %q, Code: [redacted]}", r.OperationID, r.Destination, r.Name)
+}
+
+func (r JoinRequest) GoString() string { return r.String() }
+
+// Begin records an operator's redemption durably, before any dial, and
+// returns what will run it. A known operation ID is a replay: it returns the
+// existing record and no PendingJoin, whatever code was supplied, since the
+// code is never stored. A different destination or name is ErrJoinConflict.
+func (j *Joiner) Begin(ctx context.Context, req JoinRequest) (*PendingJoin, JoinRecord, error) {
+	if req.Destination == "" {
+		return nil, JoinRecord{}, ErrInvalidDestination
+	}
+	return j.begin(ctx, req)
+}
+
+func (j *Joiner) begin(ctx context.Context, req JoinRequest) (*PendingJoin, JoinRecord, error) {
+	// The lookup and the write are one step for this Joiner, so concurrent
+	// calls for one operation ID get one PendingJoin between them. A store
+	// has one Joiner: its broker's.
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.ex == nil {
+		return nil, JoinRecord{}, ErrExchangeUnavailable
+	}
+	digits, err := admitRequest(req)
+	if err != nil {
+		return nil, JoinRecord{}, err
+	}
+	start := JoinStart{OperationID: req.OperationID, Joiner: j.self.Fingerprint(), Name: req.Name, Destination: req.Destination, At: j.clock()}
+	if known, found, err := j.store.GetJoin(ctx, req.OperationID); err != nil || found {
+		clear(digits)
+		return nil, known, replayed(known, start, err)
+	}
+	r, err := j.store.BeginJoin(ctx, start)
+	if err != nil {
+		clear(digits)
+		return nil, JoinRecord{}, err
+	}
+	return &PendingJoin{j: j, start: start, digits: digits}, r, nil
+}
+
+func replayed(known JoinRecord, start JoinStart, err error) error {
+	if err != nil {
+		return err
+	}
+	_, err = ReplayJoin(known, start)
+	return err
+}
+
+// CheckJoinRequest validates an operator's redemption without recording it:
+// a destination, the operation ID, the name and the code.
+func CheckJoinRequest(req JoinRequest) error {
+	if err := CheckDestination(req.Destination); err != nil {
+		return err
+	}
+	digits, err := admitRequest(req)
+	clear(digits)
+	return err
+}
+
+// admitRequest checks a request's own fields and returns the code's digits.
+func admitRequest(req JoinRequest) ([]byte, error) {
+	if !validPairingID(req.OperationID) || !validPairingName(req.Name) {
+		return nil, ErrInvalidBinding
+	}
+	if err := validDestination(req.Destination); err != nil {
+		return nil, err
+	}
+	return normalizeCode(req.Code)
+}
+
+// PendingJoin is a recorded redemption waiting for its connection. It runs
+// or is abandoned exactly once, and forgets the code either way.
+type PendingJoin struct {
+	j     *Joiner
+	start JoinStart
+
+	mu     sync.Mutex
+	digits []byte
+	done   bool
+}
+
+// take hands out the code once.
+func (p *PendingJoin) take() ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.done {
+		return nil, ErrJoinState
+	}
+	p.done = true
+	digits := p.digits
+	p.digits = nil
+	return digits, nil
+}
+
+// Run redeems on the connection the operator's destination produced. ctx
+// bounds the store writes; f carries its own network deadline.
+func (p *PendingJoin) Run(ctx context.Context, f Frames, c Connection) (JoinRecord, error) {
+	digits, err := p.take()
+	if err != nil {
+		return JoinRecord{}, err
+	}
+	defer clear(digits)
+	if err := c.check(p.start.Joiner); err != nil {
+		return p.j.fail(ctx, p.start.OperationID, err)
+	}
+	return p.j.run(ctx, boundedFrames{f}, c, p.start, digits)
+}
+
+// Abandon fails a redemption that never reached its inviter, such as a
+// failed dial or handshake: nothing was sent, so it can't have been
+// committed.
+func (p *PendingJoin) Abandon(ctx context.Context, cause error) (JoinRecord, error) {
+	digits, err := p.take()
+	if err != nil {
+		return JoinRecord{}, err
+	}
+	clear(digits)
+	return p.j.fail(ctx, p.start.OperationID, cause)
+}
+
+// run is the exchange after the intent was written.
+func (j *Joiner) run(ctx context.Context, f Frames, c Connection, start JoinStart, digits []byte) (JoinRecord, error) {
+	opID := start.OperationID
 	hello, err := j.correlate(ctx, f, start)
 	if err != nil {
 		return j.fail(ctx, opID, err)
 	}
 	b := ExchangeBinding{InvitationID: hello.InvitationID, JoinerOperationID: opID, InviterOperationID: hello.OperationID,
-		Inviter: in.Connection.PeerLeaf, Joiner: start.Joiner, JoinerName: in.Name, ChannelBinding: in.Connection.ChannelBinding}
+		Inviter: c.PeerLeaf, Joiner: start.Joiner, JoinerName: start.Name, ChannelBinding: c.ChannelBinding}
 	persisted, err := j.exchange(ctx, f, b, digits)
 	if !persisted {
 		return j.fail(ctx, opID, errors.Join(ErrExchangeFailed, err))
@@ -114,21 +260,6 @@ func (j *Joiner) Join(ctx context.Context, f Frames, in JoinInput) (JoinRecord, 
 		return j.unknown(ctx, opID, err)
 	}
 	return j.settle(ctx, f, opID)
-}
-
-// admit refuses before anything is written or sent, and returns the code's
-// digits.
-func (j *Joiner) admit(in JoinInput) ([]byte, error) {
-	if j.ex == nil {
-		return nil, ErrExchangeUnavailable
-	}
-	if err := in.Connection.check(j.self.Fingerprint()); err != nil {
-		return nil, err
-	}
-	if !validPairingName(in.Name) {
-		return nil, ErrInvalidBinding
-	}
-	return normalizeCode(in.Code)
 }
 
 // Code bounds match InvitationPolicy's; typed input, grouping included, is

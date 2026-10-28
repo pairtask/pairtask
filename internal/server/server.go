@@ -36,6 +36,10 @@ type Server struct {
 	cancel     context.CancelFunc
 	closed     bool
 	handle     func(context.Context, net.Conn)
+	// prepare checks the path before binding, and secure the socket after;
+	// both are optional.
+	prepare func(path string) error
+	secure  func(path string) error
 }
 
 // New creates a Server bound to socketPath (not yet listening).
@@ -61,12 +65,22 @@ func (s *Server) Listen(ctx context.Context) error {
 		}
 		return fmt.Errorf("inspect socket path: %w", err)
 	}
+	if err := s.run(s.prepare); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: s.socketPath, Net: "unix"})
 	if err != nil {
 		s.mu.Unlock()
 		return fmt.Errorf("listen unix %s: %w", s.socketPath, err)
 	}
 	ln.SetUnlinkOnClose(false)
+	if err := s.run(s.secure); err != nil {
+		ln.Close()
+		os.Remove(s.socketPath)
+		s.mu.Unlock()
+		return err
+	}
 	info, err := os.Lstat(s.socketPath)
 	if err != nil {
 		ln.Close()
@@ -102,6 +116,14 @@ func (s *Server) Listen(ctx context.Context) error {
 			s.handle(ctx, conn)
 		}()
 	}
+}
+
+// run applies an optional path hook.
+func (s *Server) run(hook func(string) error) error {
+	if hook == nil {
+		return nil
+	}
+	return hook(s.socketPath)
 }
 
 // Close stops acceptance and cancels connections. Listen waits for their cleanup.

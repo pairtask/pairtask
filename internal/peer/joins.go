@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Joins (#178) are this workspace's attempts to redeem another workspace's
@@ -60,6 +63,7 @@ type JoinRecord struct {
 	OperationID        string // ours
 	Joiner             string // our own fingerprint
 	JoinerName         string
+	Destination        string // where the operator sent us; empty for a direct join
 	InvitationID       string
 	InviterOperationID string
 	Peer               string // the authenticated inviter
@@ -95,11 +99,11 @@ func (s JoinState) Open() bool {
 	return s != JoinFailed && s != JoinUnverified
 }
 
-// JoinStart is a join's intent: our operation ID, our own fingerprint and
-// the name we pair under.
+// JoinStart is a join's intent: our operation ID, our own fingerprint, the
+// name we pair under and, for an operator's redemption, the destination.
 type JoinStart struct {
-	OperationID, Joiner, Name string
-	At                        time.Time
+	OperationID, Joiner, Name, Destination string
+	At                                     time.Time
 }
 
 // JoinCounts is what admitting a new join depends on.
@@ -118,15 +122,48 @@ func NewJoin(s JoinStart, c JoinCounts) (JoinRecord, error) {
 	if c.Open >= MaxOpenJoins {
 		return JoinRecord{}, ErrTooManyOpenJoins
 	}
-	return JoinRecord{OperationID: s.OperationID, Joiner: s.Joiner, JoinerName: s.Name, State: JoinIntent, CreatedAt: s.At, UpdatedAt: s.At}, nil
+	return JoinRecord{OperationID: s.OperationID, Joiner: s.Joiner, JoinerName: s.Name, Destination: s.Destination,
+		State: JoinIntent, CreatedAt: s.At, UpdatedAt: s.At}, nil
 }
 
 func (s JoinStart) validate() error {
 	if !validPairingID(s.OperationID) || !validPairingName(s.Name) {
 		return ErrInvalidJoin
 	}
-	if ValidIdentityKey(s.Joiner) != nil {
+	if ValidIdentityKey(s.Joiner) != nil || validDestination(s.Destination) != nil {
 		return ErrInvalidJoin
+	}
+	return nil
+}
+
+// MaxDestinationBytes bounds where an operator may send a redemption.
+const MaxDestinationBytes = 255
+
+// ErrInvalidDestination: an oversized destination or one with control
+// characters.
+var ErrInvalidDestination = errors.New("peer: invalid destination")
+
+// CheckDestination accepts an operator's destination: host:port, with a
+// non-empty host and a port from 1 to 65535.
+func CheckDestination(d string) error {
+	if d == "" || validDestination(d) != nil {
+		return ErrInvalidDestination
+	}
+	host, port, err := net.SplitHostPort(d)
+	if err != nil || host == "" {
+		return ErrInvalidDestination
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return ErrInvalidDestination
+	}
+	return nil
+}
+
+// validDestination accepts the empty destination of a direct join; an
+// operator's redemption must also name one, see JoinRequest.
+func validDestination(d string) error {
+	if len(d) > MaxDestinationBytes || strings.ContainsFunc(d, unicode.IsControl) {
+		return ErrInvalidDestination
 	}
 	return nil
 }
@@ -137,7 +174,7 @@ func validPairingID(id string) bool {
 
 // ReplayJoin answers BeginJoin for a known operation.
 func ReplayJoin(r JoinRecord, s JoinStart) (JoinRecord, error) {
-	if r.Joiner != s.Joiner || r.JoinerName != s.Name {
+	if r.Joiner != s.Joiner || r.JoinerName != s.Name || r.Destination != s.Destination {
 		return JoinRecord{}, ErrJoinConflict
 	}
 	return r, nil

@@ -23,20 +23,28 @@ const (
 	PairingOpList   = "list"
 	PairingOpAccept = "accept" // target: the full identity key
 	PairingOpReject = "reject" // target: the full identity key
+	// PairingOpRedeem redeems another workspace's code: pairing_destination,
+	// pairing_code and an optional pairing_name; it answers with pairing_join
+	// as soon as the redemption is recorded, before any network wait.
+	PairingOpRedeem = "redeem"
 
 	// ErrPairing is a refused pairing operation; the detail names why.
 	ErrPairing = "pairing_refused"
 
 	// CapabilityPairing: the broker serves operator_pairing.
 	CapabilityPairing = "pairing"
+	// CapabilityPairingRedeem: the broker serves operator_pairing redeem.
+	CapabilityPairingRedeem = "pairing_redeem"
 
 	// ListedPairingRequests bounds a pairing listing: pending first, then
 	// by identity key. Totals and the truncation flag keep omissions visible.
 	ListedPairingRequests = 64
+	// ListedPairingJoins bounds the joins in a pairing snapshot, newest first.
+	ListedPairingJoins = 16
 
-	// PairingPreview says what this slice can't do yet, wherever a code is
-	// shown, so opening one never implies a peer can redeem it.
-	PairingPreview = "preview: nothing redeems this code yet; joining another workspace and contact messaging aren't connected"
+	// PairingPreview says what pairing can and can't do yet, wherever a code
+	// is shown.
+	PairingPreview = "experimental, unaudited CPace: a code is redeemable only through a broker's pairing socket, and contact messaging isn't connected"
 )
 
 // PairingSnapshot is the open invitation, if any, and the pairing requests.
@@ -49,6 +57,24 @@ type PairingSnapshot struct {
 	Requests          []PairingRequestView `json:"requests"`
 	RequestsTotal     int                  `json:"requests_total"`
 	RequestsTruncated bool                 `json:"requests_truncated"`
+	// Joins are this workspace's redemptions of other workspaces' codes.
+	Joins           []PairingJoinView `json:"joins"`
+	JoinsTotal      int               `json:"joins_total"`
+	JoinsTruncated  bool              `json:"joins_truncated"`
+	RedeemAvailable bool              `json:"redeem_available"`
+}
+
+// PairingJoinView is one redemption as stored. awaiting_acceptance means the
+// inviter committed it and has yet to decide; it is not a contact.
+type PairingJoinView struct {
+	OperationID  string    `json:"operation_id"`
+	State        string    `json:"state"`
+	Destination  string    `json:"destination"`
+	Name         string    `json:"name"`
+	Peer         string    `json:"peer"`
+	InvitationID string    `json:"invitation_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // InvitationView describes the open invitation. Code is set only in the

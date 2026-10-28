@@ -91,31 +91,58 @@ joins rooms on registration, in addition to any the agent already has. From
 `secured`, `pairtask operator room list|create R|add R AGENT|remove R AGENT|delete R`
 manages rooms and `pairtask operator send --all --room R TEXT` posts to one.
 
-**Pairing preview** (#178): from `secured`, `pairtask operator pair [list]`,
-`open`, `status`, `cancel [INVITATION_ID]` and `accept|reject KEY` manage the
-short-code invitation and pairing requests. `open` prints a one-time 6-digit
-code on stdout only; the broker keeps it in memory and never stores, logs or
-audits it. `accept` and `reject` take a key prefix and send the full key only
-when it matches exactly one listed request. This is a preview: nothing redeems
-a code yet, and joining another workspace and contact messaging aren't
-connected.
+**Pairing** (#178, experimental): from `secured`, `pairtask operator pair [list]`,
+`open`, `status [OPERATION_ID]`, `cancel [INVITATION_ID]`, `accept|reject KEY`
+and `redeem DESTINATION` manage pairing. `open` prints a one-time 6-digit code
+on stdout only; the broker keeps it in memory and never stores, logs or audits
+it. `accept` and `reject` take a key prefix and send the full key only when it
+matches exactly one listed request.
+
+The exchange is CPace (`the-sarge/cpace` v0.1.3), an unaudited implementation
+of an Internet-Draft: experimental, not production security. Contact
+messaging isn't connected.
+
+`redeem DESTINATION` reads the other operator's code from the terminal, or
+from stdin when piped, never from the command line. It checks the broker can
+redeem before reading the code, records the redemption under a stable ID
+before dialing, then follows it until it settles or `--wait` (45s) ends.
+Repeating a request returns the same redemption; the first code wins, since
+codes are never stored. `awaiting_acceptance` means the inviter recorded it
+and has yet to decide; it is not a contact. `outcome_unknown` means our final
+confirmation may have arrived without a receipt.
+
+Broker settings, all off by default:
+
+- `PAIRTASK_PAIRING_SOCKET=PATH` accepts pairing connections on a Unix socket.
+  Its directory must be the broker user's with mode 0700; the socket is 0600.
+  An existing path is never removed: delete a stale socket yourself.
+- `PAIRTASK_PAIRING_EGRESS=direct` lets `redeem` dial TCP from this broker,
+  for a standalone broker only. The `secured`/`connector` relay route isn't
+  wired yet, so don't expect home-to-work redemption from this setting.
+- `PAIRTASK_PAIRING_NAME` is the name this workspace pairs under
+  (`workspace` by default).
+
+With either of the first two set, the broker loads or creates its workspace
+key at startup and marks redemptions interrupted before verification
+`unverified`.
 
 The workspace identity is an Ed25519 key in `<DB_PATH>.peer/identity.key`
-(0600, in a 0700 directory), created on the first pairing use. Its
-fingerprint, `sha256:` and the 64 lowercase hex digits of the SHA-256 digest
-of the key's SubjectPublicKeyInfo DER, shows in `status` and `/pair`, so two operators can compare fingerprints by
-phone. Certificates made from the key can be renewed without changing it. The
+(0600, in a 0700 directory). Its fingerprint, `sha256:` and the 64 lowercase
+hex digits of the SHA-256 digest of the key's SubjectPublicKeyInfo DER, shows
+in `status` and `/pair`, so two operators can compare fingerprints by phone.
+Certificates made from the key can be renewed without changing it. The
 database records the fingerprint, so a missing, unreadable or different key is
 reported (`identity_missing`, `identity_corrupt`, `identity_unsafe`,
 `identity_mismatch`) and never silently replaced: restore the key from a
-backup. While it is unavailable only `open` is refused. Storage is bounded: 64
-requests awaiting a decision, 1024 identities and 4096 pairing records. A full
-store refuses new ones and never evicts.
+backup. While it is unavailable, `open` and `redeem` are refused. Storage is
+bounded: 64 requests awaiting a decision, 1024 identities, 4096 pairing
+records, and 64 open of 1024 redemptions. A full store refuses new ones and
+never evicts.
 
-When redemption arrives: the colleague entering the code records their
-consent, and the inviting operator accepts once. Neither side reports the
-other as confirmed before a durable acknowledgement, a rejected request is
-never revived, and nothing is accepted automatically.
+The colleague entering the code records their consent, and the inviting
+operator accepts once. Neither side reports the other as confirmed before a
+durable acknowledgement, a rejected request is never revived, and nothing is
+accepted automatically.
 
 **Pi** (#155): `pairtask start pi --id pi-1 [--room R] [--max-tokens N]`
 starts Pi with the pairtask extension, capping each request's output at

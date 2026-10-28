@@ -136,64 +136,68 @@ type ReceiptState struct {
 // Message is the single frame type used in both directions.
 // Fields are populated depending on Type.
 type Message struct {
-	Status            *StatusSnapshot   `json:"status,omitempty"` // status response only
-	Type              string            `json:"type"`
-	ProtocolVersion   int               `json:"protocol_version,omitempty"` // hello/welcome capability negotiation
-	MessageID         string            `json:"message_id,omitempty"`
-	InReplyTo         string            `json:"in_reply_to,omitempty"`
-	AckRequested      bool              `json:"ack_requested,omitempty"`       // msg: request staged acknowledgments
-	Durable           bool              `json:"durable,omitempty"`             // v3: retained until explicit agent acknowledgment
-	Replayed          bool              `json:"replayed,omitempty"`            // delivery on a replacement connection
-	Repeated          bool              `json:"repeated,omitempty"`            // accepted: idempotent send retry; no new delivery
-	Stage             string            `json:"stage,omitempty"`               // ack
-	Recipients        []Recipient       `json:"recipients,omitempty"`          // accepted: fixed membership
-	Receipts          []ReceiptState    `json:"receipts,omitempty"`            // repeated acceptance: latest retained progress
-	Seq               uint64            `json:"seq,omitempty"`                 // broker-assigned global order (msg, welcome)
-	AgentID           string            `json:"agent_id,omitempty"`            // hello, welcome
-	SessionID         string            `json:"session_id,omitempty"`          // broker-assigned connection identity
-	OwnerSessionID    string            `json:"owner_session_id,omitempty"`    // duplicate_id: current inbox owner
-	Harness           string            `json:"harness,omitempty"`             // hello: e.g. "claude-code 1.5"
-	AgentStatus       *AgentStatus      `json:"agent_status,omitempty"`        // agent_status_set request and agent_status_result
-	Source            string            `json:"source,omitempty"`              // agent_activity: who observed it
-	Model             string            `json:"model,omitempty"`               // hello: e.g. "claude-sonnet-4"
-	From              string            `json:"from,omitempty"`                // msg (broker -> client)
-	To                string            `json:"to,omitempty"`                  // msg: agent id or "*"
-	Origin            string            `json:"origin,omitempty"`              // msg (broker -> client): operator, agent or unknown
-	Group             []string          `json:"group,omitempty"`               // operator_send: explicit recipient set
-	Excluded          []string          `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
-	Room              string            `json:"room,omitempty"`                // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
-	Mentions          []string          `json:"mentions,omitempty"`            // operator msg to a room or group: the members it addresses (#164); attention, not routing
-	Rooms             []string          `json:"rooms,omitempty"`               // v9 hello: rooms to join; welcome, room_result: the agent's rooms
-	RoomOp            string            `json:"room_op,omitempty"`             // operator_room: what to do
-	RoomList          *RoomList         `json:"room_list,omitempty"`           // operator_room_result
-	PairingOp         string            `json:"pairing_op,omitempty"`          // operator_pairing: what to do (#178)
-	PairingTarget     string            `json:"pairing_target,omitempty"`      // operator_pairing: full invitation ID or identity key
-	PairingResult     *PairingSnapshot  `json:"pairing_result,omitempty"`      // operator_pairing_result
-	PageRequest       *PageRequest      `json:"page_request,omitempty"`        // operator_receive
-	Page              *OperatorPage     `json:"page,omitempty"`                // operator_page
-	MessageIDs        []string          `json:"message_ids,omitempty"`         // operator_received
-	AckSelection      *AckSelection     `json:"ack_selection,omitempty"`       // operator_ack_many
-	AckMany           *AckManyResult    `json:"ack_many,omitempty"`            // operator_ack_many response
-	Inbox             *InboxStatus      `json:"inbox,omitempty"`               // operator_inbox_status response
-	RequestID         string            `json:"request_id,omitempty"`          // operator session requests and their responses
-	OperatorMessageID string            `json:"operator_message_id,omitempty"` // claim frames: the operator message claimed
-	Task              string            `json:"task,omitempty"`                // claim frames: stable task key
-	Topic             string            `json:"topic,omitempty"`               // claim_set: display label
-	Role              string            `json:"role,omitempty"`                // claim_set, claim_release: owner or reviewer
-	*ClaimPage                          // claim_result, claim_conflict: claims, claims_total, claims_truncated
-	Client            string            `json:"client,omitempty"`      // operator_session_open
-	Session           *SessionInfo      `json:"session,omitempty"`     // operator_session
-	Owner             *SessionInfo      `json:"owner,omitempty"`       // owner_busy
-	Snapshot          *OperatorSnapshot `json:"snapshot,omitempty"`    // operator_snapshot response
-	Stages            *StagePage        `json:"stages,omitempty"`      // operator_message_stages response
-	Event             *SessionEvent     `json:"event,omitempty"`       // event
-	AfterAgent        string            `json:"after_agent,omitempty"` // operator_message_stages
-	Limit             int               `json:"limit,omitempty"`       // operator_message_stages
-	History           *HistoryPage      `json:"history,omitempty"`     // operator_history response
-	Payload           json.RawMessage   `json:"payload,omitempty"`     // msg: opaque JSON
-	Code              string            `json:"code,omitempty"`        // error
-	Detail            string            `json:"detail,omitempty"`      // error
-	TS                *time.Time        `json:"ts,omitempty"`          // msg (broker -> client), UTC; pointer so zero is omitted
+	Status             *StatusSnapshot   `json:"status,omitempty"` // status response only
+	Type               string            `json:"type"`
+	ProtocolVersion    int               `json:"protocol_version,omitempty"` // hello/welcome capability negotiation
+	MessageID          string            `json:"message_id,omitempty"`
+	InReplyTo          string            `json:"in_reply_to,omitempty"`
+	AckRequested       bool              `json:"ack_requested,omitempty"`       // msg: request staged acknowledgments
+	Durable            bool              `json:"durable,omitempty"`             // v3: retained until explicit agent acknowledgment
+	Replayed           bool              `json:"replayed,omitempty"`            // delivery on a replacement connection
+	Repeated           bool              `json:"repeated,omitempty"`            // accepted: idempotent send retry; no new delivery
+	Stage              string            `json:"stage,omitempty"`               // ack
+	Recipients         []Recipient       `json:"recipients,omitempty"`          // accepted: fixed membership
+	Receipts           []ReceiptState    `json:"receipts,omitempty"`            // repeated acceptance: latest retained progress
+	Seq                uint64            `json:"seq,omitempty"`                 // broker-assigned global order (msg, welcome)
+	AgentID            string            `json:"agent_id,omitempty"`            // hello, welcome
+	SessionID          string            `json:"session_id,omitempty"`          // broker-assigned connection identity
+	OwnerSessionID     string            `json:"owner_session_id,omitempty"`    // duplicate_id: current inbox owner
+	Harness            string            `json:"harness,omitempty"`             // hello: e.g. "claude-code 1.5"
+	AgentStatus        *AgentStatus      `json:"agent_status,omitempty"`        // agent_status_set request and agent_status_result
+	Source             string            `json:"source,omitempty"`              // agent_activity: who observed it
+	Model              string            `json:"model,omitempty"`               // hello: e.g. "claude-sonnet-4"
+	From               string            `json:"from,omitempty"`                // msg (broker -> client)
+	To                 string            `json:"to,omitempty"`                  // msg: agent id or "*"
+	Origin             string            `json:"origin,omitempty"`              // msg (broker -> client): operator, agent or unknown
+	Group              []string          `json:"group,omitempty"`               // operator_send: explicit recipient set
+	Excluded           []string          `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
+	Room               string            `json:"room,omitempty"`                // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
+	Mentions           []string          `json:"mentions,omitempty"`            // operator msg to a room or group: the members it addresses (#164); attention, not routing
+	Rooms              []string          `json:"rooms,omitempty"`               // v9 hello: rooms to join; welcome, room_result: the agent's rooms
+	RoomOp             string            `json:"room_op,omitempty"`             // operator_room: what to do
+	RoomList           *RoomList         `json:"room_list,omitempty"`           // operator_room_result
+	PairingOp          string            `json:"pairing_op,omitempty"`          // operator_pairing: what to do (#178)
+	PairingTarget      string            `json:"pairing_target,omitempty"`      // operator_pairing: full invitation ID or identity key
+	PairingResult      *PairingSnapshot  `json:"pairing_result,omitempty"`      // operator_pairing_result
+	PairingDestination string            `json:"pairing_destination,omitempty"` // operator_pairing redeem: host:port of the inviter
+	PairingCode        string            `json:"pairing_code,omitempty"`        // operator_pairing redeem: never stored, logged or echoed
+	PairingName        string            `json:"pairing_name,omitempty"`        // operator_pairing redeem: the name to pair under
+	PairingJoin        *PairingJoinView  `json:"pairing_join,omitempty"`        // operator_pairing_result for redeem
+	PageRequest        *PageRequest      `json:"page_request,omitempty"`        // operator_receive
+	Page               *OperatorPage     `json:"page,omitempty"`                // operator_page
+	MessageIDs         []string          `json:"message_ids,omitempty"`         // operator_received
+	AckSelection       *AckSelection     `json:"ack_selection,omitempty"`       // operator_ack_many
+	AckMany            *AckManyResult    `json:"ack_many,omitempty"`            // operator_ack_many response
+	Inbox              *InboxStatus      `json:"inbox,omitempty"`               // operator_inbox_status response
+	RequestID          string            `json:"request_id,omitempty"`          // operator session requests and their responses
+	OperatorMessageID  string            `json:"operator_message_id,omitempty"` // claim frames: the operator message claimed
+	Task               string            `json:"task,omitempty"`                // claim frames: stable task key
+	Topic              string            `json:"topic,omitempty"`               // claim_set: display label
+	Role               string            `json:"role,omitempty"`                // claim_set, claim_release: owner or reviewer
+	*ClaimPage                           // claim_result, claim_conflict: claims, claims_total, claims_truncated
+	Client             string            `json:"client,omitempty"`      // operator_session_open
+	Session            *SessionInfo      `json:"session,omitempty"`     // operator_session
+	Owner              *SessionInfo      `json:"owner,omitempty"`       // owner_busy
+	Snapshot           *OperatorSnapshot `json:"snapshot,omitempty"`    // operator_snapshot response
+	Stages             *StagePage        `json:"stages,omitempty"`      // operator_message_stages response
+	Event              *SessionEvent     `json:"event,omitempty"`       // event
+	AfterAgent         string            `json:"after_agent,omitempty"` // operator_message_stages
+	Limit              int               `json:"limit,omitempty"`       // operator_message_stages
+	History            *HistoryPage      `json:"history,omitempty"`     // operator_history response
+	Payload            json.RawMessage   `json:"payload,omitempty"`     // msg: opaque JSON
+	Code               string            `json:"code,omitempty"`        // error
+	Detail             string            `json:"detail,omitempty"`      // error
+	TS                 *time.Time        `json:"ts,omitempty"`          // msg (broker -> client), UTC; pointer so zero is omitted
 }
 
 // Operator inbox paging limits.

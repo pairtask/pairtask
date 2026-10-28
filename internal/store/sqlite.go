@@ -86,6 +86,7 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"durable_agents", "protocol_version", "INTEGER"},
 	{"message_metadata", "room", "TEXT"},     // NULL is the Square
 	{"message_metadata", "mentions", "TEXT"}, // a JSON array; NULL is none (#164)
+	{"peer_joins", "destination", "TEXT"},    // NULL for joins before operator redemption (#178)
 }
 
 func migrate(db *sql.DB) error {
