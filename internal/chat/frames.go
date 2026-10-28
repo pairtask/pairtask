@@ -68,14 +68,21 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		m.statuses.presence(ev)
 	case protocol.EventSendRefused:
 		return m.sendRefused(ev)
-	case protocol.EventStatusChanged, protocol.EventClaimsChanged, protocol.EventRoomsChanged:
-		return m.refreshStatuses() // the snapshot carries statuses, claims and rooms
-	case protocol.EventPairingChanged:
-		return m.pairingChanged()
-	case protocol.EventReviewsChanged:
-		return m.reviewsChanged()
+	}
+	if refresh := refreshEvents[ev.Kind]; refresh != nil {
+		return refresh(m)
 	}
 	return nil
+}
+
+// refreshEvents read again what changed; they carry nothing to apply.
+var refreshEvents = map[string]func(*Model) tea.Cmd{
+	// The snapshot carries statuses, claims and rooms.
+	protocol.EventStatusChanged:  (*Model).refreshStatuses,
+	protocol.EventClaimsChanged:  (*Model).refreshStatuses,
+	protocol.EventRoomsChanged:   (*Model).refreshStatuses,
+	protocol.EventPairingChanged: (*Model).pairingChanged,
+	protocol.EventReviewsChanged: (*Model).reviewsChanged,
 }
 
 func (m *Model) conversationChanged(ev *protocol.SessionEvent) tea.Cmd {

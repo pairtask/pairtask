@@ -55,10 +55,15 @@ func reviewArg(a argument) error {
 }
 
 func wantFields(fields []string, least, most int) error {
-	if len(fields) < least || (most >= 0 && len(fields) > most) {
+	if len(fields) < least || tooMany(fields, most) {
 		return errors.New(reviewUsage)
 	}
 	return nil
+}
+
+// tooMany: more fields than most, where a negative most means no bound.
+func tooMany(fields []string, most int) bool {
+	return most >= 0 && len(fields) > most
 }
 
 // parseReviewRequest reads [--no-publish] [--no-formal] TARGET AGENT [SCOPE].
