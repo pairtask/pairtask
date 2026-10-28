@@ -117,8 +117,8 @@ func (h *Hub) contactRead(ctx context.Context, req operatorRequest, auditID int6
 		h.SyncMessages(msg.ContactKey) // the receipts travel at the next session
 		h.MessagesChanged(msg.ContactKey)
 	}
-	out := h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, ContactKey: msg.ContactKey, ContactOp: msg.ContactOp,
-		ContactMarked: &marked})
+	out := h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ContactKey: msg.ContactKey,
+		ContactOp: msg.ContactOp, ContactMarked: &marked})
 	return out, nil
 }
 
@@ -149,36 +149,45 @@ func (h *Hub) contactList(ctx context.Context, msg protocol.Message) protocol.Me
 	}
 	out := protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactPage: &page, ContactMarked: msg.ContactMarked}
-	fitContactPage(&out)
+	if err := fitContactPage(&out, msg.RequestID); err != nil {
+		h.log.Error("contact page not encodable", "error", err)
+		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
+	}
 	return out
 }
 
-// contactEnvelope is room left in a frame for what the session adds to a
-// response: its request_id at the longest, and the trailing newline.
-const contactEnvelope = 256
+// frameTail is the frame's own line end, and slack.
+const frameTail = 16
 
-// fitContactPage keeps the newest messages that fit one frame, as encoded,
-// with room for the session's envelope: every message kept is whole, the
-// newest always stays, and More tells the client older ones remain, from
-// the last cursor returned.
-func fitContactPage(out *protocol.Message) {
+// fitContactPage keeps the newest messages that fit one frame, as encoded
+// with the request ID the session will put on the response: every message
+// kept is whole, the newest always stays, and More tells the client older
+// ones remain, from the last cursor returned. An encoding failure is an
+// error, never an empty page.
+func fitContactPage(out *protocol.Message, requestID string) error {
 	page := out.ContactPage
 	all := page.Messages
 	page.Messages = []protocol.ContactMessageView{}
-	base, err := json.Marshal(out)
+	envelope := *out
+	envelope.RequestID = requestID
+	base, err := json.Marshal(envelope)
 	if err != nil {
-		return
+		return err
 	}
-	used := len(base) + contactEnvelope
+	used := len(base) + frameTail
 	for i, m := range all {
-		size, err := json.Marshal(m)
-		if err != nil || (i > 0 && used+len(size)+1 > protocol.MaxFrameBytes) {
-			page.Messages, page.More = all[:i], true
-			return
+		encoded, err := json.Marshal(m)
+		if err != nil {
+			return err
 		}
-		used += len(size) + 1
+		if i > 0 && used+len(encoded)+1 > protocol.MaxFrameBytes {
+			page.Messages, page.More = all[:i], true
+			return nil
+		}
+		used += len(encoded) + 1
 	}
 	page.Messages = all
+	return nil
 }
 
 func (h *Hub) contactNow() time.Time {
