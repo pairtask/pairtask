@@ -33,26 +33,24 @@ func TestMessageTextAcceptanceCountsUTF8Bytes(t *testing.T) {
 	}
 }
 
+func assertRefusalClass(t *testing.T, reason, correct, wrong string) {
+	t.Helper()
+	refusal := messaging.Refuse(reason)
+	if !refusal.Valid() || refusal.Class != correct {
+		t.Fatalf("wrong refusal: %+v", refusal)
+	}
+	refusal.Class = wrong
+	if refusal.Valid() {
+		t.Fatalf("reason %s accepted with class %s", reason, wrong)
+	}
+}
+
 func TestMessageRefusalAcceptanceClassCannotChange(t *testing.T) {
 	for _, reason := range []string{"invalid", "too_large", "conflict", "too_old"} {
-		refusal := messaging.Refuse(reason)
-		if !refusal.Valid() || refusal.Class != messaging.Terminal {
-			t.Fatalf("wrong refusal: %+v", refusal)
-		}
-		refusal.Class = messaging.Transient
-		if refusal.Valid() {
-			t.Fatalf("terminal reason accepted as transient: %s", reason)
-		}
+		assertRefusalClass(t, reason, messaging.Terminal, messaging.Transient)
 	}
 	for _, reason := range []string{"inbox_full", "busy"} {
-		refusal := messaging.Refuse(reason)
-		if !refusal.Valid() || refusal.Class != messaging.Transient {
-			t.Fatalf("wrong refusal: %+v", refusal)
-		}
-		refusal.Class = messaging.Terminal
-		if refusal.Valid() {
-			t.Fatalf("transient reason accepted as terminal: %s", reason)
-		}
+		assertRefusalClass(t, reason, messaging.Transient, messaging.Terminal)
 	}
 	if messaging.Refuse("unknown").Valid() {
 		t.Fatal("unknown reason accepted")
