@@ -13,6 +13,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pairtask/pairtask/internal/bridge"
 	"github.com/pairtask/pairtask/internal/config"
+	"github.com/pairtask/pairtask/internal/forge"
+	"github.com/pairtask/pairtask/internal/forge/github"
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
@@ -33,7 +35,7 @@ func main() {
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: *harness, Model: *model, Rooms: rooms}
+	cfg := bridge.ClientConfig{SocketPath: *socket, AgentID: *agent, Harness: *harness, Model: *model, Rooms: rooms, Forges: reviewForges()}
 	if err := run(ctx, cfg, *channel, *autoListen); err != nil {
 		// stdout is reserved exclusively for MCP protocol frames.
 		log.Print(err)
@@ -73,4 +75,10 @@ func newChannelServer(listener *bridge.Listener, autoListen bool) *mcp.Server {
 		return bridge.NewAutoChannelMCP(listener)
 	}
 	return bridge.NewHostMCP(listener, true)
+}
+
+// reviewForges are the forges this agent's reviews may use (#201), with the
+// agent's own access.
+func reviewForges() forge.Registry {
+	return forge.Registry{"github": github.New(github.Production())}
 }
