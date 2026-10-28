@@ -12,6 +12,7 @@ import (
 
 	"github.com/pairtask/pairtask/internal/hub"
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
+	"github.com/pairtask/pairtask/internal/peer/shared"
 )
 
 // maxPairingConns bounds live inbound pairing connections; more are closed
@@ -32,6 +33,18 @@ type PairingServer struct {
 func NewPairing(socketPath string, h *hub.Hub, log *slog.Logger) *PairingServer {
 	p := &PairingServer{Server: &Server{socketPath: socketPath, hub: h, log: log}, slots: make(chan struct{}, maxPairingConns)}
 	p.prepare, p.secure, p.handle = privateDir, ownerOnly, p.serve
+	return p
+}
+
+// NewSharedPairing is NewPairing for the secured/connector route: the
+// socket's directory must be ours with group gid and mode 0750, and the
+// socket is given to gid with mode 0660, so connector's relay can connect.
+// The group can connect only; every connection must still complete first
+// contact and the pairing exchange. It is opt-in: NewPairing stays private.
+func NewSharedPairing(socketPath string, gid int, h *hub.Hub, log *slog.Logger) *PairingServer {
+	p := NewPairing(socketPath, h, log)
+	p.prepare = func(path string) error { return shared.CheckSharedDir(filepath.Dir(path), os.Geteuid(), gid) }
+	p.secure = func(path string) error { return shared.SecureSharedSocket(path, gid) }
 	return p
 }
 

@@ -116,13 +116,43 @@ Broker settings, all off by default:
 - `PAIRTASK_PAIRING_SOCKET=PATH` accepts pairing connections on a Unix socket.
   Its directory must be the broker user's with mode 0700; the socket is 0600.
   An existing path is never removed: delete a stale socket yourself.
+- `PAIRTASK_PAIRING_SOCKET_GROUP=NAME`, with the socket above, shares it with
+  one group so connector's relay can connect: the directory must be the
+  broker user's with group NAME and mode 0750, and the socket is 0660. The
+  broker needs NAME as a supplementary group. The group may only connect;
+  every connection must still complete TLS and the pairing exchange.
 - `PAIRTASK_PAIRING_EGRESS=direct` lets `redeem` dial TCP from this broker,
-  for a standalone broker only. The `secured`/`connector` relay route isn't
-  wired yet, so don't expect home-to-work redemption from this setting.
+  for a standalone broker only. `PAIRTASK_PAIRING_EGRESS=socket:/ABS/PATH`
+  sends each redemption through connector's egress forwarder instead, for a
+  `secured` broker with no network.
 - `PAIRTASK_PAIRING_NAME` is the name this workspace pairs under
   (`workspace` by default).
 
-With either of the first two set, the broker loads or creates its workspace
+A shared pairing or egress socket's directory must neither be, contain nor
+sit inside the agent socket's, the operator socket's, the database's (its
+configured and its real location) or the key's directory; the broker
+refuses to start otherwise.
+
+On connector, two commands carry pairing traffic without any key or any
+view of its contents, since TLS and the pairing exchange run end to end
+between the brokers. Neither starts by default:
+
+- `pairtask peer relay --listen ADDR --dial-unix /PATH` forwards inbound
+  pairing connections, sealed, to the broker's shared pairing socket.
+- `pairtask peer egress --socket /PATH --group NAME` serves the broker's
+  outbound redemptions on a socket it creates (directory 0750, socket 0660,
+  an existing path never removed). Per connection the broker names one
+  `host:port`; the forwarder resolves it once and refuses it if any address
+  is loopback, link-local, multicast, unspecified, zoned or one of
+  connector's own interface addresses, then dials that address. Private LAN
+  and tailnet addresses are allowed: they are where other workspaces live.
+
+Both take `--max-conns`, `--max-bytes` and `--idle` (16 connections, 1 MiB
+per direction and 30 s by default). The route's code is here; installing
+these as services in the images, the shared volumes and a native end-to-end
+proof come next (#178), so don't expect home-to-work redemption yet.
+
+With the socket or an egress set, the broker loads or creates its workspace
 key at startup and marks redemptions interrupted before verification
 `unverified`.
 
