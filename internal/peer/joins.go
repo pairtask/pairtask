@@ -28,10 +28,10 @@ import (
 //	intent | exchanging → unverified          (RecoverJoins after a restart)
 //
 // outcome_unknown means our final confirmation may have reached the
-// inviter; only an exactly matching receipt, at the start of a Settle, moves
-// it on. contact and declined are final: they hold the inviter's
-// authenticated decision, and DecisionConfirmedAt records, once, that the
-// inviter took note of our acknowledgment of it.
+// inviter; only an exactly matching receipt moves it on: the redemption's
+// own, or one a later Settle matches. contact and declined are final: they
+// hold the inviter's authenticated decision, and DecisionConfirmedAt
+// records, once, that the inviter took note of our acknowledgment of it.
 
 // JoinState is where a join stands.
 type JoinState string
