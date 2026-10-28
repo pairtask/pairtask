@@ -44,20 +44,38 @@ func githubTarget(owner, repo, change string) protocol.ReviewTarget {
 // github.com: https only, no account, no port, no escaped or dot segments.
 func githubPullPath(raw string) ([]string, bool) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Opaque != "" {
+	if err != nil {
 		return nil, false
 	}
-	if u.Host != "github.com" && u.Host != "www.github.com" {
-		return nil, false
-	}
-	if u.RawPath != "" || strings.Contains(u.Path, "//") {
+	if !githubOrigin(u) || !plainPath(u) {
 		return nil, false
 	}
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), "/"), "/")
-	if len(parts) < 4 || parts[2] != "pull" || !number.MatchString(parts[3]) || !plainName(parts[0], parts[1]) {
+	if !pullPath(parts) {
 		return nil, false
 	}
 	return parts[:4], pullTab(parts[4:])
+}
+
+// githubHosts are the hosts a browser shows github.com pull requests on.
+var githubHosts = map[string]bool{"github.com": true, "www.github.com": true}
+
+// githubOrigin: https on github.com itself, with no account and no port.
+func githubOrigin(u *url.URL) bool {
+	return u.Scheme == "https" && u.User == nil && u.Opaque == "" && githubHosts[u.Host]
+}
+
+// plainPath: no escaped characters and no empty segments.
+func plainPath(u *url.URL) bool {
+	return u.RawPath == "" && !strings.Contains(u.Path, "//")
+}
+
+// pullPath: OWNER/REPO/pull/N, and maybe a tab after it.
+func pullPath(parts []string) bool {
+	if len(parts) < 4 || parts[2] != "pull" {
+		return false
+	}
+	return number.MatchString(parts[3]) && plainName(parts[0], parts[1])
 }
 
 // pullTab accepts nothing, or one known tab with what it takes.

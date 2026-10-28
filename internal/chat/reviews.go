@@ -126,14 +126,31 @@ func (m *Model) reviewCommand(arg argument) tea.Cmd {
 		return nil
 	}
 	fields := strings.Fields(string(arg))
-	switch {
-	case len(fields) == 1 && (fields[0] == "status" || fields[0] == "cancel"):
-		return m.pickReview(fields[0])
-	case fields[0] == "status":
-		return m.reviewStatus(fields[1])
-	case fields[0] == "cancel":
-		return m.reviewCancel(fields[1], strings.Join(fields[2:], " "))
+	if follow, ok := reviewFollowOps[fields[0]]; ok {
+		return follow(m, fields[1:])
 	}
+	return m.requestReview(arg, fields)
+}
+
+// reviewFollowOps follow or cancel a review; without an ID they pick one.
+var reviewFollowOps = map[string]func(*Model, []string) tea.Cmd{
+	"status": func(m *Model, rest []string) tea.Cmd {
+		if len(rest) == 0 {
+			return m.pickReview("status")
+		}
+		return m.reviewStatus(rest[0])
+	},
+	"cancel": func(m *Model, rest []string) tea.Cmd {
+		if len(rest) == 0 {
+			return m.pickReview("cancel")
+		}
+		return m.reviewCancel(rest[0], strings.Join(rest[1:], " "))
+	},
+}
+
+// requestReview asks for a review and shows the request in the panel at
+// once, before the broker answers.
+func (m *Model) requestReview(arg argument, fields []string) tea.Cmd {
 	if in := m.reviews.intent; in != nil {
 		// One request at a time, so a lost answer is never lost with it.
 		m.status = "review request " + safe(in.MessageID) + " is not settled yet; /review again once it is answered"
@@ -208,18 +225,14 @@ func (m *Model) reviewID(ref string) (string, string) {
 // reviewResult answers /review and /reviews: one review or the list.
 func (m *Model) reviewResult(req pendingRequest, resp protocol.Message) tea.Cmd {
 	op := req.ids[0]
-	var follow tea.Cmd
 	settled := op == protocol.ReviewOpRequest && m.settles(req)
+	var follow tea.Cmd
 	if settled {
 		m.reviews.intent, m.reviews.unknown = nil, false
 		follow = m.refreshAfterResend()
 	}
 	if resp.Type != protocol.TypeOperatorReviewResult {
-		m.status = "review " + op + " refused: " + refusalReason(resp)
-		m.reviews.pick = ""
-		if settled {
-			m.requestRefused(resp)
-		}
+		m.reviewRefused(op, settled, resp)
 		return follow
 	}
 	if settled {
@@ -229,13 +242,29 @@ func (m *Model) reviewResult(req pendingRequest, resp protocol.Message) tea.Cmd 
 	if op == protocol.ReviewOpList {
 		m.pickAfterList()
 	}
-	if resp.Review != nil {
-		m.status = reviewStatusLine(op, *resp.Review)
-		if op == protocol.ReviewOpRequest {
-			m.reviews.followed = resp.Review.ID
-		}
-	}
+	m.reviewAnswered(op, resp.Review)
 	return follow
+}
+
+// reviewRefused reports a refused operation; a refused request stays in
+// the panel with its command given back.
+func (m *Model) reviewRefused(op string, settled bool, resp protocol.Message) {
+	m.status = "review " + op + " refused: " + refusalReason(resp)
+	m.reviews.pick = ""
+	if settled {
+		m.requestRefused(resp)
+	}
+}
+
+// reviewAnswered shows one review's progress, following a requested one.
+func (m *Model) reviewAnswered(op string, r *protocol.ReviewView) {
+	if r == nil {
+		return
+	}
+	m.status = reviewStatusLine(op, *r)
+	if op == protocol.ReviewOpRequest {
+		m.reviews.followed = r.ID
+	}
 }
 
 // requestRefused keeps the refusal in the panel and gives the command back
@@ -259,9 +288,14 @@ func (m *Model) requestRefused(resp protocol.Message) {
 func (m *Model) requestAnswered(resp protocol.Message) {
 	p := m.reviews.pending
 	m.reviews.pending = nil
-	if p != nil && resp.Review != nil && m.reviews.selected == p.id {
+	if resp.Review != nil && m.showingPending(p) {
 		m.reviews.selected = resp.Review.ID
 	}
+}
+
+// showingPending: the panel still shows this pending request.
+func (m *Model) showingPending(p *pendingReview) bool {
+	return p != nil && m.reviews.selected == p.id
 }
 
 // refusalReason is the broker's reason in words, its code after it.

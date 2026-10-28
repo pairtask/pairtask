@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"slices"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -60,28 +62,17 @@ func filled(n int, v bool) []bool {
 // including the space after the name, or the whole line when it is only a
 // name, was typed.
 func (l *commandLine) trusted() bool {
-	value := []rune(l.input.Value())
-	end := len(value)
-	for i, r := range value {
-		if r == ' ' && i > 0 && value[i-1] != ' ' {
-			end = i + 1
-			break
-		}
-	}
-	for i := 0; i < end && i < len(l.pasted); i++ {
-		if l.pasted[i] {
-			return false
-		}
-	}
-	return true
+	end := min(nameEnd([]rune(l.input.Value())), len(l.pasted))
+	return !slices.Contains(l.pasted[:end], true)
 }
 
-// hasPaste reports pasted text anywhere on the line.
-func (l *commandLine) hasPaste() bool {
-	for _, p := range l.pasted {
-		if p {
-			return true
+// nameEnd is where the command name ends, its space included: the first
+// space after a non-space, or the end of the line.
+func nameEnd(value []rune) int {
+	for i := 1; i < len(value); i++ {
+		if value[i] == ' ' && value[i-1] != ' ' {
+			return i + 1
 		}
 	}
-	return false
+	return len(value)
 }

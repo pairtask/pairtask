@@ -22,9 +22,10 @@ func TestReviewUXTypedCommandAcceptsPastedGitHubArguments(t *testing.T) {
 			chatEqual(t, "repository", req.ReviewSpec.Repository, "github.com/3tio/3t.interceptor")
 			chatEqual(t, "change", req.ReviewSpec.Change, "323")
 			chatEqual(t, "scope", req.ReviewSpec.Scope, "security")
-			if req.ReviewSpec.Policy == nil || !req.ReviewSpec.Policy.Publish || req.ReviewSpec.Policy.Formal {
-				t.Fatalf("wrong policy: %+v", req.ReviewSpec.Policy)
+			if req.ReviewSpec.Policy == nil {
+				t.Fatal("missing explicit comment policy")
 			}
+			chatEqual(t, "comment policy", *req.ReviewSpec.Policy, protocol.ReviewPolicy{Publish: true})
 			chatEqual(t, "no message intent", h.m.State().Intent, nil)
 		})
 	}

@@ -21,15 +21,7 @@ func TestReviewUXDetailRendersMarkdownAndDistinctPublication(t *testing.T) {
 	for _, want := range []string{"Target", "Verdict", "Findings", "Publication", "Security review", "First paragraph.", "Second paragraph.", "internal/connsel/aa.go:85", "Keep secrets out of logs.", "approve", "comment", "review-account"} {
 		v3Contains(t, view, want)
 	}
-	lines := strings.Split(view, "\n")
-	for i, line := range lines {
-		label := strings.TrimSpace(line)
-		if strings.HasPrefix(label, "Verdict") || strings.HasPrefix(label, "Findings") || label == "Publication" {
-			if i == 0 || strings.TrimSpace(lines[i-1]) != "" {
-				t.Errorf("section has no separating blank line: %q", label)
-			}
-		}
-	}
+	reviewUXSectionSpacing(t, view)
 	for _, raw := range []string{"**Security review**", "**P2**"} {
 		if strings.Contains(view, raw) {
 			t.Errorf("Markdown left raw: %q", raw)
@@ -37,10 +29,36 @@ func TestReviewUXDetailRendersMarkdownAndDistinctPublication(t *testing.T) {
 	}
 	for _, width := range []int{80, 40, 24} {
 		h.input(tea.WindowSizeMsg{Width: width, Height: 70})
-		for _, line := range strings.Split(h.m.View().Content, "\n") {
-			if got := ansi.StringWidth(line); got > width {
-				t.Fatalf("width %d rendered %d columns: %q", width, got, line)
-			}
+		reviewUXWidth(t, h.m.View().Content, width)
+	}
+}
+
+func reviewUXSectionSpacing(t *testing.T, view string) {
+	t.Helper()
+	previous := "not a blank line"
+	for _, line := range strings.Split(view, "\n") {
+		label := strings.TrimSpace(line)
+		if reviewUXSection(label) && previous != "" {
+			t.Errorf("section has no separating blank line: %q", label)
+		}
+		previous = label
+	}
+}
+
+func reviewUXSection(label string) bool {
+	for _, name := range []string{"Verdict", "Findings", "Publication"} {
+		if strings.HasPrefix(label, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func reviewUXWidth(t *testing.T, view string, width int) {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if got := ansi.StringWidth(line); got > width {
+			t.Fatalf("width %d rendered %d columns: %q", width, got, line)
 		}
 	}
 }

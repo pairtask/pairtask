@@ -1,6 +1,7 @@
 package review_test
 
 import (
+	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/review"
 	"testing"
 )
@@ -14,7 +15,8 @@ func TestBrowserPullLinksResolveToSameReviewTarget(t *testing.T) {
 				t.Errorf("%s: %v", raw, err)
 				continue
 			}
-			if got.Forge != "github" || got.Repository != "github.com/3tio/3t.interceptor" || got.Change != "323" {
+			want := (protocol.ReviewTarget{Forge: "github", Repository: "github.com/3tio/3t.interceptor", Change: "323"})
+			if got != want {
 				t.Errorf("%s: %+v", raw, got)
 			}
 		}
