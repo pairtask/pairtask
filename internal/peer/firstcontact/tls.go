@@ -89,14 +89,23 @@ func pairingRole(server bool) tlsRole {
 	return tlsRole{server: server, protocols: []string{ALPN}}
 }
 
-// serverRole offers contact connections too when pins are given, and
-// accepts one only from a pinned identity.
+// serverRole offers contact connections and message sessions too when their
+// pins are given, and accepts each only from an identity its pins admit.
 func serverRole(opts ServerOptions) tlsRole {
-	if opts.ContactPins == nil {
+	pins := map[string]func(string) bool{}
+	protocols := []string{ALPN}
+	for protocol, admit := range map[string]func(string) bool{ContactALPN: opts.ContactPins, MessageALPN: opts.MessagePins} {
+		if admit != nil {
+			pins[protocol] = admit
+			protocols = append(protocols, protocol)
+		}
+	}
+	if len(pins) == 0 {
 		return pairingRole(true)
 	}
-	return tlsRole{server: true, protocols: []string{ALPN, ContactALPN}, accept: func(protocol, fingerprint string) error {
-		if protocol == ContactALPN && !opts.ContactPins(fingerprint) {
+	slices.Sort(protocols[1:])
+	return tlsRole{server: true, protocols: protocols, accept: func(protocol, fingerprint string) error {
+		if admit, pinned := pins[protocol]; pinned && !admit(fingerprint) {
 			return fmt.Errorf("%w: %w", ErrFirstContact, peer.ErrPeerMismatch)
 		}
 		return nil
@@ -104,8 +113,11 @@ func serverRole(opts ServerOptions) tlsRole {
 }
 
 // contactRole is a contact connection to the one identity it pins.
-func contactRole(pin string) tlsRole {
-	return tlsRole{protocols: []string{ContactALPN}, accept: func(_, fingerprint string) error {
+func contactRole(pin string) tlsRole { return pinnedRole(ContactALPN, pin) }
+
+// pinnedRole offers one protocol to the one identity it pins.
+func pinnedRole(protocol, pin string) tlsRole {
+	return tlsRole{protocols: []string{protocol}, accept: func(_, fingerprint string) error {
 		if subtle.ConstantTimeCompare([]byte(fingerprint), []byte(pin)) != 1 {
 			return fmt.Errorf("%w: %w", ErrFirstContact, peer.ErrPeerMismatch)
 		}

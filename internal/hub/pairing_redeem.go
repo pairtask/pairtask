@@ -13,6 +13,7 @@ import (
 
 	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -42,6 +43,9 @@ type PairingConfig struct {
 	// SettleTick drives automatic settlement passes; nil ticks every
 	// SettleInterval. Tests send on it instead of waiting.
 	SettleTick <-chan time.Time
+	// MessageTick drives message sync passes (#210); nil ticks every
+	// MessageActiveInterval.
+	MessageTick <-chan time.Time
 }
 
 // PairingEndpoint is what an inbound pairing connection needs, read as one
@@ -60,6 +64,12 @@ type PairingEndpoint struct {
 	// RequestMark is the durable state of fingerprint's request, to compare
 	// around an inbound settlement.
 	RequestMark func(fingerprint string) string
+	// MessagePins accepts a message session only from a confirmed contact
+	// (#210); Messages is their store, and BeginMessages claims a contact
+	// for one session, inbound or outbound, or reports it busy.
+	MessagePins   func(fingerprint string) bool
+	Messages      messaging.Store
+	BeginMessages func(contact string) (end func(moved bool), ok bool)
 }
 
 // pairingWiring is the hub's pairing state beyond the invitation itself.
@@ -124,7 +134,8 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 	}
 	if inviter, err := peer.NewInviter(cfg.Exchanger, h.pairing, id); err == nil {
 		h.pair.endpoint.Store(&PairingEndpoint{Identity: id, Inviter: inviter, Joiner: h.pair.joiner, Clock: cfg.Clock,
-			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark})
+			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark,
+			MessagePins: h.messagePins, Messages: h.store.PeerMessages(), BeginMessages: h.beginMessages})
 	}
 }
 
@@ -157,6 +168,7 @@ func (h *Hub) beginPairing(ctx context.Context) {
 	}
 	if h.redeemAvailable() {
 		h.startSettleWorker(ctx)
+		h.startMessageWorker(ctx)
 	}
 }
 
