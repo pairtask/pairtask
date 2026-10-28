@@ -175,6 +175,26 @@ class PairingRouteTopologyAcceptanceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             route.check_instances(found)
 
+    def test_image_source_archive_contains_the_installed_route(self):
+        import hashlib
+        import tarfile
+        import tempfile
+        from sandbox_source import source_archive
+
+        required = ("pairtask-pairing-setup", "pairtask-pairing-setup.service",
+                    "pairtask-connector-setup.service", "pairtask-peer-egress.service",
+                    "pairtask-peer-relay.service", "pairtask-secured-broker.service.d/pairing.conf")
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "source.tar"
+            provenance = source_archive(archive)
+            with tarfile.open(archive) as source:
+                for name in required:
+                    path = "infra/image/" + name
+                    with self.subTest(path=path):
+                        self.assertTrue(path in source.getnames(), "image source is missing " + path)
+                        contents = source.extractfile(path).read()
+                        self.assertEqual(hashlib.sha256(contents).hexdigest(), provenance["files_sha256"][path])
+
 
 if __name__ == "__main__":
     unittest.main()

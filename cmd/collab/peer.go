@@ -173,7 +173,14 @@ func groupID(name string) (int, error) {
 // replaced it.
 func removeOwnSocket(path string, ln *net.UnixListener, bound os.FileInfo) {
 	ln.Close()
-	if info, err := os.Lstat(path); err == nil && bound != nil && os.SameFile(bound, info) {
+	if bound == nil {
+		return
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return
+	}
+	if os.SameFile(bound, info) {
 		os.Remove(path)
 	}
 }

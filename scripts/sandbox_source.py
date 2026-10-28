@@ -26,6 +26,9 @@ RECIPE_PATHS = ["infra/image/" + name for name in (
     "pairtask-tools-setup.service", "pairtask-playwright", "pairtask-codescene-login",
     "pairtask-chromium.apparmor", "mcp/package.json", "mcp/package-lock.json", "mcp/servers.json",
     "pairtask-pi", "pi-extension.ts",
+    # The opt-in pairing route (#178).
+    "pairtask-pairing-setup", "pairtask-pairing-setup.service", "pairtask-connector-setup.service",
+    "pairtask-peer-egress.service", "pairtask-peer-relay.service", "pairtask-secured-broker.service.d/pairing.conf",
 )] + ["docs/skills/collab-ai/" + name for name in (
     "SKILL.md", "references/managed.md", "references/manual.md", "references/operator.md", "references/sandbox.md",
 )]
