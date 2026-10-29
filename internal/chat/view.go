@@ -419,6 +419,9 @@ func (m *Model) hintText() string {
 	if m.compose.cmd != nil {
 		return "command · Enter runs · Tab completes · Esc back to your draft"
 	}
+	if key := m.conv.selected; key.isContact() {
+		return m.contactHint(key)
+	}
 	a := m.resolveAudience()
 	if a.err != "" {
 		return "✗ " + a.err
