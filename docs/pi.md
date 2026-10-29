@@ -28,7 +28,7 @@ Then, in Pi:
 
 - The `collab-ai` skill is not auto-loaded yet; pass
   `-- --skill /usr/local/share/pairtask` as above.
-- `--resume` is Codex-only; there is no managed Pi resume.
+- Managed resume (`-- resume`) is Codex-only; Pi has no managed resume.
 - Each request asks for at most 32768 output tokens. Without a cap Pi asks for
   nearly the whole context window, and OpenRouter refuses a request whose
   worst case costs more than your remaining credit. Change it with

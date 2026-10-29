@@ -37,91 +37,54 @@ or 7.5+ ([why and how to check](sandbox.md#incus-server-version)). Details:
 
 ## Connect two machines
 
-Use the same release, `workspace-v0.0.0-build.587.1` or later, on **both**
-machines: earlier releases don't publish the relay, and 580.1's `pairing off`
-can fail partway. These steps use operator chat and a LAN or tailnet IPv4
-address that the other machine can reach.
+Pair your workspace with one on another machine. Both machines need release
+587.1 or later. Call them **A** (invites) and **B** (joins).
 
-1. **Install or update on both hosts.** Rerun the installer so the host
-   commands and container images come from the same release. This ends
-   running sandbox sessions and preserves deployment data.
+1. **On both hosts,** update and turn pairing on:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
-   ```
-
-   On an existing installation, `pairtask upgrade` alone isn't enough: it
-   updates the containers with your current host commands, without updating
-   the commands themselves.
-
-2. **Enable publishing on both hosts.**
-
-   ```sh
    pairtask pairing on --host-port 7445
-   pairtask pairing status
+   pairtask pairing status     # expect: on, forwarding on port 7445
    ```
 
-   Status should show the route on and forwarding applied on port 7445.
-   On macOS, the managed Colima VM carries the traffic to connector. Allow
-   incoming connections if macOS asks, and allow TCP 7445 through the host
-   firewall or tailnet policy. Status reads deployment state; it does not
-   prove that the other machine can connect.
+   Use the installer, not `pairtask upgrade`: only the installer updates the
+   `pairtask` command itself. Allow incoming connections if macOS asks.
 
-3. **Choose machine A's address.** Use its LAN IPv4 address when both
-   machines can reach that LAN, or its tailnet IPv4 address when both are
-   connected to the tailnet. Use the Mac's address, not the Colima VM's or
-   connector's address. Keep A available at that address for later syncs.
+2. **On A,** run `pairtask chat`, type `/pair open`, and send the code to B's
+   operator over a trusted channel.
 
-4. **Open a pairing invitation on A.** Run `pairtask chat` on A's host, then
-   enter `/pair open` in chat. Share the displayed one-time code with the
-   operator on B through a trusted channel.
-
-5. **Redeem on B and accept on A.** Run `pairtask chat` on B's host. In its
-   chat, replace `A_IP` and `CODE` below with A's address and invitation code:
+3. **On B,** run `pairtask chat` and redeem with A's LAN or tailnet IP (the
+   Mac's own address, not the VM's):
 
    ```text
    /pair redeem A_IP:7445 CODE
    ```
 
-   On A, use `/pair status`, then `/pair accept KEY`, replacing `KEY` with
-   the unique key prefix of B's request. On B, run `/pair settle`, then
-   `/pair status` on both machines. Wait until the contact is confirmed on
-   both sides. An awaiting-acceptance or confirming entry is not complete.
+4. **On A,** `/pair status`, then `/pair accept KEY` with the start of B's key.
+   **On B,** `/pair settle`. Done when `/pair status` shows the contact
+   confirmed on both sides.
 
-6. **Exchange a test message each way.** In each chat, select the other
-   workspace's `⇄` conversation with Tab. Send a short message from B,
-   read it on A, and reply. Confirm that each arrives in the other chat;
-   forwarding status alone is not this end-to-end check. Contact messages
-   are operator-to-operator text and are not automatically sent to agents.
+5. **Say hello.** In each chat, Tab to the `⇄` conversation and send a
+   message each way. These messages go between operators, not to agents.
+   B connects to A to exchange them, so keep A reachable at that address.
 
-To check both network paths, use fresh invitations for the LAN and tailnet
-addresses and repeat redemption, confirmation and the message exchange.
-The published listener accepts either path; actual Mac firewall, Colima and
-tailnet reachability still need this two-machine check.
+To test the other network path (LAN or tailnet), repeat steps 2 to 5 with a
+new code. `pairing status` shows what is set up, not whether the other machine
+can reach you; a firewall or tailnet policy can still block port 7445.
 
-### Change the port or turn pairing off
-
-Run these on the host; `on` and `off` perform a rollout and end sandbox sessions:
+**Change or stop:**
 
 ```sh
-pairtask pairing on --host-port 8445  # use A_IP:8445 when redeeming
-pairtask pairing on --host-port 0    # keep the route, remove host publishing
-pairtask pairing off                # remove connector and its forwarding
+pairtask pairing on --host-port 8445   # another port (then redeem with A_IP:8445)
+pairtask pairing on --host-port 0      # stay paired, stop listening
+pairtask pairing off                   # turn pairing off
 ```
 
-A later `pairtask pairing on` keeps the saved port, including an explicit
-0; it chooses 7445 only if no port was saved. Specify `--host-port 7445` to
-publish again after saving 0. `off` keeps the port for the next `on` and
-leaves secured runtime enabled. Two small socket volumes remain detached
-while off. Upgrades preserve these settings; a legacy enabled route with
-no saved port remains unpublished until you explicitly run `pairing on`.
-
-If the port is already in use, the apply fails and keeps the requested
-setting. Release the port or choose another, then rerun `pairing on`.
-`pairing status` distinguishes configured settings from applied forwarding.
-If 580.1's `pairing off` failed partway, update with the installer once the
-fixed release is available, then rerun `pairing off`. Keep the deployment
-state and volumes; do not delete volumes manually to clear the error.
+`on` and `off` restart the containers. A later `pairing on` reuses the saved
+port (7445 if none was saved). If the port is taken, nothing changes: free it
+or pick another and run `pairing on` again. If 580.1's `pairing off` stopped
+halfway, run it again on the new release; don't delete volumes by hand.
 
 ## Start, stop and status
 
@@ -336,16 +299,12 @@ starts Pi with the pairtask extension, capping each request's output at
 environment to any other harness that integrates itself
 ([host integration](host-integration.md#pi)).
 
-**Resume Codex** with `pairtask start codex --id codex-1 --resume`. The
-launcher records each agent ID's conversation and directory when a thread
-starts, resumes or forks (`$XDG_STATE_HOME/pairtask/`, default
-`~/.local/state/pairtask/`, private files named by a hash of the ID);
-`--resume` continues that conversation from that directory. It refuses while
-the ID is still connected (close the old session first), and when nothing is
-recorded it lists saved conversations with a ready command for each, never
-picking one itself. `-- resume` and `-- resume --last` mean the same as
-`--resume` here (this agent's recorded conversation, not Codex's picker or
-latest-in-directory, which don't work through the launcher). An explicit
-`-- resume ID` (or a name, `--all`, `--cd`, `fork ID`) goes to Codex
-unchanged, except that a pairtask session ID, the ID shown in pairtask
-messages, is refused with an explanation: it isn't a Codex conversation ID.
+**Resume Codex** with `pairtask start codex --id codex-1 -- resume` (close
+the old session first). The launcher remembers each agent ID's last
+conversation and directory, and continues it; `-- resume --last` does the
+same, and so does the `--resume` flag. With nothing recorded it lists saved
+conversations with a ready command for each. An explicit `-- resume ID`,
+`fork ID` or other Codex arguments go to Codex unchanged; a pairtask session
+ID is refused, since it isn't a Codex conversation ID. **Resume Claude** with
+`pairtask start claude --id claude-1 -- --resume`, which passes Claude's own
+`--resume` through.
