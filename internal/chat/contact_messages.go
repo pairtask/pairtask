@@ -341,18 +341,35 @@ func (m *Model) contactsReconnected() tea.Cmd {
 	if !m.contactsAvailable() {
 		return nil
 	}
-	var cmds []tea.Cmd
-	if op := m.contacts.send; op != nil && op.unknown {
-		op.unknown = false
-		m.status = "contact message outcome unknown; resending " + safe(op.msg.MessageID)
-		cmds = append(cmds, m.request(kindContactSend, op.msg, op.msg.ContactKey, op.msg.MessageID))
+	return tea.Batch(m.resendContactSend(), m.resendContactReads(), m.refreshLoadedContacts())
+}
+
+// resendContactSend resends a send whose answer was lost, unchanged.
+func (m *Model) resendContactSend() tea.Cmd {
+	op := m.contacts.send
+	if op == nil || !op.unknown {
+		return nil
 	}
+	op.unknown = false
+	m.status = "contact message outcome unknown; resending " + safe(op.msg.MessageID)
+	return m.request(kindContactSend, op.msg, op.msg.ContactKey, op.msg.MessageID)
+}
+
+// resendContactReads resends reads whose answers were lost, unchanged.
+func (m *Model) resendContactReads() tea.Cmd {
+	var cmds []tea.Cmd
 	for id, op := range m.contacts.reads {
 		if op.unknown {
 			op.unknown = false
 			cmds = append(cmds, m.request(kindContactRead, op.msg, op.msg.ContactKey, id))
 		}
 	}
+	return tea.Batch(cmds...)
+}
+
+// refreshLoadedContacts reads every loaded thread's newest page again.
+func (m *Model) refreshLoadedContacts() tea.Cmd {
+	var cmds []tea.Cmd
 	for contact, t := range m.contacts.threads {
 		if t.loaded {
 			cmds = append(cmds, m.refreshContact(contact, 0))

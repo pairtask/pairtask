@@ -61,9 +61,6 @@ func (s *sendState) disconnected() {
 // submit freezes the draft, its audience and reply into a send intent. The
 // hint line shows the audience beforehand, so there is no confirmation.
 func (m *Model) submit() tea.Cmd {
-	if m.conv.selected.isContact() {
-		return m.contactSubmit()
-	}
 	scope, reason, ok := m.sendable()
 	if !ok {
 		if reason != "" {

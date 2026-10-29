@@ -164,6 +164,9 @@ func (m *Model) enter() tea.Cmd {
 		m.afterEdit()
 		return nil
 	}
+	if m.conv.selected.isContact() {
+		return m.contactSubmit() // a contact tab sends to the workspace
+	}
 	return m.submit()
 }
 
