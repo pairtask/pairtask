@@ -55,6 +55,17 @@ CREATE INDEX IF NOT EXISTS review_events_by_review ON review_events(review_id, i
 type ReviewAction struct {
 	Actor, Action string
 	AuditID       int64
+	// Notice, on a new request, is the reviewer's durable message about it
+	// (#220): stored with the review or not at all. A retry of a request
+	// already stored writes no new one.
+	Notice *ReviewNotice
+}
+
+// ReviewNotice is the message that tells a reviewer about a request, and
+// who it is for.
+type ReviewNotice struct {
+	Msg        protocol.Message
+	Recipients []protocol.Recipient
 }
 
 // openStates is the SQL list of states that still wait for or run a review.
@@ -74,10 +85,22 @@ func (s *Store) CreateReview(ctx context.Context, rec review.Record, act ReviewA
 	if err != nil {
 		return review.Record{}, false, err
 	}
+	if err := notifyReviewer(ctx, tx, act.Notice, created); err != nil {
+		return review.Record{}, false, err
+	}
 	if err := record(ctx, tx, reviewChange{out, created, act}); err != nil {
 		return review.Record{}, false, err
 	}
 	return out, created, tx.Commit()
+}
+
+// notifyReviewer stores a new request's notice for its reviewer, durably
+// and inside the request's transaction.
+func notifyReviewer(ctx context.Context, tx *sql.Tx, notice *ReviewNotice, created bool) error {
+	if notice == nil || !created {
+		return nil
+	}
+	return persistMessage(ctx, tx, routedMessage{msg: notice.Msg, recipients: notice.Recipients})
 }
 
 func createReview(ctx context.Context, tx *sql.Tx, rec review.Record) (review.Record, bool, error) {

@@ -257,7 +257,7 @@ func reviewCode(err error) (string, bool) {
 
 // operatorReview serves operator_review: a request or a cancellation, each
 // audited before anything changes, or a read.
-func (h *Hub) operatorReview(ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
+func (h *Hub) operatorReview(ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message {
 	msg := req.msg
 	if len(msg.MessageID) > 128 {
 		return (&routingError{protocol.ErrMalformedFrame, "message_id must be at most 128 bytes"}).frame("")
@@ -267,7 +267,7 @@ func (h *Hub) operatorReview(ctx context.Context, _ map[string]*Client, req oper
 	}
 	switch msg.ReviewOp {
 	case protocol.ReviewOpRequest, protocol.ReviewOpCancel:
-		return h.operatorReviewChange(ctx, req)
+		return h.operatorReviewChange(ctx, clients, req)
 	case protocol.ReviewOpList:
 		page, err := h.reviewPage(ctx, "")
 		if err != nil {
@@ -297,9 +297,14 @@ func (h *Hub) operatorReviewStatus(ctx context.Context, msg protocol.Message) pr
 
 // operatorReviewChange checks, audits and applies a request or a
 // cancellation; nothing changes without its audit row.
-func (h *Hub) operatorReviewChange(ctx context.Context, req operatorRequest) protocol.Message {
+func (h *Hub) operatorReviewChange(ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message {
 	msg := req.msg
 	if rerr := checkOperatorReview(msg); rerr != nil {
+		return rerr.frame(msg.MessageID)
+	}
+	notice, rerr := h.reviewNotice(ctx, clients, msg)
+	if rerr != nil {
+		h.auditRejected(ctx, "review "+msg.ReviewOp, req, rerr)
 		return rerr.frame(msg.MessageID)
 	}
 	scope := msg.ReviewID
@@ -311,18 +316,15 @@ func (h *Hub) operatorReviewChange(ctx context.Context, req operatorRequest) pro
 	if err != nil {
 		return (&routingError{protocol.ErrInternal, "operator audit unavailable; reviews unchanged"}).frame(msg.MessageID)
 	}
-	rec, changed, err := h.applyOperatorReview(ctx, req, auditID)
+	rec, changed, err := h.applyOperatorReview(ctx, req, store.ReviewAction{AuditID: auditID, Notice: notice})
 	if err != nil {
-		code, ok := reviewCode(err)
-		if !ok {
-			h.log.Error("review not stored", "message_id", msg.MessageID, "error", err)
-			code, err = protocol.ErrInternal, errors.New("review not stored")
-		}
-		h.finishAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditRejected, Detail: code})
-		return (&routingError{code, err.Error()}).frame(msg.MessageID)
+		rerr := h.reviewStoreError(msg.MessageID, err)
+		h.finishAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditRejected, Detail: rerr.code})
+		return rerr.frame(msg.MessageID)
 	}
 	if changed {
 		h.emit(protocol.SessionEvent{Kind: protocol.EventReviewsChanged, ReviewID: rec.View.ID})
+		h.deliverReviewNotice(clients, notice)
 	}
 	view := rec.View
 	return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewID: view.ID, Review: &view}
@@ -330,9 +332,9 @@ func (h *Hub) operatorReviewChange(ctx context.Context, req operatorRequest) pro
 
 // applyOperatorReview commits the change together with its audit row's
 // accepted result.
-func (h *Hub) applyOperatorReview(ctx context.Context, req operatorRequest, auditID int64) (review.Record, bool, error) {
+func (h *Hub) applyOperatorReview(ctx context.Context, req operatorRequest, act store.ReviewAction) (review.Record, bool, error) {
 	msg, now := req.msg, h.reviewNow()
-	act := store.ReviewAction{Actor: fmt.Sprintf("operator:%d", req.uid), Action: "operator " + msg.ReviewOp, AuditID: auditID}
+	act.Actor, act.Action = fmt.Sprintf("operator:%d", req.uid), "operator "+msg.ReviewOp
 	if msg.ReviewOp == protocol.ReviewOpRequest {
 		return h.store.CreateReview(ctx, review.New(msg.MessageID, act.Actor, *msg.ReviewSpec, now), act)
 	}

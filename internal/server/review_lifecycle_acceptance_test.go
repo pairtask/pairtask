@@ -51,7 +51,9 @@ func reviewTestCall(p *sessionProbe, kind, id string, fields map[string]any) ses
 	}
 	fields["review_id"] = id
 	r, events := p.request(kind, fields)
-	operatorEqual(p.t, "review changes are not unsolicited agent messages", len(events), 0)
+	for _, event := range events {
+		reviewNoticeEvent(p, event)
+	}
 	return r
 }
 

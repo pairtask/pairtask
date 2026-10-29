@@ -218,7 +218,7 @@ func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error
 	return int(version.Int64), err
 }
 
-const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions`
+const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id`
 
 // groupColumn is a group send's canonical members (JSON), or NULL.
 const groupColumn = `(SELECT o.members FROM operator_requests o WHERE o.message_id = mm.message_id AND o.scope_kind = 'group')`
@@ -250,12 +250,12 @@ type scanner interface{ Scan(...any) error }
 func scanDurableMessage(row scanner) (protocol.Message, error) {
 	msg := protocol.Message{Type: protocol.TypeMsg, Durable: true, AckRequested: true}
 	var payload string
-	var origin, group, room, mentions sql.NullString
-	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group, &room, &mentions)
+	var origin, group, room, mentions, reviewID sql.NullString
+	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group, &room, &mentions, &reviewID)
 	if err != nil {
 		return msg, err
 	}
-	msg.Room = room.String
+	msg.Room, msg.ReviewID = room.String, reviewID.String
 	if msg.Mentions, err = groupList(mentions); err != nil {
 		return msg, err
 	}

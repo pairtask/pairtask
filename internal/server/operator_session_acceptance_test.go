@@ -26,7 +26,8 @@ func (m sessionWire) text(key string) string {
 
 type sessionProbe struct {
 	*operatorPeer
-	next int
+	next          int
+	reviewNotices map[string]bool
 }
 
 func sessionConnect(f *operatorFixture) (*sessionProbe, sessionWire) {
