@@ -81,7 +81,7 @@ func (m *Model) confirmedContact(fingerprint string) bool {
 // messages once, and marks read what the operator now sees there.
 func (m *Model) contactFollowUp() tea.Cmd {
 	key := m.conv.selected
-	if !key.isContact() || m.panel != nil || !m.ready() || !m.contactsAvailable() || !m.confirmedContact(key.contact) {
+	if !m.contactTabShown(key) || !m.contactsUsable(key.contact) {
 		return nil
 	}
 	t := m.contacts.thread(key.contact)
@@ -90,6 +90,20 @@ func (m *Model) contactFollowUp() tea.Cmd {
 		cmds = append(cmds, m.refreshContact(key.contact, 0))
 	}
 	return tea.Batch(append(cmds, m.readShown(key.contact))...)
+}
+
+// contactTabShown: a contact tab is open and nothing covers it.
+func (m *Model) contactTabShown(key viewKey) bool {
+	return key.isContact() && m.panel == nil
+}
+
+// contactsUsable: connected to a broker that carries contact messages, for
+// a confirmed contact.
+func (m *Model) contactsUsable(contact string) bool {
+	if !m.ready() || !m.contactsAvailable() {
+		return false
+	}
+	return m.confirmedContact(contact)
 }
 
 // refreshContact reads a page of a contact's messages: the newest (before
@@ -159,12 +173,20 @@ func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bo
 		t.offset = 0
 	}
 	t.merge(page.Messages)
-	if !t.loaded || t.oldest == 0 || (current && c != 0 && c <= t.oldestHeld()) {
-		// The page reaches as low as anything held: its boundary is the
-		// thread's. A thread already paged further down keeps its own.
+	if t.boundaryFrom(current, c) {
 		t.more, t.oldest = page.More, c
 	}
 	t.loaded = true
+}
+
+// boundaryFrom: a newest page sets the thread's older-page boundary when
+// the thread has none yet, or when the page reaches as low as anything held.
+// A thread already paged further down keeps its own.
+func (t *contactThread) boundaryFrom(current bool, pageOldest int64) bool {
+	if !t.loaded || t.oldest == 0 {
+		return true
+	}
+	return current && pageOldest != 0 && pageOldest <= t.oldestHeld()
 }
 
 func (t *contactThread) newestHeld() int64 {
