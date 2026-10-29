@@ -162,10 +162,15 @@ func foreignAction(msg Message) bool {
 // hex digits; a prefix or a name is resolved by the client first.
 func validContactKey(key string) error {
 	digest, ok := strings.CutPrefix(key, "sha256:")
-	if !ok || len(digest) != 64 || strings.ContainsFunc(digest, notLowerHex) {
+	if !ok || !hexDigest(digest) {
 		return errors.New("contact_key is required: a contact's full identity key, sha256: and 64 lowercase hex digits")
 	}
 	return nil
+}
+
+// hexDigest: 64 lowercase hex digits.
+func hexDigest(s string) bool {
+	return len(s) == 64 && !strings.ContainsFunc(s, notLowerHex)
 }
 
 func notLowerHex(r rune) bool { return !strings.ContainsRune("0123456789abcdef", r) }

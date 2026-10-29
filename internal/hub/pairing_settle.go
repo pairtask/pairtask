@@ -302,10 +302,21 @@ func joinMoved(before, after peer.JoinRecord) bool {
 // PairingChanged has the operator session told, once for any burst, that
 // durable pairing state changed in the background. Safe from any goroutine.
 func (h *Hub) PairingChanged() {
+	h.pair.dirty.Store(true)
 	select {
 	case h.pair.changed <- struct{}{}:
 	default:
 	}
+}
+
+// announceBackground tells the operator session what changed in the
+// background since the last time, on the Run goroutine: pairing state, and
+// each contact whose messages changed.
+func (h *Hub) announceBackground() {
+	if h.pair.dirty.Swap(false) {
+		h.emit(protocol.SessionEvent{Kind: protocol.EventPairingChanged})
+	}
+	h.announceMessages()
 }
 
 var errNoDestination = errors.New("hub: join has no destination or peer")
