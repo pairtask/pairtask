@@ -13,7 +13,7 @@ in force. An independent collaborating agent still needs its own logical ID.
 
 ## Setup and parent/child example
 
-Build the updated adapter and configure the normal stdio MCP server:
+Build the adapter and configure the stdio MCP server:
 
 ```sh
 go build -o pairtask-mcp ./cmd/mcp
@@ -21,7 +21,7 @@ codex mcp add pairtask -- /absolute/path/to/pairtask-mcp \
   --agent-id codex-etl --harness codex --socket /tmp/collab-ai.sock
 ```
 
-Start the broker and restart the host's MCP session to load the new tools. No
+Start the broker and restart the host's MCP session to load the tools. No
 additional daemon, shared HTTP MCP configuration, or broker upgrade is needed
 for delegation itself; durable sends/recovery still require v3. The owner must
 use the manual adapter (without `--claude-channel`). Host integration modes

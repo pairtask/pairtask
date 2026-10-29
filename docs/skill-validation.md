@@ -43,5 +43,5 @@ These checks detect broken packaging, not model behavior.
 The cases above were reviewed against the core contract and its managed/manual/
 sandbox/operator references without starting an agent session or making model requests.
 A live Codex/Claude trial needs separate authorization, chosen models, and a
-numeric soft-token ceiling. Issue #22 remains open for the real two-host delivery
-acceptance test; this skill update does not claim to finish it.
+numeric soft-token ceiling. Real two-host delivery acceptance remains open;
+this checklist does not claim to finish it.

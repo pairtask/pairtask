@@ -100,8 +100,7 @@ receipt what the operator client hasn't adopted. `pairtask operator inbox
 status` shows usage against the per-sender, operator-inbox and
 retained-history bounds; the global pending bounds across all inboxes are
 reported only when they refuse a send.
-This deliberately small first implementation requires operator-managed archival
-at the retained-history limit. Archival is not provided by this change. Preserve
+At the retained-history limit, operator-managed archival is required. Preserve
 unfinished work and stop the broker before any database maintenance; starting a
 fresh database resets registration and duplicate-detection scope. Message IDs
 should remain globally unique across such deliberate resets.
@@ -128,7 +127,7 @@ Migration adds `durable_agents`, `durable_messages`, and `durable_inbox`. Existi
 messages/receipts remain history and are never silently enrolled for replay.
 Versions 0–2 continue their existing non-durable protocol; version 2 still supports
 staged acknowledgments. A v3 wire client must explicitly set both `durable: true`
-and `ack_requested: true`; the new MCP adapter supplies these by default.
+and `ack_requested: true`; the MCP adapter supplies these by default.
 
 Tests include SIGKILL of a child broker, recovery of both adapters from the same
 database, lost acknowledgment confirmation, host failure, session changes,

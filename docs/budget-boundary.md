@@ -96,7 +96,7 @@ failure rather than waiting for an unsupported approval flow.
 This is an offline integration building block, not a production launch recipe.
 Use the proof above to exercise it. The [protected runtime setup](secured-runtime.md) now installs the trusted offline
 configuration, broker and executor. Interactive/resume binding and native
-subscription authentication still need integration under [#34](https://github.com/pairtask/pairtask/issues/34).
+subscription authentication are not integrated yet.
 
 ## Supervisor failure
 

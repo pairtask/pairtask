@@ -31,10 +31,9 @@ Do not reinitialize an existing server. Mac requires Colima 0.10.3+.
 The Incus **server** must be **7.0.x at 7.0.2 or later** (LTS) or **7.5 or
 later**. Older servers (6.0.x, 7.0.0–7.0.1, 7.1–7.4) can give two containers
 created at the same moment overlapping host UID/GID ranges, which weakens the
-file-permission separation between `secured` and `workspace`
-([#183](https://github.com/pairtask/pairtask/issues/183); fixed upstream in
-[lxc/incus#3999](https://github.com/lxc/incus/pull/3999)). Check the server
-line, not the client:
+file-permission separation between `secured` and `workspace` (fixed upstream
+in Incus 7.0.2 and 7.5). Check the
+server line, not the client:
 
 ```sh
 incus version colima-pairtask:     # Linux: incus version local:
@@ -104,7 +103,7 @@ host login key and copies **only its public key**. It never forwards your SSH ag
 SSH uses `incus exec`, works offline and opens no network SSH listener.
 A session that drops while a full-screen program (an agent harness, the chat)
 runs can leave your terminal in mouse-reporting mode; the wrapper restores it,
-and `reset` fixes a terminal that is already in that state (#122).
+and `reset` fixes a terminal that is already in that state.
 
 [Sign in below](#sign-in-and-network-access), then use the
 [README commands](../README.md#set-up-a-sandbox) to clone, start/resume and reconnect.

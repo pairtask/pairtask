@@ -3,8 +3,8 @@
 Writing a message? See the short [formatting guide](chat-formatting.md) for
 supported syntax, examples, input keys, and literal text.
 
-**Design history.** The shipped operator chat is documented in [operator chat](operator-chat.md); the original design notes and per-PR contracts are kept below for reference.
-Extends #68 (operator control plane; part 1 merged in #75) with an operator
+**Design history.** The shipped operator chat is documented in [operator chat](operator-chat.md); the original design notes and step-by-step contracts are kept below for reference.
+Extends the operator control plane with an operator
 inbox, messages to the operator, and an interactive chat. The chat is the first
 form of the **forum** from `docs/team-presets.md`. On its own it is a
 discussion space: it doesn't enforce task ownership or approval workflows.
@@ -54,7 +54,7 @@ The human runs one interactive chat in `secured` instead of single
 - One live **writable** session owns the operator inbox. A second claimant
   fails and is told who the owner is; there's no silent takeover.
 - The inbox survives the chat exiting.
-- **Read-only viewers** come later through #19. They never claim replay,
+- **Read-only viewers** come later, through inspection. They never claim replay,
   receive or acknowledge.
 - Viewing and writing are separate privileges, even though UID 0 holds both
   today.
@@ -74,7 +74,7 @@ The human runs one interactive chat in `secured` instead of single
     events can't leave stale state unnoticed.
   - The session heartbeat doesn't prove a human is watching.
 
-**5. Relation to #19 (inspection)**
+**5. Relation to inspection**
 - History and status reads stay non-consuming: they don't take inbox
   ownership or allocate sequence numbers.
 - The chat, as a participant, claims, reads and acknowledges **its own** inbox
@@ -99,33 +99,33 @@ The human runs one interactive chat in `secured` instead of single
 - Messages to the operator are ordinary messages with `origin: agent` and
   `to: operator`.
 
-## PRs
+## Delivery steps
 
 1. **Operator inbox:** versioned protocol, messages and replies to the
    operator with quotas, operator acknowledgment with audit, and CLI
    `receive`/`ack`. Tests for restart and capacity.
-2. **Session and synchronization:** bounded #19 inspection reads, plus the
+2. **Session and synchronization:** bounded inspection reads, plus the
    operator session's stream semantics (paging, credit, watermark, gap and
    reset). Tests with a scripted client.
 3. **`pairtask operator chat`:** the Bubble Tea UI, plus a manual end-to-end
    demonstration.
 
-**Later:** read-only viewers, forum groups by team or duo (#73), and links to
+**Later:** read-only viewers, forum groups by team or duo, and links to
 library entries.
 
 ## Out of scope
 
-`attach` to agent seats (#69), team presets (#73), web UI (#36).
+`attach` to agent seats, [team presets](team-presets.md), a web UI.
 
-Related: #19, #21, #68, #73, #74, `docs/runtime-boundaries-v2.md`.
+Related: [runtime boundaries](runtime-boundaries-v2.md).
 
-## PR1 contract: operator inbox (agreed by Claude and Codex, 2026-10-12)
+## Step 1 contract: operator inbox (agreed by Claude and Codex, 2026-10-12)
 
 **Scope:** messages to the operator, one-shot receive/received/ack operations,
 the CLI, and a status count. The live session, stream and single-owner
-guarantee are PR2.
+guarantee are step 2.
 
-**Known PR1 limitation:** the CLI is one-shot and has no exclusive owner. Two
+**Known step 1 limitation:** the CLI is one-shot and has no exclusive owner. Two
 concurrent receives can return the same messages. Mutations are serialized
 through the hub and store transactions. The internal placeholder session
 `operator-inbox` is storage bookkeeping only. It is never shown as presence or
@@ -280,16 +280,16 @@ page.
   older broker and is shown as "unknown", not 0. `DurablePending.Total`
   includes operator-inbox rows; `OperatorPending` is a separate view of those
   same rows.
-- **#19:** inspection routes never change state.
+- **Inspection** routes never change state.
 
-## PR2 contract: live operator session (round 2, Claude/Codex, 2026-10-13)
+## Step 2 contract: live operator session (round 2, Claude/Codex, 2026-10-13)
 
-**Goal:** one long-lived operator connection that the chat (PR3) builds on. It
+**Goal:** one long-lived operator connection that the chat (step 3) builds on. It
 owns the operator inbox and learns about changes as they happen.
 
 **Scope:** session, events and snapshot ship together, because resync can't
-be separated from a lossy notification stream. History is a follow-up PR
-(PR2b) before the chat.
+be separated from a lossy notification stream. History is a follow-up step
+(2b) before the chat.
 
 ### Session and ownership
 
@@ -298,7 +298,7 @@ be separated from a lossy notification stream. History is a follow-up PR
   on the connection: session ID, capabilities, and the epoch.
 - **One writable owner.**
   - A second open while a session is live gets `owner_busy`, with the current
-    owner's opened-at time and connection ID. No takeover in this PR.
+    owner's opened-at time and connection ID. No takeover at this step.
   - Ownership checks, claim, release, and inbox `received`/`ack` mutations are
     all serialized in the hub goroutine.
   - Each claim gets a connection generation. A disconnect releases ownership
@@ -327,10 +327,10 @@ be separated from a lossy notification stream. History is a follow-up PR
   gets an error response (with the `request_id` when it could be parsed) and
   the session is closed.
 - `request_id` is correlation only, not retry deduplication. If an outcome is
-  unknown, the durable `message_id` retry rules from PR1 apply.
+  unknown, the durable `message_id` retry rules from step 1 apply.
 - Allowed requests:
   - `operator_send`, `operator_receive`, `operator_received`, `operator_ack`,
-    with PR1 semantics
+    with step 1 semantics
   - `operator_snapshot`
   - `operator_message_stages` (below)
 
@@ -561,7 +561,7 @@ type SessionEvent struct {
   - `operator_session` (open)
   - `operator_snapshot`
   - `operator_message_stages`
-  - PR1 responses (`ack`, `operator_page`, `error`), now carrying `request_id`
+  - Step 1 responses (`ack`, `operator_page`, `error`), now carrying `request_id`
 - Events: `{"type": "event", "event": {...}}`, with no `request_id`.
 - Errors: `owner_busy` (with `owner`), `invalid_state`, `invalid_message`,
   plus the existing codes.
@@ -575,15 +575,15 @@ type SessionEvent struct {
   `unsupported_operation`, or `malformed_frame` for build.132. The CLI reports
   either clearly.
 
-### Out of scope (PR2)
+### Out of scope (step 2)
 
-- History (PR2b): `operator_history`, newest-first operator-sent and
+- History (step 2b): `operator_history`, newest-first operator-sent and
   operator-addressed messages with bodies, with a stable scan bound and byte
   budget, non-consuming.
-- Takeover of a stuck session, read-only viewers, the chat UI (PR3), and team
-  or forum groups (#73).
+- Takeover of a stuck session, read-only viewers, the chat UI (step 3), and team
+  or forum groups.
 
-## PR2b contract: operator history (final, Claude/Codex, 2026-10-13)
+## Step 2b contract: operator history (final, Claude/Codex, 2026-10-13)
 
 **Goal:** the chat can show the operator's earlier conversation, not just what
 happened since it opened. Read-only: it never claims, receives or
@@ -612,7 +612,7 @@ peer-supplied `from`:
     boundary (`commitOperator`). An exact retry of an earlier accepted message
     over 512 KiB keeps its retained outcome; a changed retry stays
     `duplicate_message`.
-- **Older oversized operator messages,** possible since #75, appear with an
+- **Older oversized operator messages,** possible with early brokers, appear with an
   entry-level `body_omitted: true`, and the message has no `payload` field.
   (A JSON `null` payload is still a legitimate inline payload.) Their text is
   documented as unavailable through history. Nothing promises a fetch that
@@ -702,15 +702,15 @@ type HistoryEntry struct {
 - `upper_seq` freezes which messages are in the scan, not their receipts.
   Acknowledged entries stay in history. Stages are current at watermark `W`
   and can change or be reclaimed later.
-- The PR2 per-entity watermark rules apply when a client merges history stages
+- The step 2 per-entity watermark rules apply when a client merges history stages
   with events.
 - Cursors survive a restart of the same database. A new epoch resets merged
-  state. After a database restore, start a new scan (as in PR1).
+  state. After a database restore, start a new scan (as in step 1).
 
 ### `operator_message_stages` as a one-shot read
 
 It is also allowed outside a session: a read-only metadata read with no
-ownership or receipt effects and no audit, as in PR2. Truncated receipts in a
+ownership or receipt effects and no audit, as in step 2. Truncated receipts in a
 one-shot history can therefore be paged without opening a session.
 
 ### Audit
@@ -737,10 +737,10 @@ nothing is returned, and the watermark is unchanged.
   body was omitted and isn't available
 - peer text is quoted, and a correlation is labeled as a claim
 
-## PR3 contract: `pairtask operator chat` (final, Claude/Codex and the operator, 2026-10-13)
+## Step 3 contract: `pairtask operator chat` (final, Claude/Codex and the operator, 2026-10-13)
 
-**Goal:** the interactive interface on top of the inbox (PR1), the live
-session (PR2) and history (PR2b). It runs in `secured` (`incus exec … secured
+**Goal:** the interactive interface on top of the inbox (step 1), the live
+session (step 2) and history (step 2b). It runs in `secured` (`incus exec … secured
 -- pairtask operator chat`) and needs a TTY. Built with Bubble Tea v2, Lip Gloss
 v2 and the Bubbles v2 `textarea`, in the dashboard's style. All network work
 runs outside `Update`, as commands.
@@ -914,7 +914,7 @@ runs outside `Update`, as commands.
 - Transport errors, timeouts and malformed broker responses are reported
   distinctly.
 - **Reconnect:** exponential backoff with a ceiling, reset after a healthy
-  period. Idle reading never times out, as in PR2.
+  period. Idle reading never times out, as in step 2.
 
 ### Tests
 
@@ -938,7 +938,7 @@ runs outside `Update`, as commands.
 
 ## Chat v2: a chat-first operator UI (draft, 2026-10-18)
 
-Operator feedback on the PR3 chat after the first real use: the screen drew
+Operator feedback on the step 3 chat after the first real use: the screen drew
 twice, long messages were cut off, the `To:` field could not be reached, and
 the layout was hard to read. Requested instead: a chat on the main screen,
 commands typed into the input, recipients chosen with `@name` and
@@ -995,7 +995,7 @@ a message's text on the clipboard (OSC 52).
   acknowledgment is suspended) or `● acknowledged`. A content conflict or a
   failed receipt confirmation follows the mark; a pending or confirmed receipt
   shows nothing more. A sent message lists its recipients' stages, dim.
-  Peer text stays escaped (PR3 safety rules unchanged).
+  Peer text stays escaped (step 3 safety rules unchanged).
 - **Input (bottom):** a multi-line text box with a hint line above it:
   `→ everyone (2 online)` or `→ codex-1` or `/command`. It grows with the
   draft, soft-wrapped rows included, up to six rows, and scrolls inside
@@ -1057,7 +1057,7 @@ ID is literally `all` is never turned into `@all`.
 not seen)`, `↳ reply to #127 from codex-1`, or the blocking reason. After a
 send the transcript shows the broker's accepted recipients, as today.
 
-**No broadcast confirmation.** The hint line replaces the PR3 y/n prompt (the
+**No broadcast confirmation.** The hint line replaces the step 3 y/n prompt (the
 operator's review of that decision). Presence changes never reinterpret a
 draft: an explicit audience stays explicit until sent or cleared.
 
@@ -1076,7 +1076,7 @@ Replies to sent messages remain invalid. The hint line shows
 `↳ reply to #127 → codex-1`.
 
 **Draft lifetime.** On Enter the audience (mentions, `/to` or reply), the
-`in_reply_to` and the payload are frozen into the send intent, as in PR3. The
+`in_reply_to` and the payload are frozen into the send intent, as in step 3. The
 composer and its audience/reply metadata are cleared only once that request is
 actually queued; a validation failure or an offline state keeps all of it.
 Late accepted, rejected or unknown outcomes update the intent only, never a
@@ -1093,7 +1093,7 @@ the picker open completes the highlighted command and runs it when it runs
 without an argument (`/agents`, `/history`, `/clear`, `/help`, `/quit`, and
 `/ack`, `/reply`, `/find`, `/to`, whose argument is optional); a command that
 needs one (`/chat`, `/stages`, `/copy`) stays on the line, completed,
-waiting for it (#121; before,
+waiting for it (before,
 Enter ran the typed fragment). With the picker closed Enter runs
 an exact command or alias, or a unique prefix; an ambiguous prefix stays and
 lists the candidates. Esc closes the command line and restores the draft
@@ -1129,7 +1129,7 @@ runs. Rows that are sent (for `/ack`, `/reply`), outside the loaded
 transcript, behind a gap or from an older epoch are refused with a reason
 (`/history` loads more). `/ack` keeps the receipt-before-ack rule: an
 acknowledgment for a message whose receipt isn't confirmed is queued, bound to
-its ID and content, exactly as in PR3.
+its ID and content, exactly as in step 3.
 
 **`/clear`** sets a view cutoff only. Pinned inbox state, unconfirmed
 receipts, queued acknowledgments and the unresolved send are untouched;
@@ -1152,13 +1152,13 @@ still count them; `/history` after `/clear` shows the older rows again.
 
 - The alternate screen is entered on start and left on every exit path
   (normal quit, startup failure, owner busy, fatal error), so the terminal's
-  scrollback is restored. Cause of the PR3 double drawing: `view.go` builds
+  scrollback is restored. Cause of the step 3 double drawing: `view.go` builds
   `tea.NewView` for the main and the help screen without setting
   `AltScreen`, so frames taller than the window scroll into the terminal's
   history. Every view, help and modal views included, sets it.
 - Wrapping is by terminal cell width (wide and combining characters), on
   text that was escaped before styling. Real line breaks in a message stay
-  line breaks; terminal control sequences are escaped as in PR3.
+  line breaks; terminal control sequences are escaped as in step 3.
 - The transcript scrolls by visual line, keeps its anchor on resize, and
   every line of every message is reachable.
 - **Small terminals degrade in a fixed order.** The hint line (audience or
@@ -1168,7 +1168,7 @@ still count them; `/history` after `/clear` shows the older rows again.
   is disabled, so a message can never be sent with its audience off screen.
   Nothing renders taller than the window.
 
-### Unchanged from PR3
+### Unchanged from step 3
 
 The session, inbox admission and receipt rules, acknowledgment binding,
 catch-up/resync, frozen send intents, bounds, reconnect, safety and exit
@@ -1184,7 +1184,7 @@ behaviour. Only the view, the input model and addressing change.
 
 ### Tests
 
-PR3's acceptance tests keep their invariants: handshake, transport,
+Step 3's acceptance tests keep their invariants: handshake, transport,
 admission, receipts, epochs, conflicts, bounds, capacity, frozen intents,
 offline submit, quit, paste and payload limits. Replaced or adapted: the
 broadcast confirmation test becomes single-Enter default broadcast plus
@@ -1224,8 +1224,7 @@ shipped as `/etc/pairtask/claude-settings.json` and passed with `--settings`
 by the `claude` alias; it stops the auto-mode classifier judging those calls
 and grants nothing else. **Pending**: that file and alias change are not in
 the tree yet; Claude Code's harness refused to let the Claude agent author its
-own permission grant, so the change is for the operator to add (#116 stays
-open for it).
+own permission grant, so the change is for the operator to add.
 For managed Codex threads the runtime tools are an injected `collab_runtime`
 MCP server; the launcher marks its five tools (`send`, `acknowledge`,
 `receive`, `wait_reply`, `listener_status`) with `approval_mode = "approve"`.
@@ -1247,7 +1246,7 @@ approval. Pending: the Claude Code settings allowlist. Not provable by these: li
 behaviour of two harnesses reading the same text, which is checked by running
 the duo. Not ours: both harnesses still label channel input as not from the
 user; a trusted channel that makes operator frames count as the user is an
-upstream feature that signed identities (#115) would let them verify.
+upstream feature that signed identities would let them verify.
 
 Resumed managed Codex conversations keep the developer instructions they were
 saved with (resume and fork preserve them when the caller supplies none), so
@@ -1256,7 +1255,7 @@ a fresh managed conversation to get the current instructions.
 
 ## Chat v3: conversations (design, 2026-10-21)
 
-Operator feedback after real use of v2 (#100): a message without a mention
+Operator feedback after real use of v2: a message without a mention
 goes to everyone and the only sign is the hint line, so it is easy to
 broadcast by mistake; the transcript doesn't show which conversation you are
 in; the controls want dividers and colour; `/ack` is confusing and a reply
@@ -1281,7 +1280,7 @@ scope.
   messages still has a (possibly empty) 1:1, so `/chat @x` opens it.
 - **Group conversations**: a send to exactly those members, keyed by the
   broker's member list, never by `to`.
-- **Rooms** (#153): a tab per room (`#name`) after All, from the snapshot. A
+- **Rooms**: a tab per room (`#name`) after All, from the snapshot. A
   room tab holds that room's `"*"` posts, from you and its members; All keeps
   everything and labels them `→ #name`. Composing in a room tab sends `"*"`
   with that room, and the divider shows `to #name (N members)`. Replying to a
@@ -1353,7 +1352,7 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   (title, footer, selection) carry explicit foreground and background so
   their contrast holds in any theme, and a selection (picker row, selected
   tab) is a dark blue band (24) with light text (255), never reverse video
-  over faint text, so a highlighted command's explanation stays readable. The connection facts moved to the footer (#121).
+  over faint text, so a highlighted command's explanation stays readable. The connection facts moved to the footer.
 - **Conversation bar**, one row: `1 All`, then `2 claude-1`, with `•N` unread
   in the warning colour. The selected one is the selection band (dark blue
   24, light text 255, badge bold inside it); the others keep their agent
@@ -1408,7 +1407,7 @@ entries, so viewing All clears what it showed and viewing a 1:1 lowers All's.
   and this is a fixed subset, not Markdown: links, images, block quotes and
   emphasis rules beyond the above stay literal; an indented list line keeps
   its indent but there is no nested-list semantics.
-- **Agent status** (#133): in an agent's conversation, a row under the bar
+- **Agent status**: in an agent's conversation, a row under the bar
   shows what that agent declared with its `status` tool: state, task, step,
   what it waits on, how long ago it declared it, and when its harness was
   last seen working (`launcher` for Codex, `pairtask tool activity` for
@@ -1556,7 +1555,7 @@ Each slice: Codex writes the acceptance tests, Claude implements, Codex
 reviews, merge on green CI for the exact head plus MERGE for that SHA. The
 contract above is amended with each slice.
 
-## Public broadcast in the chat (#140, protocol v7)
+## Public broadcast in the chat (protocol v7)
 
 An agent's `"*"` from v7 reaches the operator inbox as well as the other
 agents ([protocol](protocol.md#public-broadcast-v7)). Before this, a group
@@ -1576,7 +1575,7 @@ never saw the agents' answers.
 - **Older agents:** `/agents` marks an agent below v7, because its `"*"`
   still reaches agents only.
 
-## Groups, closing conversations and task claims (#148, #141)
+## Groups, closing conversations and task claims
 
 - **Group conversations:** a message the operator sends to several agents
   belongs to one group conversation per member set, in any order. It also

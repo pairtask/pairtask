@@ -46,7 +46,7 @@ go vet ./...
 The collaboration skill also passed the Skill Creator validator. Targeted race
 tests were rerun after changes to the MCP readiness guard and test helpers.
 
-## Managed resume (2026-10-25, #67)
+## Managed resume
 
 Codex's own resume picker (`resume` without an ID) and `resume --last` don't
 resume through the managed launcher: the picker sends `thread/list` and

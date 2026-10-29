@@ -6,9 +6,9 @@ does it all: `pairtask`, put on your PATH by the one-line installer below, or
 stands for either). The installer also writes `pk` as a short alias when no
 other `pk` exists; it never replaces one it did not write. Each `pairtask`
 subcommand runs one of the scripts in `scripts/` with the matching action, or
-an Incus command, and passes your flags through unchanged, so the legacy
-`python3 scripts/sandbox-*.py` forms keep working for one release. `pairtask
---dry-run <command> …` prints what would run.
+an Incus command, and passes your flags through unchanged, so the
+`python3 scripts/sandbox-*.py` forms work too. `pairtask --dry-run <command> …`
+prints what would run.
 
 Where a command runs: **host** is your Mac or Linux machine; **workspace** is
 the dev container you SSH into; **secured** is the offline control container
@@ -21,12 +21,12 @@ shells in the containers are stopped.
 | --- | --- | --- | --- |
 | `curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh \| sh` | host | The one-line install: checks Python 3.9+, Git, Incus (and Colima on macOS, offering the `brew install` line), fetches the latest release's host tooling into `~/.pairtask/host`, puts `pairtask` on your PATH, then runs `pairtask install --release <that tag>`; run again later to upgrade both. Options after `sh -s --`: `--version TAG`, `--no-provision`, `--no-modify-path`, `--yes`. Never run as root. | yes, if containers exist |
 | `pairtask install` | host | First install: on macOS starts the Colima VM, then downloads and verifies the latest release, provisions the containers, configures SSH and lists them. Flags go to the rollout (`--release workspace-vX.Y.Z`, `--remote`, `--project`, `--storage-pool`, `--network`, `--tools`). | yes, if containers exist |
-| `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. Legacy: `python3 scripts/sandbox-provision.py rollout`. | yes |
-| `pairtask pairing on` / `pairtask pairing off` | host | Turn the experimental pairing route (#178) on or off in the deployment's settings, then run the same rollout as upgrade (same flags). `on` also turns on `secured_runtime`; it is refused while `peer_connector_probe` is on. `on` publishes the relay on every host address (LAN and tailnet) on `--host-port N` (1024–65535, or 0 for none), else the saved port, else 7445; `off` keeps the port for the next `on`. Settings are checked before anything is written or stopped. Later upgrades keep the setting. | yes |
+| `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. | yes |
+| `pairtask pairing on` / `pairtask pairing off` | host | Turn the experimental pairing route on or off in the deployment's settings, then run the same rollout as upgrade (same flags). `on` also turns on `secured_runtime`; it is refused while `peer_connector_probe` is on. `on` publishes the relay on every host address (LAN and tailnet) on `--host-port N` (1024–65535, or 0 for none), else the saved port, else 7445; `off` keeps the port for the next `on`. Settings are checked before anything is written or stopped. Later upgrades keep the setting. | yes |
 | `pairtask pairing status` | host | Show the pairing route and its host port as configured and as deployed, read-only: `on`, `off`, or which command finishes a change an interrupted rollout left behind. It reports applied forwarding, not whether another machine can reach it. | no |
-| `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). Legacy: `python3 scripts/sandbox-download.py`. | no |
-| `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. Legacy: `python3 scripts/sandbox-host.py plan|apply`. | no |
-| `pairtask ssh` | host | Create the key-only SSH path into the workspace; the remote defaults to your OS (`colima-pairtask` on macOS, `local` on Linux), `--remote` and `--instance` override. The rollout does this for you. Legacy: `python3 scripts/sandbox-ssh.py --remote …`. | no |
+| `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). | no |
+| `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. | no |
+| `pairtask ssh` | host | Create the key-only SSH path into the workspace; the remote defaults to your OS (`colima-pairtask` on macOS, `local` on Linux), `--remote` and `--instance` override. The rollout does this for you. | no |
 
 Prerequisites the installer cannot bundle: Incus (and Colima on macOS), Python
 3.9+, Git, OpenSSH. macOS: `brew install colima incus python git`. Linux:
@@ -37,10 +37,10 @@ or 7.5+ ([why and how to check](sandbox.md#incus-server-version)). Details:
 
 ## Connect two machines
 
-Use a release containing [#225](https://github.com/pairtask/pairtask/pull/225)
-on **both** machines. Release 580.1 has the pairing commands but does not
-publish the relay, and its `pairing off` can fail partway. These steps use
-operator chat and work with a reachable LAN or tailnet IPv4 address.
+Use the same release, `workspace-v0.0.0-build.587.1` or later, on **both**
+machines: earlier releases don't publish the relay, and 580.1's `pairing off`
+can fail partway. These steps use operator chat and a LAN or tailnet IPv4
+address that the other machine can reach.
 
 1. **Install or update on both hosts.** Rerun the installer so the host
    commands and container images come from the same release. This ends
@@ -50,10 +50,9 @@ operator chat and work with a reachable LAN or tailnet IPv4 address.
    curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
    ```
 
-   For an existing installation, `pairtask upgrade` alone updates the
-   deployment using your current host tooling; it does not update the
-   installer's host checkout. Wait for the release containing #225 before
-   using this setup.
+   On an existing installation, `pairtask upgrade` alone isn't enough: it
+   updates the containers with your current host commands, without updating
+   the commands themselves.
 
 2. **Enable publishing on both hosts.**
 
@@ -147,9 +146,9 @@ state and volumes; do not delete volumes manually to clear the error.
 
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
-| `pairtask mounts plan --mounts-file FILE` | host | Preview host directories mounted into the workspace. Legacy: `python3 scripts/sandbox-host.py mounts-plan`. | no |
+| `pairtask mounts plan --mounts-file FILE` | host | Preview host directories mounted into the workspace. | no |
 | `pairtask mounts apply --mounts-file FILE` | host | Write the mount variables; then `pairtask plan` and `pairtask apply` attach them. On macOS: `pairtask stop --vm`, `pairtask mounts apply …`, `pairtask start`, then `pairtask plan` and `pairtask apply`; see the [apply sequence](sandbox-mounts.md#apply). | yes, at apply |
-| `pairtask share plan` / `pairtask share setup` / `pairtask share run` (`--mounts-file FILE`) | host (macOS) | Writable sharing through a dedicated local account: preview, create the account and ACLs (asks for sudo), run the helper. Legacy: `python3 scripts/sandbox-share.py`. | no |
+| `pairtask share plan` / `pairtask share setup` / `pairtask share run` (`--mounts-file FILE`) | host (macOS) | Writable sharing through a dedicated local account: preview, create the account and ACLs (asks for sudo), run the helper. | no |
 
 Details and the `mounts.json` format: [mounts](sandbox-mounts.md).
 
@@ -157,13 +156,13 @@ Details and the `mounts.json` format: [mounts](sandbox-mounts.md).
 
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
-| `pairtask plan` / `pairtask apply` | host | Preview and apply a provisioning change: `pairtask plan --replace` replaces the dev container keeping data; `pairtask plan --destroy` plans deletion (volume guards must be removed first). Legacy: `python3 scripts/sandbox-provision.py plan|apply`. | yes, when replacing or destroying |
-| `pairtask recover` | host | Repair provisioning state without changing data. Legacy: `python3 scripts/sandbox-provision.py recover`. | no |
-| `pairtask tools` | host | Retry the pinned agent tools install in running containers. Legacy: `python3 scripts/sandbox-provision.py tools-retry`. | no |
+| `pairtask plan` / `pairtask apply` | host | Preview and apply a provisioning change: `pairtask plan --replace` replaces the dev container keeping data; `pairtask plan --destroy` plans deletion (volume guards must be removed first). | yes, when replacing or destroying |
+| `pairtask recover` | host | Repair provisioning state without changing data. | no |
+| `pairtask tools` | host | Retry the pinned agent tools install in running containers. | no |
 | `incus --project pairtask stop colima-pairtask:workspace` then `colima stop pairtask` | host | Full stop on macOS, keeps persistent files. | yes |
 
 Back up before upgrading: [storage](sandbox-storage.md#back-up-and-restore).
-Operator inbox backup and archive are tracked in #119.
+Backing up or archiving the operator inbox isn't supported yet.
 
 ## Inside the sandbox
 
@@ -177,12 +176,12 @@ Codex launcher or writes a per-ID Claude MCP config under
 `$XDG_CONFIG_HOME/pairtask/` (default `~/.config/pairtask/`); `--dry-run`
 shows the command.
 
-**Rooms** (#153): `pairtask start codex --id x --room pairtask` (repeatable)
+**Rooms**: `pairtask start codex --id x --room pairtask` (repeatable)
 joins rooms on registration, in addition to any the agent already has. From
 `secured`, `pairtask operator room list|create R|add R AGENT|remove R AGENT|delete R`
 manages rooms and `pairtask operator send --all --room R TEXT` posts to one.
 
-**Pairing** (#178, experimental): from `secured`, `pairtask operator pair [list]`,
+**Pairing** (experimental): from `secured`, `pairtask operator pair [list]`,
 `open`, `status [OPERATION_ID]`, `cancel [INVITATION_ID]`, `accept|reject KEY`
 and `redeem DESTINATION` manage pairing. `open` prints a one-time 6-digit code
 on stdout only; the broker keeps it in memory and never stores, logs or audits
@@ -286,25 +285,28 @@ runs; `pairtask pairing on|off` stops workspace, connector and secured, in
 that order, first. CI proves the installed route in a
 disposable project with redemptions both ways, crash restarts included.
 
-**Publishing** (`pairing_host_port`, #222): with a port P set (default 0,
-none; `pairtask pairing on` sets 7445 unless told otherwise), connector
-gets one Incus proxy device, `pairing-relay`, listening on `tcp:0.0.0.0:P`
-on the host side and connecting to the relay's 7445 inside connector
-(`bind=host`, `nat=false`). It is a real listening socket, so on macOS
-Colima's port forwarding publishes it on every Mac address too; this needs
-the managed VM's `network.address = false`, which `pairtask vm` pins and
-checks. Anyone who can reach the host on P can open a connection, but each
-one must still complete TLS and the pairing exchange, within the relay's
-limits; secured keeps no network. While the route is on, the project
-allows proxy devices (`restricted.devices.proxy = allow`, even with port
-0); only the host operator holds the Incus API, so neither dev nor secured
-can add one. Turning the route off removes connector, its device and the
-allowance. The two socket volumes stay as long as `secured_runtime`,
-detached while the route is off (they may keep stale socket entries, which
-each unit replaces when it starts), so the same apply never deletes a
-volume secured still uses. macOS may ask whether to accept incoming connections for the
-forwarder, and a firewall or tailnet ACL may still block P: status shows
-applied forwarding, not reachability.
+**Publishing** (`pairing_host_port`): with a port P set (default 0, none;
+`pairtask pairing on` sets 7445 unless told otherwise), connector gets one
+Incus proxy device, `pairing-relay`, that listens on `tcp:0.0.0.0:P` on the
+host side and connects to the relay's 7445 inside connector (`bind=host`,
+`nat=false`). It is a real listening socket, so on macOS Colima's port
+forwarding also publishes it on every Mac address; that needs the managed
+VM's `network.address = false`, which `pairtask vm` pins and checks.
+
+- Anyone who can reach the host on P can connect, but each connection must
+  still complete TLS and the pairing exchange, within the relay's limits.
+  secured keeps no network.
+- While the route is on, the project allows proxy devices
+  (`restricted.devices.proxy = allow`, even with port 0). Only the host
+  operator holds the Incus API, so neither dev nor secured can add one.
+- Turning the route off removes connector, its device and the allowance. The
+  two socket volumes live as long as `secured_runtime` and are detached while
+  the route is off, so the same apply never deletes a volume secured still
+  uses. They may keep stale socket entries; each unit replaces its own when it
+  starts.
+- macOS may ask whether to accept incoming connections for the forwarder, and
+  a firewall or tailnet ACL may still block P. Status shows applied
+  forwarding, not reachability.
 
 With the socket or an egress set, the broker loads or creates its workspace
 key at startup and marks redemptions interrupted before verification
@@ -328,13 +330,13 @@ operator accepts once. Neither side reports the other as confirmed before a
 durable acknowledgement, a rejected request is never revived, and nothing is
 accepted automatically.
 
-**Pi** (#155): `pairtask start pi --id pi-1 [--room R] [--max-tokens N]`
+**Pi**: `pairtask start pi --id pi-1 [--room R] [--max-tokens N]`
 starts Pi with the pairtask extension, capping each request's output at
-32768 tokens unless `--max-tokens` says otherwise (0: no cap; #170); `pairtask join --id ID -- COMMAND` passes the adapter
+32768 tokens unless `--max-tokens` says otherwise (0: no cap); `pairtask join --id ID -- COMMAND` passes the adapter
 environment to any other harness that integrates itself
 ([host integration](host-integration.md#pi)).
 
-**Resume Codex** with `pairtask start codex --id codex-1 --resume` (#67). The
+**Resume Codex** with `pairtask start codex --id codex-1 --resume`. The
 launcher records each agent ID's conversation and directory when a thread
 starts, resumes or forks (`$XDG_STATE_HOME/pairtask/`, default
 `~/.local/state/pairtask/`, private files named by a hash of the ID);

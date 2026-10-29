@@ -27,7 +27,7 @@
 ## The forum
 
 - The human, plus one representative per duo or all duo members, depending on
-  the team's charter. It runs over the operator control plane (#68): the human
+  the team's charter. It runs over the operator control plane: the human
   fans out to the team, duos reply in the forum.
 - The forum discusses work, splits it into tasks, and **allocates each task to
   one duo**. The duo then runs the workflow below on its own task.
@@ -97,7 +97,7 @@ These tiers are hypotheses, not optimized presets.
   affordable and focused.
 - The catalog is not proof of entitlement, and prices aren't in it.
 - Before calling a tier optimized, compare acceptance pass rate, rework, total
-  usage and latency per tier (#39 loop).
+  usage and latency per tier.
 - Check availability at launch. An unavailable model fails clearly, with no
   silent fallback.
 - Claude model and effort availability (Fable) is unverified.
@@ -106,7 +106,7 @@ These tiers are hypotheses, not optimized presets.
 
 ```sh
 collab team create <team> --size duo|team-4 --duo a=moderate --duo b=low --project <p>   # operator, in secured
-collab attach <team>/<duo>/<agent>   # e.g. auth/a/claude, auth/a/codex; one terminal each (#69)
+collab attach <team>/<duo>/<agent>   # e.g. auth/a/claude, auth/a/codex; one terminal each
 collab team status <team>            # duos, seats filled or missing, configured and observed models
 ```
 
@@ -162,7 +162,7 @@ workspace.
 - **Future: real enforcement through credential isolation.** A launcher or
   credential proxy holds the model credentials and agents never see them; seats
   may need separate OS users. Without credentials, an agent can't start an
-  unmanaged model session at all. Related to #34 and the protected runtime.
+  unmanaged model session at all. Related to the budget boundary and the protected runtime.
 
 **Model selection: operator-selected, with drift reported.**
 - Launch flags set the initial model and effort: `--model`/`--effort` for
@@ -193,7 +193,7 @@ limits and merge policy.
   operator action. Ordinary resumes outside a team stay unchanged.
 - Adopting a new charter, or an arbitrary saved thread, needs a separate,
   explicit flow (not in MVP). Installed-harness behavior still needs focused
-  tests; see #67.
+  tests.
 
 **Worktrees:** each duo gets its own git worktree when a team has more than one
 duo; the two agents in a duo share it. Worktrees stop
@@ -257,5 +257,4 @@ enforced):**
   - An automatic merge controller is separate scope.
 - An explicit merge policy per team.
 
-Related: #19, #21, #34, #39, #67, #68, #69, #73, #74,
-`docs/agent-roster-experiment.md`, `docs/runtime-boundaries-v2.md`.
+Related: `docs/agent-roster-experiment.md`, `docs/runtime-boundaries-v2.md`.

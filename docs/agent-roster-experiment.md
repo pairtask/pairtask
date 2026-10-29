@@ -99,14 +99,14 @@ Budget authorization is separate from these rules.
 ## Runs
 
 1. The operator gives one agent a task in its terminal that needs two skills,
-   e.g. "propose the #19 inspection contract and have it reviewed".
+   e.g. "propose the inspection contract and have it reviewed".
 2. Repeat with the task given to a different agent.
 3. One task better suited to a cheaper agent, to see whether the expensive one
    delegates or does it itself.
 
 ## What we measure
 
-The #39 checks aren't implemented yet.
+Automated outcome checks aren't implemented yet.
 
 **From the broker:**
 - Reply latency per designated task request.
@@ -164,7 +164,7 @@ The observer (`claude-1`) sent the run brief over the channel.
   on GPT-6"; it can't see the variant or the effort, although its session runs
   gpt-6-sol at high effort. The launcher has to report the actual model.
 
-### exp2 (2026-10-09, task exp2-t1: #19 slice-1 inspection contract)
+### exp2 (2026-10-09, task exp2-t1: slice-1 inspection contract)
 
 The operator pasted the authorization into all four terminals. All four
 broadcast introductions; three arrived within 15 s, and the fourth came about
@@ -255,7 +255,7 @@ address the finding instead.
 1. **Central human control plane.**
    - Send to one agent, a group or all agents (fan-out). Extend or stop runs.
    - Inspect who talks to whom, how often, and which paths are used and which
-     aren't (builds on the #19 contract).
+     aren't (builds on the inspection contract).
    - **No agent can impersonate the human.** The broker sets `origin` from the
      connection (a separate operator socket), never from message text. The
      human client runs outside the agents' reach (another OS user or
@@ -275,9 +275,9 @@ address the finding instead.
      *verified* (approved by the operator). Searches return approved entries
      by default.
    - Approved entries can be promoted into docs or skills through a reviewed
-     PR (#39 improvement step).
+     change.
 
-Proposed order: operator socket with origin marking and fan-out → #19
+Proposed order: operator socket with origin marking and fan-out →
 inspection and graph → library.
 
 ## If it works: what to build
@@ -304,8 +304,7 @@ inspection and graph → library.
 
 Before building this, compare it with
 [oh-my-pi](https://github.com/can1357/oh-my-pi) to understand how collab-ai
-differs. #22 cites an earlier investigation of it; re-read the current project
-rather than relying on that.
+differs. Re-read the current project rather than relying on earlier notes.
 
 ## If it doesn't: router
 
@@ -319,7 +318,7 @@ since routing runs in a single loop (`internal/hub/hub.go`). Options:
 - An LLM router such as Claude Haiku.
 
 Decisions combine typed answers (task kind, complexity) with rules (roster,
-availability, budget #34) and measured outcomes from #39.
+availability, budget) and measured outcomes.
 
 ## Later: beyond one project and one host
 
@@ -328,7 +327,7 @@ availability, budget #34) and measured outcomes from #39.
   - routing and broadcast membership
   - receipts and durable inbox ownership, and replay
   - message IDs, which are globally unique
-  - who may inspect which messages (#19)
+  - who may inspect which messages
 
   Name suffixes such as `claude-builder@etl` don't isolate projects on their
   own. Agents that work in several projects (e.g. a reviewer) need a project
@@ -340,7 +339,7 @@ availability, budget #34) and measured outcomes from #39.
   - Real participant authentication; today the boundary is a same-user local
     socket.
   - Per-project authorization and encrypted transport.
-  - Operator controls such as exact-session disconnect (#21) and inspection (#19).
+  - Operator controls such as exact-session disconnect and inspection.
   - An explicit decision that message contents, which include code, may leave
     the host.
 
@@ -354,6 +353,5 @@ availability, budget #34) and measured outcomes from #39.
 
 Review: Codex, 2026-10-09 (folded in above).
 
-Related: #19, #21, #22, #34, #36, #39, #67. Clef:
-<https://blog.cloudflare.com/clef-decision-models/>. Team design:
+Clef: <https://blog.cloudflare.com/clef-decision-models/>. Team design:
 `docs/team-presets.md`.

@@ -40,7 +40,8 @@ draft. `#n` is a message's number.
 | `/agents` | Agents online/offline, protocol, last seen, status and claims |
 | `/chat @a @b` | Open a conversation with those agents |
 | `/room`, `/room NAME`, `/room add NAME @a`, `/room remove NAME @a`, `/room delete NAME` | List rooms; open one (creating it if unknown); add or remove members; delete a room (its messages stay in All, an unsent draft stays with its hidden tab, and an agent that joins it again re-creates it) |
-| `/pair`, `/pair open`, `/pair status`, `/pair cancel`, `/pair accept KEY`, `/pair reject KEY`, `/pair redeem HOST:PORT CODE [NAME]`, `/pair settle [OPERATION_ID]` | Experimental pairing (#178): list requests and redemptions; open a one-time code, shown only in the panel until Esc or a disconnect; cancel the invitation; decide a request by a unique prefix of a listed key; redeem another workspace's code. The redeem command line is cleared however it ends and the code is never shown, kept or recalled. The exchange is unaudited CPace; confirmed contacts can exchange operator messages in their `⇄` conversations |
+| `/review TARGET AGENT [SCOPE]`, `/review status [ID]`, `/review cancel [ID [REASON]]`, `/reviews` | Ask an agent to review a pull request, follow or cancel a request, list all requests and verdicts; see [reviews](#reviews) |
+| `/pair`, `/pair open`, `/pair status`, `/pair cancel`, `/pair accept KEY`, `/pair reject KEY`, `/pair redeem HOST:PORT CODE [NAME]`, `/pair settle [OPERATION_ID]` | Experimental pairing: list requests and redemptions; open a one-time code, shown only in the panel until Esc or a disconnect; cancel the invitation; decide a request by a unique prefix of a listed key; redeem another workspace's code. The redeem command line is cleared however it ends and the code is never shown, kept or recalled. The exchange is unaudited CPace; confirmed contacts can exchange operator messages in their `⇄` conversations |
 | `/reply [#n]` (Ctrl+R) | Reply; acknowledges the answered message once the broker accepts the reply |
 | `/ack`, `/ack all`, `/ack from id` | Acknowledge messages ("seen, no reply needed") |
 | `/claims #n` | Task claims on a message with topics and ages |
@@ -54,6 +55,23 @@ While you type `/room` or `/chat` arguments, a picker offers room names and
 `@agent` IDs: Up/Down select, Tab or Enter completes, Esc dismisses it.
 
 Aliases: `/who` = `/agents`, `/exit` = `/quit`, `/r` = `/reply`.
+
+## Reviews
+
+`/review [--no-publish] [--no-formal] TARGET AGENT [SCOPE]` asks `AGENT` to
+review a GitHub pull request. `TARGET` is `OWNER/REPO#N` or the pull request's
+link; the optional `SCOPE` (up to 1 KiB of text) says what to focus on.
+
+- By default the agent publishes a formal review: an approval or a change
+  request. `--no-formal` publishes it as a comment, and `--no-publish` keeps
+  the verdict in pairtask.
+- The agent receives the request as a message, also when idle, and accepts or
+  declines it.
+- `/reviews` lists requests with their state and verdict; `/review status [ID]`
+  shows one, and `/review cancel [ID [REASON]]` cancels one. Without an ID, a
+  picker offers the listed reviews.
+
+Reviews show in a panel, not in the transcript.
 
 ## Messages and delivery
 
@@ -82,6 +100,5 @@ See the trust section in the design archive for the full rules.
 
 ---
 
-**History and full contract:** the original design notes and per-PR contracts
-live in [the design archive](operator-chat-design.md). This page is the current
-user guide.
+The [design archive](operator-chat-design.md) holds the original design notes
+and detailed contracts. This page is the current user guide.
