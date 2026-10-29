@@ -18,6 +18,7 @@ import sandbox_pairing
 
 PROXY = "restricted.devices.proxy"
 BOUNDARY = ("secured", "workspace")
+VOLUMES = ("pairing-ingress", "pairing-egress")
 
 
 def require(condition, message):
@@ -34,11 +35,11 @@ def host_address():
     return address
 
 
-def free_ports(count):
+def free_ports(address, count):
     ports = set()
     while len(ports) < count:
         with socket.socket() as probe:
-            probe.bind(("0.0.0.0", 0))
+            probe.bind((address, 0))
             ports.add(probe.getsockname()[1])
     return sorted(ports)
 
@@ -74,6 +75,9 @@ class Publication:
     def restriction(self):
         return self.query(f"/1.0/projects/{self.project}")["config"].get(PROXY)
 
+    def container_limit(self):
+        return self.query(f"/1.0/projects/{self.project}")["config"].get("limits.containers")
+
     def instances(self):
         return {item["name"] for item in self.query(f"/1.0/instances?project={self.project}&recursion=1")}
 
@@ -92,6 +96,14 @@ class Publication:
 
     def apply(self):
         return subprocess.run(self.tofu + ["apply", "-auto-approve", "-input=false"]).returncode
+
+    def volume_users(self, name):
+        """Who uses a retained socket volume, per Incus."""
+        pool = json.loads((self.directory / "terraform.tfstate").read_text())
+        pools = {i["attributes"]["pool"] for r in pool["resources"] if r["type"] == "incus_storage_volume"
+                 for i in r["instances"] if i["attributes"]["name"] == name}
+        require(len(pools) == 1, f"the state holds {len(pools)} {name} volumes")
+        return self.query(f"/1.0/storage-pools/{pools.pop()}/volumes/custom/{name}?project={self.project}")["used_by"]
 
     def stop(self, *names):
         for name in names:
@@ -128,7 +140,7 @@ def prove_publishing(publication, redeem):
     port. redeem(destination) runs a real redemption and returns its code;
     returns the codes used and every port published."""
     baseline = publication.boundary()
-    first, second, third, taken = free_ports(4)
+    first, second, third, taken = free_ports(publication.address, 4)
     used, codes = set(), []
     for port in (first, second, 0, third):
         publication.set(pairing_host_port=port)
@@ -147,7 +159,8 @@ def prove_publishing(publication, redeem):
 def prove_collision(publication, port, baseline, used):
     blocker = socket.socket()
     try:
-        blocker.bind(("0.0.0.0", port))
+        # A listener on one address still denies the forwarder's wildcard bind.
+        blocker.bind((publication.address, port))
         blocker.listen()
         publication.set(pairing_host_port=port)
         require(publication.apply() != 0, f"publishing on taken port {port} reported success")
@@ -164,15 +177,51 @@ def prove_collision(publication, port, baseline, used):
 
 
 def prove_off(publication, used):
-    """Turning the route off removes connector, its forwarder and the allowance."""
+    """Turning the route off removes connector, its forwarder and the
+    allowance, and detaches the retained socket volumes."""
     publication.stop("connector", "secured")  # the route's preflight requires both stopped
     publication.set(pairing_route=False)
     require(publication.apply() == 0, "turning the route off failed")
     restriction = publication.restriction()
     require(restriction == "block", f"after off the project's proxy restriction is {restriction}")
+    limit = publication.container_limit()
+    require(limit == "2", f"after off the project's container limit is {limit}")
     require("connector" not in publication.instances(), "connector survived turning the route off")
     applied = sandbox_pairing.published_port(publication.directory, publication.project)
     require(applied is None, f"after off the state still publishes {applied}")
     for port in used:
         require(not accepts(publication.address, port), f"{publication.address}:{port} still accepts after off")
-    print("PASS: off removed connector and its forwarder, closed every port and restored block.", flush=True)
+    for name in VOLUMES:
+        users = publication.volume_users(name)
+        require(users == [], f"retained volume {name} is still used by {users}")
+    require_unrouted(publication)
+    print("PASS: off removed connector and its forwarder, closed every port, restored block and detached the "
+          "retained socket volumes.", flush=True)
+
+
+def require_unrouted(publication):
+    """No route mount, NIC or proxy left on secured or workspace."""
+    for name, devices in publication.boundary().items():
+        for device in devices.values():
+            require(device.get("type") != "proxy", f"{name} kept a proxy device")
+            require(device.get("source") not in VOLUMES, f"{name} kept a route mount: {device}")
+        if name == "secured":
+            require(not any(d.get("type") == "nic" for d in devices.values()), "secured gained a NIC")
+
+
+def prove_reenable(publication, port, ready, redeem):
+    """On again after off reuses the retained volumes: the units start on
+    them and a real redemption through the host port reaches secured."""
+    publication.stop("secured")  # the route's preflight; connector doesn't exist
+    publication.set(pairing_route=True, pairing_host_port=port)
+    require(publication.apply() == 0, "turning the route on again failed")
+    ready()
+    restriction = publication.restriction()
+    require(restriction == "allow", f"after on the project's proxy restriction is {restriction}")
+    require(publication.devices("connector") == {"pairing-relay": forwarder(port)}, "connector's forwarder after on")
+    applied = sandbox_pairing.published_port(publication.directory, publication.project)
+    require(applied == port, f"after on the state publishes {applied}")
+    await_accepts(publication.address, port)
+    code = redeem(f"{publication.address}:{port}")
+    print(f"PASS: on again reused the retained volumes and served a redemption through port {port}.", flush=True)
+    return code

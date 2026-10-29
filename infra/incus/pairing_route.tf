@@ -34,10 +34,16 @@ resource "terraform_data" "pairing_route_preflight" {
   }
 }
 
+# The two socket volumes live as long as secured_runtime, not the route: they
+# are attached only while the route is on, so turning it off never deletes a
+# volume secured's profile still references in the same apply. They may keep
+# stale socket entries; each unit replaces its own when it starts. (The route
+# term keeps the precondition below the error for route without secured.)
+
 # Inbound: secured's broker owns the pairing socket here (read-write in
 # secured); connector's relay may only connect to it (read-only there).
 resource "incus_storage_volume" "pairing_ingress" {
-  count        = var.pairing_route ? 1 : 0
+  count        = var.secured_runtime || var.pairing_route ? 1 : 0
   name         = "pairing-ingress"
   project      = incus_project.sandbox.name
   pool         = var.storage_pool
@@ -52,7 +58,7 @@ resource "incus_storage_volume" "pairing_ingress" {
 # Outbound: connector's egress forwarder owns its socket here (read-write in
 # connector); secured's broker may only connect to it (read-only there).
 resource "incus_storage_volume" "pairing_egress" {
-  count        = var.pairing_route ? 1 : 0
+  count        = var.secured_runtime || var.pairing_route ? 1 : 0
   name         = "pairing-egress"
   project      = incus_project.sandbox.name
   pool         = var.storage_pool

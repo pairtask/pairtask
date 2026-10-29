@@ -170,18 +170,19 @@ def published_port(directory, project):
 
 
 def relay_port(attrs):
+    """The connector's publishing port: 0 without the forwarder device."""
     devices = [device for device in attrs.get("device") or [] if device.get("name") == DEVICE]
-    if not devices:
-        return 0
     if len(devices) > 1:
         raise ValueError(f"Connector has more than one {DEVICE} device; use explicit plan/apply")
-    properties = devices[0].get("properties") or {}
-    shape = dict(properties, type=devices[0].get("type"))
+    return forwarder_port(devices[0]) if devices else 0
+
+
+def forwarder_port(device):
+    """The port of exactly the forwarder the deployment defines."""
+    shape = dict(device.get("properties") or {}, type=device.get("type"))
     listen = LISTEN.fullmatch(str(shape.pop("listen", "")))
-    if listen is None or shape != FORWARDER:
-        raise ValueError(f"Unexpected {DEVICE} device on connector; use explicit plan/apply")
-    port = int(listen.group(1))
-    if port == 0:
+    port = int(listen.group(1)) if listen else 0
+    if shape != FORWARDER or port == 0:
         raise ValueError(f"Unexpected {DEVICE} device on connector; use explicit plan/apply")
     return valid_port(port, f"{DEVICE} port")
 

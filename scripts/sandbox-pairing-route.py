@@ -392,10 +392,19 @@ def redeem_published(deployment, host, destination):
     return code
 
 
-def exercise(args, deployment, binaries, workdir, publication):
-    for role, unit in (("secured", "pairtask-secured-broker.service"), ("connector", "pairtask-peer-egress.service"),
-                       ("connector", "pairtask-peer-relay.service")):
+ROUTE_UNITS = (("secured", "pairtask-secured-broker.service"), ("connector", "pairtask-peer-egress.service"),
+               ("connector", "pairtask-peer-relay.service"))
+
+
+def route_ready(deployment):
+    for role, unit in ROUTE_UNITS:
         deployment.await_active(role, unit)
+
+
+def exercise(args, deployment, local, publication):
+    """local is (binaries, workdir): the host fixture's build and directory."""
+    binaries, workdir = local
+    route_ready(deployment)
     connector_ip = deployment.address("connector")
     bridge_ip = connector_ip.rsplit(".", 1)[0] + ".1"
     host = HostBroker(binaries, workdir, bridge_ip)
@@ -410,12 +419,17 @@ def exercise(args, deployment, binaries, workdir, publication):
         codes += both_ways(deployment, host, connector_ip, first=False)
         print("PASS: both directions, settlement included, again after crashing the broker and the forwarder.", flush=True)
         pairing_route_checks.check_all(args.remote, deployment.base[2])
-        published, ports = pairing_publish_checks.prove_publishing(
-            publication, lambda destination: redeem_published(deployment, host, destination))
-        codes_absent(deployment, host, codes + published)
+        redeem = lambda destination: redeem_published(deployment, host, destination)  # noqa: E731
+        published, ports = pairing_publish_checks.prove_publishing(publication, redeem)
+        codes += published
+        codes_absent(deployment, host, codes)  # while this connector and its journal exist
+        # Off, on again with the host broker still up, then off for good.
+        pairing_publish_checks.prove_off(publication, ports)
+        codes.append(pairing_publish_checks.prove_reenable(publication, max(ports), lambda: route_ready(deployment), redeem))
+        codes_absent(deployment, host, codes)
+        pairing_publish_checks.prove_off(publication, ports)
     finally:
         host.stop()
-    return ports
 
 
 def parse_args():
@@ -445,8 +459,7 @@ def main():
         initialized = True
         run(tofu + ["apply", "-auto-approve", "-input=false"])
         publication = pairing_publish_checks.Publication(args.remote, project, directory, tofu)
-        ports = exercise(args, deployment, binaries, workdir, publication)
-        pairing_publish_checks.prove_off(publication, ports)
+        exercise(args, deployment, (binaries, workdir), publication)
         print("PASS: pairing route proof.", flush=True)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

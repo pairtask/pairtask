@@ -6,18 +6,24 @@ variables {
   secured_runtime   = true
 }
 
-run "route_is_absent_by_default" {
+run "route_is_detached_by_default" {
   command = plan
   assert {
     condition = (
       length(incus_instance.pairing_connector) == 0 &&
       length(incus_profile.pairing_connector) == 0 &&
-      length(incus_storage_volume.pairing_ingress) == 0 &&
-      length(incus_storage_volume.pairing_egress) == 0 &&
+      length(incus_storage_volume.pairing_ingress) == 1 &&
+      length(incus_storage_volume.pairing_egress) == 1 &&
       incus_project.sandbox.config["limits.containers"] == "2" &&
-      alltrue([for device in incus_profile.secured[0].device : !contains(["/mnt/pairtask-pairing", "/mnt/pairtask-egress"], lookup(device.properties, "path", ""))])
+      incus_project.sandbox.config["restricted.devices.proxy"] == "block" &&
+      alltrue([for profile in [incus_profile.secured[0], incus_profile.sandbox] : alltrue([
+        for device in profile.device : (
+          !contains(["/mnt/pairtask-pairing", "/mnt/pairtask-egress"], lookup(device.properties, "path", "")) &&
+          !contains([incus_storage_volume.pairing_ingress[0].name, incus_storage_volume.pairing_egress[0].name], lookup(device.properties, "source", ""))
+        )
+      ])])
     )
-    error_message = "The experimental pairing route must be absent unless explicitly enabled."
+    error_message = "With pairing off, retain both secured socket volumes but attach neither; no connector or proxy permission may remain."
   }
 }
 
@@ -101,4 +107,21 @@ run "route_and_old_probe_are_mutually_exclusive" {
     peer_connector_probe = true
   }
   expect_failures = [incus_instance.pairing_connector]
+}
+
+run "no_socket_volumes_without_secured_runtime" {
+  command = plan
+  variables {
+    secured_runtime = false
+    pairing_route   = false
+  }
+  assert {
+    condition = (
+      length(incus_storage_volume.pairing_ingress) == 0 &&
+      length(incus_storage_volume.pairing_egress) == 0 &&
+      length(incus_instance.pairing_connector) == 0 &&
+      incus_project.sandbox.config["restricted.devices.proxy"] == "block"
+    )
+    error_message = "A deployment without secured runtime needs neither pairing socket volumes nor a route."
+  }
 }

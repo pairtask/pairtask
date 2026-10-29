@@ -48,16 +48,20 @@ def arguments():
     changes.add_argument("--replace", action="store_true", help="Plan replacement of the dev container")
     changes.add_argument("--destroy", action="store_true", help="Explicitly plan deletion; volume guards must be removed first")
     args = parser.parse_args()
-    if args.action != "plan" and any((args.replace, args.destroy)):
-        parser.error("--replace and --destroy are plan options; apply uses the saved plan")
-    if args.release:
-        if args.action not in ROLLOUTS or args.image_dir:
-            parser.error("--release is for rollout and cannot be combined with --image-dir")
+    check_combinations(parser, args)
     args.release = args.release or "latest"
     args.pairing = ROLLOUTS.get(args.action)
+    return args
+
+
+def check_combinations(parser, args):
+    """Flags that only some actions take."""
+    if args.action != "plan" and any((args.replace, args.destroy)):
+        parser.error("--replace and --destroy are plan options; apply uses the saved plan")
+    if args.release and (args.action not in ROLLOUTS or args.image_dir):
+        parser.error("--release is for rollout and cannot be combined with --image-dir")
     if args.host_port is not None and args.action != "pairing-on":
         parser.error("--host-port is for pairing-on")
-    return args
 
 
 def main():

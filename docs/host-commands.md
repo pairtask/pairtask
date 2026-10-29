@@ -210,7 +210,10 @@ limits; secured keeps no network. While the route is on, the project
 allows proxy devices (`restricted.devices.proxy = allow`, even with port
 0); only the host operator holds the Incus API, so neither dev nor secured
 can add one. Turning the route off removes connector, its device and the
-allowance. macOS may ask whether to accept incoming connections for the
+allowance. The two socket volumes stay as long as `secured_runtime`,
+detached while the route is off (they may keep stale socket entries, which
+each unit replaces when it starts), so the same apply never deletes a
+volume secured still uses. macOS may ask whether to accept incoming connections for the
 forwarder, and a firewall or tailnet ACL may still block P: status shows
 applied forwarding, not reachability.
 
