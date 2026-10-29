@@ -124,13 +124,18 @@ skill elsewhere.
 Starship settings go in persistent `~/.config/starship.toml`. Older containers need
 an [image update](sandbox-storage.md#replace-dev-retain-data).
 
-**RTK reduces shell output** through Codex/Claude hooks, configured on first boot.
-Approve the RTK hook if Codex prompts. `rtk gain` shows estimated output savings,
-not provider billing or a token cap. History stays in `~/.local/share/rtk/` across
-container replacement; `/etc/codex/config.toml` grants it workspace-write access
-through the App Server. User/project configuration can override that default.
+**RTK reduces shell output** for Codex and Claude (hooks) and Pi (an extension
+in `~/.pi/agent/extensions/`), set up on first boot; a sandbox from before Pi
+was wired gets Pi's once on its next boot. Approve the RTK hook if Codex
+prompts. `rtk gain` shows estimated output savings, not provider billing or a
+token cap. History stays in `~/.local/share/rtk/` across container
+replacement; `/etc/codex/config.toml` grants it workspace-write access through
+the App Server. User/project configuration can override that default.
 Existing settings are preserved; telemetry is not enabled. To opt out, run
-`rtk init -g --codex --uninstall` and `rtk init -g --uninstall --auto-patch`, then restart agents.
+`rtk init -g --codex --uninstall`, `rtk init -g --uninstall --auto-patch` and
+`rtk init -g --agent pi --uninstall`, then restart agents; setup never
+reinstalls what you removed. For Pi, `RTK_DISABLED=1` turns it off for one
+session.
 
 ## Docker and Compose
 
