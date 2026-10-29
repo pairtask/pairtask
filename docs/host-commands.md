@@ -22,6 +22,8 @@ shells in the containers are stopped.
 | `curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh \| sh` | host | The one-line install: checks Python 3.9+, Git, Incus (and Colima on macOS, offering the `brew install` line), fetches the latest release's host tooling into `~/.pairtask/host`, puts `pairtask` on your PATH, then runs `pairtask install --release <that tag>`; run again later to upgrade both. Options after `sh -s --`: `--version TAG`, `--no-provision`, `--no-modify-path`, `--yes`. Never run as root. | yes, if containers exist |
 | `pairtask install` | host | First install: on macOS starts the Colima VM, then downloads and verifies the latest release, provisions the containers, configures SSH and lists them. Flags go to the rollout (`--release workspace-vX.Y.Z`, `--remote`, `--project`, `--storage-pool`, `--network`, `--tools`). | yes, if containers exist |
 | `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. Legacy: `python3 scripts/sandbox-provision.py rollout`. | yes |
+| `pairtask pairing on` / `pairtask pairing off` | host | Turn the experimental pairing route (#178) on or off in the deployment's settings, then run the same rollout as upgrade (same flags). `on` also turns on `secured_runtime`; it is refused while `peer_connector_probe` is on. Settings are checked before anything is written or stopped. Later upgrades keep the setting. | yes |
+| `pairtask pairing status` | host | Show the pairing route as configured and as deployed, read-only: `on`, `off`, or which command finishes a change an interrupted rollout left behind. | no |
 | `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). Legacy: `python3 scripts/sandbox-download.py`. | no |
 | `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. Legacy: `python3 scripts/sandbox-host.py plan|apply`. | no |
 | `pairtask ssh` | host | Create the key-only SSH path into the workspace; the remote defaults to your OS (`colima-pairtask` on macOS, `local` on Linux), `--remote` and `--instance` override. The rollout does this for you. Legacy: `python3 scripts/sandbox-ssh.py --remote …`. | no |
@@ -171,10 +173,13 @@ between the brokers. Neither starts by default:
 Both take `--max-conns`, `--max-bytes` and `--idle` (16 connections, 1 MiB
 per direction and 30 s by default).
 
-The Incus deployment installs the route with `pairing_route = true` (it
-needs `secured_runtime`, and can't be on together with the validation-only
-`peer_connector_probe`). It adds a `connector` container on the dev bridge
-and two one-way volumes:
+`pairtask pairing on` installs the route in the Incus deployment: it sets
+`pairing_route = true` (which needs `secured_runtime`, and can't be on
+together with the validation-only `peer_connector_probe`) and rolls out.
+The setting lives in the deployment's `operator.auto.tfvars.json`, or the
+one JSON variables file that already sets these controls; the command
+refuses to guess when they are split across files or set in HCL. It adds a
+`connector` container on the dev bridge and two one-way volumes:
 
 - `/mnt/pairtask-pairing`: read-write in secured (the broker's pairing
   socket), read-only in connector;
@@ -186,11 +191,14 @@ secured keeps no network. The image's units start only in their role:
 route settings in `/run/pairtask/pairing.env`. In connector,
 `pairtask-connector-setup` (root) prepares the egress volume, and
 `pairtask-peer-egress` and `pairtask-peer-relay` (listening on port 7445)
-run as the `peer` user (UID 1052, group `collab-peer`, GID 1050). Stop secured (and connector) before turning the route on, off or
-changing it: the apply refuses otherwise. CI proves the installed route in a
+run as the `peer` user (UID 1052, group `collab-peer`, GID 1050). The apply
+refuses to turn the route on, off or change it while secured or connector
+runs; `pairtask pairing on|off` stops workspace, connector and secured, in
+that order, first. CI proves the installed route in a
 disposable project with redemptions both ways, crash restarts included;
-reaching a colleague's workspace on another machine still depends on your
-LAN or tailnet reaching connector's port, which isn't claimed here.
+port 7445 is connector's, inside the deployment: it isn't published on the
+host's addresses, so a colleague's workspace on another machine can't reach
+it yet.
 
 With the socket or an egress set, the broker loads or creates its workspace
 key at startup and marks redemptions interrupted before verification

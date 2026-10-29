@@ -38,6 +38,8 @@ ACTIONS = {
     "vm": ("sandbox-host.py", {"plan": "plan", "apply": "apply"}, "the macOS Colima VM: plan | apply"),
     "mounts": ("sandbox-host.py", {"plan": "mounts-plan", "apply": "mounts-apply"}, "host directories in the workspace: plan | apply --mounts-file FILE"),
     "share": ("sandbox-share.py", {"plan": "plan", "setup": "setup", "run": "run"}, "macOS writable sharing: plan | setup | run --mounts-file FILE"),
+    "pairing": ("sandbox-provision.py", {"on": "pairing-on", "off": "pairing-off", "status": "pairing-status"},
+                "the pairing route: on | off (each an upgrade; ends sessions) | status"),
 }
 # Short names for commands, resolved before anything else.
 ALIASES = {"sh": "shell"}
