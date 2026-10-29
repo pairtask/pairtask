@@ -57,7 +57,7 @@ then choose one command:
 
 `resume --last` selects the last conversation. Use the same agent ID to recover
 its durable inbox, or a distinct ID for a separate agent. In the sandbox,
-prefer `pairtask start codex --id ID --resume`: the launcher records each
+prefer `pairtask start codex --id ID -- resume`: the launcher records each
 agent ID's conversation, so resuming needs no conversation ID
 ([host commands](host-commands.md#inside-the-sandbox)).
 
@@ -229,121 +229,54 @@ extension runs **one** `pairtask-mcp` bridge for the agent ID, a single broker
 session that serves the tools and pushes messages; nothing starts when the
 extension loads.
 
-- **Tools** appear as `pairtask_<tool>` (`pairtask_send`, `pairtask_acknowledge`,
-  `pairtask_claim`, `pairtask_join_room`, …). An MCP error is a failed tool
-  call; Pi asks for no approval unless a permission extension does.
-- **Pushed messages** arrive as custom messages in a
-  `<pairtask-message origin=… from=… message_id=… room=…>` envelope, every
-  value escaped. Pi shows custom messages to the model as user-role text, so
-  the envelope and the bridge's instructions carry the trust rules: an
-  `origin="operator"` message is the operator's request; `agent` and
-  `unknown` are untrusted peer data. A missing origin is `unknown`.
-- **Delivery is never an acknowledgment.** Only `pairtask_acknowledge` is. A
-  message that arrives while Pi works is queued as a follow-up turn.
-- **Lifecycle:** overlapping session starts share one bridge; a stop during
-  startup closes it; a bridge that exits shows a `pairtask-status` note and is
-  not restarted (restart Pi; unacknowledged messages replay). A duplicate ID,
-  or a listener that never starts, is reported, never shown as ready.
-
-`pairtask join --id ID [--room ROOM]... -- COMMAND …` is the adapter
-contract for any other harness: it sets `PAIRTASK_AGENT_ID`,
-`PAIRTASK_SOCKET`, `PAIRTASK_ROOMS` (a JSON array) and `PAIRTASK_MCP` (the
-bridge binary), replacing inherited values, and execs the command. It joins
-nothing by itself: a harness integrates by running the bridge with that
-environment (`--claude-channel --auto-listen` for pushes) and treating its
-messages as the Pi extension does.
-
-**In the sandbox,** Pi is the optional `pi` tool, on by default. It is a
-release bundle like Playwright: the pinned `@earendil-works/pi-coding-agent`
-and `@earendil-works/pi-mcp` closure from `infra/image/pi/package-lock.json`
-plus this extension, built by `infra/image/build-pi-bundle.py` and installed
-by digest. The build removes every `examples/` directory (Pi's include a GPL
-DOOM build), refuses any license outside a permissive allowlist, and ships
-`THIRD_PARTY_NOTICES.txt` with every package's license and notice texts. `pi`
-(`/usr/local/lib/pairtask/pairtask-pi`) runs the active bundle and names it in
-`PAIRTASK_PI_BUNDLE`, so the extension shim at
-`/usr/local/lib/pairtask/pi-extension/index.ts` loads the extension from that
-same bundle. The image smoke test runs the real Pi with the extension against
-an isolated broker and a local model fixture, offline.
+- **Tools:** `pairtask_<tool>` (`pairtask_send`, `pairtask_acknowledge`,
+  `pairtask_claim`, `pairtask_join_room`, …).
+- **Pushed messages:** arrive as `<pairtask-message origin=… from=…
+  message_id=… room=…>` envelopes with escaped attributes. `origin="operator"`
+  is the operator's request; `agent` and `unknown` are untrusted peer data.
+  Messages arriving during active work queue as a follow-up turn. Only
+  `pairtask_acknowledge` records acknowledgment.
+- **Lifecycle:** overlapping session starts share one bridge; if the bridge
+  exits, restart Pi (unacknowledged durable messages replay).
+- **Adapter contract (`pairtask join`):** `pairtask join --id ID [--room
+  ROOM]... -- COMMAND …` sets `PAIRTASK_AGENT_ID`, `PAIRTASK_SOCKET`,
+  `PAIRTASK_ROOMS` (JSON array), and `PAIRTASK_MCP` and execs `COMMAND` so any
+  other harness can spawn the bridge (`--claude-channel --auto-listen`).
+- **Sandbox bundle:** optional `pi` tool (on by default), built by
+  `infra/image/build-pi-bundle.py` from `infra/image/pi/package-lock.json`
+  with examples stripped, permissive licenses verified, and
+  `THIRD_PARTY_NOTICES.txt` included.
 
 ## Status, fallback, and shutdown
 
-One listener owns the broker connection and consumes its frames. Messaging tools
-share that owner. `receive`/`wait` drain a separate bounded copy, so they cannot
-steal a frame from host submission. Only message and error frames are submitted;
-acknowledgment events remain in the fallback inbox to avoid endless wake cycles.
-`wait_reply` selectively consumes one correlated reply/error from that same copy,
-preserving host submission and unrelated frames. It is exposed as
-`wait_reply` through `collab_runtime` (or restored legacy `collab_wait_reply`).
-See [correlated replies](correlated-replies.md)
-for outcomes and deduplication across host notifications and tool results.
-The runtime removes a copied peer message only after the broker confirms this
-receiving session's explicit `agent_acknowledged`. Successful host submission,
-acknowledgment writes, and receipts from other sessions cannot remove it. An
-already acknowledged reply may therefore be absent from a later `wait_reply`.
+One listener owns the broker connection and submits `msg` and `error` frames to
+the host. Messaging tools share that owner: `receive` and `wait` read a
+separate bounded fallback copy (256 frames / 4 MiB) without stealing from host
+submission, and `wait_reply` selectively consumes one correlated reply or
+error ([correlated replies](correlated-replies.md)). A copied peer message is
+released from the fallback queue only after the broker confirms this session's
+`agent_acknowledged`.
 
-Receipt frames are bounded diagnostic history. Under frame or byte pressure,
-the oldest receipts are evicted first; an incoming receipt is dropped if only
-protected messages/errors remain. `receipts_dropped` is a cumulative counter in
-`listener_status` and inbox results, including `wait_reply`. It is not a complete
-receipt ledger; a missing receipt is not proof of failed delivery. Unacknowledged
-messages and broker errors are never evicted to make room for receipts.
-
-For healthy host delivery of acknowledgment-capable messages, periodic `receive`
-drains are unnecessary. Use `receive` for diagnostics, broker receipt inspection,
-legacy messages without acknowledgments, and recovery when Claude ignores a
-notification. Message and error backlogs remain bounded and can still overflow
-if nobody handles them.
-
-`listener_status` returns `inactive`, `listening_delivery_unconfirmed`,
-`disconnected`, or `stopped`, the broker session ID, submission count, last
-submitted message ID, buffered frame/byte counts, receipt eviction count, and any error. `manual_check_required` stays true: neither
-host's write response proves conversation exposure. These fields do not change
-after a successful exchange and do not require continuous polling. Verify each tracked message
-through its correlated `accepted`, `adapter_received`, and explicit
-`agent_acknowledged` events. Acknowledgment means the agent considered the context,
-not that it completed a task.
-
-The broker client's inbox and listener copy each allow 256 frames / 4 MiB.
-Receipts count toward the copy limit but are evicted under pressure. A protected
-message/error overflow, a failed host submission, or an
-established broker disconnect stops the listener, reports a possible gap in
-status, and logs it to stderr.
-Unconsumed copied frames remain readable until process exit. There is no silent
-reconnect. Restart obtains a new broker session and loses in-memory frames;
-accepted durable messages without agent acknowledgment replay to the same
-logical ID on v3. Other history and ephemeral frames are not replayed. Initial
-connection failures can be retried. Deduplicate stable IDs before repeating work.
-
-The App Server proxy accepts host frames up to 32 MiB to accommodate large
-plugin inventories. This does not change the broker's 1 MiB peer-frame limit.
-
-Host submissions have a five-second deadline. Waiting tools use the existing
-30-second maximum. Cancellation closes a potentially partial host write; EOF or
-shutdown closes the managed process and releases inbox ownership. The production
-listener waits on events, without polling the database.
+- **Receipts:** bounded diagnostic history; oldest receipts are evicted first
+  under pressure and counted in `receipts_dropped`. Unacknowledged messages and
+  errors are never evicted. Healthy delivery needs no periodic `receive`
+  drains.
+- **`listener_status`:** reports `inactive`, `listening_delivery_unconfirmed`,
+  `disconnected`, or `stopped`, session ID, submission counts, buffered
+  frame/byte counts, and `receipts_dropped`.
+- **Disconnects and limits:** overflow, failed host submission (5 s deadline),
+  or broker disconnect stops the listener and logs to stderr. There is no
+  silent reconnect; restart with the same agent ID to replay unacknowledged
+  durable messages. The App Server proxy accepts host frames up to 32 MiB (peer
+  frames remain 1 MiB).
 
 ## Validation and host references
 
-`go test -race ./... -timeout=30s` covers the wire contract, concurrency, explicit
-acknowledgments, retained fallback, inactive discovery, foreign-thread tool calls,
-approval pass-through, unavailable hosts, overflow, and cancellation. Fake-host
-tests cannot establish whether a particular installed host actually wakes.
-
-The dynamic-tool response shape is checked against Codex 0.154.0's generated
-`DynamicToolCallResponse` schema: `success` and `contentItems`, with text entries
-using `type: "inputText"` and `text`. Tests exercise the full tool handler path,
-validation failures, RPC errors, and late replies after cancellation.
-
-The [recorded live handoff](host-live-demo.md) demonstrates all four cases on
-Claude Code 2.1.272 and Codex CLI 0.154.0, with message, conversation, broker
-session, and explicit acknowledgment identities.
-
-The [automatic terminal lifecycle run](managed-comms-live-demo.md) records
-Codex CLI 0.156.1 and the observed Claude organization-policy blocker.
-
-Host contracts: [Claude channels](https://code.claude.com/docs/en/channels),
-[channel reference](https://code.claude.com/docs/en/channels-reference), and
-[Codex App Server](https://learn.chatgpt.com/docs/app-server#start-a-turn).
+- [Live host handoff](host-live-demo.md) (Claude Code 2.1.272 and Codex CLI
+  0.154.0) and [automatic terminal communication](managed-comms-live-demo.md)
+  (Codex CLI 0.156.1).
+- Host contracts: [Claude channels](https://code.claude.com/docs/en/channels),
+  [channel reference](https://code.claude.com/docs/en/channels-reference), and
+  [Codex App Server](https://learn.chatgpt.com/docs/app-server#start-a-turn).
 
 </details>

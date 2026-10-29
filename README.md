@@ -7,277 +7,148 @@
   </picture>
 </p>
 
-**Work with Codex, Claude, and Pi in one place.** pairtask gives the agents
-the same project workspace and a shared message channel, with you directing
-the work from an operator chat. Ask one agent to implement a change and
-another to review it; they coordinate directly instead of making you relay
-every message.
+**Your AI coding agents, working as a team.** pairtask puts Codex, Claude and
+Pi in one shared workspace, lets them message each other directly, and gives
+you one chat to direct them. Ask one agent to build a change and another to
+review it; they coordinate without you relaying every message.
 
-Messages survive disconnects, and the chat shows agent status and delivery
-progress. The agents run in an Incus sandbox, separate from your host, while
-project files and agent home persist across container upgrades. You decide
-what to ask, review, and approve.
-
-[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) licensed · [Set up](#set-up-a-sandbox) · [Features](#features) · [Documentation](#documentation) · [Troubleshooting](docs/troubleshooting.md)
+[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) · [Get started](#set-up-a-sandbox) · [Features](#features) · [Docs](#documentation) · [Troubleshooting](docs/troubleshooting.md)
 
 ## Features
 
-- **Agents that work together.** Codex, Claude and [Pi](docs/pi.md) share one
-  workspace and message each other directly through the bundled
-  [collaboration skill](docs/skills/collab-ai/SKILL.md). Run several of each,
-  and group them in rooms.
-- **Operator chat.** One terminal chat for directing agents, with per-agent and
-  group conversations, rooms, replies, acknowledgments, search, history and
-  [Markdown and diagrams](docs/chat-formatting.md).
-  See [operator chat](docs/operator-chat.md).
-- **Pull request reviews.** `/review OWNER/REPO#N AGENT` asks an agent to review a
-  pull request and publish the result; `/reviews` follows every request.
-  See [operator chat](docs/operator-chat.md#reviews).
-- **Delivery you can trust.** Messages are stored until the recipient
-  acknowledges them, survive disconnects and restarts, and show their delivery
-  stage. See [durable inboxes](docs/durable-inboxes.md) and
-  [correlated replies](docs/correlated-replies.md).
-- **Status at a glance.** Agents declare what they are doing and claim tasks;
-  `pairtask status`, the chat and a read-only [dashboard](docs/dashboard.md)
-  show it. See [broker status](docs/status.md).
-- **An isolated sandbox.** Agents run in Incus containers, apart from your host;
-  the broker runs in a [separate offline container](docs/secured-runtime.md).
-  Projects and agent home [persist across upgrades](docs/sandbox-storage.md).
-  See [sandbox setup](docs/sandbox.md).
-- **Your project, your way.** [Mount host directories](docs/sandbox-mounts.md)
-  read-only or writable, run [Docker and Compose](docs/sandbox.md#docker-and-compose),
-  and choose the [installed tools](docs/sandbox-tools.md).
-- **Workspaces on two machines.** Pair a workspace with another over your LAN or
-  tailnet and exchange operator messages. See
-  [connect two machines](docs/host-commands.md#connect-two-machines).
-- **One host command.** `pairtask` installs, upgrades, starts, stops and
-  recovers the sandbox. See [host commands](docs/host-commands.md).
-- **Without a sandbox.** Run the broker and agents
-  [directly on your host](docs/quickstart.md), or connect any MCP client
-  [manually](docs/mcp.md).
+| | |
+| --- | --- |
+| 🤝 **Agents that pair up** | Codex, Claude and [Pi](docs/pi.md) share one workspace and talk to each other directly. Run several of each and group them in rooms. |
+| 💬 **One chat to lead them** | Message one agent, a group or everyone. Replies, acknowledgments, search, history, [Markdown and diagrams](docs/chat-formatting.md). [Operator chat →](docs/operator-chat.md) |
+| 🔍 **Pull request reviews** | `/review OWNER/REPO#N AGENT` hands a pull request to an agent, which reviews it and publishes the result on GitHub. [Reviews →](docs/operator-chat.md#reviews) |
+| 📬 **Nothing gets lost** | Messages wait until they are acknowledged, survive restarts, and show where they are. [Delivery →](docs/durable-inboxes.md) |
+| 👀 **See who is doing what** | Agents report their status and claim tasks; the chat and a [dashboard](docs/dashboard.md) show it. |
+| 🔒 **Sandboxed by default** | Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades. |
+| 🧰 **Ready to code** | Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you. |
+| 🌐 **Two machines, one team** | Pair your workspace with a colleague's over your LAN or tailnet. [Connect two machines →](docs/host-commands.md#connect-two-machines) |
+| ⚡ **One command** | `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md) |
+
+No containers? Run it [directly on your machine](docs/quickstart.md), or
+connect any MCP client [by hand](docs/mcp.md).
 
 ## Set up a sandbox
 
-These steps use the installed `pairtask` command. **Host** means your Mac or
-Linux terminal. **Workspace** means the shell opened by `pairtask shell`.
-The installer provisions the sandbox, agent tools, and the `collab-ai` skill
-for both agents; you do not need to compile them or install OpenTofu on your
-host.
+**Host** is your Mac or Linux terminal. **Workspace** is the shell that
+`pairtask shell` opens.
 
 ### First time
 
-1. On **macOS**, install the host prerequisites:
+1. **Install the prerequisites** on your host.
+   - macOS: `brew install colima incus python git`
+   - Linux: [Incus](https://linuxcontainers.org/incus/docs/main/installing/)
+     (server 7.0.2+ or 7.5+, [why](docs/sandbox.md#incus-server-version)),
+     Python 3.9+, Git and OpenSSH.
 
-   ```sh
-   brew install colima incus python git
-   ```
-
-   On **Linux**, [install Incus](https://linuxcontainers.org/incus/docs/main/installing/)
-   with a quota-capable storage pool and managed bridge. You also need Python
-   3.9+, Git, and OpenSSH. See the [full sandbox setup](docs/sandbox.md) for
-   host details.
-
-   The Incus **server** must be 7.0.x ≥ 7.0.2 or 7.5+; see
-   [Incus server version](docs/sandbox.md#incus-server-version).
-
-2. On your **host**, install pairtask and provision the sandbox:
+2. **Install pairtask** on your host, then open a new terminal:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
    ```
 
-   The installer adds `pairtask` to your shell PATH, sets up SSH, and lists the
-   containers. **Open a new host terminal** before using `pairtask`. Run the
-   installer again later to upgrade; an upgrade ends active sessions but keeps
-   projects and agent home.
+   Run it again later to upgrade. Upgrades end running sessions and keep your
+   projects.
 
-3. On your **host**, enter the workspace:
+3. **Sign in** inside the workspace:
 
    ```sh
    pairtask shell
-   ```
-
-   If the installer created the `pk` shortcut, `pk sh` does the same thing.
-
-   Inside the **workspace**, run these sign-ins one at a time and follow their
-   prompts. Codex prints a device code to enter in your host browser.
-
-   ```sh
    command codex login --device-auth
    command claude auth login
    ```
 
-4. Still inside the **workspace**, clone a project. This repository is a
-   copy-and-paste example; use your own Git URL and project directory for your
-   work.
+4. **Clone a project** into the workspace, then `exit`:
 
    ```sh
-   git clone https://github.com/pairtask/pairtask.git /workspace/pairtask
-   exit
+   git clone https://github.com/you/your-project.git /workspace/your-project
    ```
 
-### Each session
+### Every day
 
-1. On your **host**, start the containers and check the broker:
+1. **Start** the sandbox on your host:
 
    ```sh
    pairtask start
-   pairtask status
-   pairtask shell pairtask status
    ```
 
-   Expect `workspace` and `secured` to be running, and `Broker: ready`.
-
-2. Open a new host terminal for **Codex**. Enter the workspace, then start
-   Codex from the project directory:
+2. **Start each agent** in its own host terminal, from your project:
 
    ```sh
    pairtask shell
+   cd /workspace/your-project
+   pairtask start codex --id codex-1     # or: claude --id claude-1
    ```
 
-   ```sh
-   cd /workspace/pairtask
-   pairtask start codex --id codex-1
-   ```
+   Accept the agent's first prompt (Codex: folder trust; Claude: channel
+   consent). The agents already know how to work together. Optional:
+   `pairtask start pi --id pi-1 -- --skill /usr/local/share/pairtask`
+   ([Pi guide](docs/pi.md)).
 
-   Complete Codex's folder trust prompt, then start a conversation by pasting
-   this into Codex:
-
-   ```text
-   Use the collab-ai skill to collaborate with claude-1 on this project. Tell me when you are ready.
-   ```
-
-3. Open another host terminal for **Claude**. Enter the workspace, then start
-   Claude in the same project:
-
-   ```sh
-   pairtask shell
-   ```
-
-   ```sh
-   cd /workspace/pairtask
-   pairtask start claude --id claude-1
-   ```
-
-   Accept Claude's channel consent prompt, then paste this into Claude:
-
-   ```text
-   Use the collab-ai skill to collaborate with codex-1 on this project. Tell me when you are ready.
-   ```
-
-4. Optional: open another host terminal for **Pi**. Enter the workspace, then
-   start Pi with the collaboration skill; on first run, `/login` and `/model`
-   inside Pi set its provider and model ([Pi guide](docs/pi.md)):
-
-   ```sh
-   pairtask shell
-   ```
-
-   ```sh
-   cd /workspace/pairtask
-   pairtask start pi --id pi-1 -- --skill /usr/local/share/pairtask
-   ```
-
-5. Open another host terminal for **your chat**:
+3. **Open your chat** in another host terminal:
 
    ```sh
    pairtask chat
    ```
 
-   Press Tab until the **codex-1** conversation is selected. Check the
-   recipient hint above the input, then paste this task and press Enter:
+   Tab picks a conversation; the line above the input shows who will receive
+   your message. Try, in codex-1's conversation:
 
    ```text
-   Find one unclear step in this project's README, improve it, and ask claude-1 to review the edit.
+   Improve one unclear step in the README and ask claude-1 to review it.
    ```
 
-   Press Tab until **claude-1** is selected, check the recipient hint, then
-   paste this task and press Enter:
+   Only one chat can be open at a time; `pairtask chat` again reconnects with
+   the history.
 
-   ```text
-   Review codex-1's README edit for accuracy and clarity. Report any issues to us both.
-   ```
+4. **Stop** when you're done: `pairtask stop`. Closing a terminal ends that
+   agent; the workspace and your files stay.
 
-   Replace the example task with your own. Agents can send you updates and
-   coordinate with each other; you still decide which changes to accept.
+### Agent commands
 
-   To return to the operator chat later, run `pairtask chat` again on your
-   host. It reconnects to the saved conversation and shows its history. Only
-   one operator chat can be open at a time.
-
-**Agent commands**, all run inside the workspace from the project directory:
+Run inside the workspace, from your project:
 
 | To | Run |
 | --- | --- |
-| Start Codex, Claude or Pi | `pairtask start codex --id codex-1`, `pairtask start claude --id claude-1`, `pairtask start pi --id pi-1 -- --skill /usr/local/share/pairtask` |
-| Add another agent | the same command with a new ID, e.g. `--id codex-2` |
-| Join a room as well | add `--room NAME` (repeatable) |
+| Start an agent | `pairtask start codex --id codex-1` (or `claude`, `pi`) |
+| Add another | same command, new ID: `--id codex-2` |
+| Resume Codex's last conversation | `pairtask start codex --id codex-1 -- resume` |
+| Join a room | add `--room NAME` |
 | Pick a model | add `--model NAME` |
-| Change Pi's output cap (default 32768 tokens per request) | add `--max-tokens N`, or `--max-tokens 0` for none |
-| Resume the conversation Codex last had under that ID | `pairtask start codex --id codex-1 --resume` (close the old session first) |
-| See the command without running it | add `--dry-run` |
+| Preview the command | add `--dry-run` |
 
-Put pairtask flags before `--`; arguments after `--` go to the agent itself.
-`codex` and `claude` alone are shortcuts for the `codex-1` and `claude-1`
-commands above. To work on another repository, replace `/workspace/pairtask`
-with that project's directory. [Sign-in help](docs/sandbox.md#sign-in-and-network-access) ·
-[Host commands](docs/host-commands.md) · [Operator chat](docs/secured-runtime.md#interactive-chat) ·
-[Mount host directories](docs/sandbox-mounts.md) · [Resume an agent](docs/host-integration.md#codex-terminal).
-
-The workspace persists when you close its shell; closing an agent terminal
-ends that agent process. To keep a terminal session running while you detach,
-use `tmux` inside the workspace. To stop the containers from your host, run
-`pairtask stop`.
-
-[Mount directories](docs/sandbox-mounts.md) ·
-[Docker and Compose](docs/sandbox.md#docker-and-compose) ·
-[Upgrade or reprovision](docs/sandbox-storage.md#replace-dev-retain-data) ·
-[Back up](docs/sandbox-storage.md#back-up-and-restore) ·
-[Stop or remove](docs/sandbox.md#stop-or-remove)
+pairtask flags go before `--`; everything after goes to the agent.
+More: [host commands](docs/host-commands.md) ·
+[sign-in help](docs/sandbox.md#sign-in-and-network-access) ·
+[mount host folders](docs/sandbox-mounts.md) ·
+[back up](docs/sandbox-storage.md#back-up-and-restore) ·
+[stop or remove](docs/sandbox.md#stop-or-remove).
 
 ## Dashboards
 
-On your **host**, open the terminal dashboard for agent connections and
-pending messages:
-
-```sh
-pairtask shell --tty pairtask dashboard
-```
-
-For container resources and logs, open the Incus web UI. On macOS, run:
-
-```sh
-incus webui colima-pairtask:
-```
-
-On Linux, run:
-
-```sh
-incus webui local:
-```
-
-For Incus, open the printed URL and select project `pairtask`.
-The dashboard is read-only. Use `pairtask chat` for messages; agent-specific
-prompts may still appear in the agent terminal.
-[Controls](docs/dashboard.md) · [UI help](docs/sandbox.md#incus-web-ui).
+- **Agents and messages:** `pairtask shell --tty pairtask dashboard`
+  ([controls](docs/dashboard.md)).
+- **Containers and logs:** `incus webui colima-pairtask:` on macOS,
+  `incus webui local:` on Linux; pick project `pairtask`
+  ([help](docs/sandbox.md#incus-web-ui)).
 
 ## Connect two machines
 
-To pair your workspace with one on another machine over your LAN or a
-tailnet, follow [connect two machines](docs/host-commands.md#connect-two-machines):
-update both hosts, publish the relay, exchange a pairing code, then send a
-test message each way in operator chat.
+Pair your workspace with one on another machine over your LAN or a tailnet:
+see [connect two machines](docs/host-commands.md#connect-two-machines).
 
 ## How it fits together
 
-With `secured_runtime = true`, Codex, Claude and the read-only dashboard run in
-**workspace**; **secured** owns one broker and SQLite database.
-The shared Unix socket connects them.
-`/workspace` and `/home/agent` persist across container replacement.
+Agents and the dashboard run in **workspace**; the message broker and its
+database run in **secured**, which has no network. A shared socket connects
+them. `/workspace` and `/home/agent` survive container upgrades.
 
 ![Codex, Claude and the read-only dashboard in workspace connect through a shared Unix socket to the broker and SQLite in secured.](docs/assets/architecture.svg)
 
-[Architecture source](docs/assets/architecture.puml) · [Control setup](docs/secured-runtime.md)
+[Diagram source](docs/assets/architecture.puml) · [Control runtime](docs/secured-runtime.md)
 
 <details>
 <summary>macOS and Linux layouts</summary>
@@ -291,36 +162,24 @@ The shared Unix socket connects them.
 
 ## Security
 
-Agent commands run inside the container. Host mounts default to read-only;
-writes require a dedicated sharing identity. Writable sharing lets agents
-change files that you or host automation may later execute.
-[Boundaries](docs/sandbox.md#security-can-agents-execute-code-on-my-host).
+Agents run commands inside the container, not on your machine. Host folders
+are mounted read-only unless you set up writable sharing, which lets agents
+change files you may later run. [Details](docs/sandbox.md#security-can-agents-execute-code-on-my-host).
 
 ## Run on your host
 
-No Incus? Follow the [host quick start](docs/quickstart.md) to build and run locally.
-These agents have no Incus isolation.
+No Incus? The [host quick start](docs/quickstart.md) builds and runs pairtask
+locally, without container isolation.
 
-### Resume or fork
-
-[Host commands and compatibility](docs/host-integration.md#codex-terminal).
-For a managed Codex session, prefer `pairtask start codex --id ID --resume`
-inside the sandbox: the launcher records each agent ID's conversation and
-continues it (close the old session first). Alternatively, resume an explicit
-conversation with `codex resume SESSION_ID` or `claude --resume` from the
-project directory; the Codex resume picker does not resume managed sessions.
-
-### Set a Codex soft cap
-
-The sandbox aliases are uncapped by default. Use a [named budget](docs/host-integration.md#codex-soft-cap)
-for one managed Codex launcher. Reports can arrive late; overshoot is possible.
-Claude and shared budgets are not yet covered.
-
-### Claude Code
-
-The sandbox alias is preconfigured. For host sessions, use the
-[dedicated channel config](docs/quickstart.md#3-start-claude-code).
-Claude requires channel consent and account/organization support.
+- **Resume:** in the sandbox, `pairtask start codex --id ID -- resume`
+  continues that agent's last conversation (close the old session first).
+  Otherwise use `codex resume SESSION_ID` or `claude --resume`.
+  [More](docs/host-integration.md#codex-terminal).
+- **Codex spending cap:** a [named budget](docs/host-integration.md#codex-soft-cap)
+  caps one managed Codex; reports can arrive late, so it may overshoot.
+- **Claude Code on the host** needs the
+  [dedicated channel config](docs/quickstart.md#3-start-claude-code), channel
+  consent and an account that allows channels.
 
 ## Documentation
 

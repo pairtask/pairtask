@@ -12,11 +12,11 @@ Responses endpoint.
 | Terminal `resume SESSION_ID` / `fork SESSION_ID` | Normal Codex UI renders history and registers one broker owner |
 | Permission overrides on remote resume | Codex 0.156.1 rejects `-s`/`--sandbox` and `-a`/`--ask-for-approval` on remote resume (upstream restriction); saved permissions work |
 
-## Managed `--resume` (2026-10-25)
+## Managed resume (2026-10-25)
 
 Codex's interactive picker (`resume` without an ID) and `resume --last` only
 send `thread/list` and do not resume App Server sessions (observed on 0.159.3).
 Instead, the launcher records each agent ID's owned thread ID and working
-directory on start/resume/fork, and `pairtask start codex --id ID --resume`
-resumes that recorded thread by ID. Explicit native resume arguments still pass
-through unchanged.
+directory on start/resume/fork, and `pairtask start codex --id ID -- resume`
+(or `--resume`) resumes that recorded thread by ID. Explicit native resume
+arguments still pass through unchanged.
