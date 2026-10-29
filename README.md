@@ -115,7 +115,7 @@ Run inside the workspace, from your project:
 | --- | --- |
 | Start an agent | `pairtask start codex --id codex-1` (or `claude`, `pi`) |
 | Add another | same command, new ID: `--id codex-2` |
-| Resume Codex's last conversation | `pairtask start codex --id codex-1 -- resume` |
+| Resume the last conversation | Codex: `pairtask start codex --id codex-1 -- resume`<br>Claude: `pairtask start claude --id claude-1 -- --resume` |
 | Join a room | add `--room NAME` |
 | Pick a model | add `--model NAME` |
 | Preview the command | add `--dry-run` |
@@ -172,8 +172,9 @@ No Incus? The [host quick start](docs/quickstart.md) builds and runs pairtask
 locally, without container isolation.
 
 - **Resume:** in the sandbox, `pairtask start codex --id ID -- resume`
-  continues that agent's last conversation (close the old session first).
-  Otherwise use `codex resume SESSION_ID` or `claude --resume`.
+  continues that Codex agent's last conversation (close the old session
+  first); for Claude, `pairtask start claude --id ID -- --resume`. On the
+  host, use `codex resume SESSION_ID` or `claude --resume`.
   [More](docs/host-integration.md#codex-terminal).
 - **Codex spending cap:** a [named budget](docs/host-integration.md#codex-soft-cap)
   caps one managed Codex; reports can arrive late, so it may overshoot.

@@ -305,4 +305,6 @@ conversation and directory, and continues it; `-- resume --last` does the
 same, and so does the `--resume` flag. With nothing recorded it lists saved
 conversations with a ready command for each. An explicit `-- resume ID`,
 `fork ID` or other Codex arguments go to Codex unchanged; a pairtask session
-ID is refused, since it isn't a Codex conversation ID.
+ID is refused, since it isn't a Codex conversation ID. **Resume Claude** with
+`pairtask start claude --id claude-1 -- --resume`, which passes Claude's own
+`--resume` through.
