@@ -86,7 +86,7 @@ func (m *Model) contactFollowUp() tea.Cmd {
 	}
 	t := m.contacts.thread(key.contact)
 	var cmds []tea.Cmd
-	if !t.loaded && !t.failed && !m.requested(kindContactList, key.contact) {
+	if m.contactNeedsLoad(key.contact, t) {
 		cmds = append(cmds, m.refreshContact(key.contact, 0))
 	}
 	return tea.Batch(append(cmds, m.readShown(key.contact))...)
@@ -106,6 +106,15 @@ func (m *Model) contactsUsable(contact string) bool {
 	return m.confirmedContact(contact)
 }
 
+// contactNeedsLoad: never loaded, no failure waiting for a retry, and no
+// read already in flight.
+func (m *Model) contactNeedsLoad(contact string, t *contactThread) bool {
+	if t.loaded || t.failed {
+		return false
+	}
+	return !m.requested(kindContactList, contact)
+}
+
 // refreshContact reads a page of a contact's messages: the newest (before
 // 0) or an older one.
 func (m *Model) refreshContact(contact string, before int64) tea.Cmd {
@@ -123,7 +132,7 @@ func (m *Model) refreshContact(contact string, before int64) tea.Cmd {
 func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea.Cmd {
 	contact, gen, before := req.ids[0], req.ids[1], req.ids[2]
 	t := m.contacts.thread(contact)
-	if resp.Type != protocol.TypeOperatorContactResult || resp.ContactPage == nil || resp.ContactPage.Contact != contact {
+	if !pageFor(resp, contact) {
 		t.failed = true // no retry on every update; an event, a reconnect or reopening the tab retries
 		m.status = "contact messages not loaded: " + refusalReason(resp)
 		return nil
@@ -140,6 +149,14 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 		return m.refreshContact(contact, 0)
 	}
 	return nil
+}
+
+// pageFor: a contact result carrying a page of this contact's messages.
+func pageFor(resp protocol.Message, contact string) bool {
+	if resp.Type != protocol.TypeOperatorContactResult || resp.ContactPage == nil {
+		return false
+	}
+	return resp.ContactPage.Contact == contact
 }
 
 // stateRank orders a message's states so a merge only moves forward.
@@ -168,7 +185,7 @@ func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bo
 		clear(t.refused) // a fresh page gives refused reads one more try
 	}
 	c := oldestCursor(page.Messages)
-	if page.More && c != 0 && c > t.newestHeld() {
+	if t.gapBelow(page, c) {
 		clear(t.rows)
 		t.offset = 0
 	}
@@ -177,6 +194,15 @@ func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bo
 		t.more, t.oldest = page.More, c
 	}
 	t.loaded = true
+}
+
+// gapBelow: the page leaves older messages out and doesn't reach what the
+// thread holds, so what lies between is unknown.
+func (t *contactThread) gapBelow(page *protocol.ContactMessagePage, pageOldest int64) bool {
+	if !page.More || pageOldest == 0 {
+		return false
+	}
+	return pageOldest > t.newestHeld()
 }
 
 // boundaryFrom: a newest page sets the thread's older-page boundary when

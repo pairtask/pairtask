@@ -46,7 +46,7 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 	c, _ := m.contact(fingerprint)
 	l := contactLayout{header: m.contactHeader(c)}
 	t := m.contacts.threads[fingerprint]
-	if t == nil || !m.contactsAvailable() || !c.Confirmed {
+	if t == nil || !m.contactShowsMessages(c) {
 		return l
 	}
 	for _, v := range t.ordered() {
@@ -57,6 +57,11 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 		}
 	}
 	return l
+}
+
+// contactShowsMessages: the broker carries them and both sides confirmed.
+func (m *Model) contactShowsMessages(c protocol.PairingContactView) bool {
+	return m.contactsAvailable() && c.Confirmed
 }
 
 func (m *Model) contactHeader(c protocol.PairingContactView) []string {
@@ -168,11 +173,16 @@ func (m *Model) shownUnread(fingerprint string) []string {
 	l, start, end := m.contactWindow(fingerprint, m.layout().transcript)
 	var ids []string
 	for _, s := range l.spans {
-		if s.unread && s.from < end && s.upto > start {
+		if s.unread && s.overlaps(start, end) {
 			ids = append(ids, s.id)
 		}
 	}
 	return ids
+}
+
+// overlaps: the message has a line in [start, end).
+func (s contactSpan) overlaps(start, end int) bool {
+	return s.from < end && s.upto > start
 }
 
 // readShown marks read the received messages drawn now, once each: IDs a
@@ -182,7 +192,7 @@ func (m *Model) readShown(contact string) tea.Cmd {
 	t := m.contacts.thread(contact)
 	var ids []string
 	for _, id := range m.shownUnread(contact) {
-		if !t.read[id] && !t.refused[id] && !m.readPending(contact, id) {
+		if !t.settledRead(id) && !m.readPending(contact, id) {
 			ids = append(ids, id)
 		}
 	}
@@ -197,6 +207,11 @@ func (m *Model) readShown(contact string) tea.Cmd {
 	}
 	m.contacts.reads[msg.MessageID] = &contactOp{msg: msg}
 	return m.request(kindContactRead, msg, contact, msg.MessageID)
+}
+
+// settledRead: a read of this message was confirmed or refused already.
+func (t *contactThread) settledRead(id string) bool {
+	return t.read[id] || t.refused[id]
 }
 
 func (m *Model) readPending(contact, id string) bool {
@@ -239,8 +254,17 @@ func (m *Model) contactScroll(direction int) tea.Cmd {
 	room := max(1, m.layout().transcript-len(l.header))
 	top := max(0, len(l.lines)-room)
 	t.offset = max(0, min(top, t.offset-direction*max(1, room-1)))
-	if direction < 0 && t.offset == top && t.more && !m.requested(kindContactList, contact) {
+	if direction < 0 && m.olderDue(contact, t, top) {
 		return m.refreshContact(contact, t.oldest)
 	}
 	return nil
+}
+
+// olderDue: scrolled to the top of what is held, with older messages left
+// and none being read.
+func (m *Model) olderDue(contact string, t *contactThread, top int) bool {
+	if t.offset != top || !t.more {
+		return false
+	}
+	return !m.requested(kindContactList, contact)
 }
