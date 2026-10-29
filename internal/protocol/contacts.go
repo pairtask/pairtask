@@ -3,6 +3,7 @@ package protocol
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -142,11 +143,19 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 	return nil
 }
 
+// foreignFields are what other operator frames act on: none may ride on a
+// contact operation.
+var foreignFields = []func(Message) bool{
+	func(m Message) bool { return m.ReviewOp != "" || m.ReviewID != "" || m.ReviewSpec != nil },
+	func(m Message) bool { return m.PairingOp != "" || m.PairingTarget != "" },
+	func(m Message) bool { return m.PairingCode != "" || m.PairingDestination != "" },
+	func(m Message) bool { return m.RoomOp != "" || m.Room != "" },
+	func(m Message) bool { return m.To != "" || m.Group != nil || len(m.Payload) != 0 },
+}
+
 // foreignAction: a field another operator frame acts on.
 func foreignAction(msg Message) bool {
-	return msg.ReviewOp != "" || msg.ReviewID != "" || msg.ReviewSpec != nil || msg.PairingOp != "" ||
-		msg.PairingTarget != "" || msg.PairingCode != "" || msg.PairingDestination != "" || msg.RoomOp != "" ||
-		msg.Room != "" || msg.To != "" || len(msg.Payload) != 0 || msg.Group != nil
+	return slices.ContainsFunc(foreignFields, func(present func(Message) bool) bool { return present(msg) })
 }
 
 // validContactKey requires a full identity key, sha256: and 64 lowercase

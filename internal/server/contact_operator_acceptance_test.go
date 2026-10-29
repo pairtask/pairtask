@@ -66,34 +66,47 @@ func TestContactOperatorAcceptanceAuditFailureNoQueue(t *testing.T) {
 	}
 }
 
-func TestContactOperatorAcceptancePageBoundsEncodedBytes(t *testing.T) {
+type contactPageProbe struct {
+	fixture   *redeemOperatorFixture
+	key, text string
+	seen      map[string]bool
+	before    int64
+}
+
+func newContactPageProbe(t *testing.T) *contactPageProbe {
+	t.Helper()
 	f := newRedeemOperator(t, redeemConfig(), "")
 	id := messageIdentity(t)
 	messageConfirm(f, id, 1)
-	text := strings.Repeat("\x00", protocol.ContactTextBytes)
+	p := &contactPageProbe{fixture: f, key: id.Fingerprint(), text: strings.Repeat("\x00", protocol.ContactTextBytes), seen: map[string]bool{}}
 	for n := 1; n <= 12; n++ {
-		answer, err := f.st.PeerMessages().Accept(context.Background(), id.Fingerprint(), messaging.Message{ID: fmt.Sprint("large-", n), N: uint64(n), CreatedAt: time.Now(), Text: text}, time.Now())
+		answer, err := f.st.PeerMessages().Accept(context.Background(), p.key, messaging.Message{ID: fmt.Sprint("large-", n), N: uint64(n), CreatedAt: time.Now(), Text: p.text}, time.Now())
 		operatorNoError(t, err)
 		operatorEqual(t, "seed accepted", answer.Stored, true)
 	}
-	seen := map[string]bool{}
-	var before int64
+	return p
+}
+func (p *contactPageProbe) next(t *testing.T) bool {
+	t.Helper()
+	r := p.fixture.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: p.key, ContactBefore: p.before})
+	if r.ContactPage == nil {
+		t.Fatalf("missing page: %+v", r)
+	}
+	operatorEqual(t, "nonempty page", len(r.ContactPage.Messages) > 0, true)
+	for _, m := range r.ContactPage.Messages {
+		operatorEqual(t, "no duplicate "+m.ID, p.seen[m.ID], false)
+		p.seen[m.ID] = true
+		operatorEqual(t, "text preserved", m.Text, p.text)
+		p.before = m.Cursor
+	}
+	return r.ContactPage.More
+}
+func TestContactOperatorAcceptancePageBoundsEncodedBytes(t *testing.T) {
+	p := newContactPageProbe(t)
 	for pages := 0; pages < 12; pages++ {
-		r := f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: id.Fingerprint(), ContactBefore: before})
-		if r.ContactPage == nil || len(r.ContactPage.Messages) == 0 {
-			t.Fatalf("missing nonempty page: %+v", r)
-		}
-		for _, m := range r.ContactPage.Messages {
-			if seen[m.ID] {
-				t.Fatalf("duplicate row %s", m.ID)
-			}
-			seen[m.ID] = true
-			operatorEqual(t, "text preserved", m.Text, text)
-			before = m.Cursor
-		}
-		if !r.ContactPage.More {
+		if !p.next(t) {
 			break
 		}
 	}
-	operatorEqual(t, "every row reachable", len(seen), 12)
+	operatorEqual(t, "every row reachable", len(p.seen), 12)
 }
