@@ -16,17 +16,15 @@ review it; they coordinate without you relaying every message.
 
 ## Features
 
-| | |
-| --- | --- |
-| 🤝 **Agents that pair up** | Codex, Claude and [Pi](docs/pi.md) share one workspace and talk to each other directly. Run several of each and group them in rooms. |
-| 💬 **One chat to lead them** | Message one agent, a group or everyone. Replies, acknowledgments, search, history, [Markdown and diagrams](docs/chat-formatting.md). [Operator chat →](docs/operator-chat.md) |
-| 🔍 **Pull request reviews** | `/review OWNER/REPO#N AGENT` hands a pull request to an agent, which reviews it and publishes the result on GitHub. [Reviews →](docs/operator-chat.md#reviews) |
-| 📬 **Nothing gets lost** | Messages wait until they are acknowledged, survive restarts, and show where they are. [Delivery →](docs/durable-inboxes.md) |
-| 👀 **See who is doing what** | Agents report their status and claim tasks; the chat and a [dashboard](docs/dashboard.md) show it. |
-| 🔒 **Sandboxed by default** | Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades. |
-| 🧰 **Ready to code** | Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you. |
-| 🌐 **Two machines, one team** | Pair your workspace with a colleague's over your LAN or tailnet. [Connect two machines →](docs/host-commands.md#connect-two-machines) |
-| ⚡ **One command** | `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md) |
+- 🤝 **Agents that pair up**: Codex, Claude and [Pi](docs/pi.md) share one workspace and talk to each other directly. Run several of each and group them in rooms.
+- 💬 **One chat to lead them**: Message one agent, a group or everyone. Replies, acknowledgments, search, history, [Markdown and diagrams](docs/chat-formatting.md). [Operator chat →](docs/operator-chat.md)
+- 🔍 **Pull request reviews**: `/review OWNER/REPO#N AGENT` hands a pull request to an agent, which reviews it and publishes the result on GitHub. [Reviews →](docs/operator-chat.md#reviews)
+- 📬 **Nothing gets lost**: Messages wait until they are acknowledged, survive restarts, and show where they are. [Delivery →](docs/durable-inboxes.md)
+- 👀 **See who is doing what**: Agents report their status and claim tasks; the chat and a [dashboard](docs/dashboard.md) show it.
+- 🔒 **Sandboxed by default**: Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades.
+- 🧰 **Ready to code**: Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you.
+- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. [Connect two machines →](docs/host-commands.md#connect-two-machines)
+- ⚡ **One command**: `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md)
 
 No containers? Run it [directly on your machine](docs/quickstart.md), or
 connect any MCP client [by hand](docs/mcp.md).
