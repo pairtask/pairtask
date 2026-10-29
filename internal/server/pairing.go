@@ -182,7 +182,7 @@ func (p *PairingServer) messageSession(netCtx, storeCtx context.Context, conn *f
 	defer cancel()
 	s := messaging.Session{Frames: conn.MessageFrames(sessionCtx), Store: ep.Messages, Contact: contact, Now: ep.Clock}
 	result, err := s.Serve(storeCtx)
-	end(result.Sent+result.Received+result.ReadsSent+result.ReadsStored > 0)
+	end(result.Moved())
 	if err != nil {
 		p.log.Info("message session ended", "cause", hub.PairingCause(err))
 		return

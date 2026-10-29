@@ -83,6 +83,7 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 	// which leaves pairing unavailable rather than the hub.
 	h.pairing, _ = peer.NewInvitations(peer.DefaultInvitationPolicy(), time.Now, rand.Reader, st)
 	h.pair.changed = make(chan struct{}, 1)
+	h.msgs.init(h.pair.changed)
 	return h
 }
 
@@ -155,7 +156,7 @@ func (h *Hub) Run(ctx context.Context) {
 			h.handleOperator(req.ctx, clients, req)
 
 		case <-h.pair.changed:
-			h.emit(protocol.SessionEvent{Kind: protocol.EventPairingChanged})
+			h.announceBackground()
 		}
 	}
 }
@@ -609,21 +610,30 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 		h.handleRoom(ctx, clients, in)
 	case reviewFrames[in.Msg.Type]:
 		h.handleReview(ctx, clients, in)
-	case in.Msg.Type == protocol.TypeOperatorReview:
-		refusal := statusError(in.Msg.RequestID, protocol.ErrForbidden, "review requests are operator-only")
-		refusal.MessageID = in.Msg.MessageID
-		h.enqueue(clients, in.From, refusal)
-	case in.Msg.Type == protocol.TypeOperatorPairing:
-		// Pairing is operator-socket only (#178); an agent gets a correlated refusal.
-		refusal := statusError(in.Msg.RequestID, protocol.ErrForbidden, "pairing is operator-only")
-		refusal.MessageID = in.Msg.MessageID
-		h.enqueue(clients, in.From, refusal)
+	case operatorOnly[in.Msg.Type] != "":
+		h.enqueue(clients, in.From, operatorOnlyRefusal(in.Msg))
 	case in.Msg.Type == protocol.TypeAck:
 		h.acknowledge(ctx, clients, in)
 	default:
 		return false
 	}
 	return true
+}
+
+// operatorOnly are the operator frames an agent may send by mistake: each
+// gets a correlated refusal before any lookup, audit or change, and nothing
+// about what it names. Reviews (#201), pairing (#178) and contact messages
+// (#210) are operator-socket only.
+var operatorOnly = map[string]string{
+	protocol.TypeOperatorReview:  "review requests are operator-only",
+	protocol.TypeOperatorPairing: "pairing is operator-only",
+	protocol.TypeOperatorContact: "contact messages are operator-only",
+}
+
+func operatorOnlyRefusal(msg protocol.Message) protocol.Message {
+	refusal := statusError(msg.RequestID, protocol.ErrForbidden, operatorOnly[msg.Type])
+	refusal.MessageID = msg.MessageID
+	return refusal
 }
 
 func isStatusFrame(kind string) bool {

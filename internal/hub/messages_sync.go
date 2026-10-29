@@ -134,7 +134,7 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 		return // a session with this contact is running already; it isn't a failure
 	}
 	result, err := h.dialSession(ctx, c)
-	end(result.Sent+result.Received+result.ReadsSent+result.ReadsStored > 0)
+	end(result.Moved())
 	if err != nil {
 		h.log.Info("message sync failed", "class", classifySync(err))
 		h.recordSync(contact, classifySync(err), false)

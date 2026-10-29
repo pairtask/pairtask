@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // Messages between paired workspaces (#210). Exactly one side dials each
@@ -65,14 +67,53 @@ type messageWiring struct {
 	syncs   map[string]*MessageSync
 	traffic map[string]time.Time
 	wake    chan string
+	pending map[string]bool // contacts whose change the Run goroutine hasn't announced yet
+	changed chan struct{}   // the hub's background announcement signal, shared with pairing
 }
 
-func (w *messageWiring) init() {
+// init readies the wiring with the hub's announcement signal; New calls it.
+// Later calls only make sure the maps exist.
+func (w *messageWiring) init(changed ...chan struct{}) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if len(changed) > 0 {
+		w.changed = changed[0]
+	}
 	if w.busy == nil {
 		w.busy, w.syncs, w.traffic = map[string]bool{}, map[string]*MessageSync{}, map[string]time.Time{}
-		w.wake = make(chan string, 64)
+		w.wake, w.pending = make(chan string, 64), map[string]bool{}
+	}
+}
+
+// MessagesChanged notes that a contact's messages changed durably; the Run
+// goroutine announces it to the operator session. Safe from any goroutine;
+// it never blocks.
+func (h *Hub) MessagesChanged(contact string) {
+	w := &h.msgs
+	w.init()
+	w.mu.Lock()
+	w.pending[contact] = true
+	w.mu.Unlock()
+	select {
+	case w.changed <- struct{}{}:
+	default:
+	}
+}
+
+// announceMessages emits one contact_messages_changed per contact noted
+// since the last announcement; it runs on the Run goroutine.
+func (h *Hub) announceMessages() {
+	w := &h.msgs
+	w.mu.Lock()
+	contacts := make([]string, 0, len(w.pending))
+	for c := range w.pending {
+		contacts = append(contacts, c)
+	}
+	clear(w.pending)
+	w.mu.Unlock()
+	slices.Sort(contacts)
+	for _, c := range contacts {
+		h.emit(protocol.SessionEvent{Kind: protocol.EventContactMessagesChanged, ContactKey: c})
 	}
 }
 
@@ -102,6 +143,9 @@ func (h *Hub) beginMessages(contact string) (end func(moved bool), ok bool) {
 			w.traffic[contact] = h.pair.cfg.Clock()
 		}
 		w.mu.Unlock()
+		if moved {
+			h.MessagesChanged(contact)
+		}
 	}, true
 }
 
