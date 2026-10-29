@@ -37,9 +37,11 @@ resource "incus_project" "sandbox" {
     # the existing profile while Terraform applies the offline opt-out.
     "restricted.devices.nic"     = "managed"
     "restricted.networks.access" = var.dev_network
-    "restricted.devices.proxy"   = "block"
-    "limits.containers"          = var.secured_runtime ? (var.peer_connector_probe || var.pairing_route ? "3" : "2") : "1"
-    "limits.virtual-machines"    = "0"
+    # Allowed only while the pairing route is on, for connector's published
+    # relay; only the host operator holds the Incus API.
+    "restricted.devices.proxy" = var.pairing_route ? "allow" : "block"
+    "limits.containers"        = var.secured_runtime ? (var.peer_connector_probe || var.pairing_route ? "3" : "2") : "1"
+    "limits.virtual-machines"  = "0"
   }, local.mount_project_config)
 
   lifecycle {

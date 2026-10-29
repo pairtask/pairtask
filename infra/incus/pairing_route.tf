@@ -5,6 +5,17 @@ variable "pairing_route" {
   nullable    = false
 }
 
+variable "pairing_host_port" {
+  description = "Experimental (#222): with pairing_route, publish connector's relay on this port of every host address (on macOS, Colima forwards the VM's port to the Mac's addresses). 0 publishes nothing."
+  type        = number
+  default     = 0
+  nullable    = false
+  validation {
+    condition     = var.pairing_host_port == 0 || (var.pairing_host_port >= 1024 && var.pairing_host_port <= 65535 && floor(var.pairing_host_port) == var.pairing_host_port)
+    error_message = "pairing_host_port must be 0 or a whole port from 1024 to 65535."
+  }
+}
+
 # Enabling, changing or removing the route changes secured's mounts, which
 # Incus must not add to or remove from a running instance: refuse unless
 # secured is stopped (or not yet created).
@@ -121,6 +132,22 @@ resource "incus_instance" "pairing_connector" {
   config = {
     "user.pairtask.managed" = "infra/incus"
     "user.pairtask.role"    = "pairing-connector"
+  }
+
+  # A real listening socket on the host (the VM on macOS), not a NAT rule, so
+  # Colima's port forwarding sees it; the relay itself listens on 7445.
+  dynamic "device" {
+    for_each = var.pairing_host_port == 0 ? [] : [var.pairing_host_port]
+    content {
+      name = "pairing-relay"
+      type = "proxy"
+      properties = {
+        listen  = "tcp:0.0.0.0:${device.value}"
+        connect = "tcp:127.0.0.1:7445"
+        bind    = "host"
+        nat     = "false"
+      }
+    }
   }
 
   lifecycle {

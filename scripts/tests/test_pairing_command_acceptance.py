@@ -65,11 +65,11 @@ class PairingFilesAcceptance(PairingFixture):
         self.assertEqual(change.path, self.variables)
         pairing.write_change(change)
         self.assertEqual(json.loads(self.variables.read_text()),
-                         dict(original, secured_runtime=True, pairing_route=True))
+                         dict(original, secured_runtime=True, pairing_route=True, pairing_host_port=7445))
         self.assertEqual(stat.S_IMODE(self.variables.stat().st_mode), 0o600)
         pairing.write_change(pairing.pairing_change(self.root, False))
         self.assertEqual(json.loads(self.variables.read_text()),
-                         dict(original, secured_runtime=True, pairing_route=False))
+                         dict(original, secured_runtime=True, pairing_route=False, pairing_host_port=7445))
         self.assertFalse(pairing.configured(self.root))
 
     def test_existing_control_file_is_updated_without_creating_competing_default(self):
@@ -78,7 +78,7 @@ class PairingFilesAcceptance(PairingFixture):
         self.assertEqual(change.path, target)
         pairing.write_change(change)
         self.assertFalse(self.variables.exists())
-        self.assertEqual(json.loads(target.read_text()), {"secured_runtime": True, "custom": 7, "pairing_route": True})
+        self.assertEqual(json.loads(target.read_text()), {"secured_runtime": True, "custom": 7, "pairing_route": True, "pairing_host_port": 7445})
 
     def test_invalid_json_shapes_and_nonboolean_controls_never_write(self):
         bodies = ["{broken", "[]", "null", "42"]

@@ -33,7 +33,7 @@ run "route_preserves_secured_and_workspace_boundaries" {
       incus_instance.pairing_connector[0].name == "connector" &&
       incus_instance.pairing_connector[0].config["user.pairtask.role"] == "pairing-connector" &&
       incus_project.sandbox.config["limits.containers"] == "3" &&
-      incus_project.sandbox.config["restricted.devices.proxy"] == "block" &&
+      incus_project.sandbox.config["restricted.devices.proxy"] == "allow" &&
       length(incus_instance.connector) == 0 &&
       length(incus_storage_volume.peer_ipc) == 0 &&
       alltrue([for device in incus_profile.secured[0].device : device.type == "disk"]) &&

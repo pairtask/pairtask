@@ -22,8 +22,8 @@ shells in the containers are stopped.
 | `curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh \| sh` | host | The one-line install: checks Python 3.9+, Git, Incus (and Colima on macOS, offering the `brew install` line), fetches the latest release's host tooling into `~/.pairtask/host`, puts `pairtask` on your PATH, then runs `pairtask install --release <that tag>`; run again later to upgrade both. Options after `sh -s --`: `--version TAG`, `--no-provision`, `--no-modify-path`, `--yes`. Never run as root. | yes, if containers exist |
 | `pairtask install` | host | First install: on macOS starts the Colima VM, then downloads and verifies the latest release, provisions the containers, configures SSH and lists them. Flags go to the rollout (`--release workspace-vX.Y.Z`, `--remote`, `--project`, `--storage-pool`, `--network`, `--tools`). | yes, if containers exist |
 | `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. Legacy: `python3 scripts/sandbox-provision.py rollout`. | yes |
-| `pairtask pairing on` / `pairtask pairing off` | host | Turn the experimental pairing route (#178) on or off in the deployment's settings, then run the same rollout as upgrade (same flags). `on` also turns on `secured_runtime`; it is refused while `peer_connector_probe` is on. Settings are checked before anything is written or stopped. Later upgrades keep the setting. | yes |
-| `pairtask pairing status` | host | Show the pairing route as configured and as deployed, read-only: `on`, `off`, or which command finishes a change an interrupted rollout left behind. | no |
+| `pairtask pairing on` / `pairtask pairing off` | host | Turn the experimental pairing route (#178) on or off in the deployment's settings, then run the same rollout as upgrade (same flags). `on` also turns on `secured_runtime`; it is refused while `peer_connector_probe` is on. `on` publishes the relay on every host address (LAN and tailnet) on `--host-port N` (1024–65535, or 0 for none), else the saved port, else 7445; `off` keeps the port for the next `on`. Settings are checked before anything is written or stopped. Later upgrades keep the setting. | yes |
+| `pairtask pairing status` | host | Show the pairing route and its host port as configured and as deployed, read-only: `on`, `off`, or which command finishes a change an interrupted rollout left behind. It reports applied forwarding, not whether another machine can reach it. | no |
 | `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). Legacy: `python3 scripts/sandbox-download.py`. | no |
 | `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. Legacy: `python3 scripts/sandbox-host.py plan|apply`. | no |
 | `pairtask ssh` | host | Create the key-only SSH path into the workspace; the remote defaults to your OS (`colima-pairtask` on macOS, `local` on Linux), `--remote` and `--instance` override. The rollout does this for you. Legacy: `python3 scripts/sandbox-ssh.py --remote …`. | no |
@@ -195,10 +195,24 @@ run as the `peer` user (UID 1052, group `collab-peer`, GID 1050). The apply
 refuses to turn the route on, off or change it while secured or connector
 runs; `pairtask pairing on|off` stops workspace, connector and secured, in
 that order, first. CI proves the installed route in a
-disposable project with redemptions both ways, crash restarts included;
-port 7445 is connector's, inside the deployment: it isn't published on the
-host's addresses, so a colleague's workspace on another machine can't reach
-it yet.
+disposable project with redemptions both ways, crash restarts included.
+
+**Publishing** (`pairing_host_port`, #222): with a port P set (default 0,
+none; `pairtask pairing on` sets 7445 unless told otherwise), connector
+gets one Incus proxy device, `pairing-relay`, listening on `tcp:0.0.0.0:P`
+on the host side and connecting to the relay's 7445 inside connector
+(`bind=host`, `nat=false`). It is a real listening socket, so on macOS
+Colima's port forwarding publishes it on every Mac address too; this needs
+the managed VM's `network.address = false`, which `pairtask vm` pins and
+checks. Anyone who can reach the host on P can open a connection, but each
+one must still complete TLS and the pairing exchange, within the relay's
+limits; secured keeps no network. While the route is on, the project
+allows proxy devices (`restricted.devices.proxy = allow`, even with port
+0); only the host operator holds the Incus API, so neither dev nor secured
+can add one. Turning the route off removes connector, its device and the
+allowance. macOS may ask whether to accept incoming connections for the
+forwarder, and a firewall or tailnet ACL may still block P: status shows
+applied forwarding, not reachability.
 
 With the socket or an egress set, the broker loads or creates its workspace
 key at startup and marks redemptions interrupted before verification

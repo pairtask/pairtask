@@ -16,8 +16,10 @@ real redemptions both ways against a standalone broker on this host:
 Both directions run again after crash restarts: the repeated redemptions
 find the requests already accepted, settle, and leave one contact each.
 
-It then runs pairing_route_checks on the deployment and checks that neither
-code reached a journal or log. It never touches an operator sandbox and
+It then runs pairing_route_checks on the deployment, proves publishing the
+relay on this host's ports with pairing_publish_checks (a redemption through
+the published port, moving and unpublishing it, a taken port, then turning
+the route off), and checks that no code reached a journal or log. It never touches an operator sandbox and
 always destroys what it created. The bridge is a disposable test network on
 this host: it proves the container boundary and the installed route, not
 reachability between real home and work machines.
@@ -40,6 +42,7 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import pairing_publish_checks  # noqa: E402
 import pairing_route_checks  # noqa: E402
 
 SECURED_OPERATOR = "/run/collab-ai-operator/operator.sock"
@@ -86,7 +89,8 @@ def build(directory):
 def enable_route(directory):
     path = directory / "sandbox.auto.tfvars.json"
     variables = json.loads(path.read_text())
-    variables.update({"secured_runtime": True, "pairing_route": True})
+    # Unpublished until the publishing stages set a port.
+    variables.update({"secured_runtime": True, "pairing_route": True, "pairing_host_port": 0})
     path.write_text(json.dumps(variables))
 
 
@@ -291,11 +295,11 @@ def outbound(deployment, host, request_state):
     return code, join["operation_id"]
 
 
-def inbound(deployment, host, connector_ip, request_state):
-    """The host redeems secured's code through connector's relay; secured
-    then holds the host's request in request_state."""
+def inbound(deployment, host, destination, request_state):
+    """The host redeems secured's code at destination, through connector's
+    relay; secured then holds the host's request in request_state."""
     code, secured_identity = opened_code(deployment.operator("open", "--json"))
-    result = host.pair("redeem", f"{connector_ip}:{RELAY_PORT}", "--wait", WAIT, "--json", stdin=code + "\n")
+    result = host.pair("redeem", destination, "--wait", WAIT, "--json", stdin=code + "\n")
     require(result.returncode == 0, f"the host's redemption did not settle: {result.stdout} {result.stderr}")
     join = json.loads(result.stdout)
     require(join["state"] == "awaiting_acceptance", f"the host's redemption is {join['state']}")
@@ -360,7 +364,7 @@ def both_ways(deployment, host, connector_ip, first):
     repeat finds the requests already accepted."""
     state = "pending_acceptance" if first else "accepted"
     code_out, op_out = outbound(deployment, host, state)
-    code_in, op_in = inbound(deployment, host, connector_ip, state)
+    code_in, op_in = inbound(deployment, host, f"{connector_ip}:{RELAY_PORT}", state)
     settle_outbound(deployment, host, op_out, accept=first)
     settle_inbound(deployment, host, op_in, accept=first)
     return [code_out, code_in]
@@ -379,7 +383,16 @@ def codes_absent(deployment, host, codes):
     print("PASS: no pairing code in either journal or the host's log.", flush=True)
 
 
-def exercise(args, deployment, binaries, workdir):
+def redeem_published(deployment, host, destination):
+    """A real redemption and settlement through the host's published port:
+    the identity proof that it reaches secured through connector's relay."""
+    code, operation_id = inbound(deployment, host, destination, "accepted")
+    settle_inbound(deployment, host, operation_id, accept=False)
+    print(f"PASS: the host redeemed and settled through the published {destination}.", flush=True)
+    return code
+
+
+def exercise(args, deployment, binaries, workdir, publication):
     for role, unit in (("secured", "pairtask-secured-broker.service"), ("connector", "pairtask-peer-egress.service"),
                        ("connector", "pairtask-peer-relay.service")):
         deployment.await_active(role, unit)
@@ -397,9 +410,12 @@ def exercise(args, deployment, binaries, workdir):
         codes += both_ways(deployment, host, connector_ip, first=False)
         print("PASS: both directions, settlement included, again after crashing the broker and the forwarder.", flush=True)
         pairing_route_checks.check_all(args.remote, deployment.base[2])
-        codes_absent(deployment, host, codes)
+        published, ports = pairing_publish_checks.prove_publishing(
+            publication, lambda destination: redeem_published(deployment, host, destination))
+        codes_absent(deployment, host, codes + published)
     finally:
         host.stop()
+    return ports
 
 
 def parse_args():
@@ -428,7 +444,9 @@ def main():
         run(tofu + ["init", "-input=false", "-lockfile=readonly"])
         initialized = True
         run(tofu + ["apply", "-auto-approve", "-input=false"])
-        exercise(args, deployment, binaries, workdir)
+        publication = pairing_publish_checks.Publication(args.remote, project, directory, tofu)
+        ports = exercise(args, deployment, binaries, workdir, publication)
+        pairing_publish_checks.prove_off(publication, ports)
         print("PASS: pairing route proof.", flush=True)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
