@@ -70,7 +70,7 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 		state = "confirmed on both sides"
 	}
 	lines := []string{
-		titleStyle.Render(fmt.Sprintf("⇄ workspace %q", safe(c.Name))) + mutedStyle.Render(" · "+state),
+		titleStyle.Render("⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(" · "+state),
 		mutedStyle.Render("  identity " + safe(c.IdentityKey)),
 	}
 	switch {
@@ -82,6 +82,15 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 		lines = append(lines, mutedStyle.Render("  "+m.syncLine(c.IdentityKey)))
 	}
 	return lines
+}
+
+// departureNote says when a message written now leaves: at once when this
+// side dials, else when the other side next syncs.
+func (m *Model) departureNote(fingerprint string) string {
+	if t := m.contacts.threads[fingerprint]; t != nil && t.loaded && t.sync.Dials {
+		return "sent at once"
+	}
+	return "leaves when they next sync (30 s while active, else 5 min)"
 }
 
 // syncLine is what this side knows of syncing with the contact.
@@ -108,7 +117,7 @@ func (m *Model) syncLine(fingerprint string) string {
 // line escaped and wrapped; a contact's text is never parsed.
 func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView) []string {
 	at := v.CreatedAt.Local().Format("15:04")
-	head := agentStyle(c.IdentityKey).Render(fmt.Sprintf("  ⇄ %s", safe(c.Name))) + mutedStyle.Render(" · "+at)
+	head := agentStyle(c.IdentityKey).Render("  ⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(" · "+at)
 	if v.Direction == "out" {
 		head = titleStyle.Render("  you →") + mutedStyle.Render(" · "+at+" · "+m.outboundState(v))
 	}

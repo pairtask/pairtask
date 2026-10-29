@@ -48,6 +48,8 @@ func (m *Model) argumentCandidates(l argLine) []string {
 		return m.mentionCompletions(l, m.agentCandidates)
 	case "review":
 		return m.reviewCompletions(l)
+	case "pair":
+		return m.pairCompletions(l)
 	}
 	return nil
 }

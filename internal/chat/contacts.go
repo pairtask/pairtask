@@ -1,7 +1,8 @@
 package chat
 
 import (
-	"fmt"
+	"net"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -27,6 +28,47 @@ func contactLabel(fingerprint string) string {
 		short = short[:15] + "…"
 	}
 	return "⇄ workspace " + safe(short)
+}
+
+// defaultPairingName is the name a workspace pairs under unless told
+// otherwise; it tells nobody apart, so it is never shown as a name.
+const defaultPairingName = "workspace"
+
+// contactDisplay names a paired workspace for people: the name this side
+// has for it, else the address this side dials, else its short key. A name
+// is display only; the ⇄ before it always marks a workspace, never an agent.
+func contactDisplay(c protocol.PairingContactView) string {
+	if name := contactName(c.Name); name != "" {
+		return name
+	}
+	if host := destinationHost(c.Destination); host != "" {
+		return host
+	}
+	return protocol.ShortKey(c.IdentityKey)
+}
+
+// contactName is a workspace's name worth showing, or "".
+func contactName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == defaultPairingName {
+		return ""
+	}
+	return name
+}
+
+func destinationHost(destination string) string {
+	if host, _, err := net.SplitHostPort(destination); err == nil {
+		return host
+	}
+	return destination
+}
+
+// contactTitle is the display name of the contact with this fingerprint.
+func (m *Model) contactTitle(fingerprint string) string {
+	if c, ok := m.contact(fingerprint); ok {
+		return contactDisplay(c)
+	}
+	return protocol.ShortKey(fingerprint)
 }
 
 // contactViews are the contacts from the latest pairing snapshot, one per
@@ -72,8 +114,7 @@ func (m *Model) contactHint(key viewKey) string {
 	if notice := m.contactNotice(key); notice != "" {
 		return "✗ " + notice
 	}
-	c, _ := m.contact(key.contact)
-	return fmt.Sprintf("to workspace %q · queued now, it leaves at the next sync", safe(c.Name))
+	return "to ⇄ " + safe(m.contactTitle(key.contact)) + " · " + m.departureNote(key.contact)
 }
 
 // refreshContacts quietly reads the pairing state after a baseline, so

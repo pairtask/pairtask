@@ -132,7 +132,7 @@ var commands = []command{
 	{name: "history", help: "load older messages", check: noArgs, run: (*Model).historyCommand},
 	{name: "chat", usage: `all|id|@a @b|"id"|["a","b"]`, help: "switch conversation: all, an agent, a group of agents, or JSON for any IDs", check: chatArg, run: (*Model).chatCommand},
 	{name: "room", aliases: []string{"rooms"}, usage: "[NAME | add NAME @a | remove NAME @a | delete NAME]", help: "rooms: list, open (creating) a room's tab, add or remove members, delete a room", check: roomArg, run: (*Model).roomsCommand},
-	{name: "pair", usage: "[open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME]]", help: "experimental pairing: open or cancel an invitation code, decide requests, redeem another workspace's code", check: pairArg, run: (*Model).pairCommand, secret: true},
+	{name: "pair", usage: "[open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [ID]]", help: "experimental pairing: open or cancel an invitation code, decide requests, redeem another workspace's code", check: pairArg, run: (*Model).pairCommand, secret: true},
 	{name: "review", usage: "[--no-publish] [--no-formal] TARGET AGENT [SCOPE] | status [ID] | cancel [ID [REASON]]", help: "ask an agent to review a pull request (OWNER/REPO#N or its link), or follow or cancel one (no ID picks it)", check: reviewArg, run: (*Model).reviewCommand},
 	{name: "reviews", help: "list review requests and their verdicts", check: noArgs, run: (*Model).reviewsCommand},
 	{name: "close", help: "hide this conversation from the bar (nothing is deleted; new messages reopen it)", check: noArgs, run: (*Model).closeCommand},

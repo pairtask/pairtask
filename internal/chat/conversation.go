@@ -120,6 +120,9 @@ type ConversationView struct {
 	// Contact is a paired workspace's full identity fingerprint, set only
 	// for its conversation; no message is ever sent there yet.
 	Contact string
+	// Label is what the bar shows when it isn't the ID: a contact's name,
+	// address or short key.
+	Label string
 }
 
 // refreshDirectory keeps the directory in step with presence and the loaded

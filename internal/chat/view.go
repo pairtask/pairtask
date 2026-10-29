@@ -300,7 +300,7 @@ func (m *Model) pickerLabel(p *picker, item string) string {
 	case PickerAck:
 		return m.ackLabel(item)
 	case PickerArgument:
-		return "  " + safe(item)
+		return m.argumentLabel(item)
 	case PickerReview:
 		return m.reviewLabel(item)
 	}
@@ -417,7 +417,7 @@ func shortID(id string) string {
 // it can't be sent.
 func (m *Model) hintText() string {
 	if m.compose.cmd != nil {
-		return "command · Enter runs · Tab completes · Esc back to your draft"
+		return m.commandHint()
 	}
 	if key := m.conv.selected; key.isContact() {
 		return m.contactHint(key)
