@@ -11,6 +11,7 @@ from sandbox_operator_config import ROOT, image_selection, state_project
 from sandbox_operator_state import deployment_lock
 from sandbox_operator_recipe import refresh_recipe
 from sandbox_operator_workflow import initialize_variables, require_recovered, run_locked_operation
+from sandbox_pairing import pairing_change, pairing_connector, report, write_change
 from sandbox_releases import download_release
 from sandbox_tools_install import (Container, Release, shipped_tools, RETRY_COMMAND, has_tool_store, install,
                                    load_bundles,
@@ -21,18 +22,23 @@ def managed_instances(directory, project):
     if state_project(directory) is None:
         return []
     state = json.loads((directory / "terraform.tfstate").read_text())
-    attributes = []
+    owned = []
     for resource in state.get("resources", []):
         if resource.get("mode", "managed") != "managed" or resource["type"] != "incus_instance":
             continue
-        attributes.extend(instance["attributes"] for instance in resource.get("instances", []))
-    return [managed_name(attrs, project) for attrs in attributes]
+        owned.extend((resource, instance["attributes"]) for instance in resource.get("instances", []))
+    return [managed_name(resource, attrs, project) for resource, attrs in owned]
 
 
-def managed_name(attrs, project):
-    if attrs["name"] not in ("workspace", "secured") or attrs["project"] != project:
+def managed_name(resource, attrs, project):
+    if attrs["project"] != project or not admitted(resource, attrs, project):
         raise ValueError("Unexpected managed instance; use explicit plan/apply")
     return attrs["name"]
+
+
+def admitted(resource, attrs, project):
+    """workspace and secured, and the pairing route's own connector."""
+    return attrs["name"] in ("workspace", "secured") or pairing_connector(resource, attrs, project)
 
 
 def instances(args):
@@ -44,7 +50,7 @@ def stop_managed(args, names):
     if not names:
         return
     statuses = instances(args)
-    for name in sorted(names, reverse=True):  # workspace before secured
+    for name in sorted(names, key=STOP_ORDER.index):
         status = statuses.get(name)
         if status is None or status == "Stopped":
             continue
@@ -53,6 +59,10 @@ def stop_managed(args, names):
         print(f"Stopping {name} (active sessions will end)…", flush=True)
         subprocess.run(["incus", "--project", args.project, "stop", f"{args.remote}:{name}",
                         "--timeout", "60"], check=True)
+
+
+# secured serves the others, so it stops last.
+STOP_ORDER = ("workspace", "connector", "secured")
 
 
 def configure_ssh(args):
@@ -146,6 +156,7 @@ def rollout(args, directory, server):
     # One lock covers download through SSH: no competing plan/apply can change the selection.
     with deployment_lock(directory):
         require_recovered(directory)
+        pairing = checked_pairing(args, directory)
         initialize_variables(args, directory)
         names = managed_instances(directory, args.project)
         selected = copy(args)
@@ -153,6 +164,7 @@ def rollout(args, directory, server):
         selected.image_dir = selected.image_dir.resolve()
         image_selection(directory, selected.image_dir)
         refresh_recipe(directory)
+        record_pairing(directory, pairing)
         print("Rolling out workspace; persistent volumes are protected by plan validation.", flush=True)
         stop_managed(args, names)
         selected.action, selected.replace, selected.destroy = "plan", True, False
@@ -171,3 +183,20 @@ def rollout(args, directory, server):
             raise
         # Re-trust the key through authenticated Incus only after a successful apply.
         configure_ssh(args)
+        if pairing is not None:
+            report(pairing)
+
+
+def checked_pairing(args, directory):
+    """The requested pairing route (None keeps the setting), refused before
+    anything is written or stopped."""
+    pairing = getattr(args, "pairing", None)
+    if pairing is not None:
+        pairing_change(directory, pairing)
+    return pairing
+
+
+def record_pairing(directory, pairing):
+    # Computed again from the files as they are now: initialization may have written them.
+    if pairing is not None:
+        write_change(pairing_change(directory, pairing))
