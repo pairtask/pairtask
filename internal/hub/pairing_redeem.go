@@ -83,7 +83,8 @@ type pairingWiring struct {
 	workers   sync.WaitGroup
 	runCtx    context.Context
 	settle    settleState
-	changed   chan struct{} // one pending pairing_changed, coalescing the rest
+	changed   chan struct{} // one pending background announcement, coalescing the rest
+	dirty     atomic.Bool   // pairing state changed since the last pairing_changed
 }
 
 func defaultPairingConfig() PairingConfig {

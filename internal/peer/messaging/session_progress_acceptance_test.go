@@ -20,22 +20,15 @@ func TestMessageSessionAcceptanceLostAckRetainsProgress(t *testing.T) {
 func TestMessageSessionAcceptanceRefusalRetainsProgress(t *testing.T) {
 	db, _ := sessionFixture(t)
 	_, err := db.PeerMessages().Queue(context.Background(), messaging.Outgoing{Contact: sessionContact, ID: "refused", Text: "text", Now: sessionAt})
-	if err != nil {
-		t.Fatal(err)
-	}
+	sessionOK(t, err)
 	wire, err := messaging.EncodeRefused(messaging.Refused{ID: "refused", Refusal: messaging.Refuse("invalid")})
-	if err != nil {
-		t.Fatal(err)
-	}
+	sessionOK(t, err)
 	frames := &scriptFrames{input: [][]byte{sessionHello(t), wire}}
 	result, err := sessionSide(frames, db.PeerMessages()).Dial(context.Background())
-	if !errors.Is(err, io.EOF) || result.Refused != 1 || !result.Moved() {
-		t.Fatalf("lost refusal progress: %+v %v", result, err)
-	}
-	rows, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 64)
-	if err != nil || len(rows) != 1 || rows[0].State != messaging.StateRefused {
-		t.Fatalf("refusal not durable: %+v %v", rows, err)
-	}
+	sessionErrorIs(t, err, io.EOF)
+	sessionEqual(t, result.Refused, 1)
+	sessionEqual(t, result.Moved(), true)
+	sessionEqual(t, sessionRows(t, db.PeerMessages(), 1)[0].State, messaging.StateRefused)
 }
 
 func TestMessageSessionAcceptanceLostReadAckRetainsProgress(t *testing.T) {

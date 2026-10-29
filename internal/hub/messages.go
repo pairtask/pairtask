@@ -68,16 +68,20 @@ type messageWiring struct {
 	traffic map[string]time.Time
 	wake    chan string
 	pending map[string]bool // contacts whose change the Run goroutine hasn't announced yet
-	changed chan struct{}   // one pending announcement, coalescing the rest
+	changed chan struct{}   // the hub's background announcement signal, shared with pairing
 }
 
-// init readies the wiring; New calls it, so Run can select on changed.
-func (w *messageWiring) init() {
+// init readies the wiring with the hub's announcement signal; New calls it.
+// Later calls only make sure the maps exist.
+func (w *messageWiring) init(changed ...chan struct{}) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if len(changed) > 0 {
+		w.changed = changed[0]
+	}
 	if w.busy == nil {
 		w.busy, w.syncs, w.traffic = map[string]bool{}, map[string]*MessageSync{}, map[string]time.Time{}
-		w.wake, w.pending, w.changed = make(chan string, 64), map[string]bool{}, make(chan struct{}, 1)
+		w.wake, w.pending = make(chan string, 64), map[string]bool{}
 	}
 }
 

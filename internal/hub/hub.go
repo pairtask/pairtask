@@ -83,7 +83,7 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 	// which leaves pairing unavailable rather than the hub.
 	h.pairing, _ = peer.NewInvitations(peer.DefaultInvitationPolicy(), time.Now, rand.Reader, st)
 	h.pair.changed = make(chan struct{}, 1)
-	h.msgs.init()
+	h.msgs.init(h.pair.changed)
 	return h
 }
 
@@ -156,10 +156,7 @@ func (h *Hub) Run(ctx context.Context) {
 			h.handleOperator(req.ctx, clients, req)
 
 		case <-h.pair.changed:
-			h.emit(protocol.SessionEvent{Kind: protocol.EventPairingChanged})
-
-		case <-h.msgs.changed:
-			h.announceMessages()
+			h.announceBackground()
 		}
 	}
 }
