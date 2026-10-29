@@ -225,6 +225,11 @@ The dashboard is read-only. Use `pairtask chat` for messages; agent-specific
 prompts may still appear in the agent terminal.
 [Controls](docs/dashboard.md) · [UI help](docs/sandbox.md#incus-web-ui).
 
+To connect two machines over LAN or a tailnet, follow the
+[quick pairing setup](docs/host-commands.md#connect-two-machines): update both
+hosts, publish the relay, exchange a pairing code, then send a test message
+each way in operator chat.
+
 ## How it fits together
 
 With `secured_runtime = true`, Codex, Claude and the read-only dashboard run in

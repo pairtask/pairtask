@@ -43,18 +43,29 @@ def arguments():
     parser.add_argument("--ssh-state-dir", type=Path, default=Path(__file__).resolve().parents[1] / "infra/incus/ssh")
     parser.add_argument("--tools", nargs="*", default=["cs-mcp", "playwright", "docker", "pi"], metavar="TOOL",
                         help="Optional tools to enable (default: all); required tools are always installed")
+    parser.add_argument("--host-port", type=int, help="pairing-on: publish the relay on this port of every host address (0: none; default: the saved port, else 7445)")
     changes = parser.add_mutually_exclusive_group()
     changes.add_argument("--replace", action="store_true", help="Plan replacement of the dev container")
     changes.add_argument("--destroy", action="store_true", help="Explicitly plan deletion; volume guards must be removed first")
     args = parser.parse_args()
-    if args.action != "plan" and any((args.replace, args.destroy)):
-        parser.error("--replace and --destroy are plan options; apply uses the saved plan")
-    if args.release:
-        if args.action not in ROLLOUTS or args.image_dir:
-            parser.error("--release is for rollout and cannot be combined with --image-dir")
+    check_combinations(parser, args)
     args.release = args.release or "latest"
     args.pairing = ROLLOUTS.get(args.action)
     return args
+
+
+def release_allowed(args):
+    return args.action in ROLLOUTS and not args.image_dir
+
+
+def check_combinations(parser, args):
+    """Flags that only some actions take."""
+    if args.action != "plan" and any((args.replace, args.destroy)):
+        parser.error("--replace and --destroy are plan options; apply uses the saved plan")
+    if args.release and not release_allowed(args):
+        parser.error("--release is for rollout and cannot be combined with --image-dir")
+    if args.host_port is not None and args.action != "pairing-on":
+        parser.error("--host-port is for pairing-on")
 
 
 def main():

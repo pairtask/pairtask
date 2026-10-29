@@ -14,7 +14,9 @@ from sandbox_operator_config import LOCATION, ROOT, read_registry, state_project
 from sandbox_operator_state import private_write
 
 
-CONTROLS = ("pairing_route", "secured_runtime", "peer_connector_probe")
+SWITCHES = ("pairing_route", "secured_runtime", "peer_connector_probe")
+PORT = "pairing_host_port"
+CONTROLS = SWITCHES + (PORT,)
 DEFAULT_FILE = "operator.auto.tfvars.json"
 JSON_PATTERNS = ("*.auto.tfvars.json", "terraform.tfvars.json")
 HCL_PATTERNS = ("*.auto.tfvars", "terraform.tfvars")
@@ -22,8 +24,12 @@ HCL_PATTERNS = ("*.auto.tfvars", "terraform.tfvars")
 HCL_CONTROL = re.compile(r"\b(%s)\b" % "|".join(CONTROLS))
 CONNECTOR = ("pairing_connector", "connector", "pairing-connector")  # resource, instance, role
 RELAY_PORT = 7445
-RELAY_NOTE = (f"connector's relay listens on port {RELAY_PORT} inside the deployment; "
-              "it isn't published on this host's addresses yet, so another machine can't reach it")
+PORTS = range(1024, 65536)  # or 0: not published
+DEVICE = "pairing-relay"
+RELAY_NOTE = (f"connector's relay listens on port {RELAY_PORT} inside the deployment and isn't "
+              "published on this host's addresses, so another machine can't reach it")
+FORWARD_NOTE = ("forwarding applied on all host addresses (LAN and tailnet), port {port}; on macOS, "
+                "Colima forwards the VM's port to the Mac. Reachability isn't checked here")
 STATES = {
     (True, True): "on",
     (False, False): "off",
@@ -50,10 +56,23 @@ def json_object(path):
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
         raise ValueError(f"{path.name} must hold a JSON object")
-    for key in CONTROLS:
+    for key in SWITCHES:
         if key in data and not isinstance(data[key], bool):
             raise ValueError(f"{path.name}: {key} must be true or false")
+    if PORT in data:
+        valid_port(data[PORT], f"{path.name}: {PORT}")
     return data
+
+
+def valid_port(value, label=PORT):
+    """A publishing port: 0 (none) or a whole number from 1024 to 65535."""
+    if type(value) is not int or not publishable(value):
+        raise ValueError(f"{label} must be 0 or a whole port from 1024 to 65535")
+    return value
+
+
+def publishable(port):
+    return port == 0 or port in PORTS
 
 
 def settings(directory):
@@ -74,17 +93,23 @@ def control_file(directory, files):
     return owners[0] if owners else directory / DEFAULT_FILE
 
 
-def pairing_change(directory, enabled):
-    """The variables with the route turned on or off; nothing is written."""
+def pairing_change(directory, enabled, host_port=None):
+    """The variables with the route turned on or off; nothing is written.
+    On publishes on host_port, else on the saved port, else on 7445; off
+    keeps the saved port for the next on."""
     files = settings(directory)
     path = control_file(directory, files)
     variables = dict(files.get(path, {}))
     if not enabled:
+        if host_port is not None:
+            raise ValueError("--host-port is only for pairing on")
         variables["pairing_route"] = False
         return PairingChange(path, variables)
     if variables.get("peer_connector_probe"):
         raise ValueError("pairing_route and peer_connector_probe can't both be on; turn the probe off first")
+    port = variables.get(PORT, RELAY_PORT) if host_port is None else valid_port(host_port, "--host-port")
     variables.update(secured_runtime=True, pairing_route=True)
+    variables[PORT] = port
     return PairingChange(path, variables)
 
 
@@ -134,6 +159,39 @@ def connector_instances(state, project):
     return owned
 
 
+# Exactly the forwarder the deployment defines; the port is checked apart.
+FORWARDER = {"type": "proxy", "connect": f"tcp:127.0.0.1:{RELAY_PORT}", "bind": "host", "nat": "false"}
+LISTEN = re.compile(r"tcp:0\.0\.0\.0:([0-9]{1,5})")
+
+
+def published_port(directory, project):
+    """The applied publishing port: None without a connector in a deployed
+    state, 0 when the connector publishes nothing."""
+    state = deployed_state(directory, project)
+    owned = [] if state is None else connector_instances(state, project)
+    if not owned:
+        return None
+    return relay_port(owned[0][1])
+
+
+def relay_port(attrs):
+    """The connector's publishing port: 0 without the forwarder device."""
+    devices = [device for device in attrs.get("device") or [] if device.get("name") == DEVICE]
+    if len(devices) > 1:
+        raise ValueError(f"Connector has more than one {DEVICE} device; use explicit plan/apply")
+    return forwarder_port(devices[0]) if devices else 0
+
+
+def forwarder_port(device):
+    """The port of exactly the forwarder the deployment defines."""
+    shape = dict(device.get("properties") or {}, type=device.get("type"))
+    listen = LISTEN.fullmatch(str(shape.pop("listen", "")))
+    port = int(listen.group(1)) if listen else 0
+    if shape != FORWARDER or port == 0:
+        raise ValueError(f"Unexpected {DEVICE} device on connector; use explicit plan/apply")
+    return valid_port(port, f"{DEVICE} port")
+
+
 def find_deployment(state_dir, project, root=ROOT, location=LOCATION):
     """The deployment directory, discovered without creating or remembering
     anything; None when there is none."""
@@ -160,10 +218,18 @@ def describe(directory, project):
     on, live = configured(directory), applied(directory, project)
     word = "on" if on else "off"
     state = f"configured {word}; not deployed yet" if live is None else STATES[(on, live)]
-    lines = [f"Pairing route: {state}", f"Settings: {control_file(directory, settings(directory))}"]
+    files = settings(directory)
+    path = control_file(directory, files)
+    lines = [f"Pairing route: {state}", f"Settings: {path}"]
+    if on:
+        lines.append(f"Configured host port: {files.get(path, {}).get(PORT, 0) or 'none (not published)'}")
     if live:
-        lines.append(RELAY_NOTE)
+        lines.append(publication(published_port(directory, project)))
     return lines
+
+
+def publication(port):
+    return FORWARD_NOTE.format(port=port) if port else RELAY_NOTE
 
 
 def status(args):
@@ -176,9 +242,9 @@ def status(args):
     return 0
 
 
-def report(enabled):
-    """The closing line of a pairing rollout."""
+def report(enabled, directory, project):
+    """The closing line of a pairing rollout, from the applied state."""
     if enabled:
-        print("Pairing route on: " + RELAY_NOTE + ".", flush=True)
+        print("Pairing route on: " + publication(published_port(directory, project)) + ".", flush=True)
     else:
-        print("Pairing route off: connector removed.", flush=True)
+        print("Pairing route off: connector and its forwarding removed.", flush=True)

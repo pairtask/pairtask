@@ -164,7 +164,7 @@ def rollout(args, directory, server):
         selected.image_dir = selected.image_dir.resolve()
         image_selection(directory, selected.image_dir)
         refresh_recipe(directory)
-        record_pairing(directory, pairing)
+        record_pairing(args, directory, pairing)
         print("Rolling out workspace; persistent volumes are protected by plan validation.", flush=True)
         stop_managed(args, names)
         selected.action, selected.replace, selected.destroy = "plan", True, False
@@ -184,7 +184,7 @@ def rollout(args, directory, server):
         # Re-trust the key through authenticated Incus only after a successful apply.
         configure_ssh(args)
         if pairing is not None:
-            report(pairing)
+            report(pairing, directory, args.project)
 
 
 def checked_pairing(args, directory):
@@ -192,11 +192,11 @@ def checked_pairing(args, directory):
     anything is written or stopped."""
     pairing = getattr(args, "pairing", None)
     if pairing is not None:
-        pairing_change(directory, pairing)
+        pairing_change(directory, pairing, getattr(args, "host_port", None))
     return pairing
 
 
-def record_pairing(directory, pairing):
+def record_pairing(args, directory, pairing):
     # Computed again from the files as they are now: initialization may have written them.
     if pairing is not None:
-        write_change(pairing_change(directory, pairing))
+        write_change(pairing_change(directory, pairing, getattr(args, "host_port", None)))
