@@ -54,11 +54,15 @@ def arguments():
     return args
 
 
+def release_allowed(args):
+    return args.action in ROLLOUTS and not args.image_dir
+
+
 def check_combinations(parser, args):
     """Flags that only some actions take."""
     if args.action != "plan" and any((args.replace, args.destroy)):
         parser.error("--replace and --destroy are plan options; apply uses the saved plan")
-    if args.release and (args.action not in ROLLOUTS or args.image_dir):
+    if args.release and not release_allowed(args):
         parser.error("--release is for rollout and cannot be combined with --image-dir")
     if args.host_port is not None and args.action != "pairing-on":
         parser.error("--host-port is for pairing-on")

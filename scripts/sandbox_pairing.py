@@ -24,6 +24,7 @@ HCL_PATTERNS = ("*.auto.tfvars", "terraform.tfvars")
 HCL_CONTROL = re.compile(r"\b(%s)\b" % "|".join(CONTROLS))
 CONNECTOR = ("pairing_connector", "connector", "pairing-connector")  # resource, instance, role
 RELAY_PORT = 7445
+PORTS = range(1024, 65536)  # or 0: not published
 DEVICE = "pairing-relay"
 RELAY_NOTE = (f"connector's relay listens on port {RELAY_PORT} inside the deployment and isn't "
               "published on this host's addresses, so another machine can't reach it")
@@ -65,9 +66,13 @@ def json_object(path):
 
 def valid_port(value, label=PORT):
     """A publishing port: 0 (none) or a whole number from 1024 to 65535."""
-    if type(value) is not int or not (value == 0 or 1024 <= value <= 65535):
+    if type(value) is not int or not publishable(value):
         raise ValueError(f"{label} must be 0 or a whole port from 1024 to 65535")
     return value
+
+
+def publishable(port):
+    return port == 0 or port in PORTS
 
 
 def settings(directory):
