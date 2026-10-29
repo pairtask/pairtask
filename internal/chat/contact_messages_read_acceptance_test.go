@@ -27,9 +27,10 @@ func TestContactMessagesReadAcceptanceOnlyVisibleRows(t *testing.T) {
 	h, _ := contactMessagesHarness(t, contactUnreadRows(40)...)
 	req := h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "visible read", req.ContactOp, protocol.ContactOpRead)
-	if len(req.ContactRead) == 0 || len(req.ContactRead) >= 40 || !slices.Contains(req.ContactRead, "incoming-40") || slices.Contains(req.ContactRead, "incoming-1") {
-		t.Fatalf("offscreen read set: %v", req.ContactRead)
-	}
+	chatEqual(t, "some visible rows read", len(req.ContactRead) > 0, true)
+	chatEqual(t, "not all rows visible", len(req.ContactRead) < 40, true)
+	chatEqual(t, "newest row read", slices.Contains(req.ContactRead, "incoming-40"), true)
+	chatEqual(t, "offscreen oldest unread", slices.Contains(req.ContactRead, "incoming-1"), false)
 	contactReadReply(h, req)
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	for i := 0; i < 10; i++ {

@@ -28,7 +28,6 @@ func TestContactMessagesErrorsAcceptanceReadRefusalRetriesAfterReload(t *testing
 	h.reply(reload, contactMessagesPage(key, contactUnreadRows(1)...))
 	retry := h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "read retry after refreshed state", retry.ContactOp, protocol.ContactOpRead)
-	if len(retry.ContactRead) != 1 || retry.ContactRead[0] != "incoming-1" {
-		t.Fatalf("wrong retry IDs: %v", retry.ContactRead)
-	}
+	chatEqual(t, "one retry ID", len(retry.ContactRead), 1)
+	chatEqual(t, "same retry ID", retry.ContactRead[0], "incoming-1")
 }

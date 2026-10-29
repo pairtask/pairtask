@@ -35,9 +35,9 @@ func TestContactMessagesSendAcceptanceKeepsEditsAndUsesContactWire(t *testing.T)
 	chatEqual(t, "contact send", req.ContactOp, protocol.ContactOpSend)
 	chatEqual(t, "frozen contact", req.ContactKey, key)
 	chatEqual(t, "message text", req.ContactText, "original")
-	if req.MessageID == "" || req.To != "" || len(req.Payload) != 0 {
-		t.Fatalf("wrong wire: %+v", req)
-	}
+	chatEqual(t, "durable message ID", req.MessageID != "", true)
+	chatEqual(t, "no agent recipient", req.To, "")
+	chatEqual(t, "no agent payload", len(req.Payload), 0)
 	v2Type(h, " plus new draft")
 	changed := h.m.State().Draft
 	h.reply(req, contactMessagesQueued(req))
