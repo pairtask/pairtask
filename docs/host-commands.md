@@ -35,6 +35,95 @@ quota-capable pool and a managed bridge. The Incus server must be 7.0.x ≥ 7.0.
 or 7.5+ ([why and how to check](sandbox.md#incus-server-version)). Details:
 [sandbox setup](sandbox.md).
 
+## Connect two machines
+
+Use a release containing [#225](https://github.com/pairtask/pairtask/pull/225)
+on **both** machines. Release 580.1 has the pairing commands but does not
+publish the relay, and its `pairing off` can fail partway. These steps use
+operator chat and work with a reachable LAN or tailnet IPv4 address.
+
+1. **Install or update on both hosts.** Rerun the installer so the host
+   commands and container images come from the same release. This ends
+   running sandbox sessions and preserves deployment data.
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
+   ```
+
+   For an existing installation, `pairtask upgrade` alone updates the
+   deployment using your current host tooling; it does not update the
+   installer's host checkout. Wait for the release containing #225 before
+   using this setup.
+
+2. **Enable publishing on both hosts.**
+
+   ```sh
+   pairtask pairing on --host-port 7445
+   pairtask pairing status
+   ```
+
+   Status should show the route on and forwarding applied on port 7445.
+   On macOS, the managed Colima VM carries the traffic to connector. Allow
+   incoming connections if macOS asks, and allow TCP 7445 through the host
+   firewall or tailnet policy. Status reads deployment state; it does not
+   prove that the other machine can connect.
+
+3. **Choose machine A's address.** Use its LAN IPv4 address when both
+   machines can reach that LAN, or its tailnet IPv4 address when both are
+   connected to the tailnet. Use the Mac's address, not the Colima VM's or
+   connector's address. Keep A available at that address for later syncs.
+
+4. **Open a pairing invitation on A.** Run `pairtask chat` on A's host, then
+   enter `/pair open` in chat. Share the displayed one-time code with the
+   operator on B through a trusted channel.
+
+5. **Redeem on B and accept on A.** Run `pairtask chat` on B's host. In its
+   chat, replace `A_IP` and `CODE` below with A's address and invitation code:
+
+   ```text
+   /pair redeem A_IP:7445 CODE
+   ```
+
+   On A, use `/pair status`, then `/pair accept KEY`, replacing `KEY` with
+   the unique key prefix of B's request. On B, run `/pair settle`, then
+   `/pair status` on both machines. Wait until the contact is confirmed on
+   both sides. An awaiting-acceptance or confirming entry is not complete.
+
+6. **Exchange a test message each way.** In each chat, select the other
+   workspace's `⇄` conversation with Tab. Send a short message from B,
+   read it on A, and reply. Confirm that each arrives in the other chat;
+   forwarding status alone is not this end-to-end check. Contact messages
+   are operator-to-operator text and are not automatically sent to agents.
+
+To check both network paths, use fresh invitations for the LAN and tailnet
+addresses and repeat redemption, confirmation and the message exchange.
+The published listener accepts either path; actual Mac firewall, Colima and
+tailnet reachability still need this two-machine check.
+
+### Change the port or turn pairing off
+
+Run these on the host; `on` and `off` perform a rollout and end sandbox sessions:
+
+```sh
+pairtask pairing on --host-port 8445  # use A_IP:8445 when redeeming
+pairtask pairing on --host-port 0    # keep the route, remove host publishing
+pairtask pairing off                # remove connector and its forwarding
+```
+
+A later `pairtask pairing on` keeps the saved port, including an explicit
+0; it chooses 7445 only if no port was saved. Specify `--host-port 7445` to
+publish again after saving 0. `off` keeps the port for the next `on` and
+leaves secured runtime enabled. Two small socket volumes remain detached
+while off. Upgrades preserve these settings; a legacy enabled route with
+no saved port remains unpublished until you explicitly run `pairing on`.
+
+If the port is already in use, the apply fails and keeps the requested
+setting. Release the port or choose another, then rerun `pairing on`.
+`pairing status` distinguishes configured settings from applied forwarding.
+If 580.1's `pairing off` failed partway, update with the installer once the
+fixed release is available, then rerun `pairing off`. Keep the deployment
+state and volumes; do not delete volumes manually to clear the error.
+
 ## Start, stop and status
 
 | Command | Runs on | What it does | Ends sessions |
@@ -101,8 +190,8 @@ it. `accept` and `reject` take a key prefix and send the full key only when it
 matches exactly one listed request.
 
 The exchange is CPace (`the-sarge/cpace` v0.1.3), an unaudited implementation
-of an Internet-Draft: experimental, not production security. Contact
-messaging isn't connected.
+of an Internet-Draft: experimental, not production security. Confirmed
+contacts can exchange operator messages in their workspace conversations.
 
 `redeem DESTINATION` reads the other operator's code from the terminal, or
 from stdin when piped, never from the command line. It checks the broker can
@@ -130,9 +219,9 @@ decision is confirmed. `status` lists contacts, each `confirming` until both
 sides confirmed it. An accepted request shows `accepted, awaiting peer
 confirmation` until the joiner acknowledged it. In chat, each contact has
 its own `⇄ workspace` conversation, keyed by its fingerprint, never by the
-name it chose. Nothing can be sent from it yet. `/pair settle
-[OPERATION_ID]` works as above, and chat follows background changes as
-they happen.
+name it chose. Select that conversation to send operator messages and read
+replies. `/pair settle [OPERATION_ID]` works as above, and chat follows
+background changes as they happen.
 
 Broker settings, all off by default:
 
