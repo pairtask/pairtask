@@ -164,7 +164,7 @@ func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []strin
 		return 0, err
 	}
 	defer tx.Rollback()
-	marked, err := markReadIn(ctx, tx, contact, ids, at)
+	marked, err := markReadIn(ctx, tx, readSet{contact, ids, at})
 	if err != nil {
 		return 0, err
 	}
@@ -174,8 +174,16 @@ func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []strin
 	return marked, nil
 }
 
+// readSet is received messages shown to the operator at a time.
+type readSet struct {
+	contact string
+	ids     []string
+	at      time.Time
+}
+
 // markReadIn is MarkRead inside a transaction.
-func markReadIn(ctx context.Context, tx *sql.Tx, contact string, ids []string, at time.Time) (int, error) {
+func markReadIn(ctx context.Context, tx *sql.Tx, r readSet) (int, error) {
+	contact, ids, at := r.contact, r.ids, r.at
 	marked := 0
 	for _, id := range ids {
 		res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'read', read_at = ?1, receipt = 'pending', receipt_at = ?1

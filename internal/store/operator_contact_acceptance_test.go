@@ -27,35 +27,41 @@ func newOperatorContactFixture(t *testing.T) *operatorContactFixture {
 	t.Cleanup(func() { raw.Close() })
 	return &operatorContactFixture{db, raw, messageContact(t, db, 1), path}
 }
-func (f *operatorContactFixture) audit(t *testing.T, op, id string) int64 {
+
+type contactAuditInput struct{ op, id string }
+
+func (f *operatorContactFixture) audit(t *testing.T, input contactAuditInput) int64 {
 	t.Helper()
-	audit, err := f.db.RecordOperatorAudit(context.Background(), store.OperatorAudit{Action: "contact " + op, MessageID: id, Scope: f.contact, Result: store.AuditPending})
+	audit, err := f.db.RecordOperatorAudit(context.Background(), store.OperatorAudit{Action: "contact " + input.op, MessageID: input.id, Scope: f.contact, Result: store.AuditPending})
 	pairOK(t, err)
 	return audit
 }
-func (f *operatorContactFixture) send(t *testing.T, id, text string) (messaging.Row, error) {
+
+type contactSendInput struct{ id, text string }
+
+func (f *operatorContactFixture) send(t *testing.T, input contactSendInput) (messaging.Row, error) {
 	t.Helper()
-	return f.db.OperatorContactSend(context.Background(), store.ContactSend{OperationID: id, Contact: f.contact, Text: text, AuditID: f.audit(t, "send", id), Now: messageAt})
+	return f.db.OperatorContactSend(context.Background(), store.ContactSend{OperationID: input.id, Contact: f.contact, Text: input.text, AuditID: f.audit(t, contactAuditInput{"send", input.id}), Now: messageAt})
 }
 func (f *operatorContactFixture) read(t *testing.T, id string, ids []string) (int, error) {
 	t.Helper()
-	return f.db.OperatorContactRead(context.Background(), store.ContactRead{OperationID: id, Contact: f.contact, IDs: ids, AuditID: f.audit(t, "read", id), Now: messageAt})
+	return f.db.OperatorContactRead(context.Background(), store.ContactRead{OperationID: id, Contact: f.contact, IDs: ids, AuditID: f.audit(t, contactAuditInput{"read", id}), Now: messageAt})
 }
 
 func TestOperatorContactAcceptanceSendReplaySurvivesRestart(t *testing.T) {
 	f := newOperatorContactFixture(t)
-	first, err := f.send(t, "send-op", "private text")
+	first, err := f.send(t, contactSendInput{"send-op", "private text"})
 	pairOK(t, err)
 	pairOK(t, f.db.Close())
 	f.db = pairSQLite(t, f.path)
-	again, err := f.db.OperatorContactSend(context.Background(), store.ContactSend{OperationID: "send-op", Contact: f.contact, Text: "private text", AuditID: f.audit(t, "send", "send-op"), Now: messageAt.Add(time.Hour)})
+	again, err := f.db.OperatorContactSend(context.Background(), store.ContactSend{OperationID: "send-op", Contact: f.contact, Text: "private text", AuditID: f.audit(t, contactAuditInput{"send", "send-op"}), Now: messageAt.Add(time.Hour)})
 	pairOK(t, err)
 	pairEqual(t, again.ID, first.ID)
 	pairEqual(t, again.N, first.N)
 	pairEqual(t, again.Cursor, first.Cursor)
 	pairEqual(t, again.CreatedAt.Equal(first.CreatedAt), true)
 	pairEqual(t, len(messagePage(t, f.db.PeerMessages(), f.contact)), 1)
-	_, err = f.send(t, "send-op", "changed text")
+	_, err = f.send(t, contactSendInput{"send-op", "changed text"})
 	pairEqual(t, errors.Is(err, messaging.ErrConflict), true)
 }
 
@@ -63,7 +69,7 @@ func TestOperatorContactAcceptanceSendAuditFailureRollsBackEverything(t *testing
 	f := newOperatorContactFixture(t)
 	_, err := f.raw.Exec("CREATE TRIGGER deny_contact_audit BEFORE UPDATE ON operator_audit WHEN NEW.result='accepted' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END")
 	pairOK(t, err)
-	row, err := f.send(t, "send-op", "text")
+	row, err := f.send(t, contactSendInput{"send-op", "text"})
 	if err == nil || row.ID != "" {
 		t.Fatalf("send survived audit failure: %+v %v", row, err)
 	}
@@ -73,7 +79,7 @@ func TestOperatorContactAcceptanceSendAuditFailureRollsBackEverything(t *testing
 	pairEqual(t, count, 0)
 	_, err = f.raw.Exec("DROP TRIGGER deny_contact_audit")
 	pairOK(t, err)
-	row, err = f.send(t, "send-op", "text")
+	row, err = f.send(t, contactSendInput{"send-op", "text"})
 	pairOK(t, err)
 	pairEqual(t, row.N, uint64(1))
 }
@@ -115,7 +121,7 @@ func TestOperatorContactAcceptanceReadSetCanonicalAndOperationScoped(t *testing.
 	pairEqual(t, marked, 0)
 	_, err = f.read(t, "read-op", []string{"one"})
 	pairEqual(t, errors.Is(err, messaging.ErrConflict), true)
-	_, err = f.send(t, "read-op", "cannot repurpose operation")
+	_, err = f.send(t, contactSendInput{"read-op", "cannot repurpose operation"})
 	pairEqual(t, errors.Is(err, messaging.ErrConflict), true)
 	receipts, err := f.db.PeerMessages().PendingReads(ctx, f.contact, 16)
 	pairOK(t, err)
@@ -125,11 +131,11 @@ func TestOperatorContactAcceptanceReadSetCanonicalAndOperationScoped(t *testing.
 func TestOperatorContactAcceptanceCrossContactRetryConflictsWithoutChangingTransport(t *testing.T) {
 	f := newOperatorContactFixture(t)
 	other := messageContact(t, f.db, 2)
-	_, err := f.send(t, "operation", "text")
+	_, err := f.send(t, contactSendInput{"operation", "text"})
 	pairOK(t, err)
 	original := f.contact
 	f.contact = other
-	_, err = f.send(t, "operation", "text")
+	_, err = f.send(t, contactSendInput{"operation", "text"})
 	pairEqual(t, errors.Is(err, messaging.ErrConflict), true)
 	pairEqual(t, len(messagePage(t, f.db.PeerMessages(), other)), 0)
 	// The transport API still permits independent peers to use the same ID.

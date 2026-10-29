@@ -42,10 +42,13 @@ type ContactRead struct {
 	Now                  time.Time
 }
 
-// operation is one registered operator operation.
+// operation is one registered operator operation: what it asked, the
+// audit row it finishes and when.
 type operation struct {
 	id, op, contact string
 	fingerprint     []byte
+	auditID         int64
+	now             time.Time
 }
 
 // operationFingerprint covers the operation, the contact and what it
@@ -71,10 +74,10 @@ func canonicalIDs(ids []string) []string {
 // message as first queued (its ID, sequence and time; collected text stays
 // collected); the operation ID reused for anything else is ErrConflict.
 func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messaging.Row, error) {
-	op := operation{c.OperationID, "send", c.Contact, operationFingerprint("send", c.Contact, c.Text)}
+	op := operation{c.OperationID, "send", c.Contact, operationFingerprint("send", c.Contact, c.Text), c.AuditID, c.Now}
 	key := messageKey{c.Contact, messaging.DirOut, c.OperationID}
 	var row messaging.Row
-	err := s.operationTx(ctx, op, c.AuditID, func(tx *sql.Tx, replay bool) error {
+	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
 		var err error
 		if replay {
 			var held storedRow
@@ -84,7 +87,7 @@ func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messagi
 		}
 		row, err = queueIn(ctx, tx, outgoing{key, c.Text, c.Now})
 		return err
-	}, c.Now)
+	})
 	if err != nil {
 		return messaging.Row{}, err
 	}
@@ -96,16 +99,16 @@ func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messagi
 // a retry of the same operation marks none.
 func (s *Store) OperatorContactRead(ctx context.Context, c ContactRead) (int, error) {
 	ids := canonicalIDs(c.IDs)
-	op := operation{c.OperationID, "read", c.Contact, operationFingerprint("read", c.Contact, ids...)}
+	op := operation{c.OperationID, "read", c.Contact, operationFingerprint("read", c.Contact, ids...), c.AuditID, c.Now}
 	marked := 0
-	err := s.operationTx(ctx, op, c.AuditID, func(tx *sql.Tx, replay bool) error {
+	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
 		if replay {
 			return nil
 		}
 		var err error
-		marked, err = markReadIn(ctx, tx, c.Contact, ids, c.Now)
+		marked, err = markReadIn(ctx, tx, readSet{c.Contact, ids, c.Now})
 		return err
-	}, c.Now)
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -115,7 +118,7 @@ func (s *Store) OperatorContactRead(ctx context.Context, c ContactRead) (int, er
 // operationTx runs one operator operation: the registry decides whether it
 // is new or a retry, apply makes the change (or reads the first result),
 // and the audit row is finished as accepted, all in one transaction.
-func (s *Store) operationTx(ctx context.Context, op operation, auditID int64, apply func(tx *sql.Tx, replay bool) error, now time.Time) error {
+func (s *Store) operationTx(ctx context.Context, op operation, apply func(tx *sql.Tx, replay bool) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -131,10 +134,10 @@ func (s *Store) operationTx(ctx context.Context, op operation, auditID int64, ap
 	if err := apply(tx, replay); err != nil {
 		return err
 	}
-	if err := register(ctx, tx, op, replay, now); err != nil {
+	if err := register(ctx, tx, op, replay); err != nil {
 		return err
 	}
-	if err := finishAudit(ctx, tx, auditID, AuditOutcome{Result: AuditAccepted}); err != nil {
+	if err := finishAudit(ctx, tx, op.auditID, AuditOutcome{Result: AuditAccepted}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -156,11 +159,11 @@ func registered(ctx context.Context, tx *sql.Tx, op operation) (bool, error) {
 	return true, nil
 }
 
-func register(ctx context.Context, tx *sql.Tx, op operation, replay bool, now time.Time) error {
+func register(ctx context.Context, tx *sql.Tx, op operation, replay bool) error {
 	if replay {
 		return nil
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO operator_contact_requests (operation_id, op, contact, fingerprint, created_at)
-VALUES (?, ?, ?, ?, ?)`, op.id, op.op, op.contact, op.fingerprint, msgStamp(now))
+VALUES (?, ?, ?, ?, ?)`, op.id, op.op, op.contact, op.fingerprint, msgStamp(op.now))
 	return err
 }
