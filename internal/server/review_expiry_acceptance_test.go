@@ -4,7 +4,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -27,8 +26,7 @@ func reviewTestClockFixture(t *testing.T) (*operatorFixture, func(time.Duration)
 	h.SetReviewClock(func() time.Time { return time.Unix(0, clock.Load()).UTC() })
 	go h.Run(ctx)
 	f := &operatorFixture{t: t, agent: socketPath(t), operator: socketPath(t)}
-	f.db, err = sql.Open("sqlite", database)
-	operatorNoError(t, err)
+	f.db = openFixtureInspection(t, database)
 	a, o := New(f.agent, h, testLog()), NewOperator(f.operator, h, os.Getuid(), testLog())
 	f.endpoint = o
 	done := make(chan error, 2)
