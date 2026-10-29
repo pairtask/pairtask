@@ -140,7 +140,7 @@ func entrySize(entry protocol.HistoryEntry) (int, error) {
 }
 
 func historyRows(ctx context.Context, tx *sql.Tx, scan historyScan) ([]historyRow, error) {
-	query := `SELECT mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.ack_requested, mm.origin, ` + groupColumn + `, mm.room, mm.mentions
+	query := `SELECT mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.ack_requested, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id
 	 FROM message_metadata mm JOIN messages m USING(seq)
 	 WHERE ` + historyScope + ` AND m.seq <= ? AND (? = 0 OR m.seq < ?) ORDER BY m.seq DESC LIMIT ?`
 	rows, err := tx.QueryContext(ctx, query, scan.upper, scan.before, scan.before, scan.limit)
@@ -161,13 +161,13 @@ func historyRows(ctx context.Context, tx *sql.Tx, scan historyScan) ([]historyRo
 
 func scanHistoryRow(rows *sql.Rows) (historyRow, error) {
 	var row historyRow
-	var origin, group, room, mentions sql.NullString
+	var origin, group, room, mentions, reviewID sql.NullString
 	m := &row.entry.Message
-	err := rows.Scan(&m.MessageID, &m.Seq, &m.TS, &m.From, &row.entry.SenderSession, &m.To, &row.payload, &m.InReplyTo, &m.AckRequested, &origin, &group, &room, &mentions)
+	err := rows.Scan(&m.MessageID, &m.Seq, &m.TS, &m.From, &row.entry.SenderSession, &m.To, &row.payload, &m.InReplyTo, &m.AckRequested, &origin, &group, &room, &mentions, &reviewID)
 	if err != nil {
 		return row, err
 	}
-	m.Room = room.String
+	m.Room, m.ReviewID = room.String, reviewID.String
 	if m.Mentions, err = groupList(mentions); err != nil {
 		return row, err
 	}
