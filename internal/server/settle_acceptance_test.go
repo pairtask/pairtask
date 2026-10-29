@@ -68,8 +68,14 @@ func TestSettleOperatorAcceptanceAutomaticBackoffLimitAndManualOverride(t *testi
 	cfg := settleConfig()
 	cfg.SettleTick, cfg.Clock = tick, func() time.Time { return time.Unix(0, clock.Load()) }
 	cfg.Dial = func(context.Context, string) (net.Conn, error) {
-		calls.Add(1)
-		return nil, errors.New("remote secret diagnostic")
+		attempt := calls.Add(1)
+		err := errors.New("remote secret diagnostic")
+		// Alternate the reported cause so status distinguishes this completed
+		// pass from the previous one. Starting Dial does not finish a pass.
+		if attempt%2 == 0 {
+			err = errors.Join(err, context.DeadlineExceeded)
+		}
+		return nil, err
 	}
 	f := newRedeemOperator(t, cfg, "")
 	seedSettleJoin(t, f, settleSeed{id: "retry", peer: settleIdentity(1), destination: "host:443", at: start})
@@ -84,10 +90,7 @@ func TestSettleOperatorAcceptanceAutomaticBackoffLimitAndManualOverride(t *testi
 		}
 	}
 	sendTick()
-	awaitSettle(t, func() bool {
-		frame := pairingCommand(f.operatorFixture, "status", "retry")
-		return sessionDecode[protocol.PairingJoinView](t, frame, "pairing_join").SettleError != ""
-	})
+	awaitSettleFailure(t, f, "retry", "other")
 	operatorEqual(t, "only eligible join dialed", calls.Load(), int32(1))
 	sendTick()
 	time.Sleep(30 * time.Millisecond)
@@ -95,7 +98,14 @@ func TestSettleOperatorAcceptanceAutomaticBackoffLimitAndManualOverride(t *testi
 	for attempt := 2; attempt <= hub.SettleMaxAttempts; attempt++ {
 		clock.Store(start.Add(time.Duration(attempt) * hub.SettleBackoffMax).UnixNano())
 		sendTick()
-		awaitSettle(t, func() bool { return calls.Load() == int32(attempt) })
+		cause := "other"
+		if attempt%2 == 0 {
+			cause = "timeout"
+		}
+		// record updates the cause and backoff together. Keep this clock
+		// fixed until that update, before advancing to the next attempt.
+		awaitSettleFailure(t, f, "retry", cause)
+		operatorEqual(t, "one dial per automatic pass", calls.Load(), int32(attempt))
 	}
 	clock.Store(start.Add(time.Duration(hub.SettleMaxAttempts+1) * hub.SettleBackoffMax).UnixNano())
 	sendTick()
@@ -106,7 +116,8 @@ func TestSettleOperatorAcceptanceAutomaticBackoffLimitAndManualOverride(t *testi
 	time.Sleep(30 * time.Millisecond)
 	operatorEqual(t, "old joins no longer retried automatically", calls.Load(), int32(hub.SettleMaxAttempts))
 	settleSchedule(t, f, "retry")
-	awaitSettle(t, func() bool { return calls.Load() == int32(hub.SettleMaxAttempts+1) })
+	awaitSettleFailure(t, f, "retry", "other")
+	operatorEqual(t, "manual override dials once", calls.Load(), int32(hub.SettleMaxAttempts+1))
 	frame := pairingCommand(f.operatorFixture, "status", "retry")
 	if strings.Contains(sessionJSON(frame)+f.logs.String(), "remote secret diagnostic") {
 		t.Fatal("raw network diagnostic escaped")

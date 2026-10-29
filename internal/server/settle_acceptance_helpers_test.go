@@ -118,3 +118,13 @@ func settleEvent(t *testing.T, session *sessionProbe) {
 	operatorEqual(t, "pairing event kind", ev.Kind, "pairing_changed")
 	operatorEqual(t, "event has no peer metadata", ev.AgentID+ev.MessageID+ev.Detail, "")
 }
+
+// awaitSettleFailure observes record's completed pass through operator status.
+// The caller must choose a cause different from the preceding attempt.
+func awaitSettleFailure(t *testing.T, f *redeemOperatorFixture, id, cause string) {
+	t.Helper()
+	awaitSettle(t, func() bool {
+		frame := pairingCommand(f.operatorFixture, "status", id)
+		return sessionDecode[protocol.PairingJoinView](t, frame, "pairing_join").SettleError == cause
+	})
+}
