@@ -161,6 +161,11 @@ func (m *Model) commandCandidates(prefix argument) []string {
 	return out
 }
 
+// hasUsage: a known command that takes arguments worth describing.
+func (c command) hasUsage() bool {
+	return c.name != "" && c.usage != ""
+}
+
 // lookupCommand resolves an exact name or alias, then a unique prefix.
 func lookupCommand(name argument) (command, []string) {
 	var matches []string

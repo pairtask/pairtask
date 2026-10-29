@@ -21,7 +21,7 @@ func (m *Model) conversationViews() []ConversationView {
 		v := ConversationView{ID: viewID(key), Group: key.group(), Hidden: m.conv.hidden[key], Unread: m.unreadIn(key),
 			Selected: m.conv.selected == key, Draft: m.savedDraft(key), Contact: key.contact}
 		if key.isContact() {
-			v.Label = "⇄ " + safe(m.contactTitle(key.contact))
+			v.Label = "⇄ " + safe(m.contactTitle(key))
 		}
 		if !v.Hidden {
 			position++

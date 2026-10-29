@@ -86,11 +86,20 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 
 // departureNote says when a message written now leaves: at once when this
 // side dials, else when the other side next syncs.
-func (m *Model) departureNote(fingerprint string) string {
-	if t := m.contacts.threads[fingerprint]; t != nil && t.loaded && t.sync.Dials {
+func (m *Model) departureNote(key viewKey) string {
+	if m.dialsContact(key) {
 		return "sent at once"
 	}
 	return "leaves when they next sync (30 s while active, else 5 min)"
+}
+
+// dialsContact: this side dials the contact, as its loaded thread says.
+func (m *Model) dialsContact(key viewKey) bool {
+	t := m.contacts.threads[key.contact]
+	if t == nil || !t.loaded {
+		return false
+	}
+	return t.sync.Dials
 }
 
 // syncLine is what this side knows of syncing with the contact.

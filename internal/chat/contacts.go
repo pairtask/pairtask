@@ -38,17 +38,17 @@ const defaultPairingName = "workspace"
 // has for it, else the address this side dials, else its short key. A name
 // is display only; the ⇄ before it always marks a workspace, never an agent.
 func contactDisplay(c protocol.PairingContactView) string {
-	if name := contactName(c.Name); name != "" {
+	if name := shownName(c.Name); name != "" {
 		return name
 	}
-	if host := destinationHost(c.Destination); host != "" {
+	if host := dialedHost(c); host != "" {
 		return host
 	}
 	return protocol.ShortKey(c.IdentityKey)
 }
 
-// contactName is a workspace's name worth showing, or "".
-func contactName(name string) string {
+// shownName is a workspace's name worth showing, or "".
+func shownName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == defaultPairingName {
 		return ""
@@ -56,19 +56,20 @@ func contactName(name string) string {
 	return name
 }
 
-func destinationHost(destination string) string {
-	if host, _, err := net.SplitHostPort(destination); err == nil {
+// dialedHost is the host this side dials the contact at, or "".
+func dialedHost(c protocol.PairingContactView) string {
+	if host, _, err := net.SplitHostPort(c.Destination); err == nil {
 		return host
 	}
-	return destination
+	return c.Destination
 }
 
-// contactTitle is the display name of the contact with this fingerprint.
-func (m *Model) contactTitle(fingerprint string) string {
-	if c, ok := m.contact(fingerprint); ok {
+// contactTitle is the display name of a contact conversation.
+func (m *Model) contactTitle(key viewKey) string {
+	if c, ok := m.contact(key.contact); ok {
 		return contactDisplay(c)
 	}
-	return protocol.ShortKey(fingerprint)
+	return protocol.ShortKey(key.contact)
 }
 
 // contactViews are the contacts from the latest pairing snapshot, one per
@@ -114,7 +115,7 @@ func (m *Model) contactHint(key viewKey) string {
 	if notice := m.contactNotice(key); notice != "" {
 		return "✗ " + notice
 	}
-	return "to ⇄ " + safe(m.contactTitle(key.contact)) + " · " + m.departureNote(key.contact)
+	return "to ⇄ " + safe(m.contactTitle(key)) + " · " + m.departureNote(key)
 }
 
 // refreshContacts quietly reads the pairing state after a baseline, so

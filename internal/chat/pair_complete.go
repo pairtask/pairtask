@@ -97,7 +97,7 @@ func (m *Model) pendingRequestLabel(key string) (string, bool) {
 	if i < 0 {
 		return "", false
 	}
-	name := contactName(s.Requests[i].Name)
+	name := shownName(s.Requests[i].Name)
 	if name == "" {
 		name = "no name given"
 	}
@@ -127,7 +127,7 @@ func (m *Model) commandHint() string {
 	const keys = "Enter runs · Tab completes · Esc back to your draft"
 	name, rest, hasArgs := strings.Cut(m.compose.cmd.input.Value(), " ")
 	c, _ := lookupCommand(argument(name))
-	if !hasArgs || c.name == "" || c.usage == "" {
+	if !hasArgs || !c.hasUsage() {
 		return "command · " + keys
 	}
 	usage := c.usage

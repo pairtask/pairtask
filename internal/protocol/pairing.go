@@ -155,18 +155,12 @@ var (
 // and a partial listing can't prove a prefix unique.
 func (s *PairingSnapshot) ResolveKey(prefix string) (string, error) {
 	typed := KeyDigest(strings.TrimSpace(prefix))
-	if typed == "" || typed == "sha256" {
+	if !digestTyped(typed) {
 		return "", ErrPairingEmptyKey
 	}
-	var matches []string
-	for _, r := range s.Requests {
-		digest := KeyDigest(r.IdentityKey)
-		if digest == typed {
-			return r.IdentityKey, nil
-		}
-		if strings.HasPrefix(digest, typed) {
-			matches = append(matches, r.IdentityKey)
-		}
+	exact, matches := s.keysStarting(typed)
+	if exact != "" {
+		return exact, nil
 	}
 	switch {
 	case len(matches) > 1:
@@ -177,6 +171,27 @@ func (s *PairingSnapshot) ResolveKey(prefix string) (string, error) {
 		return "", ErrPairingUnknown
 	}
 	return matches[0], nil
+}
+
+// digestTyped: something of a digest was typed, not only the scheme.
+func digestTyped(typed string) bool {
+	return typed != "" && typed != "sha256"
+}
+
+// keysStarting is the listed key whose digest is typed, or else every
+// listed key whose digest starts with it.
+func (s *PairingSnapshot) keysStarting(typed string) (string, []string) {
+	var matches []string
+	for _, r := range s.Requests {
+		digest := KeyDigest(r.IdentityKey)
+		if digest == typed {
+			return r.IdentityKey, nil
+		}
+		if strings.HasPrefix(digest, typed) {
+			matches = append(matches, r.IdentityKey)
+		}
+	}
+	return "", matches
 }
 
 // KeyDigest is an identity key without its "sha256:" scheme: the part that
