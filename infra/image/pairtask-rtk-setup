@@ -6,17 +6,32 @@ from pathlib import Path
 import subprocess
 import sys
 
+RTK = "/usr/local/bin/rtk"
+STATE = Path(".local/state/collab-ai")
+# (marker, directories, init options): each step has its own marker, so a home
+# set up before Pi was wired still gets Pi once, and no step is ever redone.
+STEPS = (
+    ("rtk-initialized", (".codex", ".claude", ".local/share/rtk"), [("--codex",), ("--auto-patch",)]),
+    ("rtk-pi-initialized", (".pi", ".local/share/rtk"), [("--agent", "pi")]),
+)
+
 
 def initialize(home):
-    marker = home / ".local/state/collab-ai/rtk-initialized"
-    if marker.exists():
-        return  # Preserve subsequent user edits and opt-outs across replacements.
-    for relative in (".codex", ".claude", ".local/share/rtk"):
-        (home / relative).mkdir(mode=0o700, parents=True, exist_ok=True)
     env = dict(os.environ, HOME=str(home), CODEX_HOME=str(home / ".codex"),
                RTK_TELEMETRY_DISABLED="1")
-    for options in (("--codex",), ("--auto-patch",)):
-        subprocess.run(["/usr/local/bin/rtk", "init", "-g", *options],
+    for step in STEPS:
+        once(home, env, step)
+
+
+def once(home, env, step):
+    name, directories, passes = step
+    marker = home / STATE / name
+    if marker.exists():
+        return  # Preserve subsequent user edits and opt-outs across replacements.
+    for relative in directories:
+        (home / relative).mkdir(mode=0o700, parents=True, exist_ok=True)
+    for options in passes:
+        subprocess.run([RTK, "init", "-g", *options],
                        env=env, cwd=home, stdin=subprocess.DEVNULL, check=True)
     marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     marker.write_text("RTK hooks initialized; existing configuration is now user-owned.\n")

@@ -20,9 +20,9 @@ def run(command, **kwargs):
 
 
 def wait_for_setup():
-    marker = HOME / ".local/state/collab-ai/rtk-initialized"
+    markers = [HOME / ".local/state/collab-ai" / name for name in ("rtk-initialized", "rtk-pi-initialized")]
     for _ in range(40):
-        if marker.exists():
+        if all(marker.exists() for marker in markers):
             return
         time.sleep(0.25)
     raise ValueError("RTK setup did not finish; inspect pairtask-rtk-setup.service")
@@ -48,6 +48,16 @@ def check_hooks():
     assert "RTK.md" in (HOME / ".codex/AGENTS.md").read_text()
 
 
+def check_pi():
+    """Pi loads the extension from its own directory; it rewrites through rtk."""
+    extension = HOME / ".pi/agent/extensions/rtk.ts"
+    assert extension.is_file() and not extension.is_symlink(), "RTK's Pi extension is missing"
+    assert extension.stat().st_uid == os.getuid()
+    assert "rtk rewrite" in extension.read_text()
+    rewritten = subprocess.run(["rtk", "rewrite", "git status"], capture_output=True, text=True)
+    assert rewritten.stdout.strip() == "rtk git status", rewritten
+
+
 def history_count():
     assert DATABASE.is_file() and DATABASE.stat().st_uid == os.getuid()
     with sqlite3.connect(f"file:{DATABASE}?mode=ro", uri=True) as db:
@@ -71,5 +81,6 @@ def check_tracking():
 
 wait_for_setup()
 check_hooks()
+check_pi()
 check_tracking()
-print("PASS: RTK hook rewriting, exit status, private history and retained usage.")
+print("PASS: RTK hook rewriting for Codex, Claude and Pi, exit status, private history and retained usage.")
