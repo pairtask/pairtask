@@ -135,7 +135,7 @@ the terminal display.
 
 ## Agent status (schema 2)
 
-`agent_status` holds the agents' latest declarations (#133), the same records
+`agent_status` holds the agents' latest declarations, the same records
 and order as the operator chat's snapshot: connected agents' records first,
 then retained offline ones by agent ID, at most **64**. `agent_status_total`
 counts every retained record, so `agent_status_truncated` marks an omission.
@@ -161,7 +161,7 @@ unavailable.
 
 ## Claims (schema 3)
 
-`claims` holds the task claims (#141) of the newest claimed operator messages,
+`claims` holds the task claims of the newest claimed operator messages,
 as the operator chat's snapshot has them: at most **32** messages, newest claim
 first, each a set with `operator_message_id`, `claims` (at most 16, held ones
 first), `claims_total` and `claims_truncated`. The top-level `claims_total`
@@ -177,7 +177,7 @@ is never an approval.
 
 ## Wire and compatibility
 
-The new broker recognizes this as the first newline-delimited frame:
+The broker recognizes this as the first newline-delimited frame:
 
 ```json
 {"type":"status"}

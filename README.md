@@ -18,7 +18,43 @@ progress. The agents run in an Incus sandbox, separate from your host, while
 project files and agent home persist across container upgrades. You decide
 what to ask, review, and approve.
 
-[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) licensed · [First install](docs/sandbox.md) · [Troubleshooting](docs/troubleshooting.md) · [Renamed from collab](docs/renamed.md)
+[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) licensed · [Set up](#set-up-a-sandbox) · [Features](#features) · [Documentation](#documentation) · [Troubleshooting](docs/troubleshooting.md)
+
+## Features
+
+- **Agents that work together.** Codex, Claude and [Pi](docs/pi.md) share one
+  workspace and message each other directly through the bundled
+  [collaboration skill](docs/skills/collab-ai/SKILL.md). Run several of each,
+  and group them in rooms.
+- **Operator chat.** One terminal chat for directing agents, with per-agent and
+  group conversations, rooms, replies, acknowledgments, search, history and
+  [Markdown and diagrams](docs/chat-formatting.md).
+  See [operator chat](docs/operator-chat.md).
+- **Pull request reviews.** `/review OWNER/REPO#N AGENT` asks an agent to review a
+  pull request and publish the result; `/reviews` follows every request.
+  See [operator chat](docs/operator-chat.md#reviews).
+- **Delivery you can trust.** Messages are stored until the recipient
+  acknowledges them, survive disconnects and restarts, and show their delivery
+  stage. See [durable inboxes](docs/durable-inboxes.md) and
+  [correlated replies](docs/correlated-replies.md).
+- **Status at a glance.** Agents declare what they are doing and claim tasks;
+  `pairtask status`, the chat and a read-only [dashboard](docs/dashboard.md)
+  show it. See [broker status](docs/status.md).
+- **An isolated sandbox.** Agents run in Incus containers, apart from your host;
+  the broker runs in a [separate offline container](docs/secured-runtime.md).
+  Projects and agent home [persist across upgrades](docs/sandbox-storage.md).
+  See [sandbox setup](docs/sandbox.md).
+- **Your project, your way.** [Mount host directories](docs/sandbox-mounts.md)
+  read-only or writable, run [Docker and Compose](docs/sandbox.md#docker-and-compose),
+  and choose the [installed tools](docs/sandbox-tools.md).
+- **Workspaces on two machines.** Pair a workspace with another over your LAN or
+  tailnet and exchange operator messages. See
+  [connect two machines](docs/host-commands.md#connect-two-machines).
+- **One host command.** `pairtask` installs, upgrades, starts, stops and
+  recovers the sandbox. See [host commands](docs/host-commands.md).
+- **Without a sandbox.** Run the broker and agents
+  [directly on your host](docs/quickstart.md), or connect any MCP client
+  [manually](docs/mcp.md).
 
 ## Set up a sandbox
 
@@ -225,10 +261,12 @@ The dashboard is read-only. Use `pairtask chat` for messages; agent-specific
 prompts may still appear in the agent terminal.
 [Controls](docs/dashboard.md) · [UI help](docs/sandbox.md#incus-web-ui).
 
-To connect two machines over LAN or a tailnet, follow the
-[quick pairing setup](docs/host-commands.md#connect-two-machines): update both
-hosts, publish the relay, exchange a pairing code, then send a test message
-each way in operator chat.
+## Connect two machines
+
+To pair your workspace with one on another machine over your LAN or a
+tailnet, follow [connect two machines](docs/host-commands.md#connect-two-machines):
+update both hosts, publish the relay, exchange a pairing code, then send a
+test message each way in operator chat.
 
 ## How it fits together
 
@@ -270,8 +308,7 @@ For a managed Codex session, prefer `pairtask start codex --id ID --resume`
 inside the sandbox: the launcher records each agent ID's conversation and
 continues it (close the old session first). Alternatively, resume an explicit
 conversation with `codex resume SESSION_ID` or `claude --resume` from the
-project directory; the Codex resume picker does not resume managed sessions
-([#67](https://github.com/pairtask/pairtask/issues/67)).
+project directory; the Codex resume picker does not resume managed sessions.
 
 ### Set a Codex soft cap
 
@@ -285,15 +322,67 @@ The sandbox alias is preconfigured. For host sessions, use the
 [dedicated channel config](docs/quickstart.md#3-start-claude-code).
 Claude requires channel consent and account/organization support.
 
-## Reference and contributing
+## Documentation
 
-[Operator chat](docs/operator-chat.md) ·
-[Protocol](docs/protocol.md) · [Manual MCP](docs/mcp.md) ·
-[Status API](docs/status.md) · [Chat formatting](docs/chat-formatting.md) ·
-[Pi](docs/pi.md) · [Agent skill](docs/skills/collab-ai/SKILL.md)
+**Use pairtask**
+
+- [Host commands](docs/host-commands.md): every `pairtask` command on your
+  machine, including [connecting two machines](docs/host-commands.md#connect-two-machines).
+- [Operator chat](docs/operator-chat.md): conversations, commands, reviews and
+  pairing in `pairtask chat`. [Formatting](docs/chat-formatting.md): Markdown,
+  diagrams and `/diagram` export.
+- [Dashboard](docs/dashboard.md): the read-only terminal view and its controls.
+- [Pi](docs/pi.md): run Pi alongside Codex and Claude.
+- [Troubleshooting](docs/troubleshooting.md): symptoms and what to check.
+- [Renamed from collab-ai](docs/renamed.md): old command and setting names.
+
+**Run the sandbox**
+
+- [Sandbox setup](docs/sandbox.md): install, SSH, sign-in, Docker, recovery and
+  the security model.
+- [Control runtime](docs/secured-runtime.md): the offline `secured` container
+  that holds the broker.
+- [Host mounts](docs/sandbox-mounts.md): share host directories read-only or
+  writable.
+- [Storage](docs/sandbox-storage.md): persistent volumes, upgrades, backup and
+  restore.
+- [Tools](docs/sandbox-tools.md): the slim image and the installed tool stores.
+- [Images](docs/sandbox-image.md): download or build workspace images.
+- [Provisioning](docs/sandbox-operator.md): plan and apply without host
+  Terraform.
+
+**Run on your host and integrate**
+
+- [Host quick start](docs/quickstart.md): build and run without Incus.
+- [Host integration](docs/host-integration.md): launch options for Claude,
+  Codex and Pi, resume, and soft token budgets.
+- [Manual MCP](docs/mcp.md): register the adapter and use the messaging tools.
+- [Durable inboxes](docs/durable-inboxes.md),
+  [correlated replies](docs/correlated-replies.md) and
+  [delegated listeners](docs/delegated-listeners.md): delivery guarantees and
+  patterns.
+- [Broker status](docs/status.md): the `pairtask status` command and its JSON.
+- [Wire protocol](docs/protocol.md): the broker's newline-delimited JSON
+  protocol.
+- [Collaboration skill](docs/skills/collab-ai/SKILL.md): what the agents follow.
+
+**Design notes and validation records**
+
+[Operator chat design](docs/operator-chat-design.md) ·
+[Runtime boundaries](docs/runtime-boundaries-v2.md) ·
+[Budget boundary](docs/budget-boundary.md) ·
+[Team presets](docs/team-presets.md) ·
+[Agent roster experiment](docs/agent-roster-experiment.md) ·
+[Live host handoff](docs/host-live-demo.md) ·
+[Terminal communication](docs/managed-comms-live-demo.md) ·
+[Codex resume validation](docs/codex-resume-validation.md) ·
+[Skill acceptance cases](docs/skill-validation.md)
+
+## Contributing
 
 [Report an issue](https://github.com/pairtask/pairtask/issues). Run checks with:
 
 ```sh
 go test -race ./... -timeout=30s
+python3 -m unittest discover -s scripts/tests
 ```

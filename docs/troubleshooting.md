@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Back to the quick start](../README.md#run-on-your-host).
+[Back to the README](../README.md).
 
 | Symptom | What to check |
 |---------|---------------|
@@ -19,7 +19,7 @@ own socket. The broker's environment variables are optional:
 to `./collab-ai.db`.
 
 Older `COLLAB_*` names (`COLLAB_SOCKET_PATH`, `COLLAB_DB_PATH`, `COLLAB_BUDGET_DIR`,
-`COLLAB_OPERATOR_HOME`, …) still work for now: they apply only when the `PAIRTASK_*`
+`COLLAB_OPERATOR_HOME`, …) still work: they apply only when the `PAIRTASK_*`
 name is unset, and print one deprecation warning on stderr. A `PAIRTASK_*` variable
 set to an empty value is an error for settings with a default; unset it to use the
 default.

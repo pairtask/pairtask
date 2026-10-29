@@ -1,6 +1,6 @@
 # Broker wire protocol
 
-[Back to the README](../README.md#reference-and-contributing). This reference covers clients that
+[Back to the README](../README.md#documentation). This reference covers clients that
 connect directly to the broker; agent setup is in the [quick start](../README.md#run-on-your-host).
 
 Newline-delimited JSON, one object per line. Messaging connections start with a
@@ -81,8 +81,8 @@ in incoming frames. Staged events require version 2 or newer and `ack_requested:
 delivery requires version 3 and `durable: true`; MCP sends request both by default. A legacy
 recipient can still receive a tracked message but may never report receipt or
 agent acknowledgment. Missing stages remain unconfirmed. An old broker is
-exposed by `acknowledgments_supported: false` in the inbox response; the new
-MCP `send` defaults to durable delivery and requires v3; set `non_durable: true`
+exposed by `acknowledgments_supported: false` in the inbox response; MCP
+`send` defaults to durable delivery and requires v3; set `non_durable: true`
 explicitly for legacy delivery. `durability_supported` reports negotiation.
 `acknowledge` requires v2 or newer. Tool discovery remains offline-capable.
 
@@ -103,8 +103,9 @@ none.
 
 - Agent `msg` or `ack` frames that include `origin` are rejected as
   `malformed_frame`, and nothing is routed.
-- `operator` is a reserved ID. A `hello` with it fails, and agent sends to it
-  return `unknown_recipient`; replies to the operator aren't supported yet.
+- `operator` is a reserved ID. A `hello` with it fails; agent sends to
+  `operator` require v5 (see [Operator inbox (v5)](#operator-inbox-v5)) and
+  return `unknown_recipient` on v4 and below.
 
 **Operator endpoint:** a separate socket, enabled with
 `PAIRTASK_OPERATOR_SOCKET_PATH` plus `PAIRTASK_OPERATOR_UID`.
@@ -175,8 +176,7 @@ inbox's pending count; older brokers show it as unknown.
 ## Live operator session
 
 The operator socket also accepts a long-lived session, which the operator chat
-(#77) uses. The full contract is in [operator chat](operator-chat-design.md), under
-"PR2 contract".
+uses. The full contract is in [operator chat](operator-chat-design.md).
 
 - **Opening:** `operator_session_open {request_id, client}` is the first frame.
   The response `operator_session` lists the session ID, epoch and
@@ -224,7 +224,7 @@ acknowledgment.
     `receipts_truncated`; page more with `operator_message_stages`, which also
     works one-shot).
   - Received entries add the operator's own `operator_stage`.
-- **Payloads are never truncated.** New operator sends are capped at 512 KiB
+- **Payloads are never truncated.** Operator sends are capped at 512 KiB
   of encoded payload. Older oversized operator messages appear with
   `body_omitted: true`, and their text isn't available through history. A
   message stored without any payload shows payload `null`.
@@ -243,7 +243,7 @@ to healthy recipients. Socket writes time out after five seconds. Disconnecting 
 slow reader can discard in-memory frames; unacknowledged durable messages remain
 pending for replay. Other frames are not recoverable.
 
-## Agent status (#133, v6)
+## Agent status (v6)
 
 An agent tells the operator what it is doing with one small request at each
 change, never as a heartbeat. Status is informational: it is not a message,
@@ -383,9 +383,9 @@ claims_truncated}`, or an error: `invalid_claim`, `claim_conflict` (with
 
 ## Rooms (v9)
 
-Project rooms (#153) are opt-in spaces for a group's discussion. They organise
+Project rooms are opt-in spaces for a group's discussion. They organise
 talk; they are not a security boundary (agents still choose their IDs on
-`hello`; isolation is a separate stack, #74).
+`hello`; container isolation is a separate stack).
 
 - **The Square is everyone.** A `"*"` without `room` (or with
   `room: "square"`, normalized to none) reaches every agent, and the operator
@@ -432,9 +432,9 @@ talk; they are not a security boundary (agents still choose their IDs on
 SQLite retains `agents` (session lifecycle and harness/model) and `messages`
 (history), plus `message_metadata` (stable IDs, reply references, sender session,
 and acknowledgment request) and `message_receipts` (recipient/session membership
-and receipt timestamps). Opening an existing database adds the new tables and
-index without rewriting history. Pre-upgrade messages have no new metadata or
-receipts and cannot be acknowledged retroactively. The additive v3 tables `durable_agents`, `durable_messages`, and `durable_inbox`
+and receipt timestamps). Opening an existing database adds missing tables and
+indexes without rewriting history. Pre-upgrade messages have no metadata or
+receipts and cannot be acknowledged retroactively. The v3 tables `durable_agents`, `durable_messages`, and `durable_inbox`
 retain explicitly enrolled pending work and idempotent retry state. Version 4
 adds the nullable columns `message_metadata.origin` and
 `durable_agents.protocol_version` to existing databases, and the tables

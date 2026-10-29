@@ -85,4 +85,4 @@ default discovery, cancellation, and private terminal socket shutdown.
 This test does not establish indefinite unattended operation, automatic recovery
 from an established disconnect, or attachment to an already-running Codex
 conversation. The supported launcher owns one new thread. Full Claude/Codex live
-acceptance remains tracked in [issue #22](https://github.com/pairtask/pairtask/issues/22).
+acceptance remains open.

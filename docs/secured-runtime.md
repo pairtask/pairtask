@@ -85,7 +85,7 @@ message; it is not approval.
 - **Audit:** every send and every rejected connection is recorded in
   `operator_audit` in the control database, without message text. Use
   `--message-id` to retry a send safely.
-- **Not available yet:** `attach` and seat control (#69). See
+- **Not available yet:** `attach` and seat control. See
   [protocol](protocol.md#origin-and-operator-messages-v4).
 
 ### Interactive chat
@@ -100,7 +100,7 @@ that drops (a reprovision, a lost connection) cannot turn the terminal's
 mouse reporting off again, and every mouse move then types `35;26;31M`-like
 text into your shell. The wrapper saves your terminal state before the
 session and restores it afterwards, on any exit status and when interrupted,
-and emits nothing when its output is not a terminal (#122). If a terminal is
+and emits nothing when its output is not a terminal. If a terminal is
 already in that state, run `reset`, or:
 
 ```sh
@@ -170,7 +170,7 @@ can remove its volumes; use [explicit removal](sandbox-storage.md#deliberate-rem
 
 This separate path still takes JSON protocol input, not terminal prompts.
 Subscription login, protected terminal/resume support and Claude/shared accounting
-remain under [#34](https://github.com/pairtask/pairtask/issues/34). Its managed
+are not supported yet. Its managed
 provider points to an unused loopback fixture port (`18080`).
 
 Run on your host. On Linux replace `colima-pairtask:` with `local:`:
@@ -273,9 +273,10 @@ sudo python3 scripts/sandbox-smoke.py --remote local \
   --image-dir dist/installed-workspace --secured-check
 ```
 
-Use a maintained Incus release (CI uses [Zabbly's 6.0 LTS packages](https://github.com/zabbly/incus#60-lts-repository)).
+Use a supported Incus release (see [Incus server version](sandbox.md#incus-server-version));
+CI uses [Zabbly's](https://github.com/zabbly/incus) 7.0 LTS packages.
 Ubuntu 24.04's original Incus 6.0.0 package can reject these mounts on newer
-kernels because of an [upstream detection bug](https://github.com/lxc/incus/issues/882).
+kernels because of an upstream Incus detection bug.
 The storage pool/kernel must support Incus ID-mapped custom volumes
 ([`security.shifted`](https://linuxcontainers.org/incus/docs/main/reference/storage_zfs/#storage-volume-configuration));
 ZFS requires 2.2+ for idmaps. Unsupported hosts should fail provisioning rather

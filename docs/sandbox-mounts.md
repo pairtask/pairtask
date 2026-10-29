@@ -74,7 +74,7 @@ only an owner may change an ACL, and grants the rest as before.
 
 **Existing Mac installs:** rerun `sandbox-share.py setup --mounts-file /path/to/mounts.json`
 before upgrading macOS. Setup sets `RealName` on both sharing records, including
-older accounts; missing names can break macOS account migration ([#94](https://github.com/pairtask/pairtask/issues/94)).
+older accounts; missing names can break macOS account migration.
 If only the group remains after a failed upgrade, setup stops with inspection
 instructions. After the operator repairs the account/group, rerun setup to reapply ACLs.
 

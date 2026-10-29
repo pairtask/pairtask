@@ -57,4 +57,4 @@ This establishes conformance of the covered core examples. Both libraries use
 the same ristretto255 dependency, so agreement is not an independent check of
 that primitive. Passing vectors and race tests do not establish cryptographic
 security, wire interoperability, production readiness, or the invitation
-persistence and policy properties of #178.
+persistence and policy properties of peer pairing.

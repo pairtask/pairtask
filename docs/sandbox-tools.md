@@ -1,8 +1,9 @@
 # Sandbox tools: a slim image and installed tool stores
 
-Status: design v5 for #84, agreed by Claude and Codex on 2026-10-14
-(DESIGN-OK, architectural). Implementation, the pending verification and the
-acceptance tests follow in the PRs listed under "Delivery".
+Status: design v5, agreed by Claude and Codex on 2026-10-14. It was delivered
+in the steps under "Delivery"; "Verification still pending" lists what the
+real sandbox still has to confirm. For choosing tools, see `--tools` in
+[host commands](host-commands.md#install-and-upgrade).
 
 ## Problem
 
@@ -50,7 +51,7 @@ them optional.**
   rollouts; a rollout transfers only the artifacts whose pin changed.
 - A host-side cache keeps verified artifacts across rollouts, like
   `dist/images` does for the image.
-- Optional tools can be turned off per launch mode or preset (#73); the
+- Optional tools can be turned off per launch mode or preset; the
   shipped default keeps today's feature set.
 - Agent processes never fetch or replace their own executables.
 - The store switch is atomic: a container runs one complete tool generation,
@@ -88,7 +89,7 @@ per-tool fields are folded into it by the lock refresh script.
 | playwright bundle: `node_modules` from `npm ci` + Chromium (or `chromium-headless-shell`) | `archive` | **built in CI** and published as a release asset with its sha256 in the release manifest |
 | chromium-deps: the `.deb` set `playwright install --with-deps` would install | `debs` | built in CI with `apt-get download` against the signed archive, bundled, sha256 in the manifest |
 | docker: Docker's `.deb` set plus `uidmap slirp4netns fuse-overlayfs …` | `debs` | same |
-| pi: the pinned Pi closure plus the pairtask extension, examples removed, licenses checked, notices included (#155) | `archive` | **built in CI** by `infra/image/build-pi-bundle.py`, like Playwright; runs on the lock's Node |
+| pi: the pinned Pi closure plus the pairtask extension, examples removed, licenses checked, notices included | `archive` | **built in CI** by `infra/image/build-pi-bundle.py`, like Playwright; runs on the lock's Node |
 
 CI-built bundles make the "closure" explicit: pinned Node + pinned MCP
 dependencies + a pinned browser archive, verified by one digest. apt
@@ -219,7 +220,7 @@ and before any agent entry point is enabled:
 
 The step has a bounded timeout and prints what it is transferring. The
 containers never download anything themselves, so `secured` needs no network
-interface and the egress work (#69–#74) is unaffected.
+interface and the planned egress work is unaffected.
 
 **Mutation only on a fresh root.** A live root can't be quiesced: SSH and
 tmux sessions, the agent's own Docker daemon and transient supervised units
@@ -371,7 +372,7 @@ in both containers and recorded in each generation's manifest:
 - Required by every launch mode: Go, Codex, Claude Code, rtk, starship.
 - Optional: playwright (bundle + chromium-deps + node), codescene (cs-mcp),
   docker (deb set). The default selection keeps today's feature set, so a
-  rollout changes nothing for the operator; presets (#73) and a `--tools`
+  rollout changes nothing for the operator; presets and a `--tools`
   flag turn optional tools off or on. Whether the shipped default becomes
   "off" is the operator's call once presets exist.
 - The MCP configuration for Claude and Codex is written by the activator from
@@ -396,7 +397,7 @@ in both containers and recorded in each generation's manifest:
   `/usr/local/bin/codex`; that path stays and is the launcher.
 - `pairtask-playwright` hardcodes `/opt/collab-mcp`; it resolves the store path
   through `current` instead.
-- **Launch modes require tools.** Each mode or preset (#73) declares the tools
+- **Launch modes require tools.** Each mode or preset declares the tools
   it needs (duo: go, codex, claude, rtk; a review preset may add codescene).
   The provisioner rejects a selection that lacks a required tool instead of
   half-starting.
@@ -412,14 +413,14 @@ in both containers and recorded in each generation's manifest:
 ## Delivery, without a regression
 
 Every release stays feature-complete; the image switch is the last step and
-happens only when every artifact exists. PRs in order:
+happens only when every artifact exists. Steps in order:
 
 1. **Lock and artifact schema** (`artifacts` table in `tools.lock.json`,
    `sandbox_versions.py` refreshes it), the host cache and the download
    verification. No image change.
 2. **CI bundles:** playwright, chromium-deps and docker built in CI and
    attached to releases with their digests in the manifest. No image change.
-3. **Stores, activator, launchers, readiness, managed start**, in two PRs:
+3. **Stores, activator, launchers, readiness, managed start**, in two parts:
    - **3a:** the `workspace-tools` and `secured-tools` volumes, `tool_store.py`
      with the activator, readiness check and launcher, the gated units. The
      image records `tools-mode = baked`: it still carries the tools and the
@@ -428,7 +429,7 @@ happens only when every artifact exists. PRs in order:
    - **3b:** the host flow (cache → push → activate → release) in
      `scripts/sandbox_tools_install.py`, run by `rollout` between apply and
      the SSH key install; `--tools` selects optional vendor tools (bundles
-     follow in PR 4); plan identity covers the selection, the release lock and
+     follow in step 4); plan identity covers the selection, the release lock and
      the activator; `sandbox-ssh.py` refuses the agent key while
      `pairtask-tools-ready` fails; `tools-retry` reruns a crashed activation on
      never-released roots only.
@@ -448,7 +449,7 @@ happens only when every artifact exists. PRs in order:
    launchers; `tools-mode` is `store`; CI asserts a 400 MiB image budget. The
    smoke and boundary tests activate tools after their `tofu apply`, as the
    rollout does, because a store-mode root admits agents only then. The default selection keeps today's feature set on (Docker and
-   Playwright enabled) unless the operator decides otherwise; presets (#73)
+   Playwright enabled) unless the operator decides otherwise; presets
    can turn them off.
 
 The 200–250 MiB figure is the measured expectation from the component table,
@@ -456,7 +457,7 @@ not a guarantee; CI asserts a size budget once the slim image exists.
 
 ## Verification still pending
 
-None of these has been run yet; each is done on the real sandbox during PR 3
+None of these has been run yet; each is done on the real sandbox during step 3
 and recorded here with its result:
 
 - the per-container volumes (no `security.shifted`, as they aren't shared)

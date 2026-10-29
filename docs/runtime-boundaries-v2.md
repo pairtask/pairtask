@@ -190,5 +190,5 @@ doesn't mean the model or client isn't rogue.
   who administers it.
 - One executor identity per seat vs a shared `collab-dev-executor`.
 
-Related: #19, #21, #34, #67, `docs/team-presets.md`, `docs/budget-boundary.md`,
-`docs/secured-runtime.md`.
+Related: [team presets](team-presets.md), [budget boundary](budget-boundary.md),
+[control runtime](secured-runtime.md).

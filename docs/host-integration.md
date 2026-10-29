@@ -93,11 +93,10 @@ manual adapter must not claim the same inbox. Legacy `collab_*` dynamic tools us
 the same listener. Resume/fork retain developer instructions unless explicitly replaced.
 
 These Codex names (`collab_runtime`, `collab_receive` and the `collab_*` tools)
-keep their names in pairtask on purpose. Saved threads record them in their
+keep their names in pairtask on purpose: saved threads record them in their
 instructions and history, and the proxy can't tell which naming a resumed or
-forked thread was started with. Renaming them is deferred for session
-compatibility; it isn't technically impossible. Claude's server, by contrast, is
-named `pairtask` and takes effect at the next launch.
+forked thread was started with. Claude's server, by contrast, is named
+`pairtask` and takes effect at the next launch.
 
 Cancellation sends SIGTERM to Codex so npm launchers can forward it to their native
 child, with a two-second fallback timeout. Codex owns session selection, history
