@@ -118,7 +118,7 @@ type ConversationView struct {
 	Selected bool
 	Draft    bool
 	// Contact is a paired workspace's full identity fingerprint, set only
-	// for its conversation; no message is ever sent there yet.
+	// for its conversation.
 	Contact string
 	// Label is what the bar shows when it isn't the ID: a contact's name,
 	// address or short key.

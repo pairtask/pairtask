@@ -2,7 +2,8 @@
 
 Connect your pairtask workspace with one on another machine, then send
 messages between the two operators. Call the machines **A** (invites) and
-**B** (joins). Both need release 587.1 or later.
+**B** (joins). Update both to the latest release first: this guide matches
+its chat.
 
 ## 1. On both machines: update and turn pairing on
 
@@ -67,8 +68,9 @@ Check from B: `nc -vz A_IP 7445`.
 
 - **`No route to host` (macOS 15+):** System Settings › Privacy & Security ›
   Local Network, and allow your terminal app.
-- **`route -n get A_IP` names a `utun` interface:** Tailscale is routing your
-  LAN. Allow local network access for your exit node, or turn it off.
+- **You use Tailscale and `route -n get A_IP` names a `utun` interface:** the
+  tunnel may be carrying your LAN traffic. Check that your exit node allows
+  local network access, or turn the exit node off.
 - **Connection refused or a timeout:** check `pairtask pairing status` and the
   firewall on A.
 - **`/pair` shows the redemption `failed`:** fix the network, then repeat
