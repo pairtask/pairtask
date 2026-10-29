@@ -79,8 +79,7 @@ func newOperatorFixture(t *testing.T, uid int, database string) *operatorFixture
 	h := hub.New(st, seq, testLog())
 	go h.Run(ctx)
 	f := &operatorFixture{t: t, agent: socketPath(t), operator: socketPath(t)}
-	f.db, e = sql.Open("sqlite", database)
-	operatorNoError(t, e)
+	f.db = openFixtureInspection(t, database)
 	a := New(f.agent, h, testLog())
 	o := NewOperator(f.operator, h, uid, testLog())
 	f.endpoint = o
@@ -483,21 +482,7 @@ func requireOperatorAuditPrivate(t *testing.T, db *sql.DB) {
 
 func awaitOperatorShutdown(t *testing.T, done <-chan error, hubDone <-chan struct{}) {
 	t.Helper()
-	for i := 0; i < 2; i++ {
-		select {
-		case e := <-done:
-			if e != nil {
-				t.Error(e)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("listener shutdown timeout")
-		}
-	}
-	select {
-	case <-hubDone:
-	case <-time.After(3 * time.Second):
-		t.Error("hub shutdown timeout")
-	}
+	awaitFixtureShutdown(t, 2, done, hubDone)
 }
 
 func createOperatorExistingPath(t *testing.T, path, kind string) {

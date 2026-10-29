@@ -5,7 +5,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"log/slog"
 	"net"
 	"os"
@@ -67,8 +66,7 @@ func newRedeemOperator(t *testing.T, cfg hub.PairingConfig, database string) *re
 	operatorNoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	f := &redeemOperatorFixture{operatorFixture: &operatorFixture{t: t, agent: socketPath(t), operator: socketPath(t)}, st: st, h: h, pairSocket: filepath.Join(dir, "pair.sock"), logs: logs}
-	f.db, err = sql.Open("sqlite", database)
-	operatorNoError(t, err)
+	f.db = openFixtureInspection(t, database)
 	a, o, p := New(f.agent, h, log), NewOperator(f.operator, h, os.Getuid(), log), NewPairing(f.pairSocket, h, log)
 	f.endpoint = o
 	done := make(chan error, 3)
@@ -118,20 +116,9 @@ func waitRedeemStarted(t *testing.T, started <-chan struct{}) {
 }
 func waitRedeemShutdown(t *testing.T, done <-chan error, hubDone <-chan struct{}) {
 	t.Helper()
-	for range 3 {
-		select {
-		case err := <-done:
-			operatorNoError(t, err)
-		case <-time.After(3 * time.Second):
-			t.Fatal("pairing listener did not stop")
-		}
-	}
-	select {
-	case <-hubDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("pairing worker did not settle on shutdown")
-	}
+	awaitFixtureShutdown(t, 3, done, hubDone)
 }
+
 func relayToPairing(t *testing.T, f *redeemOperatorFixture) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
