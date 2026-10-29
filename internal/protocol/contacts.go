@@ -189,10 +189,18 @@ func validContactText(msg Message, allowed contactFieldSet) error {
 	if !allowed.text {
 		return nil
 	}
-	if msg.ContactText == "" || len(msg.ContactText) > ContactTextBytes || !utf8.ValidString(msg.ContactText) {
+	if !validText(msg.ContactText) {
 		return fmt.Errorf("contact_text is required: valid UTF-8, at most %d bytes", ContactTextBytes)
 	}
 	return nil
+}
+
+// validText: 1 to ContactTextBytes of valid UTF-8.
+func validText(text string) bool {
+	if text == "" || len(text) > ContactTextBytes {
+		return false
+	}
+	return utf8.ValidString(text)
 }
 
 func validContactRead(msg Message, allowed contactFieldSet) error {

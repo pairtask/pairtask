@@ -2,7 +2,6 @@ package messaging_test
 
 import (
 	"context"
-	"errors"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"io"
 	"testing"
@@ -12,9 +11,9 @@ func TestMessageSessionAcceptanceLostAckRetainsProgress(t *testing.T) {
 	db, _ := sessionFixture(t)
 	frames := &scriptFrames{input: [][]byte{sessionHello(t), sessionMessage(t, messaging.Message{ID: "progress", N: 1, CreatedAt: sessionAt, Text: "text"})}, failKind: messaging.FrameStored}
 	result, err := sessionSide(frames, db.PeerMessages()).Serve(context.Background())
-	if !errors.Is(err, io.ErrUnexpectedEOF) || result.Received != 1 || !result.Moved() {
-		t.Fatalf("lost durable progress: %+v %v", result, err)
-	}
+	sessionErrorIs(t, err, io.ErrUnexpectedEOF)
+	sessionEqual(t, result.Received, 1)
+	sessionEqual(t, result.Moved(), true)
 }
 
 func TestMessageSessionAcceptanceRefusalRetainsProgress(t *testing.T) {
