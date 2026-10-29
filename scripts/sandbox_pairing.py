@@ -109,6 +109,11 @@ def pairing_connector(resource, attrs, project):
 
 def applied(directory, project):
     """Whether the state holds the pairing connector; None without a deployed state."""
+    state = deployed_state(directory, project)
+    return None if state is None else bool(connector_instances(state, project))
+
+
+def deployed_state(directory, project):
     path = directory / "terraform.tfstate"
     if path.is_symlink():
         raise ValueError(f"Refusing symlinked state: {path}")
@@ -117,15 +122,16 @@ def applied(directory, project):
         return None
     if actual != project:
         raise ValueError(f"State belongs to {actual}, not {project}")
-    found = False
-    for resource in json.loads(path.read_text()).get("resources", []):
-        if not connector_resource(resource):
-            continue
-        for instance in resource.get("instances", []):
-            if not pairing_connector(resource, instance["attributes"], project):
-                raise ValueError("Unexpected pairing connector in state; use explicit plan/apply")
-            found = True
-    return found
+    return json.loads(path.read_text())
+
+
+def connector_instances(state, project):
+    """The state's pairing connectors, refusing any that isn't this deployment's own."""
+    owned = [(resource, instance["attributes"]) for resource in state.get("resources", [])
+             if connector_resource(resource) for instance in resource.get("instances", [])]
+    if not all(pairing_connector(resource, attrs, project) for resource, attrs in owned):
+        raise ValueError("Unexpected pairing connector in state; use explicit plan/apply")
+    return owned
 
 
 def find_deployment(state_dir, project, root=ROOT, location=LOCATION):
