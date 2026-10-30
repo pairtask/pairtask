@@ -152,50 +152,113 @@ func (h *Hub) remoteAcknowledged(msg protocol.Message, report store.AckReport) {
 	}
 }
 
-// routeRemoteReply routes an agent's reply to an imported message back to
-// its contact, and reports whether it was one. The reply is kept in
-// history and queued in one transaction; it leaves at once over a live
-// link.
-func (h *Hub) routeRemoteReply(ctx context.Context, clients map[string]*Client, in Inbound) bool {
-	if in.Msg.InReplyTo == "" {
+// routeRemote routes an agent's message to a paired workspace, and reports
+// whether it was one: a message naming a workspace, or a reply to one
+// imported from a workspace. It is kept in history and queued in one
+// transaction, and leaves at once over a live link.
+func (h *Hub) routeRemote(ctx context.Context, clients map[string]*Client, in Inbound) bool {
+	route, remote, rerr := h.remoteRoute(ctx, in)
+	if !remote {
 		return false
+	}
+	if rerr == nil {
+		rerr = h.sendRemote(ctx, clients, in, route)
+	}
+	if rerr != nil {
+		h.enqueue(clients, in.From, rerr.frame(in.Msg.MessageID))
+	}
+	return true
+}
+
+// remoteRoute is how an agent's message reaches a paired workspace: the
+// contact, and the store call that queues it.
+type remoteRoute struct {
+	contact string
+	queue   func(ctx context.Context, out protocol.Message, text string, at time.Time) (store.RemoteReplyResult, error)
+}
+
+// remoteRoute is the route of a message for a paired workspace; remote is
+// false for any other message.
+func (h *Hub) remoteRoute(ctx context.Context, in Inbound) (remoteRoute, bool, *routingError) {
+	if in.Msg.Workspace != "" {
+		route, rerr := h.workspaceRoute(ctx, in)
+		return route, true, rerr
+	}
+	if in.Msg.InReplyTo == "" {
+		return remoteRoute{}, false, nil
 	}
 	parent, found, err := h.store.RemoteParent(ctx, in.Msg.InReplyTo)
 	if err != nil || !found {
-		return false
+		return remoteRoute{}, false, nil
 	}
-	out, rerr := h.queueRemoteReply(ctx, in, parent)
-	if rerr != nil {
-		h.enqueue(clients, in.From, rerr.frame(in.Msg.MessageID))
-		return true
+	return h.replyRoute(in, parent), true, nil
+}
+
+// replyRoute answers an imported message, back to the workspace it came from.
+func (h *Hub) replyRoute(in Inbound, parent store.RemoteImport) remoteRoute {
+	return remoteRoute{parent.Contact, func(ctx context.Context, out protocol.Message, text string, at time.Time) (store.RemoteReplyResult, error) {
+		return h.store.QueueRemoteReply(ctx, store.RemoteReply{Msg: out, SenderSession: in.From.SessionID, Parent: parent.LocalID, Text: text, Now: at})
+	}}
+}
+
+// workspaceRoute is a message naming its workspace: new, or answering a
+// message imported from that same workspace, never another.
+func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *routingError) {
+	contact, err := h.store.ResolveWorkspace(ctx, in.Msg.Workspace)
+	if err != nil {
+		return remoteRoute{}, workspaceError(err)
+	}
+	if in.Msg.InReplyTo == "" {
+		return remoteRoute{contact, func(ctx context.Context, out protocol.Message, text string, at time.Time) (store.RemoteReplyResult, error) {
+			return h.store.QueueWorkspaceSend(ctx, store.WorkspaceSend{Msg: out, SenderSession: in.From.SessionID, Contact: contact, Text: text, Now: at})
+		}}, nil
+	}
+	parent, found, err := h.store.RemoteParent(ctx, in.Msg.InReplyTo)
+	if err != nil || !found {
+		return remoteRoute{}, errOtherWorkspace
+	}
+	if parent.Contact != contact {
+		return remoteRoute{}, errOtherWorkspace
+	}
+	return h.replyRoute(in, parent), nil
+}
+
+var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
+
+// workspaceError is what an agent hears of a workspace it can't name.
+func workspaceError(err error) *routingError {
+	if errors.Is(err, store.ErrNoWorkspace) || errors.Is(err, store.ErrAmbiguousWorkspace) {
+		return &routingError{protocol.ErrRecipientUnavailable, err.Error()}
+	}
+	return &routingError{protocol.ErrInternal, "paired workspaces unavailable"}
+}
+
+// sendRemote queues the message by its route, then confirms it and wakes
+// the link.
+func (h *Hub) sendRemote(ctx context.Context, clients map[string]*Client, in Inbound, route remoteRoute) *routingError {
+	text, ok := payloadText(in.Msg.Payload)
+	if !ok {
+		return &routingError{protocol.ErrMalformedFrame, "a message to a paired workspace carries a text payload"}
+	}
+	ts := time.Now().UTC()
+	out := in.Msg
+	out.Seq, out.TS, out.From, out.SessionID, out.Origin = h.seq+1, &ts, in.From.ID, in.From.SessionID, protocol.OriginAgent
+	result, err := route.queue(ctx, out, text, ts)
+	if err != nil {
+		return remoteReplyError(err)
+	}
+	if result.Repeated {
+		out.Seq, out.Repeated = result.Seq, true
+	} else {
+		h.seq++
 	}
 	if out.AckRequested {
 		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted,
 			Seq: out.Seq, Durable: out.Durable, Repeated: out.Repeated})
 	}
-	h.SyncMessages(parent.Contact)
-	h.MessagesChanged(parent.Contact)
-	return true
-}
-
-func (h *Hub) queueRemoteReply(ctx context.Context, in Inbound, parent store.RemoteImport) (protocol.Message, *routingError) {
-	text, ok := payloadText(in.Msg.Payload)
-	if !ok {
-		return protocol.Message{}, &routingError{protocol.ErrMalformedFrame, "a reply to a paired workspace carries a text payload"}
-	}
-	ts := time.Now().UTC()
-	out := in.Msg
-	out.Seq, out.TS, out.From, out.SessionID, out.Origin = h.seq+1, &ts, in.From.ID, in.From.SessionID, protocol.OriginAgent
-	result, err := h.store.QueueRemoteReply(ctx, store.RemoteReply{Msg: out, SenderSession: in.From.SessionID, Parent: parent.LocalID, Text: text, Now: ts})
-	if err != nil {
-		return out, remoteReplyError(err)
-	}
-	if result.Repeated {
-		out.Seq, out.Repeated = result.Seq, true
-		return out, nil
-	}
-	h.seq++
-	return out, nil
+	h.SyncMessages(route.contact)
+	h.MessagesChanged(route.contact)
+	return nil
 }
 
 // payloadText is a {"text": …} payload's text.
@@ -216,6 +279,7 @@ var remoteReplyErrors = []struct {
 	detail string
 }{
 	{messaging.ErrNotRecipient, protocol.ErrMalformedFrame, "a reply to a paired workspace's message comes from one of its recipients and goes to its sender"},
+	{store.ErrNoImport, protocol.ErrMalformedFrame, "in_reply_to names no message from a paired workspace"},
 	{messaging.ErrNotShared, protocol.ErrRecipientUnavailable, "this agent is not shared with that workspace"},
 	{messaging.ErrUnknownContact, protocol.ErrRecipientUnavailable, "that workspace is no longer a confirmed contact"},
 	{messaging.ErrOutboxFull, protocol.ErrInboxFull, "too many messages to that workspace are waiting to leave"},

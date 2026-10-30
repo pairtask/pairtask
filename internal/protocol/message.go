@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = RemoteVersion
+	Version                = WorkspaceVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -46,6 +46,7 @@ const (
 	RoomVersion            = 9  // project rooms: room on msg, rooms on hello and welcome
 	ContactMessagesVersion = 11 // operator_contact and contact_messages_changed (#210), operator only
 	RemoteVersion          = 12 // msg with origin remote: from a paired workspace's agents or operator (#222)
+	WorkspaceVersion       = 13 // msg workspace and workspaces_get: an agent writes to a paired workspace (#222)
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -177,6 +178,8 @@ type Message struct {
 	To                 string              `json:"to,omitempty"`                  // msg: agent id or "*"
 	Origin             string              `json:"origin,omitempty"`              // msg (broker -> client): operator, agent, remote (v12) or unknown
 	Remote             *Remote             `json:"remote,omitempty"`              // msg with origin remote (v12)
+	Workspace          string              `json:"workspace,omitempty"`           // msg (agent -> broker, v13): the paired workspace to is in, by key or name
+	Workspaces         []WorkspaceView     `json:"workspaces,omitempty"`          // workspaces_result (v13)
 	Group              []string            `json:"group,omitempty"`               // operator_send: explicit recipient set
 	Excluded           []string            `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
 	Room               string              `json:"room,omitempty"`                // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room

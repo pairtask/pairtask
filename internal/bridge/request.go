@@ -16,6 +16,7 @@ type SendRequest struct {
 	InReplyTo  string `json:"in_reply_to,omitempty" jsonschema:"Message ID this message replies to"`
 	NonDurable bool   `json:"non_durable,omitempty" jsonschema:"Explicitly use legacy delivery without replay; default false requires protocol version 3 and durable-capable recipients"`
 	Room       string `json:"room,omitempty" jsonschema:"With to *, a room you joined: only its members and the operator see it; omit for the Square (everyone). A reply without room stays in its parent's room"`
+	Workspace  string `json:"workspace,omitempty" jsonschema:"A paired workspace you may write to, by name or key from the workspaces tool: to is then one of its agents, or operator for its operator (protocol version 13)"`
 }
 
 func (r SendRequest) message() (protocol.Message, error) {
@@ -31,5 +32,5 @@ func (r SendRequest) message() (protocol.Message, error) {
 	payload, err := json.Marshal(struct {
 		Text string `json:"text"`
 	}{r.Text})
-	return protocol.Message{Type: protocol.TypeMsg, To: r.To, Payload: payload, MessageID: r.MessageID, InReplyTo: r.InReplyTo, AckRequested: true, Durable: !r.NonDurable, Room: r.Room}, err
+	return protocol.Message{Type: protocol.TypeMsg, To: r.To, Payload: payload, MessageID: r.MessageID, InReplyTo: r.InReplyTo, AckRequested: true, Durable: !r.NonDurable, Room: r.Room, Workspace: r.Workspace}, err
 }

@@ -236,7 +236,7 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 // to a paired workspace's message goes there instead, a retry gets its
 // retained outcome, and a room post needs the sender's membership.
 func (h *Hub) newSend(ctx context.Context, clients map[string]*Client, in Inbound) bool {
-	if h.routeRemoteReply(ctx, clients, in) {
+	if h.routeRemote(ctx, clients, in) {
 		return false
 	}
 	if h.reportRetry(ctx, clients, in) {
@@ -278,6 +278,23 @@ var agentEnvelopeChecks = []func(protocol.Message, int) *routingError{
 	checkAgentAddress,
 	checkPublicFlags,
 	func(msg protocol.Message, _ int) *routingError { return checkNoMentions(msg) },
+	checkWorkspace,
+}
+
+// checkWorkspace admits a message naming a paired workspace from v13, to one
+// agent there or its operator.
+func checkWorkspace(msg protocol.Message, version int) *routingError {
+	switch {
+	case msg.Workspace == "":
+		return nil
+	case version < protocol.WorkspaceVersion:
+		return &routingError{protocol.ErrMalformedFrame, "workspace requires protocol_version 13"}
+	case msg.To == protocol.Broadcast || msg.Room != "":
+		return &routingError{protocol.ErrMalformedFrame, "a message to a paired workspace goes to one agent there or its operator"}
+	case len(msg.Workspace) > 128:
+		return &routingError{protocol.ErrMalformedFrame, "workspace is a contact's key or name, at most 128 bytes"}
+	}
+	return nil
 }
 
 // checkNoMentions: mentions are the operator's for now (#164).
@@ -625,6 +642,8 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 		h.enqueue(clients, in.From, operatorOnlyRefusal(in.Msg))
 	case in.Msg.Type == protocol.TypeAck:
 		h.acknowledge(ctx, clients, in)
+	case in.Msg.Type == protocol.TypeWorkspacesGet:
+		h.enqueue(clients, in.From, h.workspaces(ctx, in))
 	default:
 		return false
 	}
