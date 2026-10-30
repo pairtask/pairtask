@@ -56,6 +56,8 @@ func (m *Model) pairCompletions(l argLine) []string {
 		return withPrefix(m.pairVerbsHere(), l.current)
 	case len(l.words) == 1 && decidesRequest(l.words[0]):
 		return withPrefix(m.pendingRequestKeys(), protocol.KeyDigest(l.current))
+	case len(l.words) == 1 && l.words[0] == protocol.PairingOpCancel:
+		return withPrefix(m.openInvitation(), l.current)
 	}
 	return nil
 }
@@ -101,8 +103,9 @@ func uniquePrefix(digest string, all []string) string {
 	return digest
 }
 
-// pendingRequestLabel is a picker row for an offered key: the key, then the
-// name the other workspace gave.
+// pendingRequestLabel is a picker row for an offered key: the key, the
+// name the other workspace gave, when it asked, and its address, which a
+// request doesn't carry.
 func (m *Model) pendingRequestLabel(key string) (string, bool) {
 	s := m.pairing.snapshot
 	if s == nil {
@@ -114,28 +117,21 @@ func (m *Model) pendingRequestLabel(key string) (string, bool) {
 	if i < 0 {
 		return "", false
 	}
-	name := shownName(s.Requests[i].Name)
+	r := s.Requests[i]
+	name := shownName(r.Name)
 	if name == "" {
 		name = "no name given"
 	}
-	return fmt.Sprintf("  %s  %s", safe(key), mutedStyle.Render(safe(name))), true
+	detail := safe(name) + " · asked " + r.FirstPairedAt.Local().Format("Jan 2 15:04") + " · address unknown"
+	return fmt.Sprintf("  %s  %s", safe(key), mutedStyle.Render(detail)), true
 }
 
 // argumentLabel is an argument picker row.
 func (m *Model) argumentLabel(item string) string {
-	if label, ok := m.pendingRequestLabel(item); ok && m.decidingOnLine() {
+	if label, ok := m.pairLabel(item); ok {
 		return label
 	}
 	return "  " + safe(item)
-}
-
-// decidingOnLine: the command line is /pair accept or /pair reject.
-func (m *Model) decidingOnLine() bool {
-	if m.compose.cmd == nil {
-		return false
-	}
-	l, ok := splitArgLine(m.compose.cmd.input.Value())
-	return ok && l.name == "pair" && len(l.words) == 1 && decidesRequest(l.words[0])
 }
 
 // commandHint is the input box's label in command mode: the usage of the

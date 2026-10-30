@@ -217,6 +217,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 			e.stagesTruncated = s.ReceiptsTruncated
 		}
 	}
+	m.pairing.listed = false // a /pair picker reads again after a reconnection
 	return tea.Batch(m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
 		m.refreshContacts(), m.reviewsReconnected(), m.contactsReconnected())
 }

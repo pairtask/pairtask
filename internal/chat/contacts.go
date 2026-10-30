@@ -146,6 +146,10 @@ func (m *Model) quietPairingResult(_ pendingRequest, resp protocol.Message) tea.
 		snapshot.Invitation = withoutCode(snapshot.Invitation)
 		m.pairing.snapshot = &snapshot
 		m.refreshDirectory()
+		m.pairMenuLoaded()
+	} else if m.pairing.menuWanted {
+		m.pairing.menuWanted = false
+		m.status = "pairing state unreadable: " + brokerReason(resp)
 	}
 	if !m.pairing.stale {
 		return nil

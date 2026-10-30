@@ -205,6 +205,9 @@ func (m *Model) runCommandLine() tea.Cmd {
 		m.closeCommandLine()
 		return nil
 	}
+	if cmd, handled := m.awaitsWord(); handled {
+		return cmd
+	}
 	name, arg, _ := strings.Cut(text, " ")
 	return m.runCommand(argument(name), argument(strings.TrimSpace(arg)))
 }

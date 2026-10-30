@@ -105,8 +105,8 @@ func pairingChatNoCode(h *chatHarness) {
 }
 func pairingChatList(h *chatHarness, keys []string, total int) {
 	h.t.Helper()
-	v2Command(h, "/pair")
-	req := pairingChatRequest(h, "list")
+	v2Command(h, "/pair status")
+	req := pairingChatRequest(h, "status")
 	h.reply(req, pairingChatReply(h.t, "", keys, total))
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	h.input(chatKey(tea.KeyEscape, 0))
@@ -200,7 +200,7 @@ func TestPairingChatAcceptanceCancelUsesInvitationID(t *testing.T) {
 	h := pairingChatHarness(t, true)
 	pairingChatOpen(h)
 	h.input(chatKey(tea.KeyEscape, 0))
-	v2Command(h, "/pair cancel")
+	v2Command(h, "/pair cancel invitation-1")
 	req := pairingChatRequest(h, "cancel")
 	chatEqual(t, "cancel names invitation", pairingChatFields(t, req)["pairing_target"], any("invitation-1"))
 	h.reply(req, pairingChatReply(t, "", nil, 0))
@@ -210,8 +210,8 @@ func TestPairingChatAcceptanceCancelUsesInvitationID(t *testing.T) {
 
 func TestPairingChatAcceptanceEmptyPartialListReportsOmittedRequests(t *testing.T) {
 	h := pairingChatHarness(t, true)
-	v2Command(h, "/pair")
-	req := pairingChatRequest(h, "list")
+	v2Command(h, "/pair status")
+	req := pairingChatRequest(h, "status")
 	h.reply(req, pairingChatReply(t, "", nil, 65))
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	view := strings.ToLower(ansi.Strip(h.m.View().Content))
