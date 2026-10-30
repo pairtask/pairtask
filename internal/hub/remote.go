@@ -112,6 +112,9 @@ func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp sto
 	if result.ReviewID != "" {
 		h.emit(protocol.SessionEvent{Kind: protocol.EventReviewsChanged, ReviewID: result.ReviewID})
 	}
+	if result.Changed && imp.IsReview() {
+		h.SyncMessages(imp.Contact) // the request's outcome leaves at once
+	}
 }
 
 // importHeld logs why an import waits, unless a full inbox or taken IDs

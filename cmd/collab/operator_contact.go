@@ -149,6 +149,25 @@ func reviewNote(m protocol.ContactMessageView) string {
 	if m.ReviewReason != "" {
 		note += fmt.Sprintf(" reason=%q", m.ReviewReason)
 	}
+	return note + outcomeNote(m.ReviewOutcome)
+}
+
+// outcomeNote is where a review request this side sent stands, quoted, as
+// the other workspace gave it.
+func outcomeNote(o *protocol.ReviewOutcomeView) string {
+	if o == nil {
+		return ""
+	}
+	note := " outcome=" + o.State
+	if o.Verdict != "" {
+		note += fmt.Sprintf(" verdict=%q", o.Verdict)
+	}
+	if o.URL != "" {
+		note += fmt.Sprintf(" url=%q", o.URL)
+	}
+	if o.Reason != "" {
+		note += fmt.Sprintf(" why=%q", o.Reason)
+	}
 	return note
 }
 

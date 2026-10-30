@@ -106,13 +106,17 @@ class SecuredAgent:
             time.sleep(0.5)
         raise ValueError(f"{SECURED_AGENT} did not connect within {STARTUP}s")
 
-    def message(self):
-        """The message the script got, once it ended within its round trip."""
+    def output(self):
+        """What the script printed last, once it ended."""
         self.thread.join(STARTUP + INSTANT + 30)
         require(not self.thread.is_alive(), f"{SECURED_AGENT} did not finish")
         result = self.result
         require(result.returncode == 0, f"{SECURED_AGENT} failed: {result.stdout} {result.stderr}")
-        out = json.loads(result.stdout.strip().splitlines()[-1])
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+    def message(self):
+        """The message the script got, once it ended within its round trip."""
+        out = self.output()
         require(out["elapsed"] <= INSTANT, f"{SECURED_AGENT}'s round trip took {out['elapsed']:.1f}s, over {INSTANT}s")
         return out["got"]
 

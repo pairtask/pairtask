@@ -152,16 +152,25 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	if err := outboxRoom(ctx, tx, o); err != nil {
 		return messaging.Row{}, err
 	}
-	n, err := nextSequence(ctx, tx, contactKey(key.contact))
+	return queueNew(ctx, tx, o)
+}
+
+// queueNew queues a new message with the next sequence, and records the
+// review request it is, if it is one.
+func queueNew(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
+	n, err := nextSequence(ctx, tx, contactKey(o.key.contact))
 	if err != nil {
 		return messaging.Row{}, err
 	}
 	m := o.m
 	m.N, m.CreatedAt = n, o.now.UTC()
-	if err := insertMessage(ctx, tx, newRow{key: key, m: m, now: o.now, localID: o.localID}); err != nil {
+	if err := insertMessage(ctx, tx, newRow{key: o.key, m: m, now: o.now, localID: o.localID}); err != nil {
 		return messaging.Row{}, err
 	}
-	row, _, err = messageRow(ctx, tx, key)
+	if err := recordedAsk(ctx, tx, o); err != nil {
+		return messaging.Row{}, err
+	}
+	row, _, err := messageRow(ctx, tx, o.key)
 	return row.Row, err
 }
 
@@ -367,9 +376,18 @@ func within(rows []storedRow, b budget) []messaging.Row {
 }
 
 func expireQueued(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'expired'
-WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ?`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
-	return err
+	ids, err := queryStrings(ctx, tx, `UPDATE peer_messages SET state = 'expired'
+WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ? RETURNING message_id`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		// A review request never sent ends unsent.
+		if err := settleAsks(ctx, tx, askEnd{"unsent", "", now}, oneAsk(contact, id)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Delivered records the peer's Stored: a queued or expired message is
@@ -396,9 +414,22 @@ func (p *PeerMessages) Refused(ctx context.Context, contact string, refused mess
 	if r.Class == messaging.Terminal {
 		state = messaging.StateRefused
 	}
-	_, err := p.db.ExecContext(ctx, `UPDATE peer_messages SET state = ?, class = ?, reason = ?
-WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`, state, r.Class, r.Reason, contact, id)
-	return err
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = ?, class = ?, reason = ?
+WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`, state, r.Class, r.Reason, contact, id); err != nil {
+		return err
+	}
+	if state == messaging.StateRefused {
+		// A review request refused for good ends there; a held one waits.
+		if err := settleAsks(ctx, tx, askEnd{"refused", r.Reason, time.Now()}, oneAsk(contact, id)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // PeerRead records the peer's Read of one of this side's messages to it; a

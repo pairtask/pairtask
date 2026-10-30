@@ -67,9 +67,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      # Each package gets 300s under -race: internal/server has reached 120s
-      # on hosted runners; the budget stays bounded.
-      - run: go test -race ./... -timeout=300s
+      # Each package gets 600s under -race: internal/server reached 293s on
+      # hosted runners; tests keep their own deadlines, so a hang still fails
+      # within the budget.
+      - run: go test -race ./... -timeout=600s
       - run: python3 -m unittest discover -s scripts/tests -v
       - name: Test the Pi extension
         working-directory: integrations/pi

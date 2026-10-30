@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = ReviewAskVersion
+	Version                = AskedVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -48,6 +48,7 @@ const (
 	RemoteVersion          = 12 // msg with origin remote: from a paired workspace's agents or operator (#222)
 	WorkspaceVersion       = 13 // msg workspace and workspaces_get: an agent writes to a paired workspace (#222)
 	ReviewAskVersion       = 14 // msg review_ask: an agent asks a paired workspace's agent for a review (#235)
+	AskedVersion           = 15 // reviews_asked_get: the review requests an agent sent, and where they stand (#235)
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -181,6 +182,8 @@ type Message struct {
 	Remote             *Remote             `json:"remote,omitempty"`              // msg with origin remote (v12)
 	Workspace          string              `json:"workspace,omitempty"`           // msg (agent -> broker, v13): the paired workspace to is in, by key or name
 	ReviewAsk          *ReviewAsk          `json:"review_ask,omitempty"`          // msg with workspace (agent -> broker, v14): a review request for to (#235)
+	ReviewOutcome      *ReviewOutcomeView  `json:"review_outcome,omitempty"`      // msg with origin remote: where a review request the recipient sent stands (#235)
+	ReviewsAsked       []ReviewOutcomeView `json:"reviews_asked,omitempty"`       // reviews_asked_result (v15)
 	Workspaces         []WorkspaceView     `json:"workspaces,omitempty"`          // workspaces_result (v13)
 	Group              []string            `json:"group,omitempty"`               // operator_send: explicit recipient set
 	Excluded           []string            `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"strings"
@@ -14,6 +15,16 @@ import (
 
 	"github.com/pairtask/pairtask/internal/peer"
 )
+
+func TestRedeemAcceptanceDigestResemblingReceiptIsNotFiltered(t *testing.T) {
+	r := newRedeemFixture(t)
+	digest := bytes.Repeat([]byte{7}, sha256.Size)
+	digest[0], digest[1] = 1, peer.FrameReceipt
+	got, err := r.checkDurableReceipt(digest)
+	invOK(t, err)
+	invEqual(t, bytes.Equal(got, digest), true)
+	invEqual(t, redeemReceipt(digest), false)
+}
 
 func TestRedeemAcceptancePersistsBeforeConfirmationAndReceipt(t *testing.T) {
 	r := newRedeemFixture(t)
@@ -68,7 +79,7 @@ func TestRedeemAcceptanceLostReceiptKeepsImmutableUnknownOutcome(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			r := newRedeemFixture(t)
 			r.filter = func(frame []byte) ([]byte, error) {
-				if len(frame) < 2 || frame[1] != peer.FrameReceipt {
+				if !redeemReceipt(frame) {
 					return frame, nil
 				}
 				if failure == "drop" {

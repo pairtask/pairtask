@@ -217,7 +217,7 @@ func (r *redeemFixture) checkVerified(b peer.ExchangeBinding) error {
 	return nil
 }
 func (r *redeemFixture) checkDurableReceipt(frame []byte) ([]byte, error) {
-	if len(frame) < 2 || frame[1] != peer.FrameReceipt {
+	if !redeemReceipt(frame) {
 		return frame, nil
 	}
 	receipt, err := peer.DecodeReceipt(frame)
@@ -232,4 +232,11 @@ func (r *redeemFixture) checkDurableReceipt(frame []byte) ([]byte, error) {
 		return nil, errors.New("receipt preceded durable inviter outcome")
 	}
 	return frame, nil
+}
+
+// The fake exchange sends raw SHA256 digests, whose bytes can resemble a
+// receipt header. Real receipts include identity and correlation fields and
+// are longer than a digest.
+func redeemReceipt(frame []byte) bool {
+	return len(frame) > sha256.Size && frame[1] == peer.FrameReceipt
 }

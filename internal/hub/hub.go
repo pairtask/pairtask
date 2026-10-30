@@ -663,8 +663,8 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 		h.enqueue(clients, in.From, operatorOnlyRefusal(in.Msg))
 	case in.Msg.Type == protocol.TypeAck:
 		h.acknowledge(ctx, clients, in)
-	case in.Msg.Type == protocol.TypeWorkspacesGet:
-		h.enqueue(clients, in.From, h.workspaces(ctx, in))
+	case workspaceFrames[in.Msg.Type] != nil:
+		h.enqueue(clients, in.From, workspaceFrames[in.Msg.Type](h, ctx, in))
 	default:
 		return false
 	}

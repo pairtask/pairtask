@@ -27,12 +27,14 @@ type Result struct {
 	Sent, Received         int // messages answered Stored, either way
 	Refused                int // this side's messages the peer refused, recorded
 	ReadsSent, ReadsStored int // read receipts confirmed and received
+	// Review outcomes settled by the peer's answer, and taken from it.
+	OutcomesSent, OutcomesStored int
 }
 
 // Moved reports durable progress: anything stored, refused or confirmed,
 // even in a session that then failed.
 func (r Result) Moved() bool {
-	return r.Sent+r.Received+r.Refused+r.ReadsSent+r.ReadsStored > 0
+	return r.Sent+r.Received+r.Refused+r.ReadsSent+r.ReadsStored+r.OutcomesSent+r.OutcomesStored > 0
 }
 
 // Session is one side of one session with one contact. Version is the one
@@ -47,10 +49,14 @@ type Session struct {
 }
 
 // maxVersion is the highest version this side speaks with its store: a
-// store without routing stops at the live version.
+// store without outcomes stops at review requests, one without routing at
+// the live version.
 func (s Session) maxVersion() byte {
-	if _, ok := s.Store.(RoutingStore); ok {
+	switch s.Store.(type) {
+	case OutcomeStore:
 		return MaxVersion
+	case RoutingStore:
+		return ReviewVersion
 	}
 	return LiveVersion
 }
@@ -154,6 +160,9 @@ func (s Session) steps(dialer bool) []phase {
 	pairs := [][2]phase{{s.sendMessages, s.receiveMessages}, {s.sendReads, s.receiveReads}}
 	if _, ok := s.routing(); ok {
 		pairs = append(pairs, [2]phase{s.sendAgentReads, s.receiveAgentReads}, [2]phase{s.sendDirectory, s.receiveDirectory})
+	}
+	if _, ok := s.outcomes(); ok {
+		pairs = append(pairs, [2]phase{s.sendOutcomes, s.receiveOutcomes})
 	}
 	steps := make([]phase, 0, 2*len(pairs))
 	for _, pair := range pairs {

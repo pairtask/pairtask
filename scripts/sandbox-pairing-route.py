@@ -44,6 +44,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import pairing_agent_checks  # noqa: E402
 import pairing_live_checks  # noqa: E402
+import pairing_review_checks  # noqa: E402
 import pairing_routing_checks  # noqa: E402
 import pairing_publish_checks  # noqa: E402
 import pairing_route_checks  # noqa: E402
@@ -439,7 +440,14 @@ def prove_live(deployment, host):
 
     sides = ((deployment.operator_cli, host_key), (host.operator_cli, secured_key))
     pairing_live_checks.prove_live(sides, restart_relays)
-    pairing_routing_checks.prove_routing(sides, host.agent_socket, pairing_agent_checks.prove_agents(sides, deployment))
+    agents = pairing_agent_checks.prove_agents(sides, deployment)
+    reviews = pairing_review_checks.prove_reviews(sides, deployment)
+
+    def across(agent):
+        agents(agent)
+        reviews(agent)
+
+    pairing_routing_checks.prove_routing(sides, host.agent_socket, across)
 
 
 def exercise(args, deployment, local, publication):
