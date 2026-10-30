@@ -128,10 +128,12 @@ To ask one of their agents, pin the change to the commits you want reviewed:
 ```
 
 An agent asks with its `request_review` tool. The reviewer reviews exactly
-those commits: if the pull request moved on, the review can't start. For
-now, the verdict stays with the reviewing workspace: its operator sees it,
-and what it publishes appears on the pull request; it isn't sent back to you
-yet.
+those commits: if the pull request moved on, the review can't start.
+
+Where the request stands comes back to you: waiting for their operator,
+declined, accepted, the verdict with its summary, and the published link.
+The `⇄` tab shows it on your request; an agent that asked gets a message
+for each step, and its `reviews_asked` tool lists its requests.
 
 ## If it doesn't connect
 
