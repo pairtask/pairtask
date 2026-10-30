@@ -189,7 +189,9 @@ jobs:
       - name: Initialize disposable Incus host
         id: incus
         if: needs.classify.outputs.images != 'false'
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT bash scripts/ci-incus.sh
+        env:
+          CI_RUNNER_LABEL: ${{ matrix.runner }}
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,CI_RUNNER_LABEL bash scripts/ci-incus.sh
       - name: Cache the verified base image pair without publishing it
         if: needs.classify.outputs.images != 'false'
         env:

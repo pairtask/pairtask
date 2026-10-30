@@ -1,8 +1,13 @@
 #!/bin/bash
-# Only for a disposable GitHub-hosted Ubuntu runner, never a developer machine.
+# Only for a disposable GitHub-hosted or Blacksmith Ubuntu runner, never a developer machine.
 set -euo pipefail
 test "${GITHUB_ACTIONS:-}" = true
-test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+case "${RUNNER_ENVIRONMENT:-}:${CI_RUNNER_LABEL:-}" in
+    github-hosted:*) ;;
+    # Blacksmith runners are disposable VMs but report self-hosted.
+    self-hosted:blacksmith-*) ;;
+    *) echo "Refusing to run outside a disposable CI runner" >&2; exit 1 ;;
+esac
 test "$EUID" = 0
 if test -e /var/lib/incus/database; then
     echo 'Refusing to initialize an existing Incus server' >&2
