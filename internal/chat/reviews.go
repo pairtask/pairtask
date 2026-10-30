@@ -20,7 +20,7 @@ const (
 	kindReview      = "review"
 	kindReviewQuiet = "review quiet"
 	panelReviews    = "reviews"
-	reviewUsage     = "usage: /review [--no-publish] [--no-formal] TARGET AGENT [SCOPE] | /review status [ID] | /review cancel [ID [REASON]]"
+	reviewUsage     = "usage: /review [--no-publish] [--no-formal] TARGET AGENT|@AGENT [SCOPE] | /review status [ID] | /review cancel [ID [REASON]]"
 )
 
 // reviewState is what chat knows of reviews: the last list, the selected
@@ -95,8 +95,11 @@ func parseReviewRequest(fields []string) (protocol.ReviewSpec, string, error) {
 	if err != nil {
 		return protocol.ReviewSpec{}, "", err
 	}
-	spec := protocol.ReviewSpec{ReviewTarget: target, Reviewer: fields[1], Scope: strings.Join(fields[2:], " "), Policy: policy}
-	return spec, fields[1], protocol.ValidateReviewSpec(spec)
+	// AGENT may be written as a mention: one leading @ goes, so @@name is
+	// the agent named @name, and a lone @ names none.
+	reviewer := strings.TrimPrefix(fields[1], "@")
+	spec := protocol.ReviewSpec{ReviewTarget: target, Reviewer: reviewer, Scope: strings.Join(fields[2:], " "), Policy: policy}
+	return spec, reviewer, protocol.ValidateReviewSpec(spec)
 }
 
 // reviewFlag applies one policy flag; an unknown flag is nil.

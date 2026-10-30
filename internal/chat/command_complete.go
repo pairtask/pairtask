@@ -3,6 +3,7 @@ package chat
 import (
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // PickerArgument completes a command's argument: room names and the words
@@ -55,15 +56,46 @@ func (m *Model) argumentCandidates(l argLine) []string {
 }
 
 // reviewCompletions offers status and cancel, then the listed review IDs
-// after either; a request's TARGET and AGENT are never completed.
+// after either; for a request, the agents after its TARGET, as typed or
+// as @mentions. A TARGET is never completed.
 func (m *Model) reviewCompletions(l argLine) []string {
 	switch {
 	case len(l.words) == 0:
 		return withPrefix([]string{"status", "cancel"}, l.current)
 	case len(l.words) == 1 && (l.words[0] == "status" || l.words[0] == "cancel"):
 		return withPrefix(m.reviewIDs(), l.current)
+	case !reviewAgentWord(l.words):
+		return nil
 	}
-	return nil
+	return m.reviewerWords(l.current)
+}
+
+// reviewerWords complete a request's AGENT word to every known agent it
+// can name: typed as a mention, each ID with one @ before it; typed bare,
+// the ID itself, or with an @ before one that starts with @, since the
+// parser drops one. An ID with whitespace can't be one word: not offered.
+func (m *Model) reviewerWords(current string) []string {
+	frag, mention := strings.CutPrefix(current, "@")
+	var out []string
+	for _, id := range m.agentCandidates(frag) {
+		if strings.ContainsFunc(id, unicode.IsSpace) {
+			continue
+		}
+		if mention || strings.HasPrefix(id, "@") {
+			id = "@" + id
+		}
+		if strings.HasPrefix(id, current) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// reviewAgentWord: the word being typed is a request's AGENT, the one after
+// its flags and TARGET.
+func reviewAgentWord(words []string) bool {
+	positional := slices.DeleteFunc(slices.Clone(words), func(w string) bool { return strings.HasPrefix(w, "--") })
+	return len(positional) == 1
 }
 
 // reviewIDs are the listed reviews' IDs, newest first as listed.

@@ -60,7 +60,8 @@ Aliases: `/who` = `/agents`, `/exit` = `/quit`, `/r` = `/reply`.
 
 `/review [--no-publish] [--no-formal] TARGET AGENT [SCOPE]` asks `AGENT` to
 review a GitHub pull request. `TARGET` is `OWNER/REPO#N` or the pull request's
-link; the optional `SCOPE` (up to 1 KiB of text) says what to focus on.
+link; `AGENT` may be written as a mention, `@codex-1`, and Tab completes it;
+the optional `SCOPE` (up to 1 KiB of text) says what to focus on.
 
 - By default the agent publishes a formal review: an approval or a change
   request. `--no-formal` publishes it as a comment, and `--no-publish` keeps
