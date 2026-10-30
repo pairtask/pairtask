@@ -1,8 +1,14 @@
 #!/bin/bash
-# Only for a disposable GitHub-hosted Ubuntu runner, never a developer machine.
+# Only for a disposable CI runner, never a developer machine: a GitHub-hosted
+# runner, or a self-hosted runner that the workflow explicitly marks as an
+# ephemeral Namespace profile (PAIRTASK_EPHEMERAL_RUNNER=namespace).
 set -euo pipefail
 test "${GITHUB_ACTIONS:-}" = true
-test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+case "${RUNNER_ENVIRONMENT:-}" in
+    github-hosted) ;;
+    self-hosted) test "${PAIRTASK_EPHEMERAL_RUNNER:-}" = namespace ;;
+    *) exit 1 ;;
+esac
 test "$EUID" = 0
 if test -e /var/lib/incus/database; then
     echo 'Refusing to initialize an existing Incus server' >&2
@@ -35,9 +41,28 @@ apt-get install -y incus btrfs-progs
 # newuidmap/newgidmap also require this host-level allowance, independently of
 # the restricted Incus project's UID/GID allowlist.
 usermod --add-subuids 60000-60000 --add-subgids 60000-60000 root
-modprobe btrfs
-systemctl start incus.socket
-incus admin init --preseed <infra/image/ci-host.json
+# The CI pool is btrfs on a loop file. An ephemeral Namespace profile refuses
+# to attach loop devices (#151), so there it is a plain directory pool
+# instead (#135 trial): slower copies and no size cap, the same images.
+preseed=infra/image/ci-host.json
+if test "${PAIRTASK_EPHEMERAL_RUNNER:-}" = namespace; then
+    preseed=infra/image/ci-host-dir.json
+fi
+uname -r
+# btrfs may be built into the runner's kernel (some providers ship no module
+# tree); load the module only when the filesystem isn't already available.
+if test "$preseed" = infra/image/ci-host.json && ! grep -qw btrfs /proc/filesystems; then
+    modprobe btrfs || { echo "btrfs is neither built in nor loadable on $(uname -r); this runner can't host the CI Incus pool" >&2; exit 1; }
+fi
+if test "$(cat /proc/1/comm)" = systemd; then
+    systemctl start incus.socket
+else
+    # A container runner without systemd as PID 1, accepted above only as an
+    # ephemeral Namespace profile: start the packaged daemon directly.
+    . "$(dirname "$0")/ci-incus-start.sh"
+    start_namespace_incus /opt/incus/lib/systemd/incusd /var/log/incus/incusd.log
+fi
+incus admin init --preseed <"$preseed"
 server_version=$(incus query /1.0 | python3 -c 'import json,sys; print(json.load(sys.stdin)["environment"]["server_version"])')
 # 7.1-7.4 are feature releases without the fix; accept only the fixed 7.0 LTS.
 case "$server_version" in
