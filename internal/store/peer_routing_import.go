@@ -413,23 +413,37 @@ func (s *Store) QueueRemoteReply(ctx context.Context, r RemoteReply) (RemoteRepl
 	if err != nil {
 		return RemoteReplyResult{}, err
 	}
-	held, found, err := messageRow(ctx, tx, o.key)
+	return queueFromAgent(ctx, tx, agentMessage{local: r.Msg, session: r.SenderSession, out: o})
+}
+
+// agentMessage is a local agent's message to a contact: as kept in
+// history here, from which session, and as queued.
+type agentMessage struct {
+	local   protocol.Message
+	session string
+	out     outgoing
+}
+
+// queueFromAgent keeps an agent's message in history and queues it, then
+// commits; a retry of one queued already is answered as first queued.
+func queueFromAgent(ctx context.Context, tx *sql.Tx, a agentMessage) (RemoteReplyResult, error) {
+	held, found, err := messageRow(ctx, tx, a.out.key)
 	if err != nil {
 		return RemoteReplyResult{}, err
 	}
 	if found {
-		return repeatedReply(ctx, tx, held, o)
+		return repeatedReply(ctx, tx, held, a.out)
 	}
-	local := r.Msg
+	local := a.local
 	local.Durable = false // kept as history: it has no inbox here
-	if err := persistMessage(ctx, tx, routedMessage{msg: local, senderSession: r.SenderSession}); err != nil {
+	if err := persistMessage(ctx, tx, routedMessage{msg: local, senderSession: a.session}); err != nil {
 		return RemoteReplyResult{}, err
 	}
-	row, err := queueIn(ctx, tx, o)
+	row, err := queueIn(ctx, tx, a.out)
 	if err != nil {
 		return RemoteReplyResult{}, err
 	}
-	return RemoteReplyResult{Row: row, Seq: r.Msg.Seq}, tx.Commit()
+	return RemoteReplyResult{Row: row, Seq: local.Seq}, tx.Commit()
 }
 
 // replyOutgoing is the message a reply queues, once its parent allows it.

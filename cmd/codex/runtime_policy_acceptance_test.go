@@ -18,6 +18,7 @@ func TestRuntimePolicyApprovesOnlyScopedCollaborationStatusAndClaimCalls(t *test
 	terminalCheck(t, json.Unmarshal(wire["tools"], &policies))
 	want := map[string]map[string]string{
 		"send":            {"approval_mode": "approve"},
+		"workspaces":      {"approval_mode": "approve"},
 		"acknowledge":     {"approval_mode": "approve"},
 		"receive":         {"approval_mode": "approve"},
 		"wait_reply":      {"approval_mode": "approve"},
@@ -41,7 +42,7 @@ func TestRuntimePolicyApprovesOnlyScopedCollaborationStatusAndClaimCalls(t *test
 		"check_review":    {"approval_mode": "approve"},
 	}
 	if !reflect.DeepEqual(policies, want) {
-		t.Fatalf("runtime tool policy = %v, want the twenty-one scoped approvals %v", policies, want)
+		t.Fatalf("runtime tool policy = %v, want the twenty-two scoped approvals %v", policies, want)
 	}
 	// No server-wide grant, global execution policy, or sandbox override may
 	// accompany this narrowly scoped tool configuration.

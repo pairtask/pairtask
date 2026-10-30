@@ -211,6 +211,9 @@ func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResu
 	if err := c.checkRoom(request); err != nil {
 		return SendResult{}, err
 	}
+	if request.Workspace != "" && c.protocolVersion < protocol.WorkspaceVersion {
+		return SendResult{}, errWorkspacesUnsupported
+	}
 	if !request.NonDurable && c.protocolVersion < protocol.DurableVersion {
 		return SendResult{}, errors.New("durable delivery requires protocol version 3; upgrade the broker or explicitly set non_durable")
 	}
