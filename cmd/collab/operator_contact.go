@@ -11,7 +11,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* [--socket PATH] [--json] [--timeout 5s]"
+const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* | reviews | review | decide [--socket PATH] [--json] [--timeout 5s]; reviews: pairtask operator contact reviews --help"
 
 // contactArgs is how many positional arguments each contact operation
 // takes: the contact's full key, and the text for send; share and unshare
@@ -53,6 +53,9 @@ func runOperatorContact(ctx context.Context, args []string, stdout, stderr io.Wr
 
 func parseOperatorContact(args []string, stderr io.Writer) (operatorCall, protocol.Message, int) {
 	var call operatorCall
+	if len(args) > 0 && contactReviewOps[args[0]] != "" {
+		return parseContactReview(args, stderr)
+	}
 	if len(args) == 0 || contactArgs[args[0]] == 0 {
 		fmt.Fprintln(stderr, operatorContactUsage)
 		return call, protocol.Message{}, 2
@@ -107,6 +110,9 @@ func writeContact(w io.Writer, resp protocol.Message) {
 			fmt.Fprintf(w, "%s %s %s id=%q%s %q\n", m.CreatedAt.Local().Format("15:04"), m.Direction, stateNote(m), m.ID, routeNote(m), m.Text)
 		}
 		fmt.Fprintf(w, "shared here: %q; they share: %q\n", p.Shared, p.Directory)
+		if len(p.ReviewGrants) > 0 {
+			fmt.Fprintf(w, "they may ask for reviews from:%s\n", grantNote(p.ReviewGrants))
+		}
 	}
 	if s := resp.ContactSync; s != nil {
 		fmt.Fprintf(w, "sync requested; live: %t\n", s.Live)
@@ -125,6 +131,22 @@ func routeNote(m protocol.ContactMessageView) string {
 	}
 	if len(m.AgentAcks) > 0 {
 		note += fmt.Sprintf(" acked=%q", m.AgentAcks)
+	}
+	return note + reviewNote(m)
+}
+
+// reviewNote is a review request's change, pins and where it is.
+func reviewNote(m protocol.ContactMessageView) string {
+	a := m.ReviewAsk
+	if a == nil {
+		return ""
+	}
+	note := fmt.Sprintf(" review=%q pinned=%q..%q", a.Repository+"#"+a.Change, a.Base, a.Head)
+	if m.ReviewState != "" {
+		note += fmt.Sprintf(" request=%s", m.ReviewState)
+	}
+	if m.ReviewReason != "" {
+		note += fmt.Sprintf(" reason=%q", m.ReviewReason)
 	}
 	return note
 }

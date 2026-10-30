@@ -98,6 +98,7 @@ type WorkspaceSend struct {
 	SenderSession string
 	Contact       string // the workspace's identity key
 	Text          string
+	Review        *messaging.ReviewAsk // a review request for Msg.To there (#235)
 	Now           time.Time
 }
 
@@ -107,7 +108,7 @@ type WorkspaceSend struct {
 // same contact is answered as first queued, and its ID used for anything
 // else is a conflict.
 func (s *Store) QueueWorkspaceSend(ctx context.Context, w WorkspaceSend) (RemoteReplyResult, error) {
-	m := messaging.Message{ID: w.Msg.MessageID, Text: w.Text, From: w.Msg.From}
+	m := messaging.Message{ID: w.Msg.MessageID, Text: w.Text, From: w.Msg.From, Review: w.Review}
 	if w.Msg.To != protocol.OperatorID {
 		m.To = []string{w.Msg.To}
 	}

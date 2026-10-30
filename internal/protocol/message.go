@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = WorkspaceVersion
+	Version                = ReviewAskVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -47,6 +47,7 @@ const (
 	ContactMessagesVersion = 11 // operator_contact and contact_messages_changed (#210), operator only
 	RemoteVersion          = 12 // msg with origin remote: from a paired workspace's agents or operator (#222)
 	WorkspaceVersion       = 13 // msg workspace and workspaces_get: an agent writes to a paired workspace (#222)
+	ReviewAskVersion       = 14 // msg review_ask: an agent asks a paired workspace's agent for a review (#235)
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -179,6 +180,7 @@ type Message struct {
 	Origin             string              `json:"origin,omitempty"`              // msg (broker -> client): operator, agent, remote (v12) or unknown
 	Remote             *Remote             `json:"remote,omitempty"`              // msg with origin remote (v12)
 	Workspace          string              `json:"workspace,omitempty"`           // msg (agent -> broker, v13): the paired workspace to is in, by key or name
+	ReviewAsk          *ReviewAsk          `json:"review_ask,omitempty"`          // msg with workspace (agent -> broker, v14): a review request for to (#235)
 	Workspaces         []WorkspaceView     `json:"workspaces,omitempty"`          // workspaces_result (v13)
 	Group              []string            `json:"group,omitempty"`               // operator_send: explicit recipient set
 	Excluded           []string            `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
@@ -207,41 +209,43 @@ type Message struct {
 	Topic              string              `json:"topic,omitempty"`               // claim_set: display label
 	Role               string              `json:"role,omitempty"`                // claim_set, claim_release: owner or reviewer
 	*ClaimPage                             // claim_result, claim_conflict: claims, claims_total, claims_truncated
-	ReviewID           string              `json:"review_id,omitempty"`       // review frames (#201): the review concerned
-	ReviewOp           string              `json:"review_op,omitempty"`       // operator_review: what to do
-	ReviewSpec         *ReviewSpec         `json:"review_spec,omitempty"`     // operator_review request
-	Revisions          *Revisions          `json:"revisions,omitempty"`       // review_prepare: the revisions resolved
-	Attempt            int                 `json:"attempt,omitempty"`         // review_restart, review_submit, review_publication: the current attempt
-	Verdict            *Verdict            `json:"verdict,omitempty"`         // review_submit
-	PublicationStep    *PublicationUpdate  `json:"publication,omitempty"`     // review_publication
-	IntentAcquired     *bool               `json:"intent_acquired,omitempty"` // review_result for a step to submitting: this call took the intent, so it may write
-	ReviewReason       string              `json:"review_reason,omitempty"`   // review_decline, operator_review cancel
-	Review             *ReviewView         `json:"review,omitempty"`          // review_result, operator_review_result: one review
-	ReviewPage         *ReviewPage         `json:"review_page,omitempty"`     // review_result, operator_review_result: a list of reviews
-	ContactOp          string              `json:"contact_op,omitempty"`      // operator_contact (#210): what to do
-	ContactKey         string              `json:"contact_key,omitempty"`     // operator_contact: the contact's identity key
-	ContactText        string              `json:"contact_text,omitempty"`    // operator_contact send
-	ContactRead        []string            `json:"contact_read,omitempty"`    // operator_contact read: the received IDs shown
-	ContactTo          []string            `json:"contact_to,omitempty"`      // operator_contact send: the contact's agents it is to (#222)
-	ContactAgents      []string            `json:"contact_agents,omitempty"`  // operator_contact share and unshare: this workspace's agents
-	ContactBefore      int64               `json:"contact_before,omitempty"`  // operator_contact list: a cursor, 0 for the newest
-	ContactMessage     *ContactMessageView `json:"contact_message,omitempty"` // operator_contact_result for send
-	ContactPage        *ContactMessagePage `json:"contact_page,omitempty"`    // operator_contact_result for list and read
-	ContactSync        *ContactSyncView    `json:"contact_sync,omitempty"`    // operator_contact_result for sync
-	ContactMarked      *int                `json:"contact_marked,omitempty"`  // operator_contact_result for read: newly marked
-	Client             string              `json:"client,omitempty"`          // operator_session_open
-	Session            *SessionInfo        `json:"session,omitempty"`         // operator_session
-	Owner              *SessionInfo        `json:"owner,omitempty"`           // owner_busy
-	Snapshot           *OperatorSnapshot   `json:"snapshot,omitempty"`        // operator_snapshot response
-	Stages             *StagePage          `json:"stages,omitempty"`          // operator_message_stages response
-	Event              *SessionEvent       `json:"event,omitempty"`           // event
-	AfterAgent         string              `json:"after_agent,omitempty"`     // operator_message_stages
-	Limit              int                 `json:"limit,omitempty"`           // operator_message_stages
-	History            *HistoryPage        `json:"history,omitempty"`         // operator_history response
-	Payload            json.RawMessage     `json:"payload,omitempty"`         // msg: opaque JSON
-	Code               string              `json:"code,omitempty"`            // error
-	Detail             string              `json:"detail,omitempty"`          // error
-	TS                 *time.Time          `json:"ts,omitempty"`              // msg (broker -> client), UTC; pointer so zero is omitted
+	ReviewID           string              `json:"review_id,omitempty"`            // review frames (#201): the review concerned
+	ReviewOp           string              `json:"review_op,omitempty"`            // operator_review: what to do
+	ReviewSpec         *ReviewSpec         `json:"review_spec,omitempty"`          // operator_review request
+	Revisions          *Revisions          `json:"revisions,omitempty"`            // review_prepare: the revisions resolved
+	Attempt            int                 `json:"attempt,omitempty"`              // review_restart, review_submit, review_publication: the current attempt
+	Verdict            *Verdict            `json:"verdict,omitempty"`              // review_submit
+	PublicationStep    *PublicationUpdate  `json:"publication,omitempty"`          // review_publication
+	IntentAcquired     *bool               `json:"intent_acquired,omitempty"`      // review_result for a step to submitting: this call took the intent, so it may write
+	ReviewReason       string              `json:"review_reason,omitempty"`        // review_decline, operator_review cancel
+	Review             *ReviewView         `json:"review,omitempty"`               // review_result, operator_review_result: one review
+	ReviewPage         *ReviewPage         `json:"review_page,omitempty"`          // review_result, operator_review_result: a list of reviews
+	ContactOp          string              `json:"contact_op,omitempty"`           // operator_contact (#210): what to do
+	ContactKey         string              `json:"contact_key,omitempty"`          // operator_contact: the contact's identity key
+	ContactText        string              `json:"contact_text,omitempty"`         // operator_contact send
+	ContactRead        []string            `json:"contact_read,omitempty"`         // operator_contact read: the received IDs shown
+	ContactTo          []string            `json:"contact_to,omitempty"`           // operator_contact send: the contact's agents it is to (#222)
+	ContactAgents      []string            `json:"contact_agents,omitempty"`       // operator_contact share and unshare: this workspace's agents
+	ContactReviewGrant *ContactReviewGrant `json:"contact_review_grant,omitempty"` // operator_contact review_grant (#235)
+	ContactApprove     *bool               `json:"contact_approve,omitempty"`      // operator_contact review_decide
+	ContactBefore      int64               `json:"contact_before,omitempty"`       // operator_contact list: a cursor, 0 for the newest
+	ContactMessage     *ContactMessageView `json:"contact_message,omitempty"`      // operator_contact_result for send
+	ContactPage        *ContactMessagePage `json:"contact_page,omitempty"`         // operator_contact_result for list and read
+	ContactSync        *ContactSyncView    `json:"contact_sync,omitempty"`         // operator_contact_result for sync
+	ContactMarked      *int                `json:"contact_marked,omitempty"`       // operator_contact_result for read: newly marked
+	Client             string              `json:"client,omitempty"`               // operator_session_open
+	Session            *SessionInfo        `json:"session,omitempty"`              // operator_session
+	Owner              *SessionInfo        `json:"owner,omitempty"`                // owner_busy
+	Snapshot           *OperatorSnapshot   `json:"snapshot,omitempty"`             // operator_snapshot response
+	Stages             *StagePage          `json:"stages,omitempty"`               // operator_message_stages response
+	Event              *SessionEvent       `json:"event,omitempty"`                // event
+	AfterAgent         string              `json:"after_agent,omitempty"`          // operator_message_stages
+	Limit              int                 `json:"limit,omitempty"`                // operator_message_stages
+	History            *HistoryPage        `json:"history,omitempty"`              // operator_history response
+	Payload            json.RawMessage     `json:"payload,omitempty"`              // msg: opaque JSON
+	Code               string              `json:"code,omitempty"`                 // error
+	Detail             string              `json:"detail,omitempty"`               // error
+	TS                 *time.Time          `json:"ts,omitempty"`                   // msg (broker -> client), UTC; pointer so zero is omitted
 }
 
 // Operator inbox paging limits.

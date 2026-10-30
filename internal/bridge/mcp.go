@@ -56,6 +56,7 @@ func newMCP(c messagingClient, options *mcp.ServerOptions) *mcp.Server {
 	addRoomTools(s, c)
 	addReviewTools(s, c)
 	addWorkspaceTools(s, c)
+	addReviewAskTools(s, c)
 	additive := false
 	mcp.AddTool(s, &mcp.Tool{Name: "send", Description: sendDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args SendRequest) (*mcp.CallToolResult, any, error) {

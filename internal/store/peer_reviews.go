@@ -290,3 +290,20 @@ func scanReviewAsk(data sql.NullString) (*messaging.ReviewAsk, error) {
 	}
 	return &r, nil
 }
+
+// AskStatus is where a review request a contact sent here is.
+type AskStatus struct {
+	State, ReviewID, Reason string
+}
+
+// AskStatus is a request's state, the review it became once imported, and
+// why it was withheld; found is false for a message that isn't one.
+func (p *PeerMessages) AskStatus(ctx context.Context, contact, remoteID string) (AskStatus, bool, error) {
+	var a AskStatus
+	err := p.db.QueryRowContext(ctx, `SELECT state, CASE WHEN state = 'imported' THEN local_id ELSE '' END, COALESCE(reason, '')
+FROM remote_imports WHERE contact = ? AND remote_id = ? AND kind = 'review'`, contact, remoteID).Scan(&a.State, &a.ReviewID, &a.Reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, false, nil
+	}
+	return a, err == nil, err
+}

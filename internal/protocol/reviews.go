@@ -216,3 +216,16 @@ type ReviewPage struct {
 	Total     int          `json:"reviews_total"`
 	Truncated bool         `json:"reviews_truncated"`
 }
+
+// ReviewAsk is a review request for a paired workspace's agent (#235): the
+// change, pinned to the revisions the requester resolved, what to focus on,
+// and whether the requester wants the verdict published, and formally. The
+// receiving workspace allows at most that.
+type ReviewAsk struct {
+	ReviewTarget
+	Scope   string `json:"scope,omitempty"`
+	Base    string `json:"base"`
+	Head    string `json:"head"`
+	Publish bool   `json:"publish,omitempty"`
+	Formal  bool   `json:"formal,omitempty"`
+}

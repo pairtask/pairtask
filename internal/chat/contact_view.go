@@ -83,6 +83,9 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 		if share := sharingLine(m.contacts.threads[c.IdentityKey]); share != "" && m.routingAvailable() {
 			lines = append(lines, mutedStyle.Render("  "+share))
 		}
+		if grants := reviewGrantsLine(m.contacts.threads[c.IdentityKey]); grants != "" {
+			lines = append(lines, mutedStyle.Render("  "+grants))
+		}
 	}
 	return lines
 }

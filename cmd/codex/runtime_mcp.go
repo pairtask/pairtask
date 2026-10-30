@@ -57,7 +57,7 @@ func (e *runtimeMCP) requireReady(next mcp.MethodHandler) mcp.MethodHandler {
 }
 
 // runtimeTools are the collaboration tools the runtime MCP server serves.
-var runtimeTools = []string{"send", "acknowledge", "receive", "wait_reply", "listener_status", "status", "read_status", "claim", "release_claim", "finish_claim", "read_claims", "join_room", "leave_room", "list_rooms", "workspaces",
+var runtimeTools = []string{"send", "acknowledge", "receive", "wait_reply", "listener_status", "status", "read_status", "claim", "release_claim", "finish_claim", "read_claims", "join_room", "leave_room", "list_rooms", "workspaces", "request_review",
 	// #201: the operator asked for agent reviews published without a routine
 	// confirmation; each call is still bounded by the operator's request, the
 	// named reviewer, the pinned attempt and the broker's write intent.

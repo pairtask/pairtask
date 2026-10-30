@@ -47,6 +47,9 @@ func pairArity(fields pairWords) bool {
 	if fields.sharesAgents() {
 		return len(fields) >= 2
 	}
+	if review, ok := fields.reviewArity(); review {
+		return ok
+	}
 	return slices.Contains(pairVerbArgs[fields[0]], len(fields))
 }
 
@@ -96,6 +99,10 @@ var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
 	protocol.PairingOpRedeem: (*Model).redeemCommand,
 	pairShare:                (*Model).shareCommand,
 	pairUnshare:              (*Model).shareCommand,
+	pairReviews:              (*Model).contactReviewCommand,
+	pairReview:               (*Model).contactReviewCommand,
+	pairApprove:              (*Model).contactReviewCommand,
+	pairDecline:              (*Model).contactReviewCommand,
 }
 
 // pairCommand is /pair: list by default, or one operation. Accept and reject
