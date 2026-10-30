@@ -186,7 +186,8 @@ uses. The full contract is in [operator chat](operator-chat-design.md).
   open, one-shot `operator_received` and `operator_ack` are refused with
   `owner_busy`; one-shot sends and receives still work.
 - **Requests:** every request carries a `request_id` (1 to 128 bytes, at most
-  8 in flight), and its response echoes it. Available: `operator_send`,
+  8 in flight), and its response echoes it. An ID may be reused once its
+  response has been read. Available: `operator_send`,
   `operator_receive`, `operator_received`, `operator_ack`,
   `operator_snapshot`, `operator_message_stages`.
 - **Events:** `{"type": "event"}` notifications, never payloads:

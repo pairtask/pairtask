@@ -81,12 +81,14 @@ func (o *OperatorServer) writeSession(ctx context.Context, conn net.Conn, sess *
 		if !ok {
 			return
 		}
+		// Free the ID before writing: the client may reuse it as soon as the
+		// bytes arrive. A failed write ends the session anyway.
+		sess.Handed(msg)
 		conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		if err := protocol.WriteFrame(conn, msg); err != nil {
 			o.log.Debug("operator session write error", "error", err)
 			return
 		}
-		sess.Written(msg)
 	}
 }
 

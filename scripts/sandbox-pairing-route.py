@@ -420,7 +420,8 @@ def prove_live(deployment, host):
             deployment.output("connector", "systemctl", "restart", unit)
             deployment.await_active("connector", unit)
 
-    pairing_live_checks.prove_live(deployment.operator_cli, host.operator_cli, secured_key, host_key, restart_relays)
+    sides = ((deployment.operator_cli, host_key), (host.operator_cli, secured_key))
+    pairing_live_checks.prove_live(sides, restart_relays)
 
 
 def exercise(args, deployment, local, publication):

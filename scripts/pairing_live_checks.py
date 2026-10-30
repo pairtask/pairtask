@@ -30,8 +30,10 @@ def page(run, key):
     return contact(run, "list", key).get("contact_page") or {}
 
 
-def await_received(run, key, message_id, text, timeout=INSTANT):
-    """Exactly one inbound row with this ID, carrying exactly this text."""
+def await_received(run, key, sent, timeout=INSTANT):
+    """Exactly one inbound row with the sent message's ID, carrying exactly
+    its text; sent is (message_id, text)."""
+    message_id, text = sent
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         rows = [m for m in page(run, key).get("messages", []) if m.get("direction") == "in" and m.get("id") == message_id]
@@ -49,10 +51,15 @@ def await_link(run, key, after=None, timeout=INSTANT * 3):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         sync = page(run, key).get("sync") or {}
-        if sync.get("live") and (after is None or sync.get("last_attempt") != after):
+        if sync.get("live") and redialled(sync, after):
             return sync
         time.sleep(0.5)
     raise ValueError(f"no live link with {key} within {timeout}s")
+
+
+def redialled(sync, after):
+    """No earlier attempt to compare, or a dial since that one."""
+    return after is None or sync.get("last_attempt") != after
 
 
 def exchange(sides, label):
@@ -63,22 +70,21 @@ def exchange(sides, label):
         text = f"{label} {message_id}"
         started = time.monotonic()
         contact(sender, "send", recipient_key, text, "--message-id", message_id)
-        await_received(receiver, sender_key, message_id, text, timeout=INSTANT - (time.monotonic() - started))
+        await_received(receiver, sender_key, (message_id, text), timeout=INSTANT - (time.monotonic() - started))
         elapsed = time.monotonic() - started
         require(elapsed <= INSTANT, f"{message_id} took {elapsed:.1f}s, over {INSTANT}s")
         print(f"PASS: {label}: delivered in {elapsed:.1f}s.", flush=True)
 
 
-def prove_live(secured, host, secured_key, host_key, restart_relays):
-    """secured and host run `pairtask operator contact …` on each side;
+def prove_live(sides, restart_relays):
+    """sides are (run, the other side's key) for the secured side and then
+    the host, where run is `pairtask operator contact …` on that side;
     restart_relays restarts what carries the link."""
-    sides = ((secured, host_key), (host, secured_key))
-    links = ((secured, host_key), (host, secured_key))
-    synced = [await_link(run, key) for run, key in links]
+    synced = [await_link(run, key) for run, key in sides]
     dialer = next(i for i, s in enumerate(synced) if s.get("dials"))
     exchange(sides, "live link")
     restart_relays()
-    run, key = links[dialer]
+    run, key = sides[dialer]
     await_link(run, key, after=synced[dialer].get("last_attempt"))
     exchange(sides, "after reconnect")
     print("PASS: instant messages both ways over the live link, again after it reconnected on its own.", flush=True)
