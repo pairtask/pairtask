@@ -53,6 +53,13 @@ const (
 	// CapabilityContactReviews: the broker serves the three review ops.
 	CapabilityContactReviews = "contact_reviews"
 
+	// ContactOpName sets what this side calls the contact, under
+	// message_id: contact_text, or none when it is empty. The answer is the
+	// pairing snapshot.
+	ContactOpName = "name"
+	// CapabilityContactNames: the broker serves name.
+	CapabilityContactNames = "contact_names"
+
 	// CapabilityContactRouting: the broker serves share and unshare, a send
 	// to the contact's agents (contact_to), and routing in the views.
 	CapabilityContactRouting = "contact_routing"
@@ -167,6 +174,7 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpReviewGrant:  {key: true, id: true, agents: true, grant: true},
 	ContactOpReviewAsk:    {key: true, id: true, to: true, note: true, ask: true},
 	ContactOpReviewDecide: {key: true, id: true, read: true, approve: true},
+	ContactOpName:         {key: true, id: true, note: true},
 }
 
 type contactFieldSet struct{ key, text, note, read, before, id, to, agents, grant, ask, approve bool }
@@ -177,7 +185,7 @@ type contactFieldSet struct{ key, text, note, read, before, id, to, agents, gran
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask or review_decide")
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide or name")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err

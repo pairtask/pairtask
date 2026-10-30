@@ -429,10 +429,14 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 	if len(contacts) > protocol.ListedPairingContacts {
 		contacts, snapshot.ContactsTruncated = contacts[:protocol.ListedPairingContacts], true
 	}
+	own := ""
+	if h.identity != nil {
+		own = h.identity.Fingerprint()
+	}
 	for _, c := range contacts {
 		snapshot.Contacts = append(snapshot.Contacts, protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
 			Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
-			Confirmed: confirmed[c.IdentityKey]})
+			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own)})
 	}
 	return nil
 }

@@ -100,7 +100,7 @@ func (h *Hub) SetPairing(cfg PairingConfig) {
 		cfg.Clock = time.Now
 	}
 	if cfg.Name == "" {
-		cfg.Name = "workspace"
+		cfg.Name = peer.DefaultPairingName
 	}
 	h.pair.cfg = cfg
 }

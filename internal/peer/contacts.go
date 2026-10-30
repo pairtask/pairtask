@@ -19,9 +19,11 @@ var ErrContactCapacity = errors.New("peer: contact capacity reached")
 
 // Contact is one paired workspace.
 type Contact struct {
-	IdentityKey   string
-	Name          string
-	Destination   string // where to reach it, when this side redeemed its code
+	IdentityKey string
+	Name        string
+	Destination string // where to reach it, when this side redeemed its code
+	// LocalName is what this side's operator calls it; never from the peer.
+	LocalName     string
 	EstablishedAt time.Time
 	Joined        bool // this workspace redeemed its code
 	Invited       bool // it redeemed this workspace's code
@@ -42,8 +44,21 @@ func MergeContact(existing Contact, found bool, c Contact) Contact {
 	}
 	existing.Joined = existing.Joined || c.Joined
 	existing.Invited = existing.Invited || c.Invited
-	existing.Name = firstNonEmpty(existing.Name, c.Name)
+	existing.Name = mergedName(existing.Name, c.Name)
 	existing.Destination = firstNonEmpty(existing.Destination, c.Destination)
+	return existing
+}
+
+// DefaultPairingName is the name a workspace pairs under unless its
+// operator names it.
+const DefaultPairingName = "workspace"
+
+// mergedName keeps a known name; an offered one replaces none, or the
+// default, which names nobody.
+func mergedName(existing, offered string) string {
+	if offered != "" && (existing == "" || existing == DefaultPairingName) {
+		return offered
+	}
 	return existing
 }
 

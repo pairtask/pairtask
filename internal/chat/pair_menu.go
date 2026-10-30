@@ -30,6 +30,7 @@ var pairMenu = map[string]string{
 	"review":  "ask one of its agents for a review",
 	"approve": "let one of its review requests through",
 	"decline": "refuse one of its review requests",
+	"name":    "what this side calls that workspace",
 }
 
 // pairNeedsWord: a /pair line with these words lacks the one it needs.
