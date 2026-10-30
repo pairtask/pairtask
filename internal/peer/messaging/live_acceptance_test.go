@@ -83,9 +83,9 @@ func TestLiveAcceptanceLostStoredAckReplaysWithoutDuplicateInsertion(t *testing.
 	sessionErrorIs(t, err, io.EOF)
 	rows, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 64)
 	sessionOK(t, err)
-	if len(rows) != 1 || rows[0].ID != m.ID || rows[0].Text != m.Text {
-		t.Fatalf("lost ack duplicated or corrupted message: %+v", rows)
-	}
+	sessionEqual(t, len(rows), 1)
+	sessionEqual(t, rows[0].ID, m.ID)
+	sessionEqual(t, rows[0].Text, m.Text)
 	sessionEqual(t, countLiveFrames(replay.sent, messaging.FrameStored), 1)
 }
 

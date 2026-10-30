@@ -84,10 +84,10 @@ func (p *instantPair) assertOneConnection(t *testing.T) {
 	operatorEqual(t, "one forward dial", p.forwardDials.Load(), int32(1))
 }
 
-func instantSend(t *testing.T, f *redeemOperatorFixture, key, id, text string) {
+func (side instantSide) send(t *testing.T, id, text string) {
 	t.Helper()
-	response := f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend,
-		ContactKey: key, MessageID: id, ContactText: text})
+	response := side.f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend,
+		ContactKey: side.key, MessageID: id, ContactText: text})
 	operatorEqual(t, "send accepted", response.Type, protocol.TypeOperatorContactResult)
 }
 
@@ -95,7 +95,7 @@ func instantSend(t *testing.T, f *redeemOperatorFixture, key, id, text string) {
 // only the joiner knows a dialable address and no periodic sync tick fires.
 func TestInstantTransportAcceptanceInviterSendsAfterIdleExchange(t *testing.T) {
 	p := newInstantPair(t)
-	instantSend(t, p.inviter, p.joinerKey, "after-idle", "send without waiting for a poll")
+	(instantSide{p.inviter, p.joinerKey}).send(t, "after-idle", "send without waiting for a poll")
 	awaitMessageDelivery(t, p.inviter.st.PeerMessages(), p.joinerKey, "after-idle")
 	p.assertOneConnection(t)
 	response := p.joiner.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: p.inviterKey})
@@ -118,7 +118,7 @@ func (side instantSide) sendBatch(t *testing.T, count int, body string, done cha
 	t.Helper()
 	defer func() { done <- struct{}{} }()
 	for n := 0; n < count; n++ {
-		instantSend(t, side.f, side.key, fmt.Sprintf("both-%d", n), body)
+		side.send(t, fmt.Sprintf("both-%d", n), body)
 	}
 }
 
@@ -209,7 +209,7 @@ func TestInstantTransportAcceptanceBothDirectionsAndReadReceipts(t *testing.T) {
 // periodic sync tick to recover. The receiver sees the stable message once.
 func TestInstantTransportAcceptanceReconnectWithoutPeriodicTick(t *testing.T) {
 	p := newInstantPair(t)
-	instantSend(t, p.inviter, p.joinerKey, "before-drop", "before disconnect")
+	(instantSide{p.inviter, p.joinerKey}).send(t, "before-drop", "before disconnect")
 	awaitMessageDelivery(t, p.inviter.st.PeerMessages(), p.joinerKey, "before-drop")
 	p.mu.Lock()
 	link := p.link
@@ -218,7 +218,7 @@ func TestInstantTransportAcceptanceReconnectWithoutPeriodicTick(t *testing.T) {
 		t.Fatal("no live transport")
 	}
 	operatorNoError(t, link.Close())
-	instantSend(t, p.inviter, p.joinerKey, "after-drop", "after disconnect")
+	(instantSide{p.inviter, p.joinerKey}).send(t, "after-drop", "after disconnect")
 	awaitMessageDelivery(t, p.inviter.st.PeerMessages(), p.joinerKey, "after-drop")
 	response := p.joiner.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: p.inviterKey})
 	if response.ContactPage == nil || len(response.ContactPage.Messages) != 2 {
@@ -281,7 +281,7 @@ func TestInstantTransportAcceptanceFifthContactNotStarved(t *testing.T) {
 	// All five connections are idle before any message is sent.
 	for n, c := range contacts {
 		id := fmt.Sprintf("fair-%d", n)
-		instantSend(t, inviter, c.key, id, "all contacts remain reachable")
+		(instantSide{inviter, c.key}).send(t, id, "all contacts remain reachable")
 		awaitMessageDelivery(t, inviter.st.PeerMessages(), c.key, id)
 		assertInstantContactMessage(t, instantSide{c.f, key}, id)
 	}
@@ -299,7 +299,7 @@ func TestInstantTransportAcceptanceRotatesBeforeRelayByteLimit(t *testing.T) {
 			const count = 30 // 480 KiB of text crosses the agreed 384 KiB rotation threshold.
 			for n := 0; n < count; n++ {
 				id := fmt.Sprintf("rotate-%d", n)
-				instantSend(t, sender, key, id, text)
+				(instantSide{sender, key}).send(t, id, text)
 				awaitMessageDelivery(t, sender.st.PeerMessages(), key, id)
 			}
 			rows, _, err := recipient.st.PeerMessages().Page(context.Background(), source, 0, 64)
@@ -323,7 +323,7 @@ func TestInstantTransportAcceptanceConfirmedPinLossStopsDelivery(t *testing.T) {
 	// not retain admission that the authoritative store has withdrawn.
 	_, err := p.inviter.db.Exec("DELETE FROM peer_contacts WHERE identity_key = ?", p.joinerKey)
 	operatorNoError(t, err)
-	instantSend(t, p.joiner, p.inviterKey, "after-pin-loss", "must not arrive")
+	(instantSide{p.joiner, p.inviterKey}).send(t, "after-pin-loss", "must not arrive")
 	deadline := time.Now().Add(3 * time.Second)
 	for p.joiner.h.MessageSyncStatus(p.inviterKey).LastFailure == "" {
 		if time.Now().After(deadline) {

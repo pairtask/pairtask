@@ -47,10 +47,6 @@ type liveLink struct {
 	serving  bool
 }
 
-func newLiveLink(contact string, serving bool) *liveLink {
-	return &liveLink{contact: contact, wake: make(chan struct{}, 1), stop: make(chan struct{}), serving: serving}
-}
-
 func (l *liveLink) halt() { l.stopOnce.Do(func() { close(l.stop) }) }
 
 // liveWiring is the hub's open links; safe from any goroutine.
@@ -92,7 +88,7 @@ func (h *Hub) claimLive(contact string, serving bool) (*liveLink, bool) {
 	if old != nil {
 		old.halt()
 	}
-	l := newLiveLink(contact, serving)
+	l := &liveLink{contact: contact, wake: make(chan struct{}, 1), stop: make(chan struct{}), serving: serving}
 	w.links[contact] = l
 	return l, true
 }
@@ -160,7 +156,7 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, car
 			}, true
 		},
 		Confirmed: func() bool { return h.messagePins(contact) },
-		More:      func() bool { return h.hasOutgoing(contact) },
+		More:      func() bool { return h.hasOutgoing(l) },
 		Timing:    liveTiming(),
 	}
 	if carried != nil {
@@ -169,8 +165,9 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, car
 	return link
 }
 
-// hasOutgoing: messages or read receipts still to send to contact.
-func (h *Hub) hasOutgoing(contact string) bool {
+// hasOutgoing: messages or read receipts still to send over the link.
+func (h *Hub) hasOutgoing(l *liveLink) bool {
+	contact := l.contact
 	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
 	defer cancel()
 	s := h.store.PeerMessages()
@@ -215,13 +212,14 @@ func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
 		open := func(ctx context.Context) messaging.Frames { return d.conn.MessageFrames(ctx) }
 		err := h.runLink(ctx, d.link, h.link(open, d.link, d.carried).RunDialer)
 		h.releaseLive(d.link.contact, d.link)
-		h.afterLink(ctx, d.link.contact, err)
+		h.afterLink(ctx, d.link, err)
 	}()
 }
 
 // afterLink reconnects: at once after a rotation, within a second after the
 // first drop, then backing off up to a minute.
-func (h *Hub) afterLink(ctx context.Context, contact string, err error) {
+func (h *Hub) afterLink(ctx context.Context, l *liveLink, err error) {
+	contact := l.contact
 	if ctx.Err() != nil {
 		return
 	}
