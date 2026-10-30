@@ -58,9 +58,11 @@ Use the Mac's own address, not the Colima VM's.
 
 ## 6. Say hello
 
-On each side, Tab to the `⇄` tab and send a message. B's messages leave at
-once; A's leave when B next syncs (within 30 seconds while you are chatting,
-5 minutes otherwise). These messages go between operators, not to agents.
+On each side, Tab to the `⇄` tab and send a message. Once B has synced, the
+two workspaces stay connected and messages leave at once, both ways; the
+tab says "connected". These messages go between operators, not to agents.
+From a terminal: `pairtask operator contact send|list KEY` (run in
+`secured`).
 
 ## If it doesn't connect
 

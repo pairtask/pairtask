@@ -177,8 +177,11 @@ func (h *Hub) hasOutgoing(contact string) bool {
 	return err == nil && len(reads) > 0
 }
 
-// runLink keeps a link until it ends or is stopped.
-func (h *Hub) runLink(ctx context.Context, l *liveLink, run func(context.Context) error) error {
+// runLink keeps a link until it ends or is stopped. Its opening and its
+// end are news to the operator: messages leave at once only while it's up.
+func (h *Hub) runLink(ctx context.Context, contact string, l *liveLink, run func(context.Context) error) error {
+	h.MessagesChanged(contact)
+	defer h.MessagesChanged(contact)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -206,7 +209,7 @@ func (h *Hub) goLive(ctx context.Context, contact string, d *dialedLink) {
 		defer h.pair.workers.Done()
 		defer d.conn.Close()
 		open := func(ctx context.Context) messaging.Frames { return d.conn.MessageFrames(ctx) }
-		err := h.runLink(ctx, d.link, h.link(contact, open, d.link, d.carried).RunDialer)
+		err := h.runLink(ctx, contact, d.link, h.link(contact, open, d.link, d.carried).RunDialer)
 		h.releaseLive(contact, d.link)
 		h.afterLink(ctx, contact, err)
 	}()
@@ -272,7 +275,7 @@ func (h *Hub) ClaimLink(contact string) (*LiveClaim, bool) {
 // carried is what the first round moved.
 func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, carried *messaging.Counted) error {
 	defer c.Release()
-	return c.h.runLink(ctx, c.link, c.h.link(c.contact, open, c.link, carried).RunServer)
+	return c.h.runLink(ctx, c.contact, c.link, c.h.link(c.contact, open, c.link, carried).RunServer)
 }
 
 // Release frees a claim that won't run.

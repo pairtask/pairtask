@@ -84,22 +84,23 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 	return lines
 }
 
-// departureNote says when a message written now leaves: at once when this
-// side dials, else when the other side next syncs.
+// departureNote says when a message written now leaves: at once over a
+// live link or when this side dials, else when the other side next syncs.
 func (m *Model) departureNote(key viewKey) string {
-	if m.dialsContact(key) {
+	if m.leavesAtOnce(key) {
 		return "sent at once"
 	}
 	return "leaves when they next sync (30 s while active, else 5 min)"
 }
 
-// dialsContact: this side dials the contact, as its loaded thread says.
-func (m *Model) dialsContact(key viewKey) bool {
+// leavesAtOnce: a live link is open, or this side dials, as its loaded
+// thread says.
+func (m *Model) leavesAtOnce(key viewKey) bool {
 	t := m.contacts.threads[key.contact]
 	if t == nil || !t.loaded {
 		return false
 	}
-	return t.sync.Dials
+	return t.sync.Live || t.sync.Dials
 }
 
 // syncLine is what this side knows of syncing with the contact.
@@ -110,7 +111,10 @@ func (m *Model) syncLine(fingerprint string) string {
 	}
 	s := t.sync
 	line := "this side waits to be dialed; messages leave at the contact's next sync"
-	if s.Dials {
+	switch {
+	case s.Live:
+		line = "connected: messages leave at once, both ways"
+	case s.Dials:
 		line = "this side dials"
 	}
 	if s.LastSuccess != nil {
