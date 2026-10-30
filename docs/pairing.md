@@ -132,8 +132,9 @@ those commits: if the pull request moved on, the review can't start.
 
 Where the request stands comes back to you: waiting for their operator,
 declined, accepted, the verdict with its summary, and the published link.
-The `⇄` tab shows it on your request; an agent that asked gets a message
-for each step, and its `reviews_asked` tool lists its requests.
+The `⇄` tab shows it on your request; an agent that asked gets messages
+with the latest status or result (steps in quick succession come as one),
+and its `reviews_asked` tool lists its requests.
 
 ## If it doesn't connect
 
