@@ -92,3 +92,8 @@ func optionalMessageTime(s string) (*time.Time, error) {
 // msgStamp is a fixed-width UTC time, so stored times compare as text in
 // time order: RFC3339Nano drops trailing zeros and would not.
 func msgStamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") }
+
+// AgentAcks is the contact's agents that acknowledged this side's message id.
+func (p *PeerMessages) AgentAcks(ctx context.Context, contact, id string) ([]string, error) {
+	return queryStrings(ctx, p.db, `SELECT agent FROM peer_agent_acks WHERE contact = ? AND message_id = ? ORDER BY agent`, contact, id)
+}

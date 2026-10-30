@@ -155,7 +155,7 @@ func ValidateContactRequest(msg Message) error {
 		return err
 	}
 	return errors.Join(validContactKey(msg.ContactKey), validContactID(msg, allowed), validContactText(msg, allowed),
-		validContactRead(msg, allowed), validContactBefore(msg), contactToError(msg.ContactTo), validContactAgents(msg, allowed))
+		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed))
 }
 
 // contactFieldsPresent refuses a field the operation doesn't take, any
@@ -284,12 +284,8 @@ func printableASCII(s string) bool {
 
 // validContactTo: the contact's agents a send is to, none for its operator;
 // distinct, each a valid agent ID.
-func validContactTo(to []string) bool {
-	return len(to) <= ContactAgentsMax && distinctAgents(to)
-}
-
-func contactToError(to []string) error {
-	if !validContactTo(to) {
+func validContactTo(to []string) error {
+	if len(to) > ContactAgentsMax || !distinctAgents(to) {
 		return fmt.Errorf("contact_to names up to %d distinct agents", ContactAgentsMax)
 	}
 	return nil
@@ -301,7 +297,7 @@ func validContactAgents(msg Message, allowed contactFieldSet) error {
 	if !allowed.agents || everyAgent(agents) {
 		return nil
 	}
-	if len(agents) == 0 || !validContactTo(agents) {
+	if len(agents) == 0 || validContactTo(agents) != nil {
 		return fmt.Errorf("contact_agents is \"*\" or 1 to %d distinct agents", ContactAgentsMax)
 	}
 	return nil

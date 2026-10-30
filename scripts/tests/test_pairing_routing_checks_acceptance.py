@@ -38,13 +38,19 @@ class RoutingProofFixture:
 
     def send(self, data):
         msg = json.loads(data)
-        if msg["type"] == "ack" and msg["stage"] == "agent_acknowledged" and self.confirmation:
-            self.frames.append({"type": "ack", "message_id": msg["message_id"], "stage": "agent_acknowledged"})
+        if msg["type"] == "ack":
+            self.confirm_ack(msg)
         if msg["type"] == "msg":
             self.frames.append({"type": "ack", "message_id": msg["message_id"], "stage": "accepted"})
             row = {"id": msg["message_id"], "direction": "in", "text": msg["payload"]["text"],
                    "from": routing.AGENT, "reply_id": "ping", "reply_side": "by_receiver"}
             self.rows.extend([row] * (2 if self.duplicate else 1))
+
+    def confirm_ack(self, msg):
+        if not self.confirmation:
+            return
+        if msg["stage"] == "agent_acknowledged":
+            self.frames.append({"type": "ack", "message_id": msg["message_id"], "stage": "agent_acknowledged"})
 
     def run(self, *args):
         assert args[:2] == ("contact", "list"), args

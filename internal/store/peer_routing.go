@@ -260,11 +260,6 @@ ON CONFLICT DO NOTHING`, contact, r.ID, r.Agent, msgStamp(at))
 	return err
 }
 
-// AgentAcks is the contact's agents that acknowledged this side's message id.
-func (p *PeerMessages) AgentAcks(ctx context.Context, contact, id string) ([]string, error) {
-	return queryStrings(ctx, p.db, `SELECT agent FROM peer_agent_acks WHERE contact = ? AND message_id = ? ORDER BY agent`, contact, id)
-}
-
 // QueueAgentRead queues, for the contact that sent it, a local agent's
 // acknowledgment of an imported message, once; an agent it wasn't to is
 // ErrNotRecipient. A local message that isn't an import is left alone.
