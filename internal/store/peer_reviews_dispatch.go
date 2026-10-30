@@ -24,7 +24,7 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 		return ImportResult{}, err
 	}
 	if held != "" {
-		return settleAsk(ctx, tx, imp, askSettle{held, heldReasons[held], at})
+		return heldOutcome(ctx, tx, imp, askSettle{held, heldReasons[held], at})
 	}
 	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
 		return ImportResult{}, err
@@ -37,6 +37,11 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 	created, err := createRemoteReview(ctx, tx, rec)
 	if err != nil {
 		return ImportResult{}, err
+	}
+	if created {
+		if err := askOutcome(ctx, tx, imp, "requested", "", at.ts); err != nil {
+			return ImportResult{}, err
+		}
 	}
 	notice := remoteReviewNotice(rec, imp, at)
 	if created {
@@ -68,6 +73,17 @@ func heldAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport) (ReviewGrant, st
 	return g, "", nil
 }
 
+// heldOutcome settles a request held from dispatch, and tells its
+// requester: withheld, or waiting for this side's operator again.
+func heldOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, s askSettle) (ImportResult, error) {
+	result, err := settleAsk(ctx, tx, imp, s)
+	if err != nil {
+		return result, err
+	}
+	state := map[string]string{ImportWithheld: "withheld", ImportAwaiting: "waiting"}[s.state]
+	return result, askOutcome(ctx, tx, imp, state, s.reason, s.at.ts)
+}
+
 // askSettle is where a request goes, why, and when.
 type askSettle struct {
 	state, reason string
@@ -94,6 +110,7 @@ func remoteReview(imp RemoteImport, g ReviewGrant, label string, at importSlot) 
 	rec := review.New(imp.LocalID, RemoteRequester, spec, at.ts)
 	rec.View.Remote = &protocol.Remote{Contact: imp.Contact, Label: label, Sender: imp.Sender}
 	rec.View.Pinned = &protocol.Revisions{Base: ask.Base, Head: ask.Head}
+	rec.View.RemoteRequest = imp.RemoteID
 	rec.Hash = remoteReviewHash(rec)
 	return rec
 }

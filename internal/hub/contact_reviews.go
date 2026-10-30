@@ -67,6 +67,7 @@ func (h *Hub) contactChanged(ctx context.Context, req operatorRequest, auditID i
 		return protocol.Message{}, err
 	}
 	h.importsDue()
+	h.SyncMessages(msg.ContactKey) // outcomes it queued leave at once
 	h.MessagesChanged(msg.ContactKey)
 	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp}), nil
@@ -101,7 +102,12 @@ func (h *Hub) reviewView(ctx context.Context, view *protocol.ContactMessageView,
 	view.ReviewAsk = &protocol.ReviewAsk{ReviewTarget: protocol.ReviewTarget{Forge: a.Forge, Repository: a.Repository, Change: a.Change},
 		Scope: a.Scope, Base: a.Base, Head: a.Head, Publish: a.Publish, Formal: a.Formal}
 	if r.Direction != messaging.DirIn {
-		return nil
+		a, found, err := h.store.PeerMessages().AskOutFor(ctx, r.Contact, r.ID)
+		if found {
+			outcome := a.View()
+			view.ReviewOutcome = &outcome
+		}
+		return err
 	}
 	status, _, err := h.store.PeerMessages().AskStatus(ctx, r.Contact, r.ID)
 	view.ReviewState, view.ReviewID, view.ReviewReason = status.State, status.ReviewID, status.Reason

@@ -183,6 +183,22 @@ func reviewHead(v protocol.ContactMessageView) string {
 	if v.ReviewState == "awaiting" {
 		head += ": /pair approve " + safe(v.ID) + " or decline"
 	}
+	return head + outcomeHead(v.ReviewOutcome)
+}
+
+// outcomeHead is where a request this side sent stands, as the other
+// workspace gave it, escaped.
+func outcomeHead(o *protocol.ReviewOutcomeView) string {
+	if o == nil {
+		return ""
+	}
+	head := " · " + safe(o.State)
+	if o.Verdict != "" {
+		head += " " + safe(o.Verdict)
+	}
+	if o.URL != "" {
+		head += " " + safe(o.URL)
+	}
 	return head
 }
 

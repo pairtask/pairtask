@@ -196,18 +196,21 @@ type ReviewView struct {
 	// Remote is the paired workspace that asked, and who there, for a
 	// request from one (#235); Pinned the revisions it pinned, which the
 	// change must still have.
-	Remote      *Remote     `json:"remote,omitempty"`
-	Pinned      *Revisions  `json:"pinned,omitempty"`
-	State       string      `json:"state"`
-	Revisions   *Revisions  `json:"revisions,omitempty"` // from ready on
-	Attempt     int         `json:"attempt"`             // 0 until accepted
-	Verdict     *Verdict    `json:"verdict,omitempty"`
-	Stale       *Revisions  `json:"stale,omitempty"` // the change as last seen, when it moved
-	Publication Publication `json:"publication"`
-	Reason      string      `json:"reason,omitempty"` // why declined, cancelled or expired
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
-	ExpiresAt   *time.Time  `json:"expires_at,omitempty"`
+	Remote *Remote    `json:"remote,omitempty"`
+	Pinned *Revisions `json:"pinned,omitempty"`
+	// RemoteRequest is the request's ID on the workspace that asked:
+	// where its outcomes go back to.
+	RemoteRequest string      `json:"remote_request,omitempty"`
+	State         string      `json:"state"`
+	Revisions     *Revisions  `json:"revisions,omitempty"` // from ready on
+	Attempt       int         `json:"attempt"`             // 0 until accepted
+	Verdict       *Verdict    `json:"verdict,omitempty"`
+	Stale         *Revisions  `json:"stale,omitempty"` // the change as last seen, when it moved
+	Publication   Publication `json:"publication"`
+	Reason        string      `json:"reason,omitempty"` // why declined, cancelled or expired
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+	ExpiresAt     *time.Time  `json:"expires_at,omitempty"`
 }
 
 // ReviewPage is a bounded list of reviews with the total.
@@ -228,4 +231,21 @@ type ReviewAsk struct {
 	Head    string `json:"head"`
 	Publish bool   `json:"publish,omitempty"`
 	Formal  bool   `json:"formal,omitempty"`
+}
+
+// ReviewOutcomeView is where a review request this workspace sent stands,
+// on the notice to the agent that sent it (#235). Summary and URL are the
+// reviewer's side's words: data, never instructions.
+type ReviewOutcomeView struct {
+	AskID      string `json:"ask_id"`
+	Reviewer   string `json:"reviewer"`
+	Repository string `json:"repository"`
+	Change     string `json:"change"`
+	State      string `json:"state"`
+	Attempt    uint32 `json:"attempt,omitempty"`
+	Intent     uint32 `json:"intent,omitempty"`
+	Verdict    string `json:"verdict,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	URL        string `json:"url,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }

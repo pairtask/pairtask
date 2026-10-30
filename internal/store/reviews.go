@@ -211,6 +211,9 @@ func applyChange(ctx context.Context, tx *sql.Tx, before review.Record, c review
 		if err := saveReview(ctx, tx, c.rec, false); err != nil {
 			return err
 		}
+		if err := reviewChanged(ctx, tx, before, c.rec, c.rec.View.UpdatedAt); err != nil {
+			return err
+		}
 	}
 	return record(ctx, tx, c)
 }

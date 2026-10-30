@@ -84,7 +84,19 @@ func stageImport(ctx context.Context, tx *sql.Tx, r newRow) error {
 (contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.key.contact, r.m.ID, localID, r.m.From, string(recipients),
 		r.m.ReplyTo.ID, int(r.m.ReplyTo.Author), state, msgStamp(r.now), kind)
-	return err
+	if err != nil || kind != importReview {
+		return err
+	}
+	return stagedAsk(ctx, tx, r, state)
+}
+
+// stagedAsk reserves a staged request's outcomes, and tells its requester
+// when it waits for this side's operator.
+func stagedAsk(ctx context.Context, tx *sql.Tx, r newRow, state string) error {
+	if err := reserveOutcomes(ctx, tx, r); err != nil || state != ImportAwaiting {
+		return err
+	}
+	return askOutcome(ctx, tx, RemoteImport{Contact: r.key.contact, RemoteID: r.m.ID}, "waiting", "", r.now)
 }
 
 // stagedAs is what a staged message is and where it starts: a message
@@ -164,7 +176,7 @@ func freeLocalID(ctx context.Context, tx *sql.Tx, contact, remoteID string) (str
 }
 
 const importColumns = `ri.contact, ri.remote_id, ri.local_id, ri.sender, ri.recipients, ri.reply_id, ri.reply_author,
-    ri.staged_at, ri.state, COALESCE(pm.text, ''), COALESCE(pm.created_at, ri.staged_at), ri.rowid,
+    ri.staged_at, ri.state, COALESCE(pm.text, ri.body, ''), COALESCE(pm.created_at, ri.staged_at), ri.rowid,
     COALESCE(ri.kind, 'message'), pm.review_ask, ri.approved_at IS NOT NULL`
 
 const importFrom = ` FROM remote_imports ri LEFT JOIN peer_messages pm
@@ -255,8 +267,11 @@ type importSlot struct {
 
 // importIn settles a pending import inside its transaction.
 func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
-	if imp.Kind == importReview {
+	switch imp.Kind {
+	case importReview:
 		return dispatchReview(ctx, tx, imp, at)
+	case importOutcome:
+		return dispatchOutcome(ctx, tx, imp, at)
 	}
 	ts := at.ts
 	shared, err := allGranted(ctx, tx, imp.Contact, imp.Recipients)

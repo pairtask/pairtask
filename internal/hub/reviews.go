@@ -59,6 +59,14 @@ func (h *Hub) expireReviews(ctx context.Context) error {
 	return err
 }
 
+// remoteReviewChanged sends at once the outcome a change of a review a
+// paired workspace asked for queued (#235).
+func (h *Hub) remoteReviewChanged(rec review.Record) {
+	if r := rec.View.Remote; r != nil {
+		h.SyncMessages(r.Contact)
+	}
+}
+
 func (h *Hub) handleReview(ctx context.Context, clients map[string]*Client, in Inbound) {
 	h.enqueue(clients, in.From, h.agentReview(ctx, in))
 }
@@ -92,6 +100,7 @@ func (h *Hub) agentReview(ctx context.Context, in Inbound) protocol.Message {
 	}
 	if changed {
 		h.emit(protocol.SessionEvent{Kind: protocol.EventReviewsChanged, ReviewID: msg.ReviewID})
+		h.remoteReviewChanged(rec)
 	}
 	view := rec.View
 	answer := protocol.Message{Type: protocol.TypeReviewResult, RequestID: msg.RequestID, ReviewID: msg.ReviewID, Review: &view}
@@ -327,6 +336,7 @@ func (h *Hub) operatorReviewChange(ctx context.Context, clients map[string]*Clie
 	if changed {
 		h.emit(protocol.SessionEvent{Kind: protocol.EventReviewsChanged, ReviewID: rec.View.ID})
 		h.deliverReviewNotice(clients, notice)
+		h.remoteReviewChanged(rec)
 	}
 	view := rec.View
 	return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewID: view.ID, Review: &view}

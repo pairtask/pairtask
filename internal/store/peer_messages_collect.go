@@ -29,7 +29,7 @@ func (p *PeerMessages) Collect(ctx context.Context, now time.Time) error {
 func messageContacts(ctx context.Context, db *sql.DB) ([]string, error) {
 	// Routing's tables outlive a contact's last message row until pruned.
 	rows, err := db.QueryContext(ctx, `SELECT contact FROM peer_messages UNION SELECT contact FROM remote_imports
-UNION SELECT contact FROM peer_agent_reads ORDER BY contact`)
+UNION SELECT contact FROM peer_agent_reads UNION SELECT contact FROM review_asks_out ORDER BY contact`)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (p *PeerMessages) collectContact(ctx context.Context, contact string, now t
 	}
 	defer tx.Rollback()
 	for _, step := range []func(context.Context, *sql.Tx, string, time.Time) error{
-		expireQueued, expireReceipts, expireAsks, collectText, raiseFloor, pruneRouting,
+		expireQueued, expireReceipts, expireAsks, collectText, raiseFloor, pruneRouting, collectAsks, pruneOutcomes,
 	} {
 		if err := step(ctx, tx, contact, now); err != nil {
 			return err

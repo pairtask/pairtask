@@ -111,6 +111,8 @@ type ContactMessageView struct {
 	ReviewState  string     `json:"review_state,omitempty"`
 	ReviewID     string     `json:"review_id,omitempty"`
 	ReviewReason string     `json:"review_reason,omitempty"`
+	// ReviewOutcome is where a review request this side sent stands.
+	ReviewOutcome *ReviewOutcomeView `json:"review_outcome,omitempty"`
 }
 
 // ContactHeldForUpgrade is the refusal_reason of a queued message to or

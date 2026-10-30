@@ -113,8 +113,11 @@ func (s Session) receiveDirectory(ctx context.Context, _ *Result) error {
 // wrapStore marks every store error of a session, keeping the routing half
 // when the store has one.
 func wrapStore(st Store) Store {
-	if rs, ok := st.(RoutingStore); ok {
-		return routingSessionStore{sessionStore{rs}, rs}
+	switch s := st.(type) {
+	case OutcomeStore:
+		return outcomeSessionStore{routingSessionStore{sessionStore{s}, s}, s}
+	case RoutingStore:
+		return routingSessionStore{sessionStore{s}, s}
 	}
 	return sessionStore{st}
 }

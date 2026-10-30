@@ -63,7 +63,7 @@ func TestRuntimeMCPDiscoveryIsPassiveAcrossConnections(t *testing.T) {
 		session := runtimeClient(t, endpoint)
 		tools, err := session.ListTools(context.Background(), nil)
 		terminalCheck(t, err)
-		if len(tools.Tools) != 25 { // collaboration, workspaces, status, claims, three room and seven review tools
+		if len(tools.Tools) != 26 { // collaboration, workspaces, status, claims, three room and seven review tools
 			t.Fatalf("missing runtime tools: %v", tools.Tools)
 		}
 		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "listener_status"})

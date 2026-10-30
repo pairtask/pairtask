@@ -19,3 +19,9 @@ type WorkspaceView struct {
 	Live   bool     `json:"live"`
 	Agents []string `json:"agents,omitempty"`
 }
+
+// Review requests an agent sent paired workspaces (#235).
+const (
+	TypeReviewsAskedGet    = "reviews_asked_get"    // agent → broker: the review requests the caller sent, newest first
+	TypeReviewsAskedResult = "reviews_asked_result" // broker → agent: those requests and where each stands
+)

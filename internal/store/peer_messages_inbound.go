@@ -100,6 +100,9 @@ var inboundChecks = []inboundCheck{
 		if m.Review == nil {
 			return false, nil
 		}
+		if full, err := outcomesFull(ctx, tx, contact); full || err != nil {
+			return full, err
+		}
 		return asksFull(ctx, tx, contact, m.To[0])
 	}},
 }

@@ -22,7 +22,7 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 4
+	MaxVersion byte = 5
 )
 
 // LiveVersion is the first version whose sessions can stay open;
@@ -58,6 +58,10 @@ const (
 	FrameDirectory       byte = 18 // the agents this side shares with the peer
 	// Version 4 only.
 	FrameReviewAsk byte = 19 // a review request for one of the receiver's agents
+	// Version 5 only.
+	FrameReviewOutcome  byte = 20 // where a review request is, back to its requester
+	FrameOutcomeStored  byte = 21 // the answer to a ReviewOutcome the requester holds
+	FrameOutcomeRefused byte = 22 // the answer to one it never will
 )
 
 // ErrProtocol is a malformed, unexpected or oversized frame.
@@ -162,7 +166,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameReviewAsk
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameOutcomeRefused
 }
 
 // shape is a frame type and its exact number of fields.

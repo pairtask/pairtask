@@ -239,13 +239,7 @@ func (e errUnreachable) Unwrap() error { return e.err }
 
 // messagesWaiting: anything still to send or confirm, or recent traffic.
 func (h *Hub) messagesWaiting(ctx context.Context, contact string) bool {
-	s := h.store.PeerMessages()
-	queued, err := s.Offer(ctx, contact, h.pair.cfg.Clock(), messaging.Limit{Count: 1, Bytes: messaging.SessionBytes})
-	if err == nil && len(queued) > 0 {
-		return true
-	}
-	reads, err := s.PendingReads(ctx, contact, 1)
-	if err == nil && len(reads) > 0 {
+	if h.outgoing(ctx, contact) {
 		return true
 	}
 	h.msgs.mu.Lock()

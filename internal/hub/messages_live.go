@@ -174,16 +174,24 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 
 // hasOutgoing: messages or read receipts still to send over the link.
 func (h *Hub) hasOutgoing(l *liveLink) bool {
-	contact := l.contact
 	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
 	defer cancel()
+	return h.outgoing(ctx, l.contact)
+}
+
+// outgoing: messages, read receipts or review outcomes still to send to
+// contact.
+func (h *Hub) outgoing(ctx context.Context, contact string) bool {
 	s := h.store.PeerMessages()
 	queued, err := s.Offer(ctx, contact, h.pair.cfg.Clock(), messaging.Limit{Count: 1, Bytes: messaging.SessionBytes})
 	if err == nil && len(queued) > 0 {
 		return true
 	}
-	reads, err := s.PendingReads(ctx, contact, 1)
-	return err == nil && len(reads) > 0
+	if reads, err := s.PendingReads(ctx, contact, 1); err == nil && len(reads) > 0 {
+		return true
+	}
+	outcomes, err := s.PendingOutcomes(ctx, contact, 1)
+	return err == nil && len(outcomes) > 0
 }
 
 // runLink keeps a link until it ends or is stopped. Its opening and its

@@ -44,6 +44,7 @@ const (
 const (
 	importMessage  = "message"
 	importReview   = "review"
+	importOutcome  = "outcome"  // the notice of a review request's outcome, for the agent that sent it
 	ImportAwaiting = "awaiting" // a review request waiting for this side's operator
 )
 
@@ -148,10 +149,24 @@ type askScope struct {
 
 // withholdAsks settles, as withheld, review requests not yet dispatched.
 func withholdAsks(ctx context.Context, tx *sql.Tx, s askScope) error {
-	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', reason = ?1, settled_at = ?2
-WHERE contact = ?3 AND kind = 'review' AND state IN ('pending', 'awaiting') AND (?4 = '' OR recipients = json_array(?4))`,
+	ids, err := queryStrings(ctx, tx, `UPDATE remote_imports SET state = 'withheld', reason = ?1, settled_at = ?2
+WHERE contact = ?3 AND kind = 'review' AND state IN ('pending', 'awaiting') AND (?4 = '' OR recipients = json_array(?4)) RETURNING remote_id`,
 		s.reason, msgStamp(s.at), s.contact, s.agent)
-	return err
+	if err != nil {
+		return err
+	}
+	return askOutcomes(ctx, tx, askScope{s.contact, "", "withheld", s.at}, ids)
+}
+
+// askOutcomes tells the requester of each request the scope's outcome.
+func askOutcomes(ctx context.Context, tx *sql.Tx, s askScope, remoteIDs []string) error {
+	reason := map[string]string{"withheld": "unshared"}[s.reason]
+	for _, id := range remoteIDs {
+		if err := askOutcome(ctx, tx, RemoteImport{Contact: s.contact, RemoteID: id}, s.reason, reason, s.at); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ReviewGrants are a contact's grants, by agent.
@@ -257,6 +272,11 @@ func (s *Store) DecideRemoteReview(ctx context.Context, d RemoteDecision) (strin
 		next, reason, msgStamp(now), contact, remoteID); err != nil {
 		return "", err
 	}
+	if next == ImportWithheld {
+		if err := askOutcome(ctx, tx, RemoteImport{Contact: contact, RemoteID: remoteID}, reason, "", now); err != nil {
+			return "", err
+		}
+	}
 	return next, tx.Commit()
 }
 
@@ -274,10 +294,13 @@ func decision(approve bool, staged string, now time.Time) (string, string) {
 
 // expireAsks withholds a contact's requests that waited past ReviewAskExpiry.
 func expireAsks(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', reason = 'expired', settled_at = ?1
-WHERE contact = ?2 AND kind = 'review' AND state = 'awaiting' AND staged_at < ?3`,
+	ids, err := queryStrings(ctx, tx, `UPDATE remote_imports SET state = 'withheld', reason = 'expired', settled_at = ?1
+WHERE contact = ?2 AND kind = 'review' AND state = 'awaiting' AND staged_at < ?3 RETURNING remote_id`,
 		msgStamp(now), contact, msgStamp(now.Add(-ReviewAskExpiry)))
-	return err
+	if err != nil {
+		return err
+	}
+	return askOutcomes(ctx, tx, askScope{contact, "", "expired", now}, ids)
 }
 
 // reviewAskJSON stores a request's ask with its row, NULL for a message.
@@ -316,3 +339,6 @@ FROM remote_imports WHERE contact = ? AND remote_id = ? AND kind = 'review'`, co
 	}
 	return a, err == nil, err
 }
+
+// IsReview: the import is a review request, whose outcomes go back.
+func (imp RemoteImport) IsReview() bool { return imp.Kind == importReview }
