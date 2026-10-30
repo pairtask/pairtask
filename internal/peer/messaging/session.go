@@ -35,12 +35,33 @@ func (r Result) Moved() bool {
 	return r.Sent+r.Received+r.Refused+r.ReadsSent+r.ReadsStored > 0
 }
 
-// Session is one side of one session with one contact.
+// Session is one side of one session with one contact. Version is the one
+// both sides agreed; OpenDial and OpenServe set it for their own phases,
+// and a link's rounds carry it over.
 type Session struct {
 	Frames  Frames
 	Store   Store
 	Contact string
 	Now     func() time.Time
+	Version byte
+}
+
+// maxVersion is the highest version this side speaks with its store: a
+// store without routing stops at the live version.
+func (s Session) maxVersion() byte {
+	if _, ok := s.Store.(RoutingStore); ok {
+		return MaxVersion
+	}
+	return LiveVersion
+}
+
+// routing is the store's routing half, when the agreed version uses it.
+func (s Session) routing() (RoutingStore, bool) {
+	if s.Version < RoutingVersion {
+		return nil, false
+	}
+	r, ok := s.Store.(RoutingStore)
+	return r, ok
 }
 
 // Dial runs the dialing side: its hello, its messages, the peer's, then the
@@ -59,22 +80,26 @@ func (s Session) Serve(ctx context.Context) (Result, error) {
 // OpenDial is Dial, also reporting the version both sides speak: at
 // LiveVersion the session may stay open (OfferLive).
 func (s Session) OpenDial(ctx context.Context) (Result, byte, error) {
-	s.Store = sessionStore{s.Store}
-	version, err := s.offerHello()
+	max := s.maxVersion()
+	s.Store = wrapStore(s.Store)
+	version, err := s.offerHello(max)
 	if err != nil {
 		return Result{}, 0, err
 	}
+	s.Version = version
 	r, err := s.phases(ctx, true)
 	return r, version, err
 }
 
 // OpenServe is Serve, also reporting the version both sides speak.
 func (s Session) OpenServe(ctx context.Context) (Result, byte, error) {
-	s.Store = sessionStore{s.Store}
-	version, err := s.answerHello()
+	max := s.maxVersion()
+	s.Store = wrapStore(s.Store)
+	version, err := s.answerHello(max)
 	if err != nil {
 		return Result{}, 0, err
 	}
+	s.Version = version
 	r, err := s.phases(ctx, false)
 	return r, version, err
 }
@@ -107,14 +132,15 @@ func (s Session) AnswerLive(can bool) (bool, error) {
 	return on, s.send(EncodeLive(on))
 }
 
-// phases runs the four phases in order; dialer sends in the first and third.
+// phase is one side of a phase: sending or receiving.
+type phase func(context.Context, *Result) error
+
+// phases runs the phases in order, each a pair the dialer opens: messages,
+// read receipts, and from RoutingVersion on agent acknowledgments and the
+// directories.
 func (s Session) phases(ctx context.Context, dialer bool) (Result, error) {
 	var r Result
-	steps := []func(context.Context, *Result) error{s.sendMessages, s.receiveMessages, s.sendReads, s.receiveReads}
-	if !dialer {
-		steps = []func(context.Context, *Result) error{s.receiveMessages, s.sendMessages, s.receiveReads, s.sendReads}
-	}
-	for _, step := range steps {
+	for _, step := range s.steps(dialer) {
 		if err := step(ctx, &r); err != nil {
 			return r, err
 		}
@@ -122,8 +148,25 @@ func (s Session) phases(ctx context.Context, dialer bool) (Result, error) {
 	return r, nil
 }
 
-func (s Session) offerHello() (byte, error) {
-	if err := s.send(EncodeHello(Hello{Min: MinVersion, Max: MaxVersion})); err != nil {
+// steps are the phases in this side's order: in each pair, the dialer
+// sends first.
+func (s Session) steps(dialer bool) []phase {
+	pairs := [][2]phase{{s.sendMessages, s.receiveMessages}, {s.sendReads, s.receiveReads}}
+	if _, ok := s.routing(); ok {
+		pairs = append(pairs, [2]phase{s.sendAgentReads, s.receiveAgentReads}, [2]phase{s.sendDirectory, s.receiveDirectory})
+	}
+	steps := make([]phase, 0, 2*len(pairs))
+	for _, pair := range pairs {
+		if !dialer {
+			pair[0], pair[1] = pair[1], pair[0]
+		}
+		steps = append(steps, pair[0], pair[1])
+	}
+	return steps
+}
+
+func (s Session) offerHello(max byte) (byte, error) {
+	if err := s.send(EncodeHello(Hello{Min: MinVersion, Max: max})); err != nil {
 		return 0, err
 	}
 	frame, err := s.Frames.Recv()
@@ -140,10 +183,10 @@ func (s Session) offerHello() (byte, error) {
 	if err != nil {
 		return 0, err
 	}
-	return common(h)
+	return common(h, max)
 }
 
-func (s Session) answerHello() (byte, error) {
+func (s Session) answerHello(max byte) (byte, error) {
 	frame, err := s.Frames.Recv()
 	if err != nil {
 		return 0, err
@@ -152,20 +195,20 @@ func (s Session) answerHello() (byte, error) {
 	if err != nil {
 		return 0, err
 	}
-	version, err := common(h)
+	version, err := common(h, max)
 	if err != nil {
-		s.send(EncodeUnsupported(Unsupported{Min: MinVersion, Max: MaxVersion}))
+		s.send(EncodeUnsupported(Unsupported{Min: MinVersion, Max: max}))
 		return 0, err
 	}
-	return version, s.send(EncodeHello(Hello{Min: MinVersion, Max: MaxVersion}))
+	return version, s.send(EncodeHello(Hello{Min: MinVersion, Max: max}))
 }
 
 // common is the highest version both sides speak.
-func common(h Hello) (byte, error) {
-	if h.Max < MinVersion || h.Min > MaxVersion {
+func common(h Hello, max byte) (byte, error) {
+	if h.Max < MinVersion || h.Min > max {
 		return 0, ErrUnsupported
 	}
-	return min(h.Max, MaxVersion), nil
+	return min(h.Max, max), nil
 }
 
 func (s Session) send(frame []byte, err error) error {
@@ -178,7 +221,7 @@ func (s Session) send(frame []byte, err error) error {
 // sendMessages offers this side's oldest queued messages and records each
 // answer before sending the next.
 func (s Session) sendMessages(ctx context.Context, r *Result) error {
-	rows, err := s.Store.Offer(ctx, s.Contact, s.Now(), SessionLimit)
+	rows, err := s.offer(ctx)
 	if err != nil {
 		return err
 	}
@@ -196,8 +239,20 @@ func (s Session) sendMessages(ctx context.Context, r *Result) error {
 	return s.send(EncodeEnd())
 }
 
+// offer is this session's messages to send: routed ones only when the
+// agreed version carries them.
+func (s Session) offer(ctx context.Context) ([]Row, error) {
+	l := SessionLimit
+	l.Version = s.Version
+	return s.Store.Offer(ctx, s.Contact, s.Now(), l)
+}
+
 func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
-	if err := s.send(EncodeMessage(m)); err != nil {
+	encode := EncodeMessage
+	if m.Routed() {
+		encode = EncodeRouted
+	}
+	if err := s.send(encode(m)); err != nil {
 		return false, err
 	}
 	frame, err := s.Frames.Recv()
@@ -237,10 +292,11 @@ func (s Session) receiveMessages(ctx context.Context, r *Result) error {
 		if err != nil {
 			return err
 		}
-		if kind, _ := Kind(frame); kind == FrameEnd {
+		kind, _ := Kind(frame)
+		if kind == FrameEnd {
 			return DecodeEnd(frame)
 		}
-		m, err := DecodeMessage(frame)
+		m, err := s.decodeMessage(kind, frame)
 		if err != nil {
 			return err
 		}
@@ -251,6 +307,14 @@ func (s Session) receiveMessages(ctx context.Context, r *Result) error {
 			return err
 		}
 	}
+}
+
+// decodeMessage reads a Message, or a routed one at RoutingVersion.
+func (s Session) decodeMessage(kind byte, frame []byte) (Message, error) {
+	if kind == FrameRouted && s.Version >= RoutingVersion {
+		return DecodeRouted(frame)
+	}
+	return DecodeMessage(frame)
 }
 
 // answerMessage stores, then answers; a store failure ends the session

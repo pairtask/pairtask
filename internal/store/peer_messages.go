@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
@@ -89,10 +90,12 @@ func textHash(text string) []byte {
 	return sum[:]
 }
 
-// Queue stores an outbound message with the contact's next sequence.
+// Queue stores an outbound message with the contact's next sequence. A
+// message from an agent needs the agent shared with the contact.
 func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messaging.Row, error) {
-	if !messaging.ValidID(o.ID) || !messaging.ValidText(o.Text) {
-		return messaging.Row{}, fmt.Errorf("%w: ID or text", messaging.ErrInvalid)
+	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo}
+	if !validOutgoing(m) {
+		return messaging.Row{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
 	}
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -100,7 +103,7 @@ func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messagi
 	}
 	defer tx.Rollback()
 	key := messageKey{o.Contact, messaging.DirOut, o.ID}
-	row, err := queueIn(ctx, tx, outgoing{key, o.Text, o.Now})
+	row, err := queueIn(ctx, tx, outgoing{key, m, o.Now, o.LocalID})
 	if err != nil {
 		return messaging.Row{}, err
 	}
@@ -110,23 +113,36 @@ func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messagi
 	return row, nil
 }
 
-// outgoing is one message the operator queues.
+// validOutgoing: a message's ID, text and routing are within the rules.
+func validOutgoing(m messaging.Message) bool {
+	if !messaging.ValidID(m.ID) {
+		return false
+	}
+	return messaging.ValidText(m.Text) && messaging.ValidRouting(m)
+}
+
+// outgoing is one message the operator or an agent queues: its ID, text
+// and routing, without its sequence or time yet.
 type outgoing struct {
-	key  messageKey
-	text string
-	now  time.Time
+	key     messageKey
+	m       messaging.Message
+	now     time.Time
+	localID string
 }
 
 // queueIn is Queue inside its transaction: the existing row for a replay,
 // or a new one with the next sequence.
 func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
-	key, text, now := o.key, o.text, o.now
+	key := o.key
 	if err := requireContact(ctx, tx, contactKey(key.contact)); err != nil {
 		return messaging.Row{}, err
 	}
 	row, found, err := messageRow(ctx, tx, key)
 	if err != nil || found {
 		return replayed(row, o, err)
+	}
+	if err := senderShared(ctx, tx, key.contact, o.m.From); err != nil {
+		return messaging.Row{}, err
 	}
 	if err := outboxRoom(ctx, tx, o); err != nil {
 		return messaging.Row{}, err
@@ -135,24 +151,42 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	if err != nil {
 		return messaging.Row{}, err
 	}
-	m := messaging.Message{ID: key.id, N: n, CreatedAt: now.UTC(), Text: text}
-	if err := insertMessage(ctx, tx, newRow{key, m, now}); err != nil {
+	m := o.m
+	m.N, m.CreatedAt = n, o.now.UTC()
+	if err := insertMessage(ctx, tx, newRow{key: key, m: m, now: o.now, localID: o.localID}); err != nil {
 		return messaging.Row{}, err
 	}
 	row, _, err = messageRow(ctx, tx, key)
 	return row.Row, err
 }
 
-// replayed answers a Queue of an ID already queued: the same text is the
-// same message, other text a conflict.
+// senderShared: the operator, or an agent shared with the contact.
+func senderShared(ctx context.Context, tx *sql.Tx, contact, from string) error {
+	if from == "" {
+		return nil
+	}
+	ok, err := allGranted(ctx, tx, contact, []string{from})
+	if err == nil && !ok {
+		err = messaging.ErrNotShared
+	}
+	return err
+}
+
+// replayed answers a Queue of an ID already queued: the same text and
+// routing is the same message, anything else a conflict.
 func replayed(row storedRow, o outgoing, err error) (messaging.Row, error) {
 	switch {
 	case err != nil:
 		return messaging.Row{}, err
-	case string(textHash(o.text)) != string(row.textHash):
+	case string(textHash(o.m.Text)) != string(row.textHash) || !sameRouting(row.Message, o.m):
 		return messaging.Row{}, messaging.ErrConflict
 	}
 	return row.Row, nil
+}
+
+// sameRouting: the same sender, recipients in order, and reply.
+func sameRouting(a, b messaging.Message) bool {
+	return a.From == b.From && slices.Equal(a.To, b.To) && a.ReplyTo == b.ReplyTo
 }
 
 // outboxRoom refuses a message the contact's queued messages leave no room for.
@@ -163,7 +197,7 @@ WHERE contact = ? AND direction = 'out' AND state = 'queued'`, o.key.contact).Sc
 	if err != nil {
 		return err
 	}
-	if !outboxBudget.holds(budget{held.count, held.bytes + len(o.text)}) {
+	if !outboxBudget.holds(budget{held.count, held.bytes + len(o.m.Text)}) {
 		return messaging.ErrOutboxFull
 	}
 	return nil
@@ -210,27 +244,62 @@ ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, string(contact), next+
 // initialState is a new row's state by direction.
 var initialState = map[string]string{messaging.DirOut: messaging.StateQueued, messaging.DirIn: messaging.StateReceived}
 
-// newRow is a message to insert: its key, the message and when.
+// newRow is a message to insert: its key, the message and when, and for
+// an outbound one queued from a local agent's message, that message.
 type newRow struct {
-	key messageKey
-	m   messaging.Message
-	now time.Time
+	key     messageKey
+	m       messaging.Message
+	now     time.Time
+	localID string
+}
+
+// state is a new row's: inbound for this side's agents is routed, never a
+// human's to read.
+func (r newRow) state() string {
+	if r.key.direction == messaging.DirIn && len(r.m.To) > 0 {
+		return messaging.StateRouted
+	}
+	return initialState[r.key.direction]
 }
 
 func insertMessage(ctx context.Context, tx *sql.Tx, r newRow) error {
 	key, m, now := r.key, r.m, r.now
 	hash := m.Hash()
-	contact, direction, state := key.contact, key.direction, initialState[key.direction]
+	var author sql.NullInt64
+	if m.ReplyTo.Author != messaging.ReplyAuthorNone {
+		author = sql.NullInt64{Int64: int64(m.ReplyTo.Author), Valid: true}
+	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
-(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		contact, direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:], state, msgStamp(now))
+(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at,
+    from_agent, to_agents, reply_id, reply_author, local_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
+		r.state(), msgStamp(now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), author, nullString(r.localID))
 	return err
 }
 
+// holdForUpgrade says why queued messages to or from agents stay queued
+// when the session's peer can't carry them; a delivery clears it.
+func holdForUpgrade(ctx context.Context, tx *sql.Tx, contact, carried string) error {
+	if carried != unroutedRow {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET class = ?, reason = ?
+WHERE contact = ? AND direction = 'out' AND state = 'queued' AND NOT (`+unroutedRow+`)`, messaging.Transient, messaging.ReasonPeerUpgrade, contact)
+	return err
+}
+
+// unroutedRow is a row any version carries.
+const unroutedRow = `from_agent IS NULL AND to_agents IS NULL AND reply_id IS NULL`
+
 // Offer is the oldest queued messages that fit the session bounds; queued
 // messages past QueuedExpiry are expired first and never offered.
+// Before RoutingVersion, messages to or from agents stay queued.
 func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
+	carried := "1"
+	if l.Version != 0 && l.Version < messaging.RoutingVersion {
+		carried = unroutedRow
+	}
 	limit := sessionBudget.clamp(budget{l.Count, l.Bytes})
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -240,7 +309,10 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 	if err := expireQueued(ctx, tx, contact, now); err != nil {
 		return nil, err
 	}
-	rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' ORDER BY n`, contact)
+	if err := holdForUpgrade(ctx, tx, contact, carried); err != nil {
+		return nil, err
+	}
+	rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
 	if err != nil {
 		return nil, err
 	}

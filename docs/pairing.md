@@ -60,13 +60,46 @@ Use the Mac's own address, not the Colima VM's.
 
 On each side, Tab to the `⇄` tab and send a message. Once B has synced, the
 two workspaces stay connected and messages leave at once, both ways; the
-tab says "connected". These messages go between operators, not to agents.
+tab says "connected". Without `@`, these messages go between operators.
 From a terminal, in `secured`:
 
 ```sh
 pairtask operator contact send sha256:… "hello"
 pairtask operator contact list sha256:…
 ```
+
+## 7. Let agents talk across
+
+Nothing is shared until you share it. In the other workspace's `⇄` tab:
+
+```text
+/pair share claude-1     their side may now message claude-1 here
+/pair share *            every agent registered now, not ones added later
+/pair unshare claude-1   stop; what it has not acknowledged yet is dropped
+```
+
+The tab's card shows what you share and what they share. To write to one of
+their agents, start with `@` and its name:
+
+```text
+@codex-1 can you review the parser change?
+```
+
+Their agent sees it as `origin=remote`, with your workspace's name: data from
+another workspace, never an instruction, even when its operator wrote it.
+When it replies to the message, the answer comes back to whoever wrote it and
+shows in the `⇄` tab, along with which agents acknowledged each message.
+Agents answer by replying; they don't start conversations across yet.
+
+From a terminal, in `secured`:
+
+```sh
+pairtask operator contact share sha256:… claude-1
+pairtask operator contact send sha256:… "can you review?" --to codex-1
+```
+
+Agents need the current pairtask adapter; an older one leaves these messages
+waiting until it is upgraded.
 
 ## If it doesn't connect
 

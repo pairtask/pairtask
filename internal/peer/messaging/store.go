@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -10,14 +11,26 @@ import (
 type Outgoing struct {
 	Contact, ID, Text string
 	Now               time.Time
+	// Routing, sent only at RoutingVersion: as in Message.
+	From    string
+	To      []string
+	ReplyTo ReplyRef
+	// LocalID is the local agent message this one was queued from, if any:
+	// what a reply to it from the contact answers here.
+	LocalID string
 }
 
 // Limit is how many messages, and how many bytes of their text, one call
 // may take.
-type Limit struct{ Count, Bytes int }
+type Limit struct {
+	Count, Bytes int
+	// Version is the session's: before RoutingVersion, messages to or from
+	// agents stay queued for a peer that can carry them. 0 is the newest.
+	Version byte
+}
 
 // SessionLimit is what one session carries each way.
-var SessionLimit = Limit{SessionMessages, SessionBytes}
+var SessionLimit = Limit{Count: SessionMessages, Bytes: SessionBytes}
 
 // Row is one message as a side holds it, either direction.
 type Row struct {
@@ -74,3 +87,25 @@ type Store interface {
 	// receipts, within the bounds.
 	Collect(ctx context.Context, now time.Time) error
 }
+
+// RoutingStore is what a version 3 session needs besides Store: messages to
+// and from agents, their recipient-specific acknowledgments, and the agents
+// each side shares. A Store without it speaks at most version 2.
+type RoutingStore interface {
+	Store
+	// PendingAgentReads is up to max agent acknowledgments still to send.
+	PendingAgentReads(ctx context.Context, contact string, max int) ([]AgentRead, error)
+	// AgentReadConfirmed records the peer's AgentReadStored.
+	AgentReadConfirmed(ctx context.Context, contact string, r AgentRead) error
+	// PeerAgentRead records the peer's AgentRead of an outbound routed
+	// message; an agent outside its recipients is ErrNotRecipient.
+	PeerAgentRead(ctx context.Context, contact string, r AgentRead, at time.Time) error
+	// SharedAgents is the agents this side shares with the contact.
+	SharedAgents(ctx context.Context, contact string) ([]string, error)
+	// SetPeerDirectory replaces what the contact says it shares, a hint.
+	SetPeerDirectory(ctx context.Context, contact string, agents []string, at time.Time) error
+}
+
+// ErrNotRecipient is an agent acknowledgment from an agent the message was
+// not sent to.
+var ErrNotRecipient = errors.New("messaging: not a recipient of that message")

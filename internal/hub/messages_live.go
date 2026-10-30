@@ -135,12 +135,19 @@ func (h *Hub) Live(contact string) bool {
 	return w.links[contact] != nil
 }
 
-// link is a contact's live link over a connection's frames; carried is
-// what its first round moved.
-func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, carried *messaging.Counted) *messaging.Link {
+// FirstRound is what a link's first round settled: what it moved, counted
+// towards rotation, and the version both sides agreed, which every later
+// round keeps.
+type FirstRound struct {
+	Carried *messaging.Counted
+	Version byte
+}
+
+// link is a contact's live link over a connection's frames.
+func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, first FirstRound) *messaging.Link {
 	contact := l.contact
 	link := &messaging.Link{
-		Session: messaging.Session{Store: h.store.PeerMessages(), Contact: contact, Now: h.pair.cfg.Clock},
+		Session: messaging.Session{Store: h.store.PeerMessages(), Contact: contact, Now: h.pair.cfg.Clock, Version: first.Version},
 		Open:    open,
 		Wake:    l.wake,
 		Begin: func() (func(messaging.Result, error), bool) {
@@ -159,8 +166,8 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, car
 		More:      func() bool { return h.hasOutgoing(l) },
 		Timing:    liveTiming(),
 	}
-	if carried != nil {
-		link.Carried.Sent, link.Carried.Recv = carried.SentBytes, carried.RecvBytes
+	if c := first.Carried; c != nil {
+		link.Carried.Sent, link.Carried.Recv = c.SentBytes, c.RecvBytes
 	}
 	return link
 }
@@ -197,9 +204,9 @@ func (h *Hub) runLink(ctx context.Context, l *liveLink, run func(context.Context
 
 // dialedLink is a connection whose first round agreed to stay open.
 type dialedLink struct {
-	conn    *firstcontact.Conn
-	link    *liveLink
-	carried *messaging.Counted
+	conn  *firstcontact.Conn
+	link  *liveLink
+	first FirstRound
 }
 
 // goLive keeps a dialed link in its own goroutine, so the sync slot that
@@ -216,7 +223,7 @@ func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
 		defer h.pair.workers.Done()
 		defer d.conn.Close()
 		open := func(ctx context.Context) messaging.Frames { return d.conn.MessageFrames(ctx) }
-		err := h.runLink(ctx, d.link, h.link(open, d.link, d.carried).RunDialer)
+		err := h.runLink(ctx, d.link, h.link(open, d.link, d.first).RunDialer)
 		h.releaseLive(d.link.contact, d.link)
 		h.afterLink(ctx, d.link, err)
 	}()

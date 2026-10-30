@@ -22,10 +22,10 @@ func (h *Hub) ClaimLink(contact string) (*LiveClaim, bool) {
 }
 
 // Run keeps the serving link until it ends, is replaced, or ctx ends;
-// carried is what the first round moved.
-func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, carried *messaging.Counted) error {
+// first is what its first round settled.
+func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, first FirstRound) error {
 	defer c.Release()
-	return c.h.runLink(ctx, c.link, c.h.link(open, c.link, carried).RunServer)
+	return c.h.runLink(ctx, c.link, c.h.link(open, c.link, first).RunServer)
 }
 
 // Release frees a claim that won't run.

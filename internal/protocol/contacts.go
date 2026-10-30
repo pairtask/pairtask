@@ -31,6 +31,20 @@ const (
 	// ContactOpSync asks for a session with the contact soon; the answer is
 	// the sync status, never a completed session.
 	ContactOpSync = "sync"
+	// ContactOpShare lets the contact message the contact_agents of this
+	// workspace (#222), under message_id; "*" alone is every agent
+	// registered now, not one registering later. The answer is the newest
+	// page, which lists what is shared.
+	ContactOpShare = "share"
+	// ContactOpUnshare stops it for contact_agents, "*" alone for all:
+	// messages staged for them are withheld, and their queued ones refused.
+	ContactOpUnshare = "unshare"
+
+	// CapabilityContactRouting: the broker serves share and unshare, a send
+	// to the contact's agents (contact_to), and routing in the views.
+	CapabilityContactRouting = "contact_routing"
+	// ContactAgentsMax bounds the agents one operation names.
+	ContactAgentsMax = 64
 
 	// ErrContactRefused is a refused contact operation; the detail names why.
 	ErrContactRefused = "contact_refused"
@@ -68,7 +82,27 @@ type ContactMessageView struct {
 	ReadAt        *time.Time `json:"read_at,omitempty"`
 	Receipt       string     `json:"receipt,omitempty"` // received messages read here: pending, confirmed or dropped
 	Cursor        int64      `json:"cursor"`            // pass as contact_before for older messages
+	// Routing (#222): the agent that sent it, "" for an operator; the
+	// agents it is to, none for the operator; the message it answers on
+	// its sender's side ("by_sender") or the other ("by_receiver"); and,
+	// for one sent to the contact's agents, those that acknowledged it.
+	From      string   `json:"from,omitempty"`
+	To        []string `json:"to,omitempty"`
+	ReplyID   string   `json:"reply_id,omitempty"`
+	ReplySide string   `json:"reply_side,omitempty"`
+	AgentAcks []string `json:"agent_acks,omitempty"`
 }
+
+// ContactHeldForUpgrade is the refusal_reason of a queued message to or
+// from agents held back while the contact runs a pairtask that can't carry
+// it.
+const ContactHeldForUpgrade = "peer_upgrade"
+
+// Reply sides of a ContactMessageView.
+const (
+	ReplyBySender   = "by_sender"
+	ReplyByReceiver = "by_receiver"
+)
 
 // ContactMessagePage is a page of one contact's messages and its sync status.
 type ContactMessagePage struct {
@@ -76,6 +110,10 @@ type ContactMessagePage struct {
 	Messages []ContactMessageView `json:"messages"`
 	More     bool                 `json:"more"`
 	Sync     ContactSyncView      `json:"sync"`
+	// Shared is this workspace's agents the contact may message; Directory
+	// what the contact last said it shares, a hint for addressing (#222).
+	Shared    []string `json:"shared,omitempty"`
+	Directory []string `json:"directory,omitempty"`
 }
 
 // ContactSyncView is what this side knows of syncing with a contact.
@@ -95,13 +133,15 @@ type ContactSyncView struct {
 // contactFields are the contact request fields each operation takes;
 // message_id is checked separately.
 var contactFields = map[string]contactFieldSet{
-	ContactOpSend: {key: true, text: true, id: true},
-	ContactOpList: {key: true, before: true},
-	ContactOpRead: {key: true, read: true, id: true},
-	ContactOpSync: {key: true},
+	ContactOpSend:    {key: true, text: true, id: true, to: true},
+	ContactOpList:    {key: true, before: true},
+	ContactOpRead:    {key: true, read: true, id: true},
+	ContactOpSync:    {key: true},
+	ContactOpShare:   {key: true, id: true, agents: true},
+	ContactOpUnshare: {key: true, id: true, agents: true},
 }
 
-type contactFieldSet struct{ key, text, read, before, id bool }
+type contactFieldSet struct{ key, text, read, before, id, to, agents bool }
 
 // ValidateContactRequest checks an operator_contact frame before anything
 // is looked up, audited or changed: a known operation with exactly its
@@ -109,13 +149,13 @@ type contactFieldSet struct{ key, text, read, before, id bool }
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read or sync")
+		return errors.New("contact_op must be send, list, read, sync, share or unshare")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err
 	}
 	return errors.Join(validContactKey(msg.ContactKey), validContactID(msg, allowed), validContactText(msg, allowed),
-		validContactRead(msg, allowed), validContactBefore(msg))
+		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed))
 }
 
 // contactFieldsPresent refuses a field the operation doesn't take, any
@@ -132,6 +172,8 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"contact_text", msg.ContactText != "", allowed.text},
 		{"contact_read", msg.ContactRead != nil, allowed.read},
 		{"contact_before", msg.ContactBefore != 0, allowed.before},
+		{"contact_to", msg.ContactTo != nil, allowed.to},
+		{"contact_agents", msg.ContactAgents != nil, allowed.agents},
 		{"contact_message", msg.ContactMessage != nil, false},
 		{"contact_page", msg.ContactPage != nil, false},
 		{"contact_sync", msg.ContactSync != nil, false},
@@ -236,6 +278,42 @@ func printableASCII(s string) bool {
 		if s[i] <= ' ' || s[i] > '~' {
 			return false
 		}
+	}
+	return true
+}
+
+// validContactTo: the contact's agents a send is to, none for its operator;
+// distinct, each a valid agent ID.
+func validContactTo(to []string) error {
+	if len(to) > ContactAgentsMax || !distinctAgents(to) {
+		return fmt.Errorf("contact_to names up to %d distinct agents", ContactAgentsMax)
+	}
+	return nil
+}
+
+// validContactAgents: the agents share and unshare name, "*" alone for all.
+func validContactAgents(msg Message, allowed contactFieldSet) error {
+	agents := msg.ContactAgents
+	if !allowed.agents || everyAgent(agents) {
+		return nil
+	}
+	if len(agents) == 0 || validContactTo(agents) != nil {
+		return fmt.Errorf("contact_agents is \"*\" or 1 to %d distinct agents", ContactAgentsMax)
+	}
+	return nil
+}
+
+// everyAgent: "*" alone.
+func everyAgent(agents []string) bool { return len(agents) == 1 && agents[0] == Broadcast }
+
+// distinctAgents: each a valid agent ID, none twice.
+func distinctAgents(agents []string) bool {
+	seen := map[string]bool{}
+	for _, a := range agents {
+		if ValidateAgentID(a) != nil || seen[a] {
+			return false
+		}
+		seen[a] = true
 	}
 	return true
 }

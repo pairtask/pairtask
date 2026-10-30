@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
@@ -43,6 +44,9 @@ type Inbound struct {
 type Hub struct {
 	membership chan membership
 	inbound    chan Inbound
+	importAt   int64       // where the next import pass goes on; owned by Run
+	rescan     atomic.Bool // an import pass was asked for since the scan began
+	importDue  atomic.Bool // an import pass is due; signalled on pair.changed (#222)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -138,6 +142,7 @@ func (h *Hub) Run(ctx context.Context) {
 	defer h.settlePairing()
 	defer h.disconnectAll(clients)
 	h.beginPairing(ctx)
+	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {
 		select {
@@ -157,7 +162,7 @@ func (h *Hub) Run(ctx context.Context) {
 			h.handleOperator(req.ctx, clients, req)
 
 		case <-h.pair.changed:
-			h.announceBackground()
+			h.background(ctx, clients)
 		}
 	}
 }
@@ -227,9 +232,13 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	h.deliver(clients, in.From, out, recipients)
 }
 
-// newSend reports whether the message is a new send to route: a retry gets
-// its retained outcome, and a room post needs the sender's membership.
+// newSend reports whether the message is a new send to route here: a reply
+// to a paired workspace's message goes there instead, a retry gets its
+// retained outcome, and a room post needs the sender's membership.
 func (h *Hub) newSend(ctx context.Context, clients map[string]*Client, in Inbound) bool {
+	if h.routeRemoteReply(ctx, clients, in) {
+		return false
+	}
 	if h.reportRetry(ctx, clients, in) {
 		return false
 	}
@@ -493,6 +502,7 @@ func (h *Hub) acknowledge(ctx context.Context, clients map[string]*Client, in In
 		return
 	}
 	h.noteAck(in, report)
+	h.remoteAcknowledged(msg, report)
 	out := protocol.Message{Type: protocol.TypeAck, MessageID: msg.MessageID, Stage: msg.Stage, AgentID: in.From.ID, SessionID: in.From.SessionID}
 	// Adapter receipts are confirmed to the sender. Explicit agent acknowledgments
 	// are also confirmed to the acknowledging agent, only after the database commit.

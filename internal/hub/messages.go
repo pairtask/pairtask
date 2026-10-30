@@ -146,6 +146,7 @@ func (h *Hub) beginMessages(contact string) (end func(moved bool), ok bool) {
 		w.mu.Unlock()
 		if moved {
 			h.MessagesChanged(contact)
+			h.importsDue() // it may have staged messages for agents
 		}
 	}, true
 }

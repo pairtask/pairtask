@@ -152,7 +152,7 @@ func (s *Store) ClaimPendingReport(ctx context.Context, recipient protocol.Recip
 		return nil, nil, err
 	}
 	defer tx.Rollback()
-	shows := replayable{origin: version >= protocol.OriginVersion, room: version >= protocol.RoomVersion}
+	shows := replayable{origin: version >= protocol.OriginVersion, room: version >= protocol.RoomVersion, remote: version >= protocol.RemoteVersion}
 	var reclaimed []string
 	if shows.origin {
 		if reclaimed, err = pendingOperatorIDs(ctx, tx, recipient.AgentID, shows.room); err != nil {
@@ -160,7 +160,7 @@ func (s *Store) ClaimPendingReport(ctx context.Context, recipient protocol.Recip
 		}
 	}
 	// Rows this session can't show stay pending for a later, capable owner.
-	_, err = tx.ExecContext(ctx, `UPDATE durable_inbox SET session_id = ?, received_at = NULL WHERE agent_id = ? AND acknowledged_at IS NULL AND (? OR NOT `+operatorRow+`) AND (? OR NOT `+roomRow+`)`, recipient.SessionID, recipient.AgentID, shows.origin, shows.room)
+	_, err = tx.ExecContext(ctx, `UPDATE durable_inbox SET session_id = ?, received_at = NULL WHERE agent_id = ? AND acknowledged_at IS NULL AND (? OR NOT `+operatorRow+`) AND (? OR NOT `+roomRow+`) AND (? OR NOT `+remoteRow+`)`, recipient.SessionID, recipient.AgentID, shows.origin, shows.room, shows.remote)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -201,10 +201,14 @@ const operatorRow = `EXISTS (SELECT 1 FROM message_metadata o WHERE o.message_id
 // from the Square.
 const roomRow = `EXISTS (SELECT 1 FROM message_metadata r WHERE r.message_id = durable_inbox.message_id AND r.room IS NOT NULL)`
 
-// replayable is what a reconnecting session can show: operator origin (v4)
-// and rooms (v9).
+// remoteRow is a pending message from a paired workspace, which only a v12
+// session can tell apart from a local one.
+const remoteRow = `EXISTS (SELECT 1 FROM message_metadata x WHERE x.message_id = durable_inbox.message_id AND x.origin = 'remote')`
+
+// replayable is what a reconnecting session can show: operator origin (v4),
+// rooms (v9) and messages from paired workspaces (v12).
 type replayable struct {
-	origin, room bool
+	origin, room, remote bool
 }
 
 // AgentProtocolVersion returns the version negotiated at the agent's last durable
@@ -218,14 +222,20 @@ func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error
 	return int(version.Int64), err
 }
 
-const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id`
+const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, ` + remoteColumns
 
-// groupColumn is a group send's canonical members (JSON), or NULL.
-const groupColumn = `(SELECT o.members FROM operator_requests o WHERE o.message_id = mm.message_id AND o.scope_kind = 'group')`
+// groupColumn is a group send's canonical members (JSON), or NULL: an
+// operator group's, or a paired workspace's message to several agents.
+const groupColumn = `COALESCE((SELECT o.members FROM operator_requests o WHERE o.message_id = mm.message_id AND o.scope_kind = 'group'),
+    (SELECT ri.recipients FROM remote_imports ri WHERE ri.local_id = mm.message_id AND mm.origin = 'remote' AND json_array_length(ri.recipients) > 1))`
+
+// remoteColumns are where a message from a paired workspace came from.
+const remoteColumns = `mm.remote_contact, (SELECT pc.name FROM peer_contacts pc WHERE pc.identity_key = mm.remote_contact),
+    mm.remote_sender, mm.remote_reply_id, mm.remote_reply_author`
 
 func readPending(ctx context.Context, tx *sql.Tx, id string, shows replayable) ([]protocol.Message, error) {
-	query := `SELECT ` + durableColumns + ` FROM durable_inbox i JOIN message_metadata mm USING(message_id) JOIN messages m USING(seq) WHERE i.agent_id = ? AND i.acknowledged_at IS NULL AND (? OR mm.origin IS NULL OR mm.origin != 'operator') AND (? OR mm.room IS NULL) ORDER BY m.seq LIMIT ?`
-	rows, err := tx.QueryContext(ctx, query, id, shows.origin, shows.room, MaxPendingMessages+1)
+	query := `SELECT ` + durableColumns + ` FROM durable_inbox i JOIN message_metadata mm USING(message_id) JOIN messages m USING(seq) WHERE i.agent_id = ? AND i.acknowledged_at IS NULL AND (? OR mm.origin IS NULL OR mm.origin != 'operator') AND (? OR mm.room IS NULL) AND (? OR mm.origin IS NULL OR mm.origin != 'remote') ORDER BY m.seq LIMIT ?`
+	rows, err := tx.QueryContext(ctx, query, id, shows.origin, shows.room, shows.remote, MaxPendingMessages+1)
 	if err != nil {
 		return nil, err
 	}
@@ -251,10 +261,13 @@ func scanDurableMessage(row scanner) (protocol.Message, error) {
 	msg := protocol.Message{Type: protocol.TypeMsg, Durable: true, AckRequested: true}
 	var payload string
 	var origin, group, room, mentions, reviewID sql.NullString
-	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group, &room, &mentions, &reviewID)
+	var remote remoteFields
+	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group, &room, &mentions, &reviewID,
+		&remote.contact, &remote.label, &remote.sender, &remote.replyID, &remote.replyAuthor)
 	if err != nil {
 		return msg, err
 	}
+	msg.Remote = remote.view()
 	msg.Room, msg.ReviewID = room.String, reviewID.String
 	if msg.Mentions, err = groupList(mentions); err != nil {
 		return msg, err
@@ -278,4 +291,19 @@ func groupList(group sql.NullString) ([]string, error) {
 		return nil, fmt.Errorf("group members: %w", err)
 	}
 	return members, nil
+}
+
+// remoteFields are a message's remote columns, all NULL unless it came
+// from a paired workspace.
+type remoteFields struct {
+	contact, label, sender, replyID sql.NullString
+	replyAuthor                     sql.NullInt64
+}
+
+func (r remoteFields) view() *protocol.Remote {
+	if !r.contact.Valid {
+		return nil
+	}
+	return &protocol.Remote{Contact: r.contact.String, Label: r.label.String, Sender: r.sender.String,
+		ReplyID: r.replyID.String, ReplyAuthor: byte(r.replyAuthor.Int64)}
 }

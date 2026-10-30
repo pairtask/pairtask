@@ -23,7 +23,7 @@ import (
 const (
 	kindPairing  = "pairing"
 	panelPairing = "pairing"
-	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID]]"
+	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|*]"
 )
 
 // pairingView is the last pairing snapshot, its code removed.
@@ -42,9 +42,17 @@ var pairVerbArgs = map[string][]int{
 // pairWords are a /pair command's words, the verb first.
 type pairWords []string
 
+// pairArity: the words a verb takes; share and unshare take agents.
+func pairArity(fields pairWords) bool {
+	if fields.sharesAgents() {
+		return len(fields) >= 2
+	}
+	return slices.Contains(pairVerbArgs[fields[0]], len(fields))
+}
+
 func pairArg(a argument) error {
 	fields := pairWords(strings.Fields(string(a)))
-	if len(fields) > 0 && !slices.Contains(pairVerbArgs[fields[0]], len(fields)) {
+	if len(fields) > 0 && !pairArity(fields) {
 		return errors.New(pairUsage)
 	}
 	if len(fields) > 0 && fields[0] == protocol.PairingOpRedeem {
@@ -83,6 +91,13 @@ var pairingStatus = map[string]string{
 	protocol.PairingOpReject: "pairing request rejected",
 }
 
+// pairCommands are the /pair words with their own command.
+var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
+	protocol.PairingOpRedeem: (*Model).redeemCommand,
+	pairShare:                (*Model).shareCommand,
+	pairUnshare:              (*Model).shareCommand,
+}
+
 // pairCommand is /pair: list by default, or one operation. Accept and reject
 // resolve a typed prefix to a full identity key here, never on the broker.
 func (m *Model) pairCommand(arg argument) tea.Cmd {
@@ -98,8 +113,8 @@ func (m *Model) pairCommand(arg argument) tea.Cmd {
 	if len(fields) == 0 {
 		fields = pairWords{protocol.PairingOpList}
 	}
-	if fields[0] == protocol.PairingOpRedeem {
-		return m.redeemCommand(fields)
+	if command := pairCommands[fields[0]]; command != nil {
+		return command(m, fields)
 	}
 	if fields[0] == protocol.PairingOpSettle && !m.session.HasCapability(protocol.CapabilityPairingContacts) {
 		m.status = "this broker can't settle pairings; upgrade it to use /pair settle"

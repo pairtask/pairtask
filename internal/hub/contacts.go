@@ -22,9 +22,11 @@ const contactPage = 64
 // contactChanges are the operations that change something, each committed
 // with its audit row.
 var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int64) (protocol.Message, error){
-	protocol.ContactOpSend: (*Hub).contactSend,
-	protocol.ContactOpRead: (*Hub).contactRead,
-	protocol.ContactOpSync: (*Hub).contactSync,
+	protocol.ContactOpSend:    (*Hub).contactSend,
+	protocol.ContactOpRead:    (*Hub).contactRead,
+	protocol.ContactOpSync:    (*Hub).contactSync,
+	protocol.ContactOpShare:   (*Hub).contactShare,
+	protocol.ContactOpUnshare: (*Hub).contactShare,
 }
 
 // operatorContact serves operator_contact.
@@ -82,6 +84,8 @@ func contactRefusal(err error) *routingError {
 		return &routingError{protocol.ErrContactRefused, "too many messages waiting for this contact"}
 	case errors.Is(err, messaging.ErrUnknownContact):
 		return &routingError{protocol.ErrContactRefused, "not a confirmed contact"}
+	case errors.Is(err, store.ErrTooManyGrants):
+		return &routingError{protocol.ErrContactRefused, "a contact is shared at most 64 agents"}
 	case errors.Is(err, messaging.ErrInvalid):
 		return &routingError{protocol.ErrMalformedFrame, "message not accepted"}
 	}
@@ -93,7 +97,7 @@ func contactRefusal(err error) *routingError {
 func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
 	row, err := h.store.OperatorContactSend(ctx, store.ContactSend{OperationID: msg.MessageID, Contact: msg.ContactKey,
-		Text: msg.ContactText, AuditID: auditID, Now: h.contactNow()})
+		Text: msg.ContactText, To: msg.ContactTo, AuditID: auditID, Now: h.contactNow()})
 	if err != nil {
 		return protocol.Message{}, err
 	}
@@ -144,8 +148,8 @@ func (h *Hub) contactList(ctx context.Context, msg protocol.Message) protocol.Me
 	}
 	page := protocol.ContactMessagePage{Contact: msg.ContactKey, Messages: []protocol.ContactMessageView{}, More: more,
 		Sync: h.contactSyncView(msg.ContactKey)}
-	for _, r := range rows {
-		page.Messages = append(page.Messages, contactMessageView(r))
+	if err := h.routingViews(ctx, &page, rows); err != nil {
+		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
 	}
 	out := protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactPage: &page, ContactMarked: msg.ContactMarked}
@@ -200,8 +204,12 @@ func (h *Hub) contactNow() time.Time {
 func contactMessageView(r messaging.Row) protocol.ContactMessageView {
 	return protocol.ContactMessageView{ID: r.ID, Contact: r.Contact, Direction: r.Direction, Seq: r.N, CreatedAt: r.CreatedAt,
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
-		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor}
+		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
+		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author]}
 }
+
+// replySides name a reply's author for the operator.
+var replySides = map[byte]string{messaging.ReplyBySender: protocol.ReplyBySender, messaging.ReplyByReceiver: protocol.ReplyByReceiver}
 
 // contactSyncView is the sync status as the operator sees it.
 func (h *Hub) contactSyncView(contact string) protocol.ContactSyncView {
@@ -216,4 +224,49 @@ func optionalTime(t time.Time) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// contactShare changes what the contact may message here, with its audit,
+// then wakes the link, so the contact learns at once, and imports what the
+// change settles; it answers with the newest page.
+func (h *Hub) contactShare(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
+	msg := req.msg
+	change := h.store.PeerMessages().Share
+	if msg.ContactOp == protocol.ContactOpUnshare {
+		change = h.store.PeerMessages().Unshare
+	}
+	if _, err := change(ctx, msg.ContactKey, msg.ContactAgents, h.contactNow()); err != nil {
+		return protocol.Message{}, err
+	}
+	if err := h.store.FinishOperatorAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditAccepted}); err != nil {
+		return protocol.Message{}, err
+	}
+	h.SyncMessages(msg.ContactKey)
+	h.importsDue()
+	h.MessagesChanged(msg.ContactKey)
+	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ContactKey: msg.ContactKey,
+		ContactOp: msg.ContactOp}), nil
+}
+
+// routingViews fills a page's messages, with the agents that acknowledged
+// each one sent to the contact's agents, and what each side shares.
+func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePage, rows []messaging.Row) error {
+	peer := h.store.PeerMessages()
+	for _, r := range rows {
+		view := contactMessageView(r)
+		if r.Direction == messaging.DirOut && len(r.To) > 0 {
+			acks, err := peer.AgentAcks(ctx, r.Contact, r.ID)
+			if err != nil {
+				return err
+			}
+			view.AgentAcks = acks
+		}
+		page.Messages = append(page.Messages, view)
+	}
+	var err error
+	if page.Shared, err = peer.SharedAgents(ctx, page.Contact); err != nil {
+		return err
+	}
+	page.Directory, err = peer.PeerDirectory(ctx, page.Contact)
+	return err
 }

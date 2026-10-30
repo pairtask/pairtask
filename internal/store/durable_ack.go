@@ -28,6 +28,9 @@ type durableReceipt struct {
 type AckReport struct {
 	Sender        protocol.Recipient
 	FirstOperator bool
+	// RemoteContact is the paired workspace a first agent acknowledgment of
+	// its message is queued for, with the acknowledgment (#222).
+	RemoteContact string
 }
 
 func (s *Store) acknowledgeDurable(ctx context.Context, ack Acknowledgment) (AckReport, error) {
@@ -59,7 +62,14 @@ func applyDurableAck(ctx context.Context, tx *sql.Tx, ack Acknowledgment) (AckRe
 	if receipt.acknowledged.Valid {
 		return report, nil
 	}
-	return report, updateDurableReceipt(ctx, tx, ack, time.Now().UTC())
+	now := time.Now().UTC()
+	if err := updateDurableReceipt(ctx, tx, ack, now); err != nil {
+		return AckReport{}, err
+	}
+	if ack.Stage == protocol.StageAgentAcknowledged && receipt.origin.String == protocol.OriginRemote {
+		report.RemoteContact, err = queueAgentReadIn(ctx, tx, agentRead{ack.MessageID, ack.Recipient.AgentID, now})
+	}
+	return report, err
 }
 
 func (r durableReceipt) firstOperatorTransition(stage string) bool {

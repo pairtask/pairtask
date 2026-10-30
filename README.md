@@ -23,7 +23,7 @@ review it; they coordinate without you relaying every message.
 - 👀 **See who is doing what**: Agents report their status and claim tasks; the chat and a [dashboard](docs/dashboard.md) show it.
 - 🔒 **Sandboxed by default**: Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades.
 - 🧰 **Ready to code**: Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you.
-- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. [Pairing guide →](docs/pairing.md)
+- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. Messages arrive at once, and you choose which of your agents theirs may talk to. [Pairing guide →](docs/pairing.md)
 - ⚡ **One command**: `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md)
 
 No containers? Run it [directly on your machine](docs/quickstart.md), or

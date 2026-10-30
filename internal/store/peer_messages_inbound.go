@@ -25,7 +25,7 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 		return messaging.Answer{}, err
 	}
 	defer tx.Rollback()
-	answer, inserted, err := acceptIn(ctx, tx, newRow{messageKey{contact, messaging.DirIn, m.ID}, m, now})
+	answer, inserted, err := acceptIn(ctx, tx, newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m, now: now})
 	if err != nil || !inserted {
 		return answer, err
 	}
@@ -52,6 +52,9 @@ func acceptIn(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool
 	if err := insertMessage(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err // never Stored when the insert failed
 	}
+	if err := stageImport(ctx, tx, r); err != nil {
+		return messaging.Answer{}, false, err
+	}
 	return stored, true, nil
 }
 
@@ -61,11 +64,19 @@ type inboundCheck struct {
 	refuses func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error)
 }
 
-// inboundChecks run in order after the replay lookup: identity, the replay
-// floor, the text, then the quota.
+// inboundChecks run in order after the replay lookup: identity and
+// routing, the recipients' grants, the replay floor, the text, then the
+// quota.
 var inboundChecks = []inboundCheck{
 	{messaging.ReasonInvalid, func(_ context.Context, _ *sql.Tx, _ string, m messaging.Message) (bool, error) {
-		return !validSequence(m.N) || !messaging.ValidID(m.ID), nil
+		return !validSequence(m.N) || !messaging.ValidID(m.ID) || !messaging.ValidRouting(m), nil
+	}},
+	{messaging.ReasonNotShared, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+		ok, err := allGranted(ctx, tx, contact, m.To)
+		return !ok, err
+	}},
+	{messaging.ReasonConflict, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+		return importedBefore(ctx, tx, contact, m)
 	}},
 	{messaging.ReasonTooOld, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
 		return belowFloor(ctx, tx, contact, m.N)
@@ -77,6 +88,9 @@ var inboundChecks = []inboundCheck{
 		return !messaging.ValidText(m.Text), nil
 	}},
 	{messaging.ReasonInboxFull, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+		if len(m.To) > 0 {
+			return importBacklogFull(ctx, tx, contact, len(m.Text))
+		}
 		return peerInboxFull(ctx, tx, contact, len(m.Text))
 	}},
 }

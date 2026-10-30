@@ -24,24 +24,27 @@ const (
 
 // contactThread is what chat holds of one contact's messages.
 type contactThread struct {
-	rows    map[string]protocol.ContactMessageView // by direction and ID
-	loaded  bool                                   // the newest page arrived at least once
-	failed  bool                                   // the last read was refused; no retry until an event, a reconnect or reopening the tab
-	stale   bool                                   // changed while a refresh was in flight
-	gen     uint64                                 // the newest refresh asked for
-	oldest  int64                                  // the cursor below which older pages lie
-	more    bool                                   // older messages exist below oldest
-	sync    protocol.ContactSyncView
-	offset  int             // rows scrolled up from the newest
-	read    map[string]bool // inbound IDs a read was confirmed for
-	refused map[string]bool // inbound IDs a read was refused for; not asked again until reloaded
+	rows      map[string]protocol.ContactMessageView // by direction and ID
+	loaded    bool                                   // the newest page arrived at least once
+	failed    bool                                   // the last read was refused; no retry until an event, a reconnect or reopening the tab
+	stale     bool                                   // changed while a refresh was in flight
+	gen       uint64                                 // the newest refresh asked for
+	oldest    int64                                  // the cursor below which older pages lie
+	more      bool                                   // older messages exist below oldest
+	sync      protocol.ContactSyncView
+	shared    []string        // this workspace's agents the contact may message
+	directory []string        // what the contact says it shares
+	offset    int             // rows scrolled up from the newest
+	read      map[string]bool // inbound IDs a read was confirmed for
+	refused   map[string]bool // inbound IDs a read was refused for; not asked again until reloaded
 }
 
 // contactOp is a send or a read whose ID and content are fixed when made,
 // so a resend after a lost answer is the same operation.
 type contactOp struct {
 	msg     protocol.Message
-	unknown bool // the answer was lost; resent after the reconnect
+	draft   string // the draft a send came from, cleared only if unchanged
+	unknown bool   // the answer was lost; resent after the reconnect
 }
 
 // contactState is every contact's thread and the operations in flight.
@@ -181,7 +184,7 @@ func (t *contactThread) merge(views []protocol.ContactMessageView) {
 // fetches the rest again, so no gap is ever drawn as continuous.
 func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bool) {
 	if !t.loaded || current {
-		t.sync = page.Sync
+		t.sync, t.shared, t.directory = page.Sync, page.Shared, page.Directory
 		clear(t.refused) // a fresh page gives refused reads one more try
 	}
 	c := oldestCursor(page.Messages)
@@ -292,11 +295,28 @@ func (m *Model) contactSubmit() tea.Cmd {
 	if m.guardSend() {
 		return nil
 	}
-	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend, ContactKey: contact,
-		MessageID: uuid.NewString(), ContactText: m.compose.editor.Value()}
-	m.contacts.send = &contactOp{msg: msg}
+	op, ok := m.contactDraft(contact)
+	if !ok {
+		return nil
+	}
+	msg := op.msg
+	m.contacts.send = op
 	m.status = "sending to the workspace…"
 	return m.request(kindContactSend, msg, contact, msg.MessageID)
+}
+
+// contactDraft is the send the draft makes: to the agents it starts with
+// @, or as written to the contact's operator; a problem goes to the status.
+func (m *Model) contactDraft(contact string) (*contactOp, bool) {
+	draft := m.compose.editor.Value()
+	a := contactAddress(draft)
+	if problem := m.addressProblem(a); problem != "" {
+		m.status = problem
+		return nil, false
+	}
+	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend, ContactKey: contact,
+		MessageID: uuid.NewString(), ContactText: a.text, ContactTo: a.to}
+	return &contactOp{msg: msg, draft: draft}, true
 }
 
 // contactSendResult settles the send: the draft clears only if it still
@@ -311,7 +331,7 @@ func (m *Model) contactSendResult(req pendingRequest, resp protocol.Message) tea
 		m.status = "not sent: " + refusalReason(resp)
 		return nil
 	}
-	if m.conv.selected.contact == op.msg.ContactKey && m.compose.editor.Value() == op.msg.ContactText {
+	if m.conv.selected.contact == op.msg.ContactKey && m.compose.editor.Value() == op.draft {
 		m.compose.resetDraft()
 	}
 	t := m.contacts.thread(op.msg.ContactKey)
