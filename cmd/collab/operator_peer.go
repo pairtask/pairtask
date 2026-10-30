@@ -104,25 +104,20 @@ func peerArguments(verb string, extra int, rest []string, req *protocol.Message)
 	if extra >= 0 && len(rest) != 1+extra {
 		return "", fmt.Errorf("peer %s: wrong number of arguments", verb)
 	}
-	if verb == "send" || verb == "name" {
-		req.ContactText = strings.Join(rest[1:], " ")
-	}
+	req.ContactText = peerText(verb, rest[1:])
 	if verb == "send" && strings.TrimSpace(req.ContactText) == "" {
 		return "", errors.New("peer send: TEXT is required")
 	}
 	return rest[0], nil
 }
 
-// nameArguments: name takes a NAME or --clear, never both; --clear is
-// name's alone.
-func nameArguments(verb string, clear bool, text string) error {
-	switch {
-	case verb != "name" && clear:
-		return errors.New("--clear is only for peer name")
-	case verb == "name" && clear == (strings.TrimSpace(text) != ""):
-		return errors.New("peer name: give NAME or --clear")
+// peerText is a send's text, or a name's words joined; other verbs take
+// none.
+func peerText(verb string, words []string) string {
+	if verb != "send" && verb != "name" {
+		return ""
 	}
-	return nil
+	return strings.Join(words, " ")
 }
 
 // resolveContact turns what was typed into one confirmed contact's full
@@ -189,22 +184,6 @@ func writeContactResult(w io.Writer, resp protocol.Message) {
 	}
 	if resp.ContactOp == protocol.ContactOpName && resp.PairingResult != nil {
 		writeContactName(w, resp.ContactKey, resp.PairingResult.Contacts)
-	}
-}
-
-// writeContactName says what this side now calls the contact; its names
-// are quoted, as text that came from people.
-func writeContactName(w io.Writer, key string, contacts []protocol.PairingContactView) {
-	for _, c := range contacts {
-		if c.IdentityKey != key {
-			continue
-		}
-		if c.LocalName == "" {
-			fmt.Fprintf(w, "Name cleared for %s; it calls itself %q\n", key, c.Name)
-			return
-		}
-		fmt.Fprintf(w, "This side calls %s %q\n", key, c.LocalName)
-		return
 	}
 }
 

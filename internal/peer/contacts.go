@@ -61,10 +61,15 @@ const DefaultPairingName = "workspace"
 // mergedName keeps a known name; an offered one replaces none, or the
 // default, which names nobody.
 func mergedName(existing, offered string) string {
-	if offered != "" && (existing == "" || existing == DefaultPairingName) {
-		return offered
+	if offered == "" || !unnamed(existing) {
+		return existing
 	}
-	return existing
+	return offered
+}
+
+// unnamed: no name, or the default, which names nobody.
+func unnamed(name string) bool {
+	return name == "" || name == DefaultPairingName
 }
 
 // NewerDestination: c's destination replaces existing's. One fills an

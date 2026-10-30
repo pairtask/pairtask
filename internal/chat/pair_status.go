@@ -136,10 +136,7 @@ func (m *Model) pairedRows() []string {
 }
 
 func pairedRow(c protocol.PairingContactView) string {
-	name := safe(contactDisplay(c))
-	if peerName := shownName(c.Name); c.LocalName != "" && peerName != "" && peerName != c.LocalName {
-		name += " (they call themselves " + safe(peerName) + ")"
-	}
+	name := safe(contactDisplay(c)) + selfNameNote(c)
 	dials := "waits to be dialed"
 	if c.Dials {
 		dials = "this side dials " + safe(c.Destination)
@@ -151,10 +148,30 @@ func pairedRow(c protocol.PairingContactView) string {
 	return row
 }
 
+// selfNamed: this workspace pairs under a name of its own, or isn't
+// known yet to pair under none.
+func (m *Model) selfNamed() bool {
+	s := m.pairing.snapshot
+	return s == nil || shownName(s.SelfName) != ""
+}
+
+// selfNameNote is " (they call themselves X)" when this side calls the
+// contact by another name than it gives itself.
+func selfNameNote(c protocol.PairingContactView) string {
+	peerName := shownName(c.Name)
+	if c.LocalName == "" || peerName == "" {
+		return ""
+	}
+	if peerName == c.LocalName {
+		return ""
+	}
+	return " (they call themselves " + safe(peerName) + ")"
+}
+
 // redeemNameHint warns a redemption without NAME when this workspace has
 // no name of its own: the other side would see it unnamed.
 func (m *Model) redeemNameHint(named bool) string {
-	if named || m.pairing.snapshot == nil || shownName(m.pairing.snapshot.SelfName) != "" {
+	if named || m.selfNamed() {
 		return ""
 	}
 	return "; they will see this workspace unnamed: add NAME, or set PAIRTASK_PAIRING_NAME"
