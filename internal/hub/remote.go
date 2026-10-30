@@ -25,9 +25,16 @@ const (
 	importPass  = 1024
 )
 
-// importsDue asks the loop for an import pass. Safe from any goroutine; it
-// never blocks.
+// importsDue asks the loop for an import pass, after something that may
+// let a held-back message in: a scan going on past it will start again
+// from the oldest. Safe from any goroutine; it never blocks.
 func (h *Hub) importsDue() {
+	h.rescan.Store(true)
+	h.importPass()
+}
+
+// importPass asks the loop for the next pass, which goes on with a scan.
+func (h *Hub) importPass() {
 	select {
 	case h.imports <- struct{}{}:
 	default: // one is due already
@@ -38,10 +45,13 @@ func (h *Hub) importsDue() {
 // time: a pass goes on from where the last one stopped, so ones a full
 // inbox holds back never hide later ones, and asks for the next until the
 // scan reaches the end. Those still held back wait for an acknowledgment,
-// a round or a grant to start a scan again.
+// a round or a grant to start a scan again, even one asked for mid-scan.
 func (h *Hub) drainImports(ctx context.Context, clients map[string]*Client) {
 	if h.store == nil {
 		return // a hub without storage stages nothing
+	}
+	if h.importAt == 0 {
+		h.rescan.Store(false) // this scan sees everything staged before it
 	}
 	for tried := 0; tried < importPass; tried += importBatch {
 		pending, err := h.store.PendingImportsAfter(ctx, h.importAt, importBatch)
@@ -55,10 +65,13 @@ func (h *Hub) drainImports(ctx context.Context, clients map[string]*Client) {
 		}
 		if len(pending) < importBatch {
 			h.importAt = 0 // the scan reached the end
+			if h.rescan.Load() {
+				h.importPass()
+			}
 			return
 		}
 	}
-	h.importsDue()
+	h.importPass()
 }
 
 // importOne imports one staged message at the next sequence, which only an

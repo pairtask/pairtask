@@ -265,7 +265,8 @@ func TestRemoteHubAcceptanceCommittedAckRecoversPeerReceiptAfterRestart(t *testi
 	messageSyncEqual(t, reads[0], messaging.AgentRead{ID: "parent", Agent: a.ID})
 }
 
-func TestRemoteHubAcceptanceScanLimitCannotStarveLaterContact(t *testing.T) {
+func remoteHubScanFixture(t *testing.T) (*Hub, *Client, *Client) {
+	t.Helper()
 	h, first := remoteHubFixture(t)
 	full := remoteHubClient(t, h, "full", 12)
 	healthy := remoteHubClient(t, h, "healthy", 12)
@@ -289,6 +290,12 @@ func TestRemoteHubAcceptanceScanLimitCannotStarveLaterContact(t *testing.T) {
 	last := remoteHubContact(t, h, 5)
 	remoteHubShare(t, h, last, healthy.ID)
 	remoteHubStage(t, h, last, messaging.Message{ID: "healthy-after-scan-limit", N: 1, To: []string{healthy.ID}})
+	return h, full, healthy
+}
+
+func TestRemoteHubAcceptanceScanLimitCannotStarveLaterContact(t *testing.T) {
+	h, full, healthy := remoteHubScanFixture(t)
+	ctx := context.Background()
 	clients := map[string]*Client{full.ID: full, healthy.ID: healthy}
 	for range 4 {
 		h.drainImports(ctx, clients)
@@ -298,5 +305,31 @@ func TestRemoteHubAcceptanceScanLimitCannotStarveLaterContact(t *testing.T) {
 		messageSyncEqual(t, m.Origin, protocol.OriginRemote)
 	default:
 		t.Fatal("bounded scan restarted at blocked prefix and starved later contact")
+	}
+}
+
+func TestRemoteHubAcceptanceAckDuringScanRevisitsEarlierBlockedRows(t *testing.T) {
+	h, full, healthy := remoteHubScanFixture(t)
+	ctx := context.Background()
+	clients := map[string]*Client{full.ID: full, healthy.ID: healthy}
+	h.drainImports(ctx, clients) // blocked prefix scanned; continuation is queued
+	for _, stage := range []string{protocol.StageAdapterReceived, protocol.StageAgentAcknowledged} {
+		h.acknowledge(ctx, clients, Inbound{From: full, Msg: protocol.Message{Type: protocol.TypeAck, MessageID: "fill-0", Stage: stage}})
+	}
+	messageSyncEqual(t, recv(t, full).Stage, protocol.StageAgentAcknowledged)
+	// Process only actual pending wake signals, as Run would. The ack's wake
+	// shares the one-slot channel with the continuation already queued.
+	for range 4 {
+		select {
+		case <-h.imports:
+			h.drainImports(ctx, clients)
+		default:
+		}
+	}
+	select {
+	case m := <-full.Send:
+		messageSyncEqual(t, m.Origin, protocol.OriginRemote)
+	default:
+		t.Fatal("ack wake coalesced with continuation; newly free prefix was never revisited")
 	}
 }

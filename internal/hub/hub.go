@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
@@ -45,6 +46,7 @@ type Hub struct {
 	inbound    chan Inbound
 	imports    chan struct{} // an import pass is due (#222)
 	importAt   int64         // where the next import pass goes on; owned by Run
+	rescan     atomic.Bool   // an import pass was asked for since the scan began
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
