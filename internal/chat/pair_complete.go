@@ -16,15 +16,28 @@ const pendingAcceptance = "pending_acceptance"
 
 var pairVerbs = []string{"open", "status", "cancel", "accept", "reject", "redeem", "settle"}
 
+// contactPairVerbs are offered too in a contact's tab, where they act.
+var contactPairVerbs = []string{pairShare, pairUnshare}
+
+// pairVerbsHere are the /pair words that act in the open tab.
+func (m *Model) pairVerbsHere() []string {
+	if m.conv.selected.isContact() && m.routingAvailable() {
+		return append(slices.Clone(pairVerbs), contactPairVerbs...)
+	}
+	return pairVerbs
+}
+
 // pairUsages say what each /pair word takes, in the input box's label.
 var pairUsages = map[string]string{
-	"open":   "open: show a one-time code for the other workspace",
-	"status": "status [OPERATION_ID]",
-	"cancel": "cancel: close the open invitation",
-	"accept": "accept KEY: the start of the request's key; Tab lists requests",
-	"reject": "reject KEY: the start of the request's key; Tab lists requests",
-	"redeem": "redeem HOST:PORT CODE [NAME]: NAME is how this workspace shows on theirs",
-	"settle": "settle [OPERATION_ID]: finish a redemption the other side accepted",
+	"open":    "open: show a one-time code for the other workspace",
+	"status":  "status [OPERATION_ID]",
+	"cancel":  "cancel: close the open invitation",
+	"accept":  "accept KEY: the start of the request's key; Tab lists requests",
+	"reject":  "reject KEY: the start of the request's key; Tab lists requests",
+	"redeem":  "redeem HOST:PORT CODE [NAME]: NAME is how this workspace shows on theirs",
+	"settle":  "settle [OPERATION_ID]: finish a redemption the other side accepted",
+	"share":   "share AGENT...|*: in a ⇄ tab, that workspace may message these agents",
+	"unshare": "unshare AGENT...|*: in a ⇄ tab, it may message them no more",
 }
 
 func decidesRequest(word string) bool {
@@ -36,7 +49,7 @@ func decidesRequest(word string) bool {
 func (m *Model) pairCompletions(l argLine) []string {
 	switch {
 	case len(l.words) == 0:
-		return withPrefix(pairVerbs, l.current)
+		return withPrefix(m.pairVerbsHere(), l.current)
 	case len(l.words) == 1 && decidesRequest(l.words[0]):
 		return withPrefix(m.pendingRequestKeys(), protocol.KeyDigest(l.current))
 	}

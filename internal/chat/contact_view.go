@@ -80,6 +80,9 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 		lines = append(lines, "  "+contactConfirming)
 	default:
 		lines = append(lines, mutedStyle.Render("  "+m.syncLine(c.IdentityKey)))
+		if share := m.sharingLine(c.IdentityKey); share != "" && m.routingAvailable() {
+			lines = append(lines, mutedStyle.Render("  "+share))
+		}
 	}
 	return lines
 }
@@ -130,9 +133,9 @@ func (m *Model) syncLine(fingerprint string) string {
 // line escaped and wrapped; a contact's text is never parsed.
 func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView) []string {
 	at := v.CreatedAt.Local().Format("15:04")
-	head := agentStyle(c.IdentityKey).Render("  ⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(" · "+at)
+	head := agentStyle(c.IdentityKey).Render("  ⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(routeHead(v)+" · "+at)
 	if v.Direction == "out" {
-		head = titleStyle.Render("  you →") + mutedStyle.Render(" · "+at+" · "+m.outboundState(v))
+		head = titleStyle.Render("  you →") + mutedStyle.Render(routeHead(v)+" · "+at+" · "+m.outboundState(v))
 	}
 	lines := []string{head}
 	text := v.Text
