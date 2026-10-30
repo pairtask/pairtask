@@ -28,6 +28,7 @@ type sessionProbe struct {
 	*operatorPeer
 	next          int
 	reviewNotices map[string]bool
+	readTimeout   time.Duration
 }
 
 func sessionConnect(f *operatorFixture) (*sessionProbe, sessionWire) {
@@ -60,7 +61,11 @@ func (p *sessionProbe) send(request any) {
 
 func (p *sessionProbe) frame() sessionWire {
 	p.t.Helper()
-	operatorNoError(p.t, p.SetReadDeadline(time.Now().Add(2*time.Second)))
+	timeout := p.readTimeout
+	if timeout == 0 {
+		timeout = 2 * time.Second
+	}
+	operatorNoError(p.t, p.SetReadDeadline(time.Now().Add(timeout)))
 	line, err := p.r.ReadBytes('\n')
 	operatorNoError(p.t, err)
 	operatorEqual(p.t, "bounded session frame", len(line) <= protocol.MaxFrameBytes, true)
