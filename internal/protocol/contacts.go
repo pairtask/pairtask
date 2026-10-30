@@ -259,7 +259,7 @@ func validContactID(msg Message, allowed contactFieldSet) error {
 }
 
 func validContactText(msg Message, allowed contactFieldSet) error {
-	if !allowed.text && (!allowed.note || msg.ContactText == "") {
+	if !textChecked(msg, allowed) {
 		return nil
 	}
 	if !validText(msg.ContactText) {
@@ -348,6 +348,14 @@ func distinctAgents(agents []string) bool {
 	return true
 }
 
+// textChecked: the operation takes text, or a note it was given.
+func textChecked(msg Message, allowed contactFieldSet) bool {
+	if allowed.text {
+		return true
+	}
+	return allowed.note && msg.ContactText != ""
+}
+
 // ContactReviewGrant is what a contact may ask of agents here (#235).
 type ContactReviewGrant struct {
 	Mode    string `json:"mode"` // ask, auto or off
@@ -395,7 +403,7 @@ func validReviewAsk(msg Message) error {
 	if len(msg.ContactTo) != 1 || a == nil {
 		return errors.New("review_ask asks exactly one agent in contact_to")
 	}
-	if a.Forge == "" || a.Repository == "" || a.Change == "" {
+	if slices.Contains([]string{a.Forge, a.Repository, a.Change}, "") {
 		return errors.New("review_ask needs the change: forge, repository and change")
 	}
 	if a.Base == "" || a.Head == "" {

@@ -51,7 +51,8 @@ func (h *Hub) contactReviewAsk(ctx context.Context, req operatorRequest, auditID
 // waits for this side's operator; an approved one is dispatched next.
 func (h *Hub) contactReviewDecide(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
-	_, err := h.store.DecideRemoteReview(ctx, msg.ContactKey, msg.ContactRead[0], *msg.ContactApprove, h.contactNow())
+	_, err := h.store.DecideRemoteReview(ctx, store.RemoteDecision{Contact: msg.ContactKey, RemoteID: msg.ContactRead[0],
+		Approve: *msg.ContactApprove, Now: h.contactNow()})
 	if err != nil {
 		return protocol.Message{}, err
 	}

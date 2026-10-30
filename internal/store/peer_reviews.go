@@ -224,7 +224,16 @@ FROM remote_imports WHERE kind = 'review' AND state IN ('pending', 'awaiting')`,
 // A request past ReviewAskExpiry is withheld as expired instead. Anything
 // else answers its state unchanged with ErrNotAwaiting, so a decision is
 // made once and nothing settled comes back.
-func (s *Store) DecideRemoteReview(ctx context.Context, contact, remoteID string, approve bool, now time.Time) (string, error) {
+// RemoteDecision is this side's operator's decision on a contact's review
+// request.
+type RemoteDecision struct {
+	Contact, RemoteID string
+	Approve           bool
+	Now               time.Time
+}
+
+func (s *Store) DecideRemoteReview(ctx context.Context, d RemoteDecision) (string, error) {
+	contact, remoteID, approve, now := d.Contact, d.RemoteID, d.Approve, d.Now
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err

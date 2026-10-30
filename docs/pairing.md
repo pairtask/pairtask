@@ -128,7 +128,10 @@ To ask one of their agents, pin the change to the commits you want reviewed:
 ```
 
 An agent asks with its `request_review` tool. The reviewer reviews exactly
-those commits: if the pull request moved on, the review can't start.
+those commits: if the pull request moved on, the review can't start. For
+now, the verdict stays with the reviewing workspace: its operator sees it,
+and what it publishes appears on the pull request; it isn't sent back to you
+yet.
 
 ## If it doesn't connect
 

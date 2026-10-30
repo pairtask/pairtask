@@ -95,11 +95,14 @@ func reviewAskFields(req *protocol.Message, positional []string, f contactReview
 	return nil
 }
 
+// decisions are decide's last word and what it means.
+var decisions = map[string]bool{"approve": true, "decline": false}
+
 func decideFields(req *protocol.Message, positional []string) error {
-	if len(positional) != 3 || positional[2] != "approve" && positional[2] != "decline" {
+	approve, ok := decisions[positional[len(positional)-1]]
+	if len(positional) != 3 || !ok {
 		return errors.New("contact decide takes KEY ID approve|decline")
 	}
-	approve := positional[2] == "approve"
 	req.ContactRead, req.ContactApprove = positional[1:2], &approve
 	return nil
 }

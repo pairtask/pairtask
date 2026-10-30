@@ -44,7 +44,7 @@ func TestRemoteReviewAcceptanceApprovalStaysRequiredAfterAuto(t *testing.T) {
 	notices, err := db.ClaimPendingFor(ctx, protocol.Recipient{AgentID: "reviewer", SessionID: "review-session"}, 14)
 	pairOK(t, err)
 	pairEqual(t, len(notices), 0)
-	state, err := db.DecideRemoteReview(ctx, contact, m.ID, true, messageAt)
+	state, err := db.DecideRemoteReview(ctx, store.RemoteDecision{Contact: contact, RemoteID: m.ID, Approve: true, Now: messageAt})
 	pairOK(t, err)
 	pairEqual(t, state, store.ImportPending)
 	// Caller-supplied mutations must not replace the accepted snapshot.
@@ -104,7 +104,7 @@ func TestRemoteReviewAcceptanceExpiryCheckedBeforeApproval(t *testing.T) {
 	a, err := db.PeerMessages().Accept(ctx, contact, m, messageAt)
 	pairOK(t, err)
 	pairEqual(t, a.Stored, true)
-	state, err := db.DecideRemoteReview(ctx, contact, m.ID, true, messageAt.Add(store.ReviewAskExpiry+time.Second))
+	state, err := db.DecideRemoteReview(ctx, store.RemoteDecision{Contact: contact, RemoteID: m.ID, Approve: true, Now: messageAt.Add(store.ReviewAskExpiry + time.Second)})
 	pairOK(t, err)
 	pairEqual(t, state, store.ImportWithheld)
 }
@@ -145,10 +145,10 @@ func TestRemoteReviewAcceptanceDeclineCannotBeRevived(t *testing.T) {
 	m := remoteAsk("declined")
 	_, err := db.PeerMessages().Accept(ctx, contact, m, messageAt)
 	pairOK(t, err)
-	state, err := db.DecideRemoteReview(ctx, contact, m.ID, false, messageAt)
+	state, err := db.DecideRemoteReview(ctx, store.RemoteDecision{Contact: contact, RemoteID: m.ID, Approve: false, Now: messageAt})
 	pairOK(t, err)
 	pairEqual(t, state, store.ImportWithheld)
-	state, err = db.DecideRemoteReview(ctx, contact, m.ID, true, messageAt)
+	state, err = db.DecideRemoteReview(ctx, store.RemoteDecision{Contact: contact, RemoteID: m.ID, Approve: true, Now: messageAt})
 	if !errors.Is(err, store.ErrNotAwaiting) {
 		t.Fatalf("late approval: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestRemoteReviewAcceptanceRestartAndNoticeCollision(t *testing.T) {
 	m := remoteAsk("restart")
 	_, err := db.PeerMessages().Accept(ctx, contact, m, messageAt)
 	pairOK(t, err)
-	_, err = db.DecideRemoteReview(ctx, contact, m.ID, true, messageAt)
+	_, err = db.DecideRemoteReview(ctx, store.RemoteDecision{Contact: contact, RemoteID: m.ID, Approve: true, Now: messageAt})
 	pairOK(t, err)
 	pending, err := db.PendingImports(ctx, 10)
 	pairOK(t, err)

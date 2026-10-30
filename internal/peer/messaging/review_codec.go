@@ -49,16 +49,27 @@ func (r *ReviewAsk) flagByte() byte {
 // ValidReviewAsk: a request for exactly one agent, answering nothing, with
 // every field of its change and both pins set and within bounds.
 func ValidReviewAsk(m Message) bool {
-	r := m.Review
-	if r == nil || len(m.To) != 1 || m.ReplyTo.ID != "" {
+	if m.Review == nil || !askAddressed(m) {
 		return false
 	}
+	r := m.Review
 	for _, f := range []string{r.Forge, r.Repository, r.Change, r.Base, r.Head} {
-		if f == "" || len(f) > ReviewFieldBytes || !utf8.ValidString(f) {
+		if !boundedField(f, ReviewFieldBytes) {
 			return false
 		}
 	}
 	return len(r.Scope) <= ReviewScopeBytes && utf8.ValidString(r.Scope)
+}
+
+// askAddressed: to exactly one agent, answering nothing.
+func askAddressed(m Message) bool { return len(m.To) == 1 && m.ReplyTo.ID == "" }
+
+// boundedField: set, at most max bytes, valid UTF-8.
+func boundedField(f string, max int) bool {
+	if f == "" || len(f) > max {
+		return false
+	}
+	return utf8.ValidString(f)
 }
 
 var reviewAskShape = shape{FrameReviewAsk, 15}

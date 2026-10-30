@@ -52,17 +52,7 @@ func remoteReviewApproval(t *testing.T, sides []instantSide, operator bool) {
 	result := receiver.f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpReviewDecide, ContactKey: receiver.key, ContactRead: []string{"remote-review"}, ContactApprove: &approve, MessageID: "approve-review"})
 	operatorEqual(t, "operator approval", result.Type, protocol.TypeOperatorContactResult)
 	got := b.read()
-	if operator {
-		operatorEqual(t, "remote operator origin", got.Origin, protocol.OriginRemote)
-		operatorEqual(t, "remote operator sender", got.From, protocol.OperatorID)
-		if got.Remote == nil {
-			t.Fatal("missing operator remote identity")
-		}
-		operatorEqual(t, "remote operator contact", got.Remote.Contact, receiver.key)
-		operatorEqual(t, "operator metadata sender", got.Remote.Sender, "")
-	} else {
-		requireWorkspaceAgent(t, got, receiver.key, asker)
-	}
+	assertReviewNoticeOrigin(t, got, receiver.key, operator)
 	if got.ReviewID == "" {
 		t.Fatal("reviewer notification lacks review ID")
 	}
@@ -84,5 +74,20 @@ func TestRemoteReviewE2EOperatorApprovalBothDirections(t *testing.T) {
 			remoteReviewApproval(t, sides, true)
 			p.assertOneConnection(t)
 		})
+	}
+}
+
+func assertReviewNoticeOrigin(t *testing.T, got protocol.Message, contact string, operator bool) {
+	t.Helper()
+	if operator {
+		operatorEqual(t, "remote operator origin", got.Origin, protocol.OriginRemote)
+		operatorEqual(t, "remote operator sender", got.From, protocol.OperatorID)
+		if got.Remote == nil {
+			t.Fatal("missing operator remote identity")
+		}
+		operatorEqual(t, "remote operator contact", got.Remote.Contact, contact)
+		operatorEqual(t, "operator metadata sender", got.Remote.Sender, "")
+	} else {
+		requireWorkspaceAgent(t, got, contact, "asking/@\nagent")
 	}
 }

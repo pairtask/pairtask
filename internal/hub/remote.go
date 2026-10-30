@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
@@ -116,11 +117,15 @@ func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp sto
 // importHeld logs why an import waits, unless a full inbox or taken IDs
 // hold it, which a later pass retries.
 func (h *Hub) importHeld(err error) {
-	if errors.Is(err, store.ErrInboxFull) || errors.Is(err, store.ErrLocalIDsTaken) || errors.Is(err, review.ErrFull) {
+	if slices.ContainsFunc(retriedImports, func(r error) bool { return errors.Is(err, r) }) {
 		return
 	}
 	h.log.Error("staged message not imported", "error", err)
 }
+
+// retriedImports hold an import back for a later pass: a full inbox, IDs
+// all taken, or the open reviews at their bound.
+var retriedImports = []error{store.ErrInboxFull, store.ErrLocalIDsTaken, review.ErrFull}
 
 // deliverImport hands an imported message to its recipients connected now.
 func (h *Hub) deliverImport(clients map[string]*Client, result store.ImportResult) {

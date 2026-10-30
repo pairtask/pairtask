@@ -36,7 +36,11 @@ func (l *agentList) Set(v string) error { *l = append(*l, v); return nil }
 // runOperatorContact sends to, lists or syncs a paired workspace's messages
 // from the operator socket, as the chat's ⇄ tab does (#210).
 func runOperatorContact(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	call, req, code := parseOperatorContact(args, stderr)
+	parse := parseOperatorContact
+	if len(args) > 0 && contactReviewOps[args[0]] != "" {
+		parse = parseContactReview
+	}
+	call, req, code := parse(args, stderr)
 	if code != -1 {
 		return code
 	}
@@ -53,9 +57,6 @@ func runOperatorContact(ctx context.Context, args []string, stdout, stderr io.Wr
 
 func parseOperatorContact(args []string, stderr io.Writer) (operatorCall, protocol.Message, int) {
 	var call operatorCall
-	if len(args) > 0 && contactReviewOps[args[0]] != "" {
-		return parseContactReview(args, stderr)
-	}
 	if len(args) == 0 || contactArgs[args[0]] == 0 {
 		fmt.Fprintln(stderr, operatorContactUsage)
 		return call, protocol.Message{}, 2

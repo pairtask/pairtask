@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -53,7 +54,7 @@ func (a RequestReviewArgs) message() (protocol.Message, error) {
 	if err != nil {
 		return protocol.Message{}, err
 	}
-	if a.Workspace == "" || a.To == "" || a.Base == "" || a.Head == "" {
+	if slices.Contains([]string{a.Workspace, a.To, a.Base, a.Head}, "") {
 		return protocol.Message{}, errors.New("workspace, to, target, base and head are required")
 	}
 	id := a.MessageID

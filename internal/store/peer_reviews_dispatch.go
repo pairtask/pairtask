@@ -19,15 +19,12 @@ const RemoteRequester = "remote"
 // operator's approval sends it back to wait for one; otherwise the review
 // and its notice are made in this transaction, and the request settles.
 func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
-	g, granted, err := reviewGrant(ctx, tx, imp.Contact, imp.Recipients[0])
+	g, held, err := heldAsk(ctx, tx, imp)
 	if err != nil {
 		return ImportResult{}, err
 	}
-	if !granted {
-		return settleAsk(ctx, tx, imp, askSettle{ImportWithheld, "unshared", at})
-	}
-	if g.Mode == ReviewAsk && !imp.Approved {
-		return settleAsk(ctx, tx, imp, askSettle{ImportAwaiting, "", at})
+	if held != "" {
+		return settleAsk(ctx, tx, imp, askSettle{held, heldReasons[held], at})
 	}
 	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
 		return ImportResult{}, err
@@ -50,6 +47,25 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 	result, err := settleAsk(ctx, tx, imp, askSettle{ImportImported, "", at})
 	result.Msg, result.Recipients, result.ReviewID = notice.Msg, notice.Recipients, rec.View.ID
 	return result, err
+}
+
+// heldReasons are why a request that can't be dispatched now is held.
+var heldReasons = map[string]string{ImportWithheld: "unshared", ImportAwaiting: ""}
+
+// heldAsk is the grant a request is dispatched under, or where it goes
+// instead: withheld without a grant, back to waiting in ask mode without
+// the operator's approval.
+func heldAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport) (ReviewGrant, string, error) {
+	g, granted, err := reviewGrant(ctx, tx, imp.Contact, imp.Recipients[0])
+	switch {
+	case err != nil:
+		return g, "", err
+	case !granted:
+		return g, ImportWithheld, nil
+	case g.Mode == ReviewAsk && !imp.Approved:
+		return g, ImportAwaiting, nil
+	}
+	return g, "", nil
 }
 
 // askSettle is where a request goes, why, and when.
@@ -155,8 +171,16 @@ func publicationAllowed(ctx context.Context, tx *sql.Tx, before, after review.Re
 	if err != nil {
 		return err
 	}
-	if !granted || !g.Publish || v.Spec.Policy.Formal && !g.Formal {
+	if !granted || !g.allows(*v.Spec.Policy) {
 		return review.ErrDenied
 	}
 	return nil
+}
+
+// allows: the grant still lets a verdict be published as the policy says.
+func (g ReviewGrant) allows(p protocol.ReviewPolicy) bool {
+	if !g.Publish {
+		return false
+	}
+	return !p.Formal || g.Formal
 }

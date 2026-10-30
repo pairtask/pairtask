@@ -21,10 +21,11 @@ import (
 // asks one of its agents; the last decide one of its requests that waits.
 
 const (
-	pairReviews = "reviews"
-	pairReview  = "review"
-	pairApprove = "approve"
-	pairDecline = "decline"
+	kindContactAsk = "contact review ask"
+	pairReviews    = "reviews"
+	pairReview     = "review"
+	pairApprove    = "approve"
+	pairDecline    = "decline"
 )
 
 // reviewPairWords are the review words of /pair and the least words each
@@ -76,7 +77,25 @@ func (m *Model) contactReviewCommand(fields pairWords) tea.Cmd {
 		return nil
 	}
 	m.status = "review " + fields[0] + "…"
+	if msg.ContactOp == protocol.ContactOpReviewAsk {
+		return m.request(kindContactAsk, msg, key.contact, msg.MessageID)
+	}
 	return m.request(kindContactShare, msg, key.contact, fields[0])
+}
+
+// contactAskResult shows a review request queued for the workspace, as a
+// send's message, or why it was refused.
+func (m *Model) contactAskResult(req pendingRequest, resp protocol.Message) tea.Cmd {
+	contact := req.ids[0]
+	if resp.Type != protocol.TypeOperatorContactResult || resp.ContactMessage == nil {
+		m.status = "review request refused: " + refusalReason(resp)
+		return nil
+	}
+	t := m.contacts.thread(contact)
+	t.merge([]protocol.ContactMessageView{*resp.ContactMessage})
+	t.offset = 0
+	m.status = "review request queued for the workspace"
+	return nil
 }
 
 // reviewRequestFor is the operator_contact request a review word makes, or
@@ -90,7 +109,8 @@ func reviewRequestFor(fields pairWords, contact string) (protocol.Message, strin
 	case pairReview:
 		return reviewAskFor(msg, words, publish, formal && publish)
 	}
-	if len(words) != 1 || publish || formal {
+	policy := publish || formal
+	if len(words) != 1 || policy {
 		return msg, "usage: /pair " + fields[0] + " ID"
 	}
 	approve := fields[0] == pairApprove

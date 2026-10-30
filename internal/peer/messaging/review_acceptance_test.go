@@ -35,28 +35,20 @@ func TestReviewWireAcceptanceRoundTripAndTruncation(t *testing.T) {
 
 func TestReviewWireAcceptanceHashBindsEntireAsk(t *testing.T) {
 	base := reviewWireFixture()
-	for _, field := range []string{"forge", "repo", "change", "scope", "base", "head", "publish", "formal"} {
+	for field, change := range map[string]func(*messaging.ReviewAsk){
+		"forge":   func(a *messaging.ReviewAsk) { a.Forge = "other" },
+		"repo":    func(a *messaging.ReviewAsk) { a.Repository = "other/repo" },
+		"change":  func(a *messaging.ReviewAsk) { a.Change = "236" },
+		"scope":   func(a *messaging.ReviewAsk) { a.Scope = "other" },
+		"base":    func(a *messaging.ReviewAsk) { a.Base = "other" },
+		"head":    func(a *messaging.ReviewAsk) { a.Head = "other" },
+		"publish": func(a *messaging.ReviewAsk) { a.Publish = false },
+		"formal":  func(a *messaging.ReviewAsk) { a.Formal = false },
+	} {
 		t.Run(field, func(t *testing.T) {
 			m, ask := base, *base.Review
 			m.Review = &ask
-			switch field {
-			case "forge":
-				ask.Forge = "other"
-			case "repo":
-				ask.Repository = "other/repo"
-			case "change":
-				ask.Change = "236"
-			case "scope":
-				ask.Scope = "other"
-			case "base":
-				ask.Base = "other"
-			case "head":
-				ask.Head = "other"
-			case "publish":
-				ask.Publish = false
-			case "formal":
-				ask.Formal = false
-			}
+			change(&ask)
 			if m.Hash() == base.Hash() {
 				t.Fatal("ask mutation did not change dedup identity")
 			}

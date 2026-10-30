@@ -154,6 +154,7 @@ var responseHandlers = map[string]responseHandler{
 	kindContactSend:  (*Model).contactSendResult,
 	kindContactRead:  (*Model).contactReadResult,
 	kindContactShare: (*Model).contactShareResult,
+	kindContactAsk:   (*Model).contactAskResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
