@@ -27,6 +27,10 @@ var (
 	ErrFull = errors.New("too many open review requests")
 	// ErrLimit: this review used up its attempts or write intents.
 	ErrLimit = errors.New("this review has no attempts or publication retries left")
+	// ErrMoved: the change no longer has the revisions its request pinned.
+	ErrMoved = errors.New("the change moved since the request pinned it; decline the review")
+	// ErrDenied: publishing is no longer allowed for this review.
+	ErrDenied = errors.New("publishing is no longer allowed by this workspace")
 )
 
 // Record is a review as stored: the view everyone sees, the token bound to
@@ -100,6 +104,9 @@ func due(v protocol.ReviewView, now time.Time) bool {
 // same revisions again change nothing; different ones never replace them.
 func Prepare(r Record, revisions protocol.Revisions, now time.Time) (Record, bool, error) {
 	v := r.View
+	if v.Pinned != nil && revisions != *v.Pinned {
+		return r, false, ErrMoved // a request's pins are never replaced
+	}
 	if v.Revisions != nil {
 		if *v.Revisions == revisions && !ended(v.State) {
 			return r, false, nil

@@ -163,7 +163,7 @@ func namedAgents(ctx context.Context, tx *sql.Tx, agents []string, all everyAgen
 
 // ungranted is an import from contact ?2 whose group holds an agent no
 // longer shared with it.
-const ungranted = `remote_imports.contact = ?2 AND EXISTS (SELECT 1 FROM json_each(remote_imports.recipients) j
+const ungranted = `remote_imports.contact = ?2 AND COALESCE(remote_imports.kind, 'message') = 'message' AND EXISTS (SELECT 1 FROM json_each(remote_imports.recipients) j
     WHERE j.value NOT IN (SELECT agent FROM peer_grants WHERE contact = ?2))`
 
 // withholdUngranted withholds, for the whole group, every message from

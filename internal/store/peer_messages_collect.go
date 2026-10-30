@@ -52,7 +52,7 @@ func (p *PeerMessages) collectContact(ctx context.Context, contact string, now t
 	}
 	defer tx.Rollback()
 	for _, step := range []func(context.Context, *sql.Tx, string, time.Time) error{
-		expireQueued, expireReceipts, collectText, raiseFloor, pruneRouting,
+		expireQueued, expireReceipts, expireAsks, collectText, raiseFloor, pruneRouting,
 	} {
 		if err := step(ctx, tx, contact, now); err != nil {
 			return err

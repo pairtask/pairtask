@@ -36,6 +36,8 @@ var reviewErrors = []struct {
 	{review.ErrFull, protocol.ErrInvalidReview},
 	{review.ErrLimit, protocol.ErrInvalidReview},
 	{review.ErrConflict, protocol.ErrReviewConflict},
+	{review.ErrMoved, protocol.ErrReviewConflict},
+	{review.ErrDenied, protocol.ErrInvalidReview},
 }
 
 // SetReviewClock sets the clock of review times; call it before Run.

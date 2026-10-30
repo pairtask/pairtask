@@ -93,7 +93,7 @@ func textHash(text string) []byte {
 // Queue stores an outbound message with the contact's next sequence. A
 // message from an agent needs the agent shared with the contact.
 func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messaging.Row, error) {
-	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo}
+	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo, Review: o.Review}
 	if !validOutgoing(m) {
 		return messaging.Row{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
 	}
@@ -115,10 +115,15 @@ func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messagi
 
 // validOutgoing: a message's ID, text and routing are within the rules.
 func validOutgoing(m messaging.Message) bool {
-	if !messaging.ValidID(m.ID) {
+	if !messaging.ValidID(m.ID) || !messaging.ValidText(m.Text) {
 		return false
 	}
-	return messaging.ValidText(m.Text) && messaging.ValidRouting(m)
+	return messaging.ValidRouting(m) && validAsk(m)
+}
+
+// validAsk: no review request, or one within the rules.
+func validAsk(m messaging.Message) bool {
+	return m.Review == nil || messaging.ValidReviewAsk(m)
 }
 
 // outgoing is one message the operator or an agent queues: its ID, text
@@ -186,7 +191,18 @@ func replayed(row storedRow, o outgoing, err error) (messaging.Row, error) {
 
 // sameRouting: the same sender, recipients in order, and reply.
 func sameRouting(a, b messaging.Message) bool {
-	return a.From == b.From && slices.Equal(a.To, b.To) && a.ReplyTo == b.ReplyTo
+	if a.From != b.From || a.ReplyTo != b.ReplyTo {
+		return false
+	}
+	return slices.Equal(a.To, b.To) && sameAsk(a.Review, b.Review)
+}
+
+// sameAsk: both no review request, or the very same one.
+func sameAsk(a, b *messaging.ReviewAsk) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // outboxRoom refuses a message the contact's queued messages leave no room for.
@@ -271,35 +287,48 @@ func insertMessage(ctx context.Context, tx *sql.Tx, r newRow) error {
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
 (contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at,
-    from_agent, to_agents, reply_id, reply_author, local_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    from_agent, to_agents, reply_id, reply_author, local_id, review_ask)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
-		r.state(), msgStamp(now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), author, nullString(r.localID))
+		r.state(), msgStamp(now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), author, nullString(r.localID), reviewAskJSON(m.Review))
 	return err
 }
 
-// holdForUpgrade says why queued messages to or from agents stay queued
-// when the session's peer can't carry them; a delivery clears it.
+// holdForUpgrade says why queued messages a session's peer can't carry
+// stay queued; a delivery clears it.
 func holdForUpgrade(ctx context.Context, tx *sql.Tx, contact, carried string) error {
-	if carried != unroutedRow {
+	if carried == carriedAll {
 		return nil
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET class = ?, reason = ?
-WHERE contact = ? AND direction = 'out' AND state = 'queued' AND NOT (`+unroutedRow+`)`, messaging.Transient, messaging.ReasonPeerUpgrade, contact)
+WHERE contact = ? AND direction = 'out' AND state = 'queued' AND NOT (`+carried+`)`, messaging.Transient, messaging.ReasonPeerUpgrade, contact)
 	return err
 }
 
-// unroutedRow is a row any version carries.
-const unroutedRow = `from_agent IS NULL AND to_agents IS NULL AND reply_id IS NULL`
+// What a session carries, by its version: every row; no review requests
+// before ReviewVersion; nothing to or from agents before RoutingVersion.
+const (
+	carriedAll  = "1"
+	noReviewAsk = `review_ask IS NULL`
+	unroutedRow = `from_agent IS NULL AND to_agents IS NULL AND reply_id IS NULL AND ` + noReviewAsk
+)
+
+// carriedAt is the rows a session at version carries; 0 is the newest.
+func carriedAt(version byte) string {
+	switch {
+	case version == 0 || version >= messaging.ReviewVersion:
+		return carriedAll
+	case version >= messaging.RoutingVersion:
+		return noReviewAsk
+	}
+	return unroutedRow
+}
 
 // Offer is the oldest queued messages that fit the session bounds; queued
 // messages past QueuedExpiry are expired first and never offered.
 // Before RoutingVersion, messages to or from agents stay queued.
 func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
-	carried := "1"
-	if l.Version != 0 && l.Version < messaging.RoutingVersion {
-		carried = unroutedRow
-	}
+	carried := carriedAt(l.Version)
 	limit := sessionBudget.clamp(budget{l.Count, l.Bytes})
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -22,7 +22,7 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 3
+	MaxVersion byte = 4
 )
 
 // LiveVersion is the first version whose sessions can stay open;
@@ -56,6 +56,8 @@ const (
 	FrameAgentRead       byte = 16 // a recipient agent acknowledged a message
 	FrameAgentReadStored byte = 17 // the answer to an AgentRead
 	FrameDirectory       byte = 18 // the agents this side shares with the peer
+	// Version 4 only.
+	FrameReviewAsk byte = 19 // a review request for one of the receiver's agents
 )
 
 // ErrProtocol is a malformed, unexpected or oversized frame.
@@ -76,6 +78,8 @@ type Message struct {
 	From    string
 	To      []string
 	ReplyTo ReplyRef
+	// Review, version 4: a review request for the one agent in To.
+	Review *ReviewAsk
 }
 
 // ReplyRef names the message a reply answers: its ID in the namespace of
@@ -106,6 +110,9 @@ func (m Message) Hash() [32]byte {
 		parts = append(parts, "routed", m.From, strconv.Itoa(len(m.To)))
 		parts = append(parts, m.To...)
 		parts = append(parts, m.ReplyTo.ID, strconv.Itoa(int(m.ReplyTo.Author)))
+	}
+	if m.Review != nil {
+		parts = append(append(parts, "review"), m.Review.parts()...)
 	}
 	h := sha256.New()
 	for _, part := range parts {
@@ -155,7 +162,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameDirectory
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameReviewAsk
 }
 
 // shape is a frame type and its exact number of fields.

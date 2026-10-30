@@ -8,6 +8,7 @@ import (
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/review"
 	"github.com/pairtask/pairtask/internal/store"
 )
 
@@ -107,12 +108,15 @@ func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp sto
 		h.seq++
 		h.deliverImport(clients, result)
 	}
+	if result.ReviewID != "" {
+		h.emit(protocol.SessionEvent{Kind: protocol.EventReviewsChanged, ReviewID: result.ReviewID})
+	}
 }
 
 // importHeld logs why an import waits, unless a full inbox or taken IDs
 // hold it, which a later pass retries.
 func (h *Hub) importHeld(err error) {
-	if errors.Is(err, store.ErrInboxFull) || errors.Is(err, store.ErrLocalIDsTaken) {
+	if errors.Is(err, store.ErrInboxFull) || errors.Is(err, store.ErrLocalIDsTaken) || errors.Is(err, review.ErrFull) {
 		return
 	}
 	h.log.Error("staged message not imported", "error", err)

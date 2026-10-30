@@ -68,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -100,6 +100,11 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"message_metadata", "remote_sender", "TEXT"},
 	{"message_metadata", "remote_reply_id", "TEXT"},
 	{"message_metadata", "remote_reply_author", "INTEGER"},
+	// Review requests from paired workspaces (#235).
+	{"peer_messages", "review_ask", "TEXT"}, // a JSON ReviewAsk; NULL for a message
+	{"remote_imports", "kind", "TEXT"},      // NULL is a message
+	{"remote_imports", "approved_at", "TEXT"},
+	{"remote_imports", "reason", "TEXT"},
 }
 
 func migrate(db *sql.DB) error {

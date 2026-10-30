@@ -190,9 +190,14 @@ type Publication struct {
 
 // ReviewView is one review request as the broker holds it.
 type ReviewView struct {
-	ID          string      `json:"review_id"`
-	Spec        ReviewSpec  `json:"spec"`
-	Requester   string      `json:"requester"` // the operator principal that asked
+	ID        string     `json:"review_id"`
+	Spec      ReviewSpec `json:"spec"`
+	Requester string     `json:"requester"` // the operator principal that asked, or "remote"
+	// Remote is the paired workspace that asked, and who there, for a
+	// request from one (#235); Pinned the revisions it pinned, which the
+	// change must still have.
+	Remote      *Remote     `json:"remote,omitempty"`
+	Pinned      *Revisions  `json:"pinned,omitempty"`
 	State       string      `json:"state"`
 	Revisions   *Revisions  `json:"revisions,omitempty"` // from ready on
 	Attempt     int         `json:"attempt"`             // 0 until accepted

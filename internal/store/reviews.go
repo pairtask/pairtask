@@ -194,6 +194,9 @@ func (s *Store) ChangeReview(ctx context.Context, id string, act ReviewAction, s
 	if err != nil {
 		return next, false, err
 	}
+	if err := publicationAllowed(ctx, tx, rec, next); err != nil {
+		return rec, false, err
+	}
 	if changed {
 		if err := saveReview(ctx, tx, next, false); err != nil {
 			return review.Record{}, false, err
