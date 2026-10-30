@@ -121,7 +121,7 @@ func (m *Model) syncLine(fingerprint string) string {
 	case s.Live:
 		line = "connected: messages leave at once, both ways"
 	case s.Dials:
-		line = "this side dials"
+		line = "this side dials" + m.dialedAt(fingerprint)
 	}
 	if s.LastSuccess != nil {
 		line += " · last sync " + s.LastSuccess.Local().Format(time.Kitchen)
@@ -130,6 +130,14 @@ func (m *Model) syncLine(fingerprint string) string {
 		line += fmt.Sprintf(" · last attempt failed: %s (%d in a row)", safe(s.LastFailure), s.Failures)
 	}
 	return line
+}
+
+// dialedAt is " <address>" this side dials the contact at, or "".
+func (m *Model) dialedAt(fingerprint string) string {
+	if c, ok := m.contact(fingerprint); ok && c.Destination != "" {
+		return " " + safe(c.Destination)
+	}
+	return ""
 }
 
 // messageLines is one message: who and its state, then its text, every

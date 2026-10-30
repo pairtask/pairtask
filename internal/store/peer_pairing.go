@@ -235,7 +235,7 @@ func deliver(ctx context.Context, tx *sql.Tx, r peer.PairingRequest) error {
 	if r.State != peer.PairingAccepted {
 		return nil
 	}
-	return upsertContact(ctx, tx, peer.InviterContact(r))
+	return upsertContact(ctx, tx, peer.InviterContact(r), "") // it carries no destination, so never moves
 }
 
 // Outcome looks up a committed operation.

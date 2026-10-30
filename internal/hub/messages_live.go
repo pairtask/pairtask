@@ -46,6 +46,7 @@ type liveLink struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	serving  bool
+	token    dialToken // a dialled link's: what its end records under
 }
 
 func (l *liveLink) halt() { l.stopOnce.Do(func() { close(l.stop) }) }
@@ -159,7 +160,7 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 			return func(r messaging.Result, err error) {
 				end(r.Moved())
 				if err == nil {
-					h.recordSync(contact, "", true) // LastSuccess is a completed round
+					h.recordRound(l) // LastSuccess is a completed round
 				}
 			}, true
 		},
@@ -255,7 +256,10 @@ func (h *Hub) afterLink(ctx context.Context, l *liveLink, err error) {
 		return
 	}
 	h.log.Info("message link ended", "class", classifySync(err))
-	h.recordSync(contact, classifySync(err), true)
+	if !h.recordDial(contact, syncOutcome{token: l.token, failure: classifySync(err), active: true}) {
+		h.SyncMessages(contact) // halted or fenced by a pairing change: redial at once, where the contact is now
+		return
+	}
 	time.AfterFunc(h.liveDelay(contact), func() { h.SyncMessages(contact) })
 }
 
