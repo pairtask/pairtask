@@ -37,54 +37,7 @@ or 7.5+ ([why and how to check](sandbox.md#incus-server-version)). Details:
 
 ## Connect two machines
 
-Pair your workspace with one on another machine. Both machines need release
-587.1 or later. Call them **A** (invites) and **B** (joins).
-
-1. **On both hosts,** update and turn pairing on:
-
-   ```sh
-   curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
-   pairtask pairing on --host-port 7445
-   pairtask pairing status     # expect: on, forwarding on port 7445
-   ```
-
-   Use the installer, not `pairtask upgrade`: only the installer updates the
-   `pairtask` command itself. Allow incoming connections if macOS asks.
-
-2. **On A,** run `pairtask chat`, type `/pair open`, and send the code to B's
-   operator over a trusted channel.
-
-3. **On B,** run `pairtask chat` and redeem with A's LAN or tailnet IP (the
-   Mac's own address, not the VM's):
-
-   ```text
-   /pair redeem A_IP:7445 CODE
-   ```
-
-4. **On A,** `/pair status`, then `/pair accept KEY` with the start of B's key.
-   **On B,** `/pair settle`. Done when `/pair status` shows the contact
-   confirmed on both sides.
-
-5. **Say hello.** In each chat, Tab to the `⇄` conversation and send a
-   message each way. These messages go between operators, not to agents.
-   B connects to A to exchange them, so keep A reachable at that address.
-
-To test the other network path (LAN or tailnet), repeat steps 2 to 5 with a
-new code. `pairing status` shows what is set up, not whether the other machine
-can reach you; a firewall or tailnet policy can still block port 7445.
-
-**Change or stop:**
-
-```sh
-pairtask pairing on --host-port 8445   # another port (then redeem with A_IP:8445)
-pairtask pairing on --host-port 0      # stay paired, stop listening
-pairtask pairing off                   # turn pairing off
-```
-
-`on` and `off` restart the containers. A later `pairing on` reuses the saved
-port (7445 if none was saved). If the port is taken, nothing changes: free it
-or pick another and run `pairing on` again. If 580.1's `pairing off` stopped
-halfway, run it again on the new release; don't delete volumes by hand.
+Step by step: [pair two machines](pairing.md).
 
 ## Start, stop and status
 

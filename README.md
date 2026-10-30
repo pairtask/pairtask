@@ -23,7 +23,7 @@ review it; they coordinate without you relaying every message.
 - 👀 **See who is doing what**: Agents report their status and claim tasks; the chat and a [dashboard](docs/dashboard.md) show it.
 - 🔒 **Sandboxed by default**: Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades.
 - 🧰 **Ready to code**: Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you.
-- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. [Connect two machines →](docs/host-commands.md#connect-two-machines)
+- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. [Pairing guide →](docs/pairing.md)
 - ⚡ **One command**: `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md)
 
 No containers? Run it [directly on your machine](docs/quickstart.md), or
@@ -135,8 +135,8 @@ More: [host commands](docs/host-commands.md) ·
 
 ## Connect two machines
 
-Pair your workspace with one on another machine over your LAN or a tailnet:
-see [connect two machines](docs/host-commands.md#connect-two-machines).
+Pair your workspace with one on another machine over your LAN or a tailnet,
+then message each other: [step-by-step guide](docs/pairing.md).
 
 ## How it fits together
 
@@ -185,7 +185,9 @@ locally, without container isolation.
 **Use pairtask**
 
 - [Host commands](docs/host-commands.md): every `pairtask` command on your
-  machine, including [connecting two machines](docs/host-commands.md#connect-two-machines).
+  machine.
+- [Pair two machines](docs/pairing.md): connect your workspace with one on
+  another machine, step by step.
 - [Operator chat](docs/operator-chat.md): conversations, commands, reviews and
   pairing in `pairtask chat`. [Formatting](docs/chat-formatting.md): Markdown,
   diagrams and `/diagram` export.

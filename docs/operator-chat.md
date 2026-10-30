@@ -26,7 +26,7 @@ addressed. Later `@` is plain text, pasted text stays literal, and a leading
 `\@` escapes it.
 
 For pairing across hosts, start with the
-[two-machine setup](host-commands.md#connect-two-machines). Once both sides
+[pairing guide](pairing.md). Once both sides
 confirm the contact, select its `⇄` conversation with Tab to send messages
 and read replies. These are messages between operators, not agent commands.
 
