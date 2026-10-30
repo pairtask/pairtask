@@ -18,7 +18,7 @@ import (
 // pairMenu says what each /pair word does, beside it in the picker.
 var pairMenu = map[string]string{
 	"open":    "show a one-time code for the other workspace",
-	"status":  "invitation, requests, redemptions and contacts",
+	"status":  "the invitation, requests and redemptions",
 	"cancel":  "close the open invitation; paired workspaces stay",
 	"accept":  "let a pairing request in",
 	"reject":  "turn a pairing request away",
