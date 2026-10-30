@@ -61,8 +61,12 @@ Use the Mac's own address, not the Colima VM's.
 On each side, Tab to the `⇄` tab and send a message. Once B has synced, the
 two workspaces stay connected and messages leave at once, both ways; the
 tab says "connected". These messages go between operators, not to agents.
-From a terminal: `pairtask operator contact send|list KEY` (run in
-`secured`).
+From a terminal, in `secured`:
+
+```sh
+pairtask operator contact send sha256:… "hello"
+pairtask operator contact list sha256:…
+```
 
 ## If it doesn't connect
 

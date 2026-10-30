@@ -96,11 +96,11 @@ func (h *Hub) claimLive(contact string, serving bool) (*liveLink, bool) {
 }
 
 // releaseLive frees a link's slot, and its contact unless a newer link
-// replaced it.
+// replaced it, then tells the operator, so a reload sees the registry as it
+// now is.
 func (h *Hub) releaseLive(contact string, l *liveLink) {
 	w := &h.live
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if l.serving {
 		w.serving--
 	} else {
@@ -109,6 +109,8 @@ func (h *Hub) releaseLive(contact string, l *liveLink) {
 	if w.links[contact] == l {
 		delete(w.links, contact)
 	}
+	w.mu.Unlock()
+	h.MessagesChanged(contact)
 }
 
 // wakeLive hands a token to contact's open link, if there is one.
@@ -180,8 +182,7 @@ func (h *Hub) hasOutgoing(contact string) bool {
 // runLink keeps a link until it ends or is stopped. Its opening and its
 // end are news to the operator: messages leave at once only while it's up.
 func (h *Hub) runLink(ctx context.Context, contact string, l *liveLink, run func(context.Context) error) error {
-	h.MessagesChanged(contact)
-	defer h.MessagesChanged(contact)
+	h.MessagesChanged(contact) // its end is announced by releaseLive, once the registry says so
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
