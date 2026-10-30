@@ -10,8 +10,8 @@ import (
 
 func pairUXRequests(h *chatHarness, requests []protocol.PairingRequestView, partial bool) {
 	h.t.Helper()
-	v2Command(h, "/pair")
-	req := pairingChatRequest(h, "list")
+	v2Command(h, "/pair status")
+	req := pairingChatRequest(h, "status")
 	h.reply(req, protocol.Message{Type: protocol.TypeOperatorPairingResult, PairingResult: &protocol.PairingSnapshot{Requests: requests, RequestsTotal: len(requests), RequestsTruncated: partial}})
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	h.input(chatKey(tea.KeyEscape, 0))

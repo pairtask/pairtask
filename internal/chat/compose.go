@@ -432,6 +432,9 @@ func (m *Model) runPicked() tea.Cmd {
 	if byName(name).check("") != nil {
 		return nil
 	}
+	if cmd, handled := m.awaitsWord(); handled {
+		return cmd
+	}
 	return m.runCommand(argument(name), "")
 }
 

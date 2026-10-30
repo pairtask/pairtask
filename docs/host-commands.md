@@ -231,7 +231,7 @@ key at startup and marks redemptions interrupted before verification
 The workspace identity is an Ed25519 key in `<DB_PATH>.peer/identity.key`
 (0600, in a 0700 directory). Its fingerprint, `sha256:` and the 64 lowercase
 hex digits of the SHA-256 digest of the key's SubjectPublicKeyInfo DER, shows
-in `status` and `/pair`, so two operators can compare fingerprints by phone.
+in `status` and `/pair status`, so two operators can compare fingerprints by phone.
 Certificates made from the key can be renewed without changing it. The
 database records the fingerprint, so a missing, unreadable or different key is
 reported (`identity_missing`, `identity_corrupt`, `identity_unsafe`,

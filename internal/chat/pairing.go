@@ -30,6 +30,10 @@ const (
 type pairingView struct {
 	snapshot *protocol.PairingSnapshot
 	stale    bool // pairing changed while a quiet read was in flight
+	// listed: this session read the snapshot for the operator, by /pair or
+	// for a /pair picker, so a picker offers it without reading again.
+	listed     bool
+	menuWanted bool // a /pair picker waits for a quiet read
 }
 
 // pairVerbArgs is how many words each /pair verb takes, itself included.
@@ -166,7 +170,7 @@ func (m *Model) invitationTarget(named pairWords) (string, string) {
 // requestTarget resolves a prefix against the last listing.
 func (m *Model) requestTarget(prefix string) (string, string) {
 	if m.pairing.snapshot == nil {
-		return "", "list the requests first: /pair"
+		return "", "list the requests first: /pair status"
 	}
 	key, err := m.pairing.snapshot.ResolveKey(prefix)
 	if err != nil {
@@ -209,7 +213,7 @@ func (m *Model) pairingResult(req pendingRequest, resp protocol.Message) tea.Cmd
 	if op != protocol.PairingOpOpen {
 		code = ""
 	}
-	m.pairing.snapshot = &snapshot
+	m.pairing.snapshot, m.pairing.listed = &snapshot, true
 	m.refreshDirectory() // contact conversations follow the snapshot
 	m.panel = &panel{kind: panelPairing, code: code}
 	m.status = pairingStatus[op]

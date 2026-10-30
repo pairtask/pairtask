@@ -41,7 +41,7 @@ Use the Mac's own address, not the Colima VM's.
 
 ## 4. Check it is really B, then accept on A
 
-- On B, `/pair` shows `this workspace: sha256:…`. Read the first characters
+- On B, `/pair status` shows `this workspace: sha256:…`. Read the first characters
   after `sha256:` to A's operator.
 - On A, type `/pair accept `: a list of waiting requests opens, each with its
   key and name. Pick the one whose key starts with what B read out (↑/↓),
@@ -147,7 +147,7 @@ Check from B: `nc -vz A_IP 7445`.
   local network access, or turn the exit node off.
 - **Connection refused or a timeout:** check `pairtask pairing status` and the
   firewall on A.
-- **`/pair` shows the redemption `failed`:** fix the network, then repeat
+- **`/pair status` shows the redemption `failed`:** fix the network, then repeat
   steps 2 to 5 with a new code.
 
 ## If A's address changed
