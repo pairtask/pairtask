@@ -162,7 +162,7 @@ func ConfirmDecision(r JoinRecord, decision PairingState, at time.Time) (JoinRec
 
 // JoinerContact is the contact an accepted join makes.
 func JoinerContact(r JoinRecord) Contact {
-	return Contact{IdentityKey: r.Peer, Destination: r.Destination, EstablishedAt: r.UpdatedAt, Joined: true}
+	return Contact{IdentityKey: r.Peer, Destination: r.Destination, DestinationAt: r.CreatedAt, EstablishedAt: r.UpdatedAt, Joined: true}
 }
 
 // JoinStart is a join's intent: our operation ID, our own fingerprint, the

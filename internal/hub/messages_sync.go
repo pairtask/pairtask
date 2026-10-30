@@ -125,7 +125,7 @@ func (h *Hub) collectMessages(ctx context.Context, last time.Time) time.Time {
 // syncContact runs one session with a confirmed contact this side dials,
 // and schedules the next.
 func (h *Hub) syncContact(ctx context.Context, contact string) {
-	c, ok := h.dialedContact(ctx, contact)
+	c, token, ok := h.dialedContact(ctx, contact)
 	if !ok {
 		return
 	}
@@ -137,12 +137,17 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 	end(result.Moved())
 	if err != nil {
 		h.log.Info("message sync failed", "class", classifySync(err))
-		h.recordSync(contact, classifySync(err), false)
-		h.retryLive(ctx, contact)
+		if h.recordDial(contact, syncOutcome{token: token, failure: classifySync(err)}) {
+			h.retryLive(ctx, contact)
+		}
 		return
 	}
-	h.recordSync(contact, "", h.messagesWaiting(ctx, contact))
+	if !h.recordDial(contact, syncOutcome{token: token, active: h.messagesWaiting(ctx, contact)}) {
+		h.dropLink(live) // the contact moved since it started
+		return
+	}
 	if live != nil {
+		live.link.token = token
 		h.goLive(ctx, live)
 	}
 }
@@ -160,23 +165,24 @@ func (h *Hub) retryLive(ctx context.Context, contact string) {
 	}
 }
 
-// dialedContact is the contact when it is confirmed and this side dials it.
-func (h *Hub) dialedContact(ctx context.Context, contact string) (peer.Contact, bool) {
+// dialedContact is the contact when it is confirmed and this side dials
+// it, and the token its dial records under.
+func (h *Hub) dialedContact(ctx context.Context, contact string) (peer.Contact, dialToken, bool) {
 	if !h.canDial() || h.Live(contact) {
-		return peer.Contact{}, false
+		return peer.Contact{}, dialToken{}, false
 	}
 	if !h.messagePins(contact) {
-		return peer.Contact{}, false
+		return peer.Contact{}, dialToken{}, false
 	}
 	c, found, err := h.store.Contact(ctx, contact)
 	if err != nil || !found {
-		return peer.Contact{}, false
+		return peer.Contact{}, dialToken{}, false
 	}
 	if !dials(c, h.identity.Fingerprint()) {
-		return peer.Contact{}, false
+		return peer.Contact{}, dialToken{}, false
 	}
-	h.markDialed(contact)
-	return c, true
+	token, current := h.markDialed(c)
+	return c, token, current
 }
 
 // canDial: an identity to present and a way to reach a destination.
@@ -247,16 +253,26 @@ func (h *Hub) messagesWaiting(ctx context.Context, contact string) bool {
 	return h.pair.cfg.Clock().Sub(h.msgs.traffic[contact]) < messageRecent
 }
 
-func (h *Hub) markDialed(contact string) {
+// markDialed takes the contact's destination and marks a dial of it; a
+// read older than the destination already dialled dials nothing.
+func (h *Hub) markDialed(c peer.Contact) (dialToken, bool) {
+	token, current, moved := h.adoptDial(c)
+	if moved {
+		h.leaveAddress(c, false) // this dial is the redial
+	}
+	return token, current
+}
+
+func (h *Hub) adoptDial(c peer.Contact) (token dialToken, current, moved bool) {
 	w := &h.msgs
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	s := w.syncs[contact]
-	if s == nil {
-		s = &MessageSync{}
-		w.syncs[contact] = s
+	s := w.syncOf(c.IdentityKey)
+	if current, moved = s.adopt(c); !current {
+		return dialToken{}, false, false
 	}
 	s.Dials, s.LastAttempt = true, h.pair.cfg.Clock()
+	return dialToken{s.gen, w.epoch}, true, moved
 }
 
 // recordSync records a session's outcome and when to sync next.
@@ -264,11 +280,11 @@ func (h *Hub) recordSync(contact, failure string, active bool) {
 	w := &h.msgs
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	s := w.syncs[contact]
-	if s == nil {
-		s = &MessageSync{}
-		w.syncs[contact] = s
-	}
+	h.recordOn(w.syncOf(contact), failure, active)
+}
+
+// recordOn records an outcome into s; the caller holds h.msgs.mu.
+func (h *Hub) recordOn(s *MessageSync, failure string, active bool) {
 	now := h.pair.cfg.Clock()
 	s.LastFailure = failure
 	switch {
