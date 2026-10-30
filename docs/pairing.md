@@ -58,7 +58,10 @@ Use the Mac's own address, not the Colima VM's.
 
 ## 6. Say hello
 
-On each side, Tab to the `⇄` tab and send a message. Once B has synced, the
+On each side, Tab to the `⇄` tab and send a message. The tab shows the
+name the other workspace pairs under (`PAIRTASK_PAIRING_NAME`), else the
+address this side dials, else its short key; `/pair name NAME` in the tab
+sets what this side calls it, and `/pair status` shows its key beside it. Once B has synced, the
 two workspaces stay connected and messages leave at once, both ways; the
 tab says "connected". Without `@`, these messages go between operators.
 From a terminal, in `secured`:
