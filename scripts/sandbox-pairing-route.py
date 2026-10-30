@@ -43,6 +43,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import pairing_live_checks  # noqa: E402
+import pairing_routing_checks  # noqa: E402
 import pairing_publish_checks  # noqa: E402
 import pairing_route_checks  # noqa: E402
 
@@ -183,7 +184,8 @@ class HostBroker:
 
     def start(self, bridge_ip):
         binaries, workdir = self.binaries, self.workdir
-        env = dict(os.environ, PAIRTASK_SOCKET_PATH=str(workdir / "agent.sock"), PAIRTASK_DB_PATH=str(workdir / "host.db"),
+        self.agent_socket = str(workdir / "agent.sock")
+        env = dict(os.environ, PAIRTASK_SOCKET_PATH=self.agent_socket, PAIRTASK_DB_PATH=str(workdir / "host.db"),
                    PAIRTASK_OPERATOR_SOCKET_PATH=self.operator_socket, PAIRTASK_OPERATOR_UID=str(os.getuid()),
                    PAIRTASK_PAIRING_SOCKET=self.pairing_socket, PAIRTASK_PAIRING_EGRESS="direct",
                    PAIRTASK_PAIRING_NAME="host-fixture")
@@ -411,7 +413,8 @@ def route_ready(deployment):
 
 def prove_live(deployment, host):
     """Instant messages both ways over the live link, then after restarting
-    the relay and the egress forwarder that carry it."""
+    the relay and the egress forwarder that carry it; then to and from an
+    agent of the host's."""
     secured_key = snapshot(deployment.operator("status", "--json"))["self_identity"]
     host_key = snapshot(host.pair("status", "--json"))["self_identity"]
 
@@ -422,6 +425,7 @@ def prove_live(deployment, host):
 
     sides = ((deployment.operator_cli, host_key), (host.operator_cli, secured_key))
     pairing_live_checks.prove_live(sides, restart_relays)
+    pairing_routing_checks.prove_routing(sides, host.agent_socket)
 
 
 def exercise(args, deployment, local, publication):
