@@ -34,47 +34,46 @@ func (h *Hub) importsDue() {
 	}
 }
 
-// drainImports imports what is staged, oldest first. One a full inbox
-// keeps pending waits for the next pass: after an acknowledgment, a round,
-// or a grant.
+// drainImports imports what is staged, oldest first, a bounded pass at a
+// time: a pass goes on from where the last one stopped, so ones a full
+// inbox holds back never hide later ones, and asks for the next until the
+// scan reaches the end. Those still held back wait for an acknowledgment,
+// a round or a grant to start a scan again.
 func (h *Hub) drainImports(ctx context.Context, clients map[string]*Client) {
 	if h.store == nil {
 		return // a hub without storage stages nothing
 	}
-	var after int64
-	progressed := false
 	for tried := 0; tried < importPass; tried += importBatch {
-		pending, err := h.store.PendingImportsAfter(ctx, after, importBatch)
+		pending, err := h.store.PendingImportsAfter(ctx, h.importAt, importBatch)
 		if err != nil {
 			h.log.Error("staged messages not read", "error", err)
 			return
 		}
 		for _, imp := range pending {
-			progressed = h.importOne(ctx, clients, imp) || progressed
-			after = imp.Order
+			h.importOne(ctx, clients, imp)
+			h.importAt = imp.Order
 		}
 		if len(pending) < importBatch {
+			h.importAt = 0 // the scan reached the end
 			return
 		}
 	}
-	if progressed {
-		h.importsDue() // more than one pass tries
-	}
+	h.importsDue()
 }
 
 // importOne imports one staged message at the next sequence, which only an
-// import uses.
-func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp store.RemoteImport) bool {
+// import uses, and hands it to its recipients connected now.
+func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp store.RemoteImport) {
 	imp.Sessions = remoteSessions(clients, imp.Recipients)
 	result, err := h.store.ImportRemote(ctx, imp, h.seq+1, time.Now())
 	if err != nil {
 		if !errors.Is(err, store.ErrInboxFull) && !errors.Is(err, store.ErrLocalIDsTaken) {
 			h.log.Error("staged message not imported", "error", err)
 		}
-		return false
+		return
 	}
 	if !result.Changed || result.State != store.ImportImported {
-		return result.Changed
+		return
 	}
 	h.seq++
 	for _, r := range result.Recipients {
@@ -82,7 +81,6 @@ func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp sto
 			h.enqueue(clients, c, result.Msg)
 		}
 	}
-	return true
 }
 
 // remoteSessions are the recipients connected at a version that shows a

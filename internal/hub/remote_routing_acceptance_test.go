@@ -15,16 +15,21 @@ import (
 func remoteHubFixture(t *testing.T) (*Hub, string) {
 	t.Helper()
 	h := newTestHub(t)
+	return h, remoteHubContact(t, h, 1)
+}
+
+func remoteHubContact(t *testing.T, h *Hub, n int) string {
+	t.Helper()
 	ctx := context.Background()
-	key := fmt.Sprintf("sha256:%064x", 1)
+	key := fmt.Sprintf("sha256:%064x", n)
 	at := time.Now()
-	_, err := h.store.Commit(ctx, peer.PairingOutcome{OperationID: "remote-op", InvitationID: "remote-inv", IdentityKey: key, Name: "Remote workspace", TranscriptID: make([]byte, 64), At: at})
+	_, err := h.store.Commit(ctx, peer.PairingOutcome{OperationID: fmt.Sprintf("remote-op-%d", n), InvitationID: fmt.Sprintf("remote-inv-%d", n), IdentityKey: key, Name: "Remote workspace", TranscriptID: make([]byte, 64), At: at})
 	messageWorkerOK(t, err)
 	_, err = h.store.Accept(ctx, key)
 	messageWorkerOK(t, err)
 	_, err = h.store.Deliver(ctx, key, peer.PairingAccepted, at)
 	messageWorkerOK(t, err)
-	return h, key
+	return key
 }
 
 func remoteHubClient(t *testing.T, h *Hub, id string, version int) *Client {
@@ -258,4 +263,40 @@ func TestRemoteHubAcceptanceCommittedAckRecoversPeerReceiptAfterRestart(t *testi
 	messageWorkerOK(t, err)
 	messageSyncEqual(t, len(reads), 1)
 	messageSyncEqual(t, reads[0], messaging.AgentRead{ID: "parent", Agent: a.ID})
+}
+
+func TestRemoteHubAcceptanceScanLimitCannotStarveLaterContact(t *testing.T) {
+	h, first := remoteHubFixture(t)
+	full := remoteHubClient(t, h, "full", 12)
+	healthy := remoteHubClient(t, h, "healthy", 12)
+	ctx := context.Background()
+	for i := 0; i < store.MaxPendingMessages; i++ {
+		at := time.Now()
+		m := protocol.Message{Type: protocol.TypeMsg, MessageID: fmt.Sprintf("fill-%d", i), Seq: uint64(i + 1), TS: &at, From: "local", To: full.ID, Payload: []byte(`{"text":"fill"}`), Durable: true, AckRequested: true}
+		messageWorkerOK(t, h.store.PersistMessage(ctx, m, "local", []protocol.Recipient{full.identity()}))
+	}
+	h.seq = store.MaxPendingMessages
+	for n := 1; n <= 4; n++ {
+		key := first
+		if n > 1 {
+			key = remoteHubContact(t, h, n)
+		}
+		remoteHubShare(t, h, key, full.ID)
+		for i := 0; i < 256; i++ {
+			remoteHubStage(t, h, key, messaging.Message{ID: fmt.Sprintf("blocked-%d", i), N: uint64(i + 1), To: []string{full.ID}})
+		}
+	}
+	last := remoteHubContact(t, h, 5)
+	remoteHubShare(t, h, last, healthy.ID)
+	remoteHubStage(t, h, last, messaging.Message{ID: "healthy-after-scan-limit", N: 1, To: []string{healthy.ID}})
+	clients := map[string]*Client{full.ID: full, healthy.ID: healthy}
+	for range 4 {
+		h.drainImports(ctx, clients)
+	}
+	select {
+	case m := <-healthy.Send:
+		messageSyncEqual(t, m.Origin, protocol.OriginRemote)
+	default:
+		t.Fatal("bounded scan restarted at blocked prefix and starved later contact")
+	}
 }

@@ -44,6 +44,7 @@ type Hub struct {
 	membership chan membership
 	inbound    chan Inbound
 	imports    chan struct{} // an import pass is due (#222)
+	importAt   int64         // where the next import pass goes on; owned by Run
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
