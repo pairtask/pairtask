@@ -59,6 +59,8 @@ func (m *Model) pairCompletions(l argLine) []string {
 		return withPrefix(m.pendingRequestKeys(), protocol.KeyDigest(l.current))
 	case len(l.words) == 1 && l.words[0] == protocol.PairingOpCancel:
 		return withPrefix(m.openInvitation(), l.current)
+	case l.words[0] == pairShare:
+		return m.shareCompletions(l)
 	}
 	return nil
 }

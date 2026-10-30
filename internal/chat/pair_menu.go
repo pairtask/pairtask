@@ -39,9 +39,19 @@ func pairNeedsWord(words []string) bool {
 	case 0:
 		return true
 	case 1:
-		return decidesRequest(words[0]) || words[0] == protocol.PairingOpCancel
+		return readsSnapshot(words[0]) || words[0] == pairShare
 	}
 	return false
+}
+
+// sharesHere: the line is /pair share, waiting for its first agent.
+func sharesHere(l argLine) bool {
+	return len(l.words) == 1 && l.words[0] == pairShare
+}
+
+// readsSnapshot: the word's choices come from the pairing snapshot.
+func readsSnapshot(word string) bool {
+	return decidesRequest(word) || word == protocol.PairingOpCancel
 }
 
 // awaitsWord handles Enter on a /pair line that lacks its word: it offers
@@ -60,7 +70,7 @@ func (m *Model) awaitsWord() (cmd tea.Cmd, handled bool) {
 		line.track(value, false)
 	}
 	line.dismissed = nil
-	if len(l.words) > 0 && !m.pairing.listed {
+	if len(l.words) > 0 && readsSnapshot(l.words[0]) && !m.pairing.listed {
 		m.status = "reading pairing requests…"
 		return m.loadPairMenu(), true
 	}
@@ -98,6 +108,7 @@ func (m *Model) pairMenuLoaded() {
 // nothing to choose.
 func (m *Model) offerPairChoices(l argLine) {
 	if len(m.pairCompletions(l)) == 0 {
+		m.compose.picker = nil
 		m.status = m.nothingToPick(l.words[0])
 		return
 	}
@@ -107,6 +118,9 @@ func (m *Model) offerPairChoices(l argLine) {
 
 // nothingToPick says why a /pair word has no choices.
 func (m *Model) nothingToPick(word string) string {
+	if word == pairShare {
+		return "no local agents to share with this workspace; start one first"
+	}
 	if word == protocol.PairingOpCancel {
 		return "no open invitation to cancel; /pair open makes one"
 	}
@@ -122,6 +136,9 @@ func (m *Model) pairMenuAt(value string) (argLine, bool) {
 	l, ok := splitArgLine(strings.TrimRight(value, " ") + " ")
 	if !ok || !pairWantsWord(l) {
 		return l, false
+	}
+	if sharesHere(l) && !m.conv.selected.isContact() {
+		return l, false // outside a ⇄ tab, /pair share says where it works
 	}
 	return l, m.pairMenuUsable()
 }
@@ -188,6 +205,8 @@ func (m *Model) pairLabel(item string) (string, bool) {
 		return m.pendingRequestLabel(item)
 	case len(l.words) == 1 && l.words[0] == protocol.PairingOpCancel:
 		return m.invitationLabel(item)
+	case l.words[0] == pairShare:
+		return m.shareLabel(item)
 	}
 	return "", false
 }
