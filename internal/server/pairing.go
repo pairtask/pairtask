@@ -173,23 +173,23 @@ func (p *PairingServer) messageSession(ctx, netCtx, storeCtx context.Context, co
 		p.log.Warn("message session refused: too many")
 		return
 	}
-	claim, carried := p.firstRound(netCtx, storeCtx, conn, ep)
+	claim, first := p.firstRound(netCtx, storeCtx, conn, ep)
 	release(p.messages)
 	if claim == nil {
 		return
 	}
-	err := claim.Run(ctx, func(ctx context.Context) messaging.Frames { return conn.MessageFrames(ctx) }, carried)
+	err := claim.Run(ctx, func(ctx context.Context) messaging.Frames { return conn.MessageFrames(ctx) }, first)
 	p.log.Info("message link ended", "cause", hub.PairingCause(err))
 }
 
 // firstRound answers the first round, and returns the live link's claim
 // when both sides stay connected.
-func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *firstcontact.Conn, ep hub.PairingEndpoint) (*hub.LiveClaim, *messaging.Counted) {
+func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *firstcontact.Conn, ep hub.PairingEndpoint) (*hub.LiveClaim, hub.FirstRound) {
 	contact := conn.Connection().PeerLeaf
 	end, free := ep.BeginMessages(contact)
 	if !free {
 		p.log.Info("message session refused: one already running for this contact")
-		return nil, nil
+		return nil, hub.FirstRound{}
 	}
 	sessionCtx, cancel := context.WithTimeout(netCtx, hub.MessageBudget)
 	defer cancel()
@@ -199,13 +199,13 @@ func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *first
 	end(result.Moved())
 	if err != nil {
 		p.log.Info("message session ended", "cause", hub.PairingCause(err))
-		return nil, nil
+		return nil, hub.FirstRound{}
 	}
 	p.log.Info("message session answered", "received", result.Received, "sent", result.Sent)
 	if version < messaging.LiveVersion {
-		return nil, nil
+		return nil, hub.FirstRound{}
 	}
-	return p.stayOpen(s, contact, ep), counted
+	return p.stayOpen(s, contact, ep), hub.FirstRound{Carried: counted, Version: version}
 }
 
 // stayOpen answers whether the connection stays open as a live link.

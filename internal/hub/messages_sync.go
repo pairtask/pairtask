@@ -209,7 +209,7 @@ func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result
 	}
 	d, err := h.stayOpen(s, conn, c.IdentityKey)
 	if d != nil {
-		d.carried = counted
+		d.first = FirstRound{Carried: counted, Version: version}
 	}
 	return r, d, err
 }

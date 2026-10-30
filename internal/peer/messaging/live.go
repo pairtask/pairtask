@@ -334,7 +334,7 @@ func (l *Link) start(ctx context.Context) (context.Context, context.CancelFunc) 
 	ctx, cancel := context.WithCancel(ctx)
 	l.in, l.again = make(chan received, 1), make(chan struct{}, 1)
 	l.started = l.Now()
-	l.Store = sessionStore{l.Store}
+	l.Store = wrapStore(l.Store)
 	l.sent.Store(l.Carried.Sent)
 	l.recv.Store(l.Carried.Recv)
 	l.followUp() // the first round may have left more than it carried

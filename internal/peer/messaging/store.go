@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -74,3 +75,28 @@ type Store interface {
 	// receipts, within the bounds.
 	Collect(ctx context.Context, now time.Time) error
 }
+
+// RoutingStore is what a version 3 session needs besides Store: messages to
+// and from agents, their recipient-specific acknowledgments, and the agents
+// each side shares. A Store without it speaks at most version 2.
+type RoutingStore interface {
+	Store
+	// OfferFor is Offer for a session at version: routed rows only from
+	// RoutingVersion on, so an older peer never receives them.
+	OfferFor(ctx context.Context, contact string, now time.Time, l Limit, version byte) ([]Row, error)
+	// PendingAgentReads is up to max agent acknowledgments still to send.
+	PendingAgentReads(ctx context.Context, contact string, max int) ([]AgentRead, error)
+	// AgentReadConfirmed records the peer's AgentReadStored.
+	AgentReadConfirmed(ctx context.Context, contact string, r AgentRead) error
+	// PeerAgentRead records the peer's AgentRead of an outbound routed
+	// message; an agent outside its recipients is ErrNotRecipient.
+	PeerAgentRead(ctx context.Context, contact string, r AgentRead, at time.Time) error
+	// SharedAgents is the agents this side shares with the contact.
+	SharedAgents(ctx context.Context, contact string) ([]string, error)
+	// SetPeerDirectory replaces what the contact says it shares, a hint.
+	SetPeerDirectory(ctx context.Context, contact string, agents []string, at time.Time) error
+}
+
+// ErrNotRecipient is an agent acknowledgment from an agent the message was
+// not sent to.
+var ErrNotRecipient = errors.New("messaging: not a recipient of that message")

@@ -22,11 +22,15 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 2
+	MaxVersion byte = 3
 )
 
-// LiveVersion is the first version whose sessions can stay open.
-const LiveVersion byte = 2
+// LiveVersion is the first version whose sessions can stay open;
+// RoutingVersion the first that carries messages to and from agents.
+const (
+	LiveVersion    byte = 2
+	RoutingVersion byte = 3
+)
 
 const frameVersion byte = 1
 
@@ -47,6 +51,11 @@ const (
 	FramePing     byte = 12 // the dialer, while idle
 	FramePong     byte = 13 // the answer to a Ping
 	FramePending  byte = 14 // the dialed side has something for the dialer
+	// Version 3 only.
+	FrameRouted          byte = 15 // a message to or from agents, or a reply
+	FrameAgentRead       byte = 16 // a recipient agent acknowledged a message
+	FrameAgentReadStored byte = 17 // the answer to an AgentRead
+	FrameDirectory       byte = 18 // the agents this side shares with the peer
 )
 
 // ErrProtocol is a malformed, unexpected or oversized frame.
@@ -55,19 +64,51 @@ var ErrProtocol = errors.New("messaging: protocol error")
 // Hello opens a session and answers it: the versions a side speaks.
 type Hello struct{ Min, Max byte }
 
-// Message is one message as it travels. ID, N, CreatedAt and Text never
-// change once queued; Hash covers all four.
+// Message is one message as it travels. Nothing in it changes once queued,
+// and Hash covers all of it.
 type Message struct {
 	ID        string
 	N         uint64 // the sender's sequence for this contact, from 1
 	CreatedAt time.Time
 	Text      string
+	// Routing, version 3: the sending agent (empty: the operator), the
+	// recipient agents (none: the operator), and the message it answers.
+	From    string
+	To      []string
+	ReplyTo ReplyRef
 }
 
-// Hash is the message's identity: a retry must carry the same one.
+// ReplyRef names the message a reply answers: its ID in the namespace of
+// the side that wrote it, which Author gives relative to the reply's sender.
+// The same ID may name one message each way, so the side always counts.
+type ReplyRef struct {
+	ID     string
+	Author byte
+}
+
+// Reply authors, relative to the replying message's sender.
+const (
+	ReplyAuthorNone byte = 0
+	ReplyBySender   byte = 1 // the parent is one the sender wrote
+	ReplyByReceiver byte = 2 // the parent is one the receiver wrote
+)
+
+// Routed reports a message only version 3 carries.
+func (m Message) Routed() bool {
+	return m.From != "" || len(m.To) > 0 || m.ReplyTo.ID != ""
+}
+
+// Hash is the message's identity: a retry must carry the same one. An
+// unrouted message hashes as in version 1.
 func (m Message) Hash() [32]byte {
+	parts := []string{m.ID, strconv.FormatUint(m.N, 10), stamp(m.CreatedAt), m.Text}
+	if m.Routed() {
+		parts = append(parts, "routed", m.From, strconv.Itoa(len(m.To)))
+		parts = append(parts, m.To...)
+		parts = append(parts, m.ReplyTo.ID, strconv.Itoa(int(m.ReplyTo.Author)))
+	}
 	h := sha256.New()
-	for _, part := range []string{m.ID, strconv.FormatUint(m.N, 10), stamp(m.CreatedAt), m.Text} {
+	for _, part := range parts {
 		var size [8]byte
 		binary.BigEndian.PutUint64(size[:], uint64(len(part)))
 		h.Write(size[:])
@@ -114,7 +155,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FramePending
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameDirectory
 }
 
 // shape is a frame type and its exact number of fields.
@@ -133,7 +174,14 @@ var (
 	readShape        = shape{FrameRead, 1}
 	readStoredShape  = shape{FrameReadStored, 1}
 	liveShape        = shape{FrameLive, 1}
+	routedShape      = shape{FrameRouted, 8}
+	agentReadShape   = shape{FrameAgentRead, 2}
+	agentStoredShape = shape{FrameAgentReadStored, 2}
+	directoryShape   = shape{FrameDirectory, 1}
 )
+
+// MaxAgents bounds a recipient list and a directory.
+const MaxAgents = 64
 
 func EncodeHello(h Hello) ([]byte, error) { return encode(FrameHello, []byte{h.Min}, []byte{h.Max}) }
 
@@ -181,6 +229,11 @@ func DecodeMessage(frame []byte) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
+	return messageFields(f)
+}
+
+// messageFields reads ID, N, CreatedAt and Text.
+func messageFields(f [][]byte) (Message, error) {
 	if len(f[1]) != 8 {
 		return Message{}, fmt.Errorf("%w: sequence", ErrProtocol)
 	}
@@ -189,6 +242,115 @@ func DecodeMessage(frame []byte) (Message, error) {
 		return Message{}, fmt.Errorf("%w: created_at", ErrProtocol)
 	}
 	return Message{ID: string(f[0]), N: binary.BigEndian.Uint64(f[1]), CreatedAt: at.UTC(), Text: string(f[3])}, nil
+}
+
+// EncodeRouted is a version 3 message: the fields of Message, then From,
+// To, and the reply's ID and author.
+func EncodeRouted(m Message) ([]byte, error) {
+	to, err := encodeList(m.To)
+	if err != nil {
+		return nil, err
+	}
+	n := binary.BigEndian.AppendUint64(nil, m.N)
+	return encode(FrameRouted, []byte(m.ID), n, []byte(stamp(m.CreatedAt)), []byte(m.Text),
+		[]byte(m.From), to, []byte(m.ReplyTo.ID), []byte{m.ReplyTo.Author})
+}
+
+func DecodeRouted(frame []byte) (Message, error) {
+	f, err := decode(frame, routedShape)
+	if err != nil {
+		return Message{}, err
+	}
+	m, err := messageFields(f[:4])
+	if err != nil {
+		return Message{}, err
+	}
+	if m.To, err = decodeList(f[5]); err != nil {
+		return Message{}, err
+	}
+	if len(f[7]) != 1 || f[7][0] > ReplyByReceiver || (f[7][0] == ReplyAuthorNone) != (len(f[6]) == 0) {
+		return Message{}, fmt.Errorf("%w: reply reference", ErrProtocol)
+	}
+	m.From, m.ReplyTo = string(f[4]), ReplyRef{ID: string(f[6]), Author: f[7][0]}
+	return m, nil
+}
+
+// AgentRead says a recipient agent acknowledged a routed message.
+type AgentRead struct{ ID, Agent string }
+
+func EncodeAgentRead(r AgentRead) ([]byte, error) {
+	return encode(FrameAgentRead, []byte(r.ID), []byte(r.Agent))
+}
+
+func DecodeAgentRead(frame []byte) (AgentRead, error) { return decodeAgentRead(frame, agentReadShape) }
+
+func EncodeAgentReadStored(r AgentRead) ([]byte, error) {
+	return encode(FrameAgentReadStored, []byte(r.ID), []byte(r.Agent))
+}
+
+func DecodeAgentReadStored(frame []byte) (AgentRead, error) {
+	return decodeAgentRead(frame, agentStoredShape)
+}
+
+func decodeAgentRead(frame []byte, want shape) (AgentRead, error) {
+	f, err := decode(frame, want)
+	if err != nil {
+		return AgentRead{}, err
+	}
+	return AgentRead{ID: string(f[0]), Agent: string(f[1])}, nil
+}
+
+// EncodeDirectory is the agents a side shares with the peer.
+func EncodeDirectory(agents []string) ([]byte, error) {
+	list, err := encodeList(agents)
+	if err != nil {
+		return nil, err
+	}
+	return encode(FrameDirectory, list)
+}
+
+func DecodeDirectory(frame []byte) ([]string, error) {
+	f, err := decode(frame, directoryShape)
+	if err != nil {
+		return nil, err
+	}
+	return decodeList(f[0])
+}
+
+// encodeList is a count byte and each item with a uint16 length, so an ID
+// may hold any byte, as agent IDs may.
+func encodeList(items []string) ([]byte, error) {
+	if len(items) > MaxAgents {
+		return nil, fmt.Errorf("%w: more than %d agents", ErrProtocol, MaxAgents)
+	}
+	out := []byte{byte(len(items))}
+	for _, it := range items {
+		if it == "" || len(it) > math.MaxUint16 {
+			return nil, fmt.Errorf("%w: list item", ErrProtocol)
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(it)))
+		out = append(out, it...)
+	}
+	return out, nil
+}
+
+func decodeList(b []byte) ([]string, error) {
+	if len(b) == 0 || int(b[0]) > MaxAgents {
+		return nil, fmt.Errorf("%w: list", ErrProtocol)
+	}
+	count, rest := int(b[0]), b[1:]
+	items := make([]string, 0, count)
+	for range count {
+		item, more, err := nextField(rest)
+		if err != nil || len(item) == 0 {
+			return nil, fmt.Errorf("%w: list item", ErrProtocol)
+		}
+		items, rest = append(items, string(item)), more
+	}
+	if len(rest) != 0 {
+		return nil, fmt.Errorf("%w: list trailing bytes", ErrProtocol)
+	}
+	return items, nil
 }
 
 func EncodeStored(s Stored) ([]byte, error) { return encode(FrameStored, []byte(s.ID)) }

@@ -54,11 +54,12 @@ const (
 	ReasonTooOld    = "too_old"
 	ReasonInboxFull = "inbox_full"
 	ReasonBusy      = "busy"
+	ReasonNotShared = "not_shared" // a recipient agent isn't shared with the sender
 )
 
 var reasonClass = map[string]string{
 	ReasonInvalid: Terminal, ReasonTooLarge: Terminal, ReasonConflict: Terminal, ReasonTooOld: Terminal,
-	ReasonInboxFull: Transient, ReasonBusy: Transient,
+	ReasonInboxFull: Transient, ReasonBusy: Transient, ReasonNotShared: Terminal,
 }
 
 // Refusal is why a message wasn't stored.

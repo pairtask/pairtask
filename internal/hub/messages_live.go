@@ -137,11 +137,18 @@ func (h *Hub) Live(contact string) bool {
 	return w.links[contact] != nil
 }
 
-// link is a contact's live link over a connection's frames; carried is
-// what its first round moved.
-func (h *Hub) link(contact string, open func(context.Context) messaging.Frames, l *liveLink, carried *messaging.Counted) *messaging.Link {
+// FirstRound is what a link's first round settled: what it moved, counted
+// towards rotation, and the version both sides agreed, which every later
+// round keeps.
+type FirstRound struct {
+	Carried *messaging.Counted
+	Version byte
+}
+
+// link is a contact's live link over a connection's frames.
+func (h *Hub) link(contact string, open func(context.Context) messaging.Frames, l *liveLink, first FirstRound) *messaging.Link {
 	link := &messaging.Link{
-		Session: messaging.Session{Store: h.store.PeerMessages(), Contact: contact, Now: h.pair.cfg.Clock},
+		Session: messaging.Session{Store: h.store.PeerMessages(), Contact: contact, Now: h.pair.cfg.Clock, Version: first.Version},
 		Open:    open,
 		Wake:    l.wake,
 		Begin: func() (func(messaging.Result, error), bool) {
@@ -160,8 +167,8 @@ func (h *Hub) link(contact string, open func(context.Context) messaging.Frames, 
 		More:      func() bool { return h.hasOutgoing(contact) },
 		Timing:    liveTiming(),
 	}
-	if carried != nil {
-		link.Carried.Sent, link.Carried.Recv = carried.SentBytes, carried.RecvBytes
+	if c := first.Carried; c != nil {
+		link.Carried.Sent, link.Carried.Recv = c.SentBytes, c.RecvBytes
 	}
 	return link
 }
@@ -197,9 +204,9 @@ func (h *Hub) runLink(ctx context.Context, contact string, l *liveLink, run func
 
 // dialedLink is a connection whose first round agreed to stay open.
 type dialedLink struct {
-	conn    *firstcontact.Conn
-	link    *liveLink
-	carried *messaging.Counted
+	conn  *firstcontact.Conn
+	link  *liveLink
+	first FirstRound
 }
 
 // goLive keeps a dialed link in its own goroutine, so the sync slot that
@@ -210,7 +217,7 @@ func (h *Hub) goLive(ctx context.Context, contact string, d *dialedLink) {
 		defer h.pair.workers.Done()
 		defer d.conn.Close()
 		open := func(ctx context.Context) messaging.Frames { return d.conn.MessageFrames(ctx) }
-		err := h.runLink(ctx, contact, d.link, h.link(contact, open, d.link, d.carried).RunDialer)
+		err := h.runLink(ctx, contact, d.link, h.link(contact, open, d.link, d.first).RunDialer)
 		h.releaseLive(contact, d.link)
 		h.afterLink(ctx, contact, err)
 	}()
@@ -272,11 +279,10 @@ func (h *Hub) ClaimLink(contact string) (*LiveClaim, bool) {
 	return &LiveClaim{h: h, contact: contact, link: l}, true
 }
 
-// Run keeps the serving link until it ends, is replaced, or ctx ends;
-// carried is what the first round moved.
-func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, carried *messaging.Counted) error {
+// Run keeps the serving link until it ends, is replaced, or ctx ends.
+func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, first FirstRound) error {
 	defer c.Release()
-	return c.h.runLink(ctx, c.contact, c.link, c.h.link(c.contact, open, c.link, carried).RunServer)
+	return c.h.runLink(ctx, c.contact, c.link, c.h.link(c.contact, open, c.link, first).RunServer)
 }
 
 // Release frees a claim that won't run.
