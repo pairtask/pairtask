@@ -108,7 +108,7 @@ func TestOperatorSessionQueueSnapshotSupersedesEventsButKeepsResponses(t *testin
 	sessionQueueEmpty(t, s)
 }
 
-func TestOperatorSessionQueueRequestIDsStayInFlightUntilWritten(t *testing.T) {
+func TestOperatorSessionQueueRequestIDsStayInFlightUntilHandedToWriter(t *testing.T) {
 	s := NewOperatorSession(1)
 	for i := 0; i < 8; i++ {
 		id := fmt.Sprintf("request-%d", i)
@@ -125,14 +125,14 @@ func TestOperatorSessionQueueRequestIDsStayInFlightUntilWritten(t *testing.T) {
 	}
 	first := sessionQueueNext(t, s)
 	if err := s.Begin(first.RequestID); err == nil {
-		t.Fatal("dequeue freed ID before write finished")
+		t.Fatal("dequeue freed ID before handoff to writer")
 	}
 	if err := s.Begin("ninth"); err == nil {
-		t.Fatal("dequeue freed capacity before write finished")
+		t.Fatal("dequeue freed capacity before handoff to writer")
 	}
-	s.Written(first)
+	s.Handed(first)
 	if err := s.Begin(first.RequestID); err != nil {
-		t.Fatalf("written ID not reusable: %v", err)
+		t.Fatalf("handed-off ID not reusable: %v", err)
 	}
 }
 

@@ -54,7 +54,8 @@ func NewOperatorSession(uid int) *OperatorSession {
 	return &OperatorSession{ID: uuid.NewString(), UID: uid, OpenedAt: time.Now().UTC(), inflight: map[string]bool{}, wake: make(chan struct{}, 1)}
 }
 
-// Begin admits a request; its ID is released when its response is written.
+// Begin admits a request; its ID is released when the writer takes its
+// response (Handed).
 func (s *OperatorSession) Begin(requestID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,8 +119,11 @@ func (s *OperatorSession) Next(ctx context.Context) (protocol.Message, bool) {
 	}
 }
 
-// Written frees a response's request ID only after it reached the connection.
-func (s *OperatorSession) Written(msg protocol.Message) {
+// Handed frees a response's request ID once the single writer has taken the
+// response to write, before its bytes go out. A client may reuse the ID as
+// soon as it reads that response, and is never refused for it; the writer is
+// FIFO, so an answer to a reused ID still comes after the earlier one.
+func (s *OperatorSession) Handed(msg protocol.Message) {
 	if msg.RequestID == "" {
 		return
 	}
