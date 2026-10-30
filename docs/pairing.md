@@ -150,6 +150,17 @@ Check from B: `nc -vz A_IP 7445`.
 - **`/pair` shows the redemption `failed`:** fix the network, then repeat
   steps 2 to 5 with a new code.
 
+## If A's address changed
+
+The ⇄ line on B says which address it dials: `this side dials A_IP:7445`.
+When A gets another address (a new DHCP lease, another network), B keeps
+dialling the old one, and messages stay queued. Pair again from B to the new
+address: repeat steps 2 to 5. A recognises B as the same workspace, so the
+contact, its name and the history on both sides stay; B dials the new
+address from then on, drops any link to the old one and retries at once.
+Only a newer pairing moves the address, so an older one finishing late
+never moves it back.
+
 ## Change or stop
 
 ```sh

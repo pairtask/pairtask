@@ -217,7 +217,7 @@ func (s *Store) RecordDecision(ctx context.Context, opID string, decision peer.P
 			return next, err
 		}
 		if next.State == peer.JoinContact {
-			if err := upsertContact(ctx, tx, peer.JoinerContact(next)); err != nil {
+			if err := upsertContact(ctx, tx, peer.JoinerContact(next), next.OperationID); err != nil {
 				return peer.JoinRecord{}, err
 			}
 		}
