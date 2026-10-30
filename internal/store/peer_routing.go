@@ -268,33 +268,47 @@ func (p *PeerMessages) QueueAgentRead(ctx context.Context, localID, agent string
 		return err
 	}
 	defer tx.Rollback()
-	var contact, remoteID, recipients string
-	err = tx.QueryRowContext(ctx, `SELECT contact, remote_id, recipients FROM remote_imports WHERE local_id = ? AND state = 'imported'`,
-		localID).Scan(&contact, &remoteID, &recipients)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	agents, err := groupList(sql.NullString{String: recipients, Valid: true})
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(agents, agent) {
-		return messaging.ErrNotRecipient
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_agent_reads (contact, message_id, agent, read_at, state) VALUES (?, ?, ?, ?, 'pending')
-ON CONFLICT DO NOTHING`, contact, remoteID, agent, msgStamp(at)); err != nil {
-		return err
-	}
-	// The oldest pending past the bound are dropped, as read receipts are.
-	if _, err := tx.ExecContext(ctx, `UPDATE peer_agent_reads SET state = 'dropped'
-WHERE rowid IN (SELECT rowid FROM peer_agent_reads WHERE contact = ?1 AND state = 'pending'
-    ORDER BY read_at DESC, rowid DESC LIMIT -1 OFFSET ?2)`, contact, messaging.Receipts); err != nil {
+	if _, err := queueAgentReadIn(ctx, tx, agentRead{localID, agent, at}); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// agentRead is a local agent's acknowledgment of a local message.
+type agentRead struct {
+	localID, agent string
+	at             time.Time
+}
+
+// queueAgentReadIn is QueueAgentRead inside a transaction, the agent's
+// acknowledgment's own: it answers the contact the read is queued for, ""
+// when the message isn't an import.
+func queueAgentReadIn(ctx context.Context, tx *sql.Tx, r agentRead) (string, error) {
+	var contact, remoteID, recipients string
+	err := tx.QueryRowContext(ctx, `SELECT contact, remote_id, recipients FROM remote_imports WHERE local_id = ? AND state = 'imported'`,
+		r.localID).Scan(&contact, &remoteID, &recipients)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	agents, err := groupList(sql.NullString{String: recipients, Valid: true})
+	if err != nil {
+		return "", err
+	}
+	if !slices.Contains(agents, r.agent) {
+		return "", messaging.ErrNotRecipient
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_agent_reads (contact, message_id, agent, read_at, state) VALUES (?, ?, ?, ?, 'pending')
+ON CONFLICT DO NOTHING`, contact, remoteID, r.agent, msgStamp(r.at)); err != nil {
+		return "", err
+	}
+	// The oldest pending past the bound are dropped, as read receipts are.
+	_, err = tx.ExecContext(ctx, `UPDATE peer_agent_reads SET state = 'dropped'
+WHERE rowid IN (SELECT rowid FROM peer_agent_reads WHERE contact = ?1 AND state = 'pending'
+    ORDER BY read_at DESC, rowid DESC LIMIT -1 OFFSET ?2)`, contact, messaging.Receipts)
+	return contact, err
 }
 
 // PendingAgentReads is the oldest agent acknowledgments not yet confirmed

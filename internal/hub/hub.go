@@ -502,7 +502,7 @@ func (h *Hub) acknowledge(ctx context.Context, clients map[string]*Client, in In
 		return
 	}
 	h.noteAck(in, report)
-	h.remoteAcknowledged(ctx, msg, in.From.ID)
+	h.remoteAcknowledged(msg, report)
 	out := protocol.Message{Type: protocol.TypeAck, MessageID: msg.MessageID, Stage: msg.Stage, AgentID: in.From.ID, SessionID: in.From.SessionID}
 	// Adapter receipts are confirmed to the sender. Explicit agent acknowledgments
 	// are also confirmed to the acknowledging agent, only after the database commit.

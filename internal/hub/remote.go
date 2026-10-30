@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
@@ -18,8 +17,13 @@ import (
 // sequence, and hands it to those connected at v12. An agent's reply to one
 // goes back to the contact, and its acknowledgment too.
 
-// importBatch is how many staged messages one pass imports.
-const importBatch = 64
+// importBatch is how many staged messages one page holds; importPass how
+// many one pass tries, so ones a full inbox holds back never keep the
+// others waiting.
+const (
+	importBatch = 64
+	importPass  = 1024
+)
 
 // importsDue asks the loop for an import pass. Safe from any goroutine; it
 // never blocks.
@@ -37,17 +41,24 @@ func (h *Hub) drainImports(ctx context.Context, clients map[string]*Client) {
 	if h.store == nil {
 		return // a hub without storage stages nothing
 	}
-	pending, err := h.store.PendingImports(ctx, importBatch)
-	if err != nil {
-		h.log.Error("staged messages not read", "error", err)
-		return
-	}
+	var after int64
 	progressed := false
-	for _, imp := range pending {
-		progressed = h.importOne(ctx, clients, imp) || progressed
+	for tried := 0; tried < importPass; tried += importBatch {
+		pending, err := h.store.PendingImportsAfter(ctx, after, importBatch)
+		if err != nil {
+			h.log.Error("staged messages not read", "error", err)
+			return
+		}
+		for _, imp := range pending {
+			progressed = h.importOne(ctx, clients, imp) || progressed
+			after = imp.Order
+		}
+		if len(pending) < importBatch {
+			return
+		}
 	}
-	if progressed && len(pending) == importBatch {
-		h.importsDue()
+	if progressed {
+		h.importsDue() // more than one pass tries
 	}
 }
 
@@ -86,27 +97,17 @@ func remoteSessions(clients map[string]*Client, agents []string) map[string]stri
 	return sessions
 }
 
-// remoteAcknowledged sends an agent's acknowledgment of an imported message
-// back to its contact. Any acknowledgment may free inbox room a staged
-// message waits for.
-func (h *Hub) remoteAcknowledged(ctx context.Context, msg protocol.Message, agent string) {
+// remoteAcknowledged sends an agent's acknowledgment of an imported
+// message, queued with it, to its contact. Any acknowledgment may free
+// inbox room a staged message waits for.
+func (h *Hub) remoteAcknowledged(msg protocol.Message, report store.AckReport) {
 	if msg.Stage != protocol.StageAgentAcknowledged {
 		return
 	}
 	h.importsDue()
-	if !strings.HasPrefix(msg.MessageID, "remote:") {
-		return
+	if report.RemoteContact != "" {
+		h.SyncMessages(report.RemoteContact)
 	}
-	contact, found, err := h.store.ImportContact(ctx, msg.MessageID)
-	if err != nil || !found {
-		return
-	}
-	peer := h.store.PeerMessages()
-	if err := peer.QueueAgentRead(ctx, msg.MessageID, agent, time.Now()); err != nil {
-		h.log.Error("agent acknowledgment not queued for the contact", "error", err)
-		return
-	}
-	h.SyncMessages(contact)
 }
 
 // routeRemoteReply routes an agent's reply to an imported message back to
@@ -127,7 +128,8 @@ func (h *Hub) routeRemoteReply(ctx context.Context, clients map[string]*Client, 
 		return true
 	}
 	if out.AckRequested {
-		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Durable: out.Durable})
+		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted,
+			Seq: out.Seq, Durable: out.Durable, Repeated: out.Repeated})
 	}
 	h.SyncMessages(parent.Contact)
 	h.MessagesChanged(parent.Contact)
@@ -142,9 +144,13 @@ func (h *Hub) queueRemoteReply(ctx context.Context, in Inbound, parent store.Rem
 	ts := time.Now().UTC()
 	out := in.Msg
 	out.Seq, out.TS, out.From, out.SessionID, out.Origin = h.seq+1, &ts, in.From.ID, in.From.SessionID, protocol.OriginAgent
-	_, err := h.store.QueueRemoteReply(ctx, store.RemoteReply{Msg: out, SenderSession: in.From.SessionID, Parent: parent.LocalID, Text: text, Now: ts})
+	result, err := h.store.QueueRemoteReply(ctx, store.RemoteReply{Msg: out, SenderSession: in.From.SessionID, Parent: parent.LocalID, Text: text, Now: ts})
 	if err != nil {
 		return out, remoteReplyError(err)
+	}
+	if result.Repeated {
+		out.Seq, out.Repeated = result.Seq, true
+		return out, nil
 	}
 	h.seq++
 	return out, nil
