@@ -42,6 +42,7 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import pairing_agent_checks  # noqa: E402
 import pairing_live_checks  # noqa: E402
 import pairing_routing_checks  # noqa: E402
 import pairing_publish_checks  # noqa: E402
@@ -158,6 +159,19 @@ class Deployment:
     def operator(self, *args, stdin=None):
         """secured's own CLI against its operator socket, as root."""
         return self.execute("secured", "pairtask", "operator", "pair", *args, "--socket", SECURED_OPERATOR, stdin=stdin)
+
+    def secured_agent(self, script, *args):
+        """A Python script with its arguments, as the workspace's agent user
+        on the secured broker's socket."""
+        return self.execute("workspace", "runuser", "-u", "agent", "--", "python3", "-", *args, stdin=script)
+
+    def agent_online(self, agent_id):
+        """The agent has a connected session on the secured broker."""
+        result = self.execute("workspace", "runuser", "-u", "agent", "--", "pairtask", "status", "--json")
+        if result.returncode != 0:
+            return False
+        sessions = json.loads(result.stdout).get("sessions") or []
+        return any(s.get("agent_id") == agent_id and s.get("state") == "transport_connected" for s in sessions)
 
     def operator_cli(self, *args):
         """Any `pairtask operator` command in secured, as root."""
@@ -414,7 +428,7 @@ def route_ready(deployment):
 def prove_live(deployment, host):
     """Instant messages both ways over the live link, then after restarting
     the relay and the egress forwarder that carry it; then to and from an
-    agent of the host's."""
+    agent of the host's, and agents of each side writing first."""
     secured_key = snapshot(deployment.operator("status", "--json"))["self_identity"]
     host_key = snapshot(host.pair("status", "--json"))["self_identity"]
 
@@ -425,7 +439,7 @@ def prove_live(deployment, host):
 
     sides = ((deployment.operator_cli, host_key), (host.operator_cli, secured_key))
     pairing_live_checks.prove_live(sides, restart_relays)
-    pairing_routing_checks.prove_routing(sides, host.agent_socket)
+    pairing_routing_checks.prove_routing(sides, host.agent_socket, pairing_agent_checks.prove_agents(sides, deployment))
 
 
 def exercise(args, deployment, local, publication):

@@ -16,20 +16,20 @@ import uuid
 from pairing_live_checks import INSTANT, await_received, contact, page, require
 
 AGENT = "proof-agent"
-REMOTE_VERSION = 12
+AGENT_VERSION = 13  # agents of paired workspaces, and writing to one first
 
 
 class Agent:
-    """A minimal agent on a broker's agent socket: JSON lines, protocol 12."""
+    """A minimal agent on a broker's agent socket: JSON lines, protocol 13."""
 
     def __init__(self, path, agent_id):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(INSTANT)
         self.sock.connect(path)
         self.reader = self.sock.makefile("r", encoding="utf-8")
-        self.send({"type": "hello", "agent_id": agent_id, "protocol_version": REMOTE_VERSION})
+        self.send({"type": "hello", "agent_id": agent_id, "protocol_version": AGENT_VERSION})
         welcome = self.next_of("welcome", INSTANT)
-        require(welcome.get("protocol_version") == REMOTE_VERSION, f"agent not at protocol {REMOTE_VERSION}: {welcome}")
+        require(welcome.get("protocol_version") == AGENT_VERSION, f"agent not at protocol {AGENT_VERSION}: {welcome}")
 
     def send(self, frame):
         self.sock.sendall((json.dumps(frame) + "\n").encode())
@@ -128,15 +128,18 @@ def reply_back(sides, agent, ping, msg):
     print(f"PASS: {AGENT}'s acknowledgment and reply back to the operator in {elapsed:.1f}s.", flush=True)
 
 
-def prove_routing(sides, agent_socket):
+def prove_routing(sides, agent_socket, agents_across=None):
     """sides as for prove_live, secured first; agent_socket is the host
-    broker's agent socket."""
+    broker's agent socket; agents_across, given the host's agent, proves
+    agents writing first across, both ways."""
     _, (host, secured_key) = sides
     contact(host, "share", secured_key, AGENT)
     agent = Agent(agent_socket, AGENT)
     try:
         ping, msg = to_agent(sides, agent)
         reply_back(sides, agent, ping, msg)
+        print("PASS: a paired workspace's operator and agent talk both ways over the live link.", flush=True)
+        if agents_across is not None:
+            agents_across(agent)
     finally:
         agent.close()
-    print("PASS: a paired workspace's operator and agent talk both ways over the live link.", flush=True)
