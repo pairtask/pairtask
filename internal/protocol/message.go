@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = ContactMessagesVersion
+	Version                = RemoteVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4

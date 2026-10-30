@@ -333,3 +333,77 @@ func optionalString(row *sql.Row) (string, error) {
 	}
 	return s, err
 }
+
+// RemoteParent is the import with this local ID, when it was imported: the
+// message an agent's reply with that in_reply_to answers.
+func (s *Store) RemoteParent(ctx context.Context, localID string) (RemoteImport, bool, error) {
+	imp, state, err := scanImport(s.db.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
+WHERE ri.local_id = ?`, localID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return RemoteImport{}, false, nil
+	}
+	return imp, err == nil && state == ImportImported, err
+}
+
+// RemoteReply is a local agent's reply to an imported message.
+type RemoteReply struct {
+	Msg           protocol.Message // as routed here: its ID, seq, sender and recipient
+	SenderSession string
+	Parent        string // the import's local ID
+	Text          string
+	Now           time.Time
+}
+
+// RemoteSender is who an import shows as its sender here, and so whom a
+// reply to it is addressed to: the remote agent, or the operator.
+func (imp RemoteImport) RemoteSender() string {
+	if imp.Sender == "" {
+		return protocol.OperatorID
+	}
+	return imp.Sender
+}
+
+// QueueRemoteReply keeps an agent's reply to an imported message in history
+// and queues it to the contact, in one transaction, reading the parent
+// again: the sender must be one of its recipients and the reply addressed
+// to its sender, or it is ErrNotRecipient. It answers the queued row.
+func (s *Store) QueueRemoteReply(ctx context.Context, r RemoteReply) (messaging.Row, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return messaging.Row{}, err
+	}
+	defer tx.Rollback()
+	parent, state, err := scanImport(tx.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
+WHERE ri.local_id = ?`, r.Parent))
+	if err != nil || state != ImportImported {
+		return messaging.Row{}, errors.Join(err, ErrNoImport)
+	}
+	if !slices.Contains(parent.Recipients, r.Msg.From) || r.Msg.To != parent.RemoteSender() {
+		return messaging.Row{}, messaging.ErrNotRecipient
+	}
+	local := r.Msg
+	local.Durable = false // kept as history: it has no inbox here
+	if err := persistMessage(ctx, tx, routedMessage{msg: local, senderSession: r.SenderSession}); err != nil {
+		return messaging.Row{}, err
+	}
+	reply := messaging.Message{ID: r.Msg.MessageID, Text: r.Text, From: r.Msg.From,
+		ReplyTo: messaging.ReplyRef{ID: parent.RemoteID, Author: messaging.ReplyByReceiver}}
+	if parent.Sender != "" {
+		reply.To = []string{parent.Sender}
+	}
+	if !messaging.ValidID(reply.ID) || !messaging.ValidText(reply.Text) || !messaging.ValidRouting(reply) {
+		return messaging.Row{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
+	}
+	key := messageKey{parent.Contact, messaging.DirOut, reply.ID}
+	row, err := queueIn(ctx, tx, outgoing{key: key, m: reply, now: r.Now, localID: r.Msg.MessageID})
+	if err != nil {
+		return messaging.Row{}, err
+	}
+	return row, tx.Commit()
+}
+
+// ImportContact is the contact an imported message came from.
+func (s *Store) ImportContact(ctx context.Context, localID string) (string, bool, error) {
+	contact, err := optionalString(s.db.QueryRowContext(ctx, `SELECT contact FROM remote_imports WHERE local_id = ?`, localID))
+	return contact, contact != "", err
+}

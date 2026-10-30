@@ -43,6 +43,7 @@ type Inbound struct {
 type Hub struct {
 	membership chan membership
 	inbound    chan Inbound
+	imports    chan struct{} // an import pass is due (#222)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -70,6 +71,7 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 	h := &Hub{
 		membership: make(chan membership),
 		inbound:    make(chan Inbound, 64),
+		imports:    make(chan struct{}, 1),
 		store:      st,
 		seq:        startSeq,
 		log:        log,
@@ -138,6 +140,7 @@ func (h *Hub) Run(ctx context.Context) {
 	defer h.settlePairing()
 	defer h.disconnectAll(clients)
 	h.beginPairing(ctx)
+	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {
 		select {
@@ -158,6 +161,9 @@ func (h *Hub) Run(ctx context.Context) {
 
 		case <-h.pair.changed:
 			h.announceBackground()
+
+		case <-h.imports:
+			h.drainImports(ctx, clients)
 		}
 	}
 }
@@ -205,6 +211,9 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	}
 	if err := h.prepareAgentSend(ctx, &in); err != nil {
 		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
+		return
+	}
+	if h.routeRemoteReply(ctx, clients, in) {
 		return
 	}
 	if !h.newSend(ctx, clients, in) {
@@ -493,6 +502,7 @@ func (h *Hub) acknowledge(ctx context.Context, clients map[string]*Client, in In
 		return
 	}
 	h.noteAck(in, report)
+	h.remoteAcknowledged(ctx, msg, in.From.ID)
 	out := protocol.Message{Type: protocol.TypeAck, MessageID: msg.MessageID, Stage: msg.Stage, AgentID: in.From.ID, SessionID: in.From.SessionID}
 	// Adapter receipts are confirmed to the sender. Explicit agent acknowledgments
 	// are also confirmed to the acknowledging agent, only after the database commit.
