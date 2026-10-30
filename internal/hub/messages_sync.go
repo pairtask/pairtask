@@ -143,7 +143,6 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 	}
 	h.recordSync(contact, "", h.messagesWaiting(ctx, contact))
 	if live != nil {
-		h.linkUp(contact)
 		h.goLive(ctx, live)
 	}
 }
@@ -163,7 +162,10 @@ func (h *Hub) retryLive(ctx context.Context, contact string) {
 
 // dialedContact is the contact when it is confirmed and this side dials it.
 func (h *Hub) dialedContact(ctx context.Context, contact string) (peer.Contact, bool) {
-	if !h.mayDial(contact) {
+	if !h.canDial() || h.Live(contact) {
+		return peer.Contact{}, false
+	}
+	if !h.messagePins(contact) {
 		return peer.Contact{}, false
 	}
 	c, found, err := h.store.Contact(ctx, contact)
@@ -175,15 +177,6 @@ func (h *Hub) dialedContact(ctx context.Context, contact string) (peer.Contact, 
 	}
 	h.markDialed(contact)
 	return c, true
-}
-
-// mayDial: this side can dial, holds no link with the contact, and the
-// contact is confirmed.
-func (h *Hub) mayDial(contact string) bool {
-	if !h.canDial() || h.Live(contact) {
-		return false
-	}
-	return h.messagePins(contact)
 }
 
 // canDial: an identity to present and a way to reach a destination.

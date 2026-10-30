@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
@@ -98,6 +99,56 @@ func legacyMessageRound(frames messaging.Frames) ([]messaging.Message, error) {
 	return messages, f.finish()
 }
 
+type legacyRound struct {
+	messages []messaging.Message
+	err      error
+}
+
+type legacyAcceptor struct {
+	listener net.Listener
+	identity *peer.WorkspaceIdentity
+	peerKey  string
+}
+
+func (a legacyAcceptor) round(ctx context.Context) legacyRound {
+	raw, err := a.listener.Accept()
+	if err != nil {
+		return legacyRound{err: err}
+	}
+	defer raw.Close()
+	conn, err := firstcontact.ServerWith(ctx, raw, a.identity, time.Now, firstcontact.ServerOptions{
+		MessagePins: func(key string) bool { return key == a.peerKey },
+	})
+	if err != nil {
+		return legacyRound{err: err}
+	}
+	defer conn.Close()
+	rows, err := legacyMessageRound(conn.MessageFrames(ctx))
+	return legacyRound{rows, err}
+}
+
+func (a legacyAcceptor) serve(ctx context.Context, rounds chan<- legacyRound) {
+	for range 2 {
+		result := a.round(ctx)
+		rounds <- result
+		if result.err != nil {
+			return
+		}
+	}
+}
+
+func awaitLegacyRound(t *testing.T, rounds <-chan legacyRound, id string) {
+	t.Helper()
+	select {
+	case result := <-rounds:
+		operatorNoError(t, result.err)
+		operatorEqual(t, "legacy round message count", len(result.messages), 1)
+		operatorEqual(t, "legacy round ID", result.messages[0].ID, id)
+	case <-time.After(3 * time.Second):
+		t.Fatal("new dialer did not complete a v1 exchange")
+	}
+}
+
 func TestInstantTransportAcceptanceNewDialerFallsBackToV1Peer(t *testing.T) {
 	cfg := redeemConfig()
 	cfg.MessageTick = make(chan time.Time)
@@ -109,48 +160,16 @@ func TestInstantTransportAcceptanceNewDialerFallsBackToV1Peer(t *testing.T) {
 	operatorNoError(t, err)
 	t.Cleanup(func() { ln.Close() })
 	messageJoinedContact(joiner, remote.Fingerprint(), ln.Addr().String())
-	type round struct {
-		messages []messaging.Message
-		err      error
-	}
-	rounds := make(chan round, 2)
+	rounds := make(chan legacyRound, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	go func() {
-		for range 2 {
-			raw, err := ln.Accept()
-			if err != nil {
-				rounds <- round{err: err}
-				return
-			}
-			conn, err := firstcontact.ServerWith(ctx, raw, remote, time.Now, firstcontact.ServerOptions{
-				MessagePins: func(key string) bool { return key == own.Identity.Fingerprint() },
-			})
-			if err != nil {
-				raw.Close()
-				rounds <- round{err: err}
-				return
-			}
-			rows, err := legacyMessageRound(conn.MessageFrames(ctx))
-			conn.Close()
-			rounds <- round{rows, err}
-			if err != nil {
-				return
-			}
-		}
-	}()
+	acceptor := legacyAcceptor{ln, remote, own.Identity.Fingerprint()}
+	go acceptor.serve(ctx, rounds)
+	side := instantSide{joiner, remote.Fingerprint()}
 	for n := 0; n < 2; n++ {
 		id := fmt.Sprintf("legacy-%d", n)
-		instantSend(t, joiner, remote.Fingerprint(), id, "still reaches an old peer")
-		select {
-		case result := <-rounds:
-			operatorNoError(t, result.err)
-			if len(result.messages) != 1 || result.messages[0].ID != id {
-				t.Fatalf("wrong legacy round: %+v", result.messages)
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("new dialer did not complete a v1 exchange")
-		}
+		side.send(t, id, "still reaches an old peer")
+		awaitLegacyRound(t, rounds, id)
 		awaitMessageDelivery(t, joiner.st.PeerMessages(), remote.Fingerprint(), id)
 	}
 }

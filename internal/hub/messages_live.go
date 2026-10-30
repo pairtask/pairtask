@@ -47,10 +47,6 @@ type liveLink struct {
 	serving  bool
 }
 
-func newLiveLink(contact string, serving bool) *liveLink {
-	return &liveLink{contact: contact, wake: make(chan struct{}, 1), stop: make(chan struct{}), serving: serving}
-}
-
 func (l *liveLink) halt() { l.stopOnce.Do(func() { close(l.stop) }) }
 
 // liveWiring is the hub's open links; safe from any goroutine.
@@ -92,7 +88,7 @@ func (h *Hub) claimLive(contact string, serving bool) (*liveLink, bool) {
 	if old != nil {
 		old.halt()
 	}
-	l := newLiveLink(contact, serving)
+	l := &liveLink{contact: contact, wake: make(chan struct{}, 1), stop: make(chan struct{}), serving: serving}
 	w.links[contact] = l
 	return l, true
 }
@@ -167,7 +163,7 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 			}, true
 		},
 		Confirmed: func() bool { return h.messagePins(contact) },
-		More:      func() bool { return h.hasOutgoing(contact) },
+		More:      func() bool { return h.hasOutgoing(l) },
 		Timing:    liveTiming(),
 	}
 	if c := first.Carried; c != nil {
@@ -176,8 +172,9 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 	return link
 }
 
-// hasOutgoing: messages or read receipts still to send to contact.
-func (h *Hub) hasOutgoing(contact string) bool {
+// hasOutgoing: messages or read receipts still to send over the link.
+func (h *Hub) hasOutgoing(l *liveLink) bool {
+	contact := l.contact
 	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
 	defer cancel()
 	s := h.store.PeerMessages()
@@ -213,8 +210,14 @@ type dialedLink struct {
 }
 
 // goLive keeps a dialed link in its own goroutine, so the sync slot that
-// opened it is free again, and reconnects when it ends.
+// opened it is free again, and reconnects when it ends. A round got
+// through, so the contact's reconnection backoff starts again.
 func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
+	w := &h.live
+	w.mu.Lock()
+	w.ready()
+	delete(w.failures, d.link.contact)
+	w.mu.Unlock()
 	h.pair.workers.Add(1)
 	go func() {
 		defer h.pair.workers.Done()
@@ -222,13 +225,14 @@ func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
 		open := func(ctx context.Context) messaging.Frames { return d.conn.MessageFrames(ctx) }
 		err := h.runLink(ctx, d.link, h.link(open, d.link, d.first).RunDialer)
 		h.releaseLive(d.link.contact, d.link)
-		h.afterLink(ctx, d.link.contact, err)
+		h.afterLink(ctx, d.link, err)
 	}()
 }
 
 // afterLink reconnects: at once after a rotation, within a second after the
 // first drop, then backing off up to a minute.
-func (h *Hub) afterLink(ctx context.Context, contact string, err error) {
+func (h *Hub) afterLink(ctx context.Context, l *liveLink, err error) {
+	contact := l.contact
 	if ctx.Err() != nil {
 		return
 	}
@@ -256,36 +260,3 @@ func (h *Hub) liveDelay(contact string) time.Duration {
 	wait := min(liveFirstRetry<<min(failures-1, 6), liveBackoffMax)
 	return min(wait+time.Duration(rand.Int64N(int64(wait)/5*2+1))-wait/5, liveBackoffMax)
 }
-
-// linkUp resets a contact's reconnection backoff after a round got through.
-func (h *Hub) linkUp(contact string) {
-	w := &h.live
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.ready()
-	delete(w.failures, contact)
-}
-
-// LiveClaim is a serving link claimed for a contact's connection.
-type LiveClaim struct {
-	h    *Hub
-	link *liveLink
-}
-
-// ClaimLink claims a serving link for contact, replacing one still open.
-func (h *Hub) ClaimLink(contact string) (*LiveClaim, bool) {
-	l, ok := h.claimLive(contact, true)
-	if !ok {
-		return nil, false
-	}
-	return &LiveClaim{h: h, link: l}, true
-}
-
-// Run keeps the serving link until it ends, is replaced, or ctx ends.
-func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, first FirstRound) error {
-	defer c.Release()
-	return c.h.runLink(ctx, c.link, c.h.link(open, c.link, first).RunServer)
-}
-
-// Release frees a claim that won't run.
-func (c *LiveClaim) Release() { c.h.releaseLive(c.link.contact, c.link) }
