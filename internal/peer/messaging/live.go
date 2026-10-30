@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"time"
 )
@@ -105,24 +106,31 @@ func (l *Link) RunDialer(ctx context.Context) error {
 
 // dialerIdle handles what the dialed side sent between rounds.
 func (l *Link) dialerIdle(ctx context.Context, r received, missed *int) error {
-	if r.err != nil {
-		return r.err
-	}
-	kind, err := Kind(r.frame)
+	kind, err := expectSignal(r, FramePending, FramePong)
 	if err != nil {
 		return err
 	}
-	if err := DecodeSignal(r.frame, kind); err != nil {
-		return err
-	}
-	switch kind {
-	case FramePending:
+	if kind == FramePending {
 		return l.dialRound(ctx, missed)
-	case FramePong:
-		*missed = 0
-		return nil
 	}
-	return fmt.Errorf("%w: unexpected frame %d while idle", ErrProtocol, kind)
+	*missed = 0
+	return nil
+}
+
+// expectSignal is the field-less live frame received, when it is one of
+// kinds; anything else is a protocol error.
+func expectSignal(r received, kinds ...byte) (byte, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	kind, err := Kind(r.frame)
+	if err != nil {
+		return 0, err
+	}
+	if !slices.Contains(kinds, kind) {
+		return 0, fmt.Errorf("%w: unexpected frame %d", ErrProtocol, kind)
+	}
+	return kind, DecodeSignal(r.frame, kind)
 }
 
 // ping sends a heartbeat, unless two went unanswered already; an idle link
@@ -192,23 +200,11 @@ func (l *Link) awaitAck(ctx context.Context, missed *int) error {
 	frames := l.frames(ctx)
 	for {
 		frame, err := frames.Recv()
-		if err != nil {
+		kind, err := expectSignal(received{frame, err}, FrameRoundAck, FramePong, FramePending)
+		if err != nil || kind == FrameRoundAck {
 			return err
 		}
-		kind, err := Kind(frame)
-		if err != nil {
-			return err
-		}
-		if kind != FrameRoundAck && kind != FramePong && kind != FramePending {
-			return fmt.Errorf("%w: unexpected frame %d before RoundAck", ErrProtocol, kind)
-		}
-		if err := DecodeSignal(frame, kind); err != nil {
-			return err
-		}
-		switch kind {
-		case FrameRoundAck:
-			return nil
-		case FramePong:
+		if kind == FramePong {
 			*missed = 0
 		}
 	}
@@ -254,42 +250,39 @@ func (l *Link) offerPending(ctx context.Context, pending *bool) error {
 
 // serverIdle handles what the dialer sent between rounds.
 func (l *Link) serverIdle(ctx context.Context, r received, pending *bool) error {
-	if r.err != nil {
-		return r.err
-	}
-	kind, err := Kind(r.frame)
+	kind, err := expectSignal(r, FramePing, FrameRound)
 	if err != nil {
-		return err
-	}
-	if kind != FramePing && kind != FrameRound {
-		return fmt.Errorf("%w: unexpected frame %d while idle", ErrProtocol, kind)
-	}
-	if err := DecodeSignal(r.frame, kind); err != nil {
 		return err
 	}
 	if kind == FramePing {
-		if err := l.checkConfirmed(); err != nil {
-			return err
-		}
-		if err := l.idleSignal(ctx, FramePong); err != nil {
-			return err
-		}
-		// Retry what an earlier round left here, refusals included, once
-		// per heartbeat.
-		if l.More != nil && l.More() {
-			return l.offerPending(ctx, pending)
-		}
-		return nil
+		return l.answerPing(ctx, pending)
 	}
 	*pending = false
 	done, err := l.serveRound(ctx)
-	if err != nil {
+	if err != nil || !progressed(done) {
 		return err
 	}
-	if progressed(done) && l.More != nil && l.More() {
-		return l.offerPending(ctx, pending)
+	return l.offerLeft(ctx, pending)
+}
+
+// answerPing answers the dialer's heartbeat, then offers what an earlier
+// round left here, refusals included: a retry once per heartbeat.
+func (l *Link) answerPing(ctx context.Context, pending *bool) error {
+	if err := l.checkConfirmed(); err != nil {
+		return err
 	}
-	return nil
+	if err := l.idleSignal(ctx, FramePong); err != nil {
+		return err
+	}
+	return l.offerLeft(ctx, pending)
+}
+
+// offerLeft tells the dialer this side has something, when it has.
+func (l *Link) offerLeft(ctx context.Context, pending *bool) error {
+	if l.More == nil || !l.More() {
+		return nil
+	}
+	return l.offerPending(ctx, pending)
 }
 
 // serveRound claims the contact, waiting while a replaced link or another

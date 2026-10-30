@@ -73,13 +73,7 @@ func newInstantPairSeeded(t *testing.T, seed func(*instantPair)) *instantPair {
 	}
 	close(ready)
 	joiner.h.SyncMessages(inviterKey)
-	deadline := time.Now().Add(3 * time.Second)
-	for joiner.h.MessageSyncStatus(inviterKey).LastSuccess.IsZero() {
-		if time.Now().After(deadline) {
-			t.Fatal("initial empty exchange did not complete")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	awaitInstantExchange(t, instantSide{joiner, inviterKey}, "initial empty exchange did not complete")
 
 	return p
 }
@@ -111,25 +105,25 @@ func TestInstantTransportAcceptanceInviterSendsAfterIdleExchange(t *testing.T) {
 	operatorEqual(t, "exact text", response.ContactPage.Messages[0].Text, "send without waiting for a poll")
 }
 
-func TestInstantTransportAcceptanceBothDirectionsAndReadReceipts(t *testing.T) {
-	p := newInstantPair(t)
-	// More than a short session's batch, to expose a link that sleeps after
-	// draining only its first batch. Identical IDs on opposite sides are valid.
-	const count = messaging.SessionMessages + 1
-	done := make(chan struct{}, 2)
-	for _, side := range []struct {
-		f         *redeemOperatorFixture
-		key, body string
-	}{
-		{p.inviter, p.joinerKey, "from inviter"}, {p.joiner, p.inviterKey, "from joiner"},
-	} {
-		go func() {
-			defer func() { done <- struct{}{} }()
-			for n := 0; n < count; n++ {
-				instantSend(t, side.f, side.key, fmt.Sprintf("both-%d", n), side.body)
-			}
-		}()
+type instantSide struct {
+	f   *redeemOperatorFixture
+	key string
+}
+
+func (p *instantPair) sides() []instantSide {
+	return []instantSide{{p.inviter, p.joinerKey}, {p.joiner, p.inviterKey}}
+}
+
+func (side instantSide) sendBatch(t *testing.T, count int, body string, done chan<- struct{}) {
+	t.Helper()
+	defer func() { done <- struct{}{} }()
+	for n := 0; n < count; n++ {
+		instantSend(t, side.f, side.key, fmt.Sprintf("both-%d", n), body)
 	}
+}
+
+func awaitInstantSends(t *testing.T, done <-chan struct{}) {
+	t.Helper()
 	for range 2 {
 		select {
 		case <-done:
@@ -137,61 +131,76 @@ func TestInstantTransportAcceptanceBothDirectionsAndReadReceipts(t *testing.T) {
 			t.Fatal("concurrent sends blocked")
 		}
 	}
-	for _, side := range []struct {
-		f   *redeemOperatorFixture
-		key string
-	}{
-		{p.inviter, p.joinerKey}, {p.joiner, p.inviterKey},
-	} {
-		for n := 0; n < count; n++ {
-			awaitMessageDelivery(t, side.f.st.PeerMessages(), side.key, fmt.Sprintf("both-%d", n))
+}
+
+func (side instantSide) awaitBatch(t *testing.T, count int) {
+	t.Helper()
+	for n := 0; n < count; n++ {
+		awaitMessageDelivery(t, side.f.st.PeerMessages(), side.key, fmt.Sprintf("both-%d", n))
+	}
+}
+
+func (side instantSide) markFirstRead(t *testing.T) {
+	t.Helper()
+	response := side.f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpRead,
+		ContactKey: side.key, MessageID: "read-first", ContactRead: []string{"both-0"}})
+	operatorEqual(t, "read accepted", response.Type, protocol.TypeOperatorContactResult)
+	if response.ContactMarked == nil || *response.ContactMarked != 1 {
+		t.Fatalf("read not marked: %+v", response)
+	}
+}
+
+func instantReadStates(rows []messaging.Row) (read, confirmed bool) {
+	for _, row := range rows {
+		if row.ID != "both-0" {
+			continue
+		}
+		switch row.Direction {
+		case messaging.DirOut:
+			read = row.State == messaging.StateRead
+		case messaging.DirIn:
+			confirmed = row.Receipt == messaging.ReceiptConfirmed
 		}
 	}
-	// Verify both outboxes before marking either inbox read: read receipts
-	// may overtake a later delivery-state observation on a live link.
-	for _, side := range []struct {
-		f   *redeemOperatorFixture
-		key string
-	}{
-		{p.inviter, p.joinerKey}, {p.joiner, p.inviterKey},
-	} {
-		response := side.f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpRead,
-			ContactKey: side.key, MessageID: "read-first", ContactRead: []string{"both-0"}})
-		operatorEqual(t, "read accepted", response.Type, protocol.TypeOperatorContactResult)
-		if response.ContactMarked == nil || *response.ContactMarked != 1 {
-			t.Fatalf("read not marked: %+v", response)
+	return
+}
+
+func (side instantSide) awaitReadReceipt(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rows, _, err := side.f.st.PeerMessages().Page(context.Background(), side.key, 0, 64)
+		operatorNoError(t, err)
+		read, confirmed := instantReadStates(rows)
+		if read && confirmed {
+			return
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("read receipt not propagated: read=%v confirmed=%v", read, confirmed)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	for _, side := range []struct {
-		f   *redeemOperatorFixture
-		key string
-	}{
-		{p.inviter, p.joinerKey}, {p.joiner, p.inviterKey},
-	} {
-		deadline := time.Now().Add(3 * time.Second)
-		for {
-			rows, _, err := side.f.st.PeerMessages().Page(context.Background(), side.key, 0, 64)
-			operatorNoError(t, err)
-			read, confirmed := false, false
-			for _, row := range rows {
-				if row.ID != "both-0" {
-					continue
-				}
-				if row.Direction == messaging.DirOut {
-					read = row.State == messaging.StateRead
-				}
-				if row.Direction == messaging.DirIn {
-					confirmed = row.Receipt == messaging.ReceiptConfirmed
-				}
-			}
-			if read && confirmed {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("read receipt not propagated: read=%v confirmed=%v", read, confirmed)
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
+}
+
+func TestInstantTransportAcceptanceBothDirectionsAndReadReceipts(t *testing.T) {
+	p := newInstantPair(t)
+	// More than one session batch; identical IDs on opposite sides are valid.
+	const count = messaging.SessionMessages + 1
+	sides := p.sides()
+	done := make(chan struct{}, 2)
+	go sides[0].sendBatch(t, count, "from inviter", done)
+	go sides[1].sendBatch(t, count, "from joiner", done)
+	awaitInstantSends(t, done)
+	for _, side := range sides {
+		side.awaitBatch(t, count)
+	}
+	// Observe both outboxes BEFORE reading either inbox; receipts can overtake
+	// a later delivery-state observation on a live link.
+	for _, side := range sides {
+		side.markFirstRead(t)
+	}
+	for _, side := range sides {
+		side.awaitReadReceipt(t)
 	}
 	p.assertOneConnection(t)
 }
@@ -223,18 +232,20 @@ func TestInstantTransportAcceptanceReconnectWithoutPeriodicTick(t *testing.T) {
 
 // Idle contacts must not consume the four short-session worker slots and
 // prevent the fifth contact from establishing a usable live connection.
-func TestInstantTransportAcceptanceFifthContactNotStarved(t *testing.T) {
-	cfg := redeemConfig()
-	cfg.MessageTick = make(chan time.Time)
-	inviter := newRedeemOperator(t, cfg, "")
-	ep, err := inviter.h.PairingEndpoint()
-	operatorNoError(t, err)
-	route := relayToPairing(t, inviter)
-	type contact struct {
-		f   *redeemOperatorFixture
-		key string
+func awaitInstantExchange(t *testing.T, side instantSide, failure string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for side.f.h.MessageSyncStatus(side.key).LastSuccess.IsZero() {
+		if time.Now().After(deadline) {
+			t.Fatal(failure)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	contacts := make([]contact, 0, 5)
+}
+
+func instantIdleContacts(t *testing.T, inviter *redeemOperatorFixture, key, route string) []instantSide {
+	t.Helper()
+	contacts := make([]instantSide, 0, 5)
 	for n := 0; n < 5; n++ {
 		cfg := redeemConfig()
 		cfg.MessageTick = make(chan time.Time)
@@ -242,27 +253,37 @@ func TestInstantTransportAcceptanceFifthContactNotStarved(t *testing.T) {
 		joined, err := joiner.h.PairingEndpoint()
 		operatorNoError(t, err)
 		messageConfirm(inviter, joined.Identity, n+1)
-		messageJoinedContact(joiner, ep.Identity.Fingerprint(), route)
-		joiner.h.SyncMessages(ep.Identity.Fingerprint())
-		deadline := time.Now().Add(3 * time.Second)
-		for joiner.h.MessageSyncStatus(ep.Identity.Fingerprint()).LastSuccess.IsZero() {
-			if time.Now().After(deadline) {
-				t.Fatalf("contact %d starved by earlier idle contacts", n+1)
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		contacts = append(contacts, contact{joiner, joined.Identity.Fingerprint()})
+		messageJoinedContact(joiner, key, route)
+		joiner.h.SyncMessages(key)
+		awaitInstantExchange(t, instantSide{joiner, key}, fmt.Sprintf("contact %d starved by earlier idle contacts", n+1))
+		contacts = append(contacts, instantSide{joiner, joined.Identity.Fingerprint()})
 	}
+	return contacts
+}
+
+func assertInstantContactMessage(t *testing.T, side instantSide, id string) {
+	t.Helper()
+	response := side.f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: side.key})
+	if response.ContactPage == nil || len(response.ContactPage.Messages) != 1 {
+		t.Fatalf("contact did not receive its own message: %+v", response)
+	}
+	operatorEqual(t, "correct contact's message", response.ContactPage.Messages[0].ID, id)
+}
+
+func TestInstantTransportAcceptanceFifthContactNotStarved(t *testing.T) {
+	cfg := redeemConfig()
+	cfg.MessageTick = make(chan time.Time)
+	inviter := newRedeemOperator(t, cfg, "")
+	ep, err := inviter.h.PairingEndpoint()
+	operatorNoError(t, err)
+	key := ep.Identity.Fingerprint()
+	contacts := instantIdleContacts(t, inviter, key, relayToPairing(t, inviter))
 	// All five connections are idle before any message is sent.
 	for n, c := range contacts {
 		id := fmt.Sprintf("fair-%d", n)
 		instantSend(t, inviter, c.key, id, "all contacts remain reachable")
 		awaitMessageDelivery(t, inviter.st.PeerMessages(), c.key, id)
-		response := c.f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: ep.Identity.Fingerprint()})
-		if response.ContactPage == nil || len(response.ContactPage.Messages) != 1 {
-			t.Fatalf("contact %d did not receive its own message: %+v", n+1, response)
-		}
-		operatorEqual(t, "correct contact's message", response.ContactPage.Messages[0].ID, id)
+		assertInstantContactMessage(t, instantSide{c.f, key}, id)
 	}
 }
 

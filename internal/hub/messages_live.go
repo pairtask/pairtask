@@ -37,16 +37,18 @@ func liveTiming() messaging.LinkTiming {
 		Rotate: liveRotate, MaxAge: liveMaxAge}
 }
 
-// liveLink is one open link's handle: its wake token and its stop.
+// liveLink is one open link's handle: its contact, its wake token and its
+// stop.
 type liveLink struct {
+	contact  string
 	wake     chan struct{}
 	stop     chan struct{}
 	stopOnce sync.Once
 	serving  bool
 }
 
-func newLiveLink(serving bool) *liveLink {
-	return &liveLink{wake: make(chan struct{}, 1), stop: make(chan struct{}), serving: serving}
+func newLiveLink(contact string, serving bool) *liveLink {
+	return &liveLink{contact: contact, wake: make(chan struct{}, 1), stop: make(chan struct{}), serving: serving}
 }
 
 func (l *liveLink) halt() { l.stopOnce.Do(func() { close(l.stop) }) }
@@ -90,7 +92,7 @@ func (h *Hub) claimLive(contact string, serving bool) (*liveLink, bool) {
 	if old != nil {
 		old.halt()
 	}
-	l := newLiveLink(serving)
+	l := newLiveLink(contact, serving)
 	w.links[contact] = l
 	return l, true
 }
@@ -139,7 +141,8 @@ func (h *Hub) Live(contact string) bool {
 
 // link is a contact's live link over a connection's frames; carried is
 // what its first round moved.
-func (h *Hub) link(contact string, open func(context.Context) messaging.Frames, l *liveLink, carried *messaging.Counted) *messaging.Link {
+func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, carried *messaging.Counted) *messaging.Link {
+	contact := l.contact
 	link := &messaging.Link{
 		Session: messaging.Session{Store: h.store.PeerMessages(), Contact: contact, Now: h.pair.cfg.Clock},
 		Open:    open,
@@ -181,8 +184,8 @@ func (h *Hub) hasOutgoing(contact string) bool {
 
 // runLink keeps a link until it ends or is stopped. Its opening and its
 // end are news to the operator: messages leave at once only while it's up.
-func (h *Hub) runLink(ctx context.Context, contact string, l *liveLink, run func(context.Context) error) error {
-	h.MessagesChanged(contact) // its end is announced by releaseLive, once the registry says so
+func (h *Hub) runLink(ctx context.Context, l *liveLink, run func(context.Context) error) error {
+	h.MessagesChanged(l.contact) // its end is announced by releaseLive, once the registry says so
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -204,15 +207,15 @@ type dialedLink struct {
 
 // goLive keeps a dialed link in its own goroutine, so the sync slot that
 // opened it is free again, and reconnects when it ends.
-func (h *Hub) goLive(ctx context.Context, contact string, d *dialedLink) {
+func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
 	h.pair.workers.Add(1)
 	go func() {
 		defer h.pair.workers.Done()
 		defer d.conn.Close()
 		open := func(ctx context.Context) messaging.Frames { return d.conn.MessageFrames(ctx) }
-		err := h.runLink(ctx, contact, d.link, h.link(contact, open, d.link, d.carried).RunDialer)
-		h.releaseLive(contact, d.link)
-		h.afterLink(ctx, contact, err)
+		err := h.runLink(ctx, d.link, h.link(open, d.link, d.carried).RunDialer)
+		h.releaseLive(d.link.contact, d.link)
+		h.afterLink(ctx, d.link.contact, err)
 	}()
 }
 
@@ -258,9 +261,8 @@ func (h *Hub) linkUp(contact string) {
 
 // LiveClaim is a serving link claimed for a contact's connection.
 type LiveClaim struct {
-	h       *Hub
-	contact string
-	link    *liveLink
+	h    *Hub
+	link *liveLink
 }
 
 // ClaimLink claims a serving link for contact, replacing one still open.
@@ -269,15 +271,15 @@ func (h *Hub) ClaimLink(contact string) (*LiveClaim, bool) {
 	if !ok {
 		return nil, false
 	}
-	return &LiveClaim{h: h, contact: contact, link: l}, true
+	return &LiveClaim{h: h, link: l}, true
 }
 
 // Run keeps the serving link until it ends, is replaced, or ctx ends;
 // carried is what the first round moved.
 func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, carried *messaging.Counted) error {
 	defer c.Release()
-	return c.h.runLink(ctx, c.contact, c.link, c.h.link(c.contact, open, c.link, carried).RunServer)
+	return c.h.runLink(ctx, c.link, c.h.link(open, c.link, carried).RunServer)
 }
 
 // Release frees a claim that won't run.
-func (c *LiveClaim) Release() { c.h.releaseLive(c.contact, c.link) }
+func (c *LiveClaim) Release() { c.h.releaseLive(c.link.contact, c.link) }

@@ -52,7 +52,7 @@ class LiveProofAcceptance(unittest.TestCase):
     def test_reconnect_is_observed_before_send_without_sync_wakes(self):
         fixture = LinkProofFixture()
         with redirect_stdout(io.StringIO()):
-            live.prove_live(fixture.side("secured"), fixture.side("host"), "secured-key", "host-key", fixture.restart)
+            live.prove_live(((fixture.side("secured"), "host-key"), (fixture.side("host"), "secured-key")), fixture.restart)
         self.assertFalse(any(args[1] == "sync" for _, args in fixture.calls), "proof woke the link it claimed reconnected itself")
         self.assertEqual(sum(args[1] == "send" for _, args in fixture.calls), 4)
 
@@ -62,7 +62,7 @@ class LiveProofAcceptance(unittest.TestCase):
             fixture.after_restart_needs_observation = True
         with patch.object(live.time, "sleep"), patch.object(live.time, "monotonic", side_effect=range(200)), redirect_stdout(io.StringIO()):
             with self.assertRaises(ValueError):
-                live.prove_live(fixture.side("secured"), fixture.side("host"), "secured-key", "host-key", restart_without_redial)
+                live.prove_live(((fixture.side("secured"), "host-key"), (fixture.side("host"), "secured-key")), restart_without_redial)
 
     def test_duplicate_rows_cannot_count_as_successful_delivery(self):
         fixture = LinkProofFixture(duplicate=True)

@@ -52,9 +52,7 @@ func TestLiveAcceptanceMalformedIdleSignalsAreRefused(t *testing.T) {
 
 func TestLiveAcceptanceBusyRoundCannotReachStore(t *testing.T) {
 	end, err := messaging.EncodeEnd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	sessionOK(t, err)
 	frames := &scriptFrames{input: [][]byte{liveSignal(t, messaging.FrameRound), sessionMessage(t, messaging.Message{
 		ID: "busy", N: 1, CreatedAt: sessionAt, Text: "must not commit concurrently"}), end, end}}
 	store := &countingSessionStore{}
@@ -77,35 +75,29 @@ func TestLiveAcceptanceLostStoredAckReplaysWithoutDuplicateInsertion(t *testing.
 	m := messaging.Message{ID: "lost-live-ack", N: 1, CreatedAt: sessionAt, Text: "commit once"}
 	first := &scriptFrames{input: [][]byte{liveSignal(t, messaging.FrameRound), sessionMessage(t, m)}, failKind: messaging.FrameStored}
 	err := acceptanceLink(first, db.PeerMessages()).RunServer(context.Background())
-	if !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("missing ack failure: %v", err)
-	}
+	sessionErrorIs(t, err, io.ErrUnexpectedEOF)
 	end, err := messaging.EncodeEnd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	sessionOK(t, err)
 	replay := &scriptFrames{input: [][]byte{liveSignal(t, messaging.FrameRound), sessionMessage(t, m), end, end}}
 	err = acceptanceLink(replay, db.PeerMessages()).RunServer(context.Background())
-	if !errors.Is(err, io.EOF) {
-		t.Fatalf("replay failed before scripted close: %v", err)
-	}
+	sessionErrorIs(t, err, io.EOF)
 	rows, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sessionOK(t, err)
 	if len(rows) != 1 || rows[0].ID != m.ID || rows[0].Text != m.Text {
 		t.Fatalf("lost ack duplicated or corrupted message: %+v", rows)
 	}
-	stored := 0
-	for _, frame := range replay.sent {
+	sessionEqual(t, countLiveFrames(replay.sent, messaging.FrameStored), 1)
+}
+
+func countLiveFrames(frames [][]byte, wanted byte) int {
+	count := 0
+	for _, frame := range frames {
 		kind, _ := messaging.Kind(frame)
-		if kind == messaging.FrameStored {
-			stored++
+		if kind == wanted {
+			count++
 		}
 	}
-	if stored != 1 {
-		t.Fatalf("replayed message not acknowledged once: %d", stored)
-	}
+	return count
 }
 
 // A peer that stops reading must not trap the state-machine writer and

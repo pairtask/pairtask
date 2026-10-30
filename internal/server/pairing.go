@@ -107,7 +107,7 @@ func (p *PairingServer) serve(ctx context.Context, raw net.Conn) {
 	}
 	defer conn.Close()
 	if conn.Protocol() == firstcontact.MessageALPN {
-		p.messageSession(ctx, netCtx, storeCtx, conn, ep)
+		p.messageSession(ctx, attemptCtx{netCtx, storeCtx}, conn, ep)
 		return
 	}
 	if !take(p.slots) {
@@ -164,16 +164,20 @@ func (p *PairingServer) pairing(netCtx, storeCtx context.Context, conn *firstcon
 	p.log.Info("pairing request committed")
 }
 
+// attemptCtx bounds one connection's first round: its network work, and
+// its store writes, which outlive a cancelled server.
+type attemptCtx struct{ net, store context.Context }
+
 // messageSession answers a confirmed contact's first round, one per
 // contact at a time, within MessageBudget. If both sides agree, the
 // connection then stays open as a live link (#222), which holds no message
 // slot and lives with the server, not the first round's budget.
-func (p *PairingServer) messageSession(ctx, netCtx, storeCtx context.Context, conn *firstcontact.Conn, ep hub.PairingEndpoint) {
+func (p *PairingServer) messageSession(ctx context.Context, attempt attemptCtx, conn *firstcontact.Conn, ep hub.PairingEndpoint) {
 	if !take(p.messages) {
 		p.log.Warn("message session refused: too many")
 		return
 	}
-	claim, carried := p.firstRound(netCtx, storeCtx, conn, ep)
+	claim, carried := p.firstRound(attempt.net, attempt.store, conn, ep)
 	release(p.messages)
 	if claim == nil {
 		return
