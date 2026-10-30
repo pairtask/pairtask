@@ -290,7 +290,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.10'
-      - run: go test ./... -timeout=300s
+      # 600s per package, as under -race and in the image build.
+      - run: go test ./... -timeout=600s
         env:
           GOTOOLCHAIN: local # the pinned toolchain, never a download
 
