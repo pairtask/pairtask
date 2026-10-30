@@ -50,8 +50,8 @@ func pairNeedsWord(words []string) bool {
 func (m *Model) awaitsWord() (cmd tea.Cmd, handled bool) {
 	line := m.compose.cmd
 	value := line.input.Value()
-	l, ok := splitArgLine(strings.TrimRight(value, " ") + " ")
-	if !ok || l.name != "pair" || !pairNeedsWord(l.words) || !m.pairMenuUsable() {
+	l, ok := m.pairMenuAt(value)
+	if !ok {
 		return nil, false
 	}
 	if !strings.HasSuffix(value, " ") {
@@ -86,13 +86,12 @@ func (m *Model) pairMenuLoaded() {
 		m.pairing.menuWanted, m.pairing.listed = false, true
 	}
 	l, ok := m.argumentLine()
-	if !ok || l.name != "pair" || len(l.words) == 0 || !pairNeedsWord(l.words) || l.current != "" {
+	if !ok || !waitsForChoice(l) {
 		return
 	}
-	if d := m.compose.cmd.dismissed; d != nil && *d == m.compose.cmd.input.Value() {
-		return
+	if !m.pickerDismissed() {
+		m.offerPairChoices(l)
 	}
-	m.offerPairChoices(l)
 }
 
 // offerPairChoices opens the picker for l's next word, or says there is
@@ -117,6 +116,36 @@ func (m *Model) nothingToPick(word string) string {
 	return "no pending requests to " + word + "; /pair status lists pairing"
 }
 
+// pairMenuAt is the line as completion sees it, when it is a /pair line
+// lacking its word and the menu can serve it.
+func (m *Model) pairMenuAt(value string) (argLine, bool) {
+	l, ok := splitArgLine(strings.TrimRight(value, " ") + " ")
+	if !ok || !pairWantsWord(l) {
+		return l, false
+	}
+	return l, m.pairMenuUsable()
+}
+
+// pairWantsWord: a /pair line lacking the word it needs.
+func pairWantsWord(l argLine) bool {
+	return l.name == "pair" && pairNeedsWord(l.words)
+}
+
+// waitsForChoice: a /pair line after accept, reject or cancel, with
+// nothing typed after it yet.
+func waitsForChoice(l argLine) bool {
+	if l.current != "" || len(l.words) == 0 {
+		return false
+	}
+	return pairWantsWord(l)
+}
+
+// pickerDismissed: Esc closed the picker on the line as it is now.
+func (m *Model) pickerDismissed() bool {
+	line := m.compose.cmd
+	return line.dismissed != nil && *line.dismissed == line.input.Value()
+}
+
 // pairMenuUsable: the broker pairs and is connected; otherwise /pair runs
 // and says why it can't.
 func (m *Model) pairMenuUsable() bool {
@@ -125,11 +154,24 @@ func (m *Model) pairMenuUsable() bool {
 
 // openInvitation is the invitation /pair cancel would close, while open.
 func (m *Model) openInvitation() []string {
-	s := m.pairing.snapshot
-	if s == nil || s.Invitation == nil || s.Invitation.Consumed || s.Invitation.Expired {
+	inv := m.invitation()
+	if inv == nil || !stillOpen(inv) {
 		return nil
 	}
-	return []string{s.Invitation.ID}
+	return []string{inv.ID}
+}
+
+// invitation is the snapshot's invitation, if any.
+func (m *Model) invitation() *protocol.InvitationView {
+	if m.pairing.snapshot == nil {
+		return nil
+	}
+	return m.pairing.snapshot.Invitation
+}
+
+// stillOpen: neither used nor expired.
+func stillOpen(inv *protocol.InvitationView) bool {
+	return !inv.Consumed && !inv.Expired
 }
 
 // pairLabel is a /pair picker row: a word and what it does, a request to
@@ -161,11 +203,10 @@ func (m *Model) argumentLine() (argLine, bool) {
 // invitationLabel is the open invitation's row: when it expires and the
 // attempts it has left; its code is never shown here.
 func (m *Model) invitationLabel(id string) (string, bool) {
-	s := m.pairing.snapshot
-	if s == nil || s.Invitation == nil || s.Invitation.ID != id {
+	v := m.invitation()
+	if v == nil || v.ID != id {
 		return "", false
 	}
-	v := s.Invitation
 	detail := fmt.Sprintf("invitation · expires %s · %d attempts left", v.ExpiresAt.Local().Format("15:04"), v.AttemptsLeft)
 	return fmt.Sprintf("  %s  %s", safe(id), mutedStyle.Render(detail)), true
 }
