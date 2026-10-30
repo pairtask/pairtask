@@ -70,6 +70,9 @@ type PairingEndpoint struct {
 	MessagePins   func(fingerprint string) bool
 	Messages      messaging.Store
 	BeginMessages func(contact string) (end func(moved bool), ok bool)
+	// ClaimLink claims a serving live link for contact after a first round
+	// agreed to stay open, replacing one still open for it (#222).
+	ClaimLink func(contact string) (*LiveClaim, bool)
 }
 
 // pairingWiring is the hub's pairing state beyond the invitation itself.
@@ -136,7 +139,8 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 	if inviter, err := peer.NewInviter(cfg.Exchanger, h.pairing, id); err == nil {
 		h.pair.endpoint.Store(&PairingEndpoint{Identity: id, Inviter: inviter, Joiner: h.pair.joiner, Clock: cfg.Clock,
 			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark,
-			MessagePins: h.messagePins, Messages: h.store.PeerMessages(), BeginMessages: h.beginMessages})
+			MessagePins: h.messagePins, Messages: h.store.PeerMessages(), BeginMessages: h.beginMessages,
+			ClaimLink: h.ClaimLink})
 	}
 }
 

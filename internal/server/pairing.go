@@ -107,7 +107,7 @@ func (p *PairingServer) serve(ctx context.Context, raw net.Conn) {
 	}
 	defer conn.Close()
 	if conn.Protocol() == firstcontact.MessageALPN {
-		p.messageSession(netCtx, storeCtx, conn, ep)
+		p.messageSession(ctx, netCtx, storeCtx, conn, ep)
 		return
 	}
 	if !take(p.slots) {
@@ -164,30 +164,65 @@ func (p *PairingServer) pairing(netCtx, storeCtx context.Context, conn *firstcon
 	p.log.Info("pairing request committed")
 }
 
-// messageSession answers a confirmed contact's message session, one per
-// contact at a time, within MessageBudget.
-func (p *PairingServer) messageSession(netCtx, storeCtx context.Context, conn *firstcontact.Conn, ep hub.PairingEndpoint) {
+// messageSession answers a confirmed contact's first round, one per
+// contact at a time, within MessageBudget. If both sides agree, the
+// connection then stays open as a live link (#222), which holds no message
+// slot and lives with the server, not the first round's budget.
+func (p *PairingServer) messageSession(ctx, netCtx, storeCtx context.Context, conn *firstcontact.Conn, ep hub.PairingEndpoint) {
 	if !take(p.messages) {
 		p.log.Warn("message session refused: too many")
 		return
 	}
-	defer release(p.messages)
+	claim, carried := p.firstRound(netCtx, storeCtx, conn, ep)
+	release(p.messages)
+	if claim == nil {
+		return
+	}
+	err := claim.Run(ctx, func(ctx context.Context) messaging.Frames { return conn.MessageFrames(ctx) }, carried)
+	p.log.Info("message link ended", "cause", hub.PairingCause(err))
+}
+
+// firstRound answers the first round, and returns the live link's claim
+// when both sides stay connected.
+func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *firstcontact.Conn, ep hub.PairingEndpoint) (*hub.LiveClaim, *messaging.Counted) {
 	contact := conn.Connection().PeerLeaf
 	end, free := ep.BeginMessages(contact)
 	if !free {
 		p.log.Info("message session refused: one already running for this contact")
-		return
+		return nil, nil
 	}
 	sessionCtx, cancel := context.WithTimeout(netCtx, hub.MessageBudget)
 	defer cancel()
-	s := messaging.Session{Frames: conn.MessageFrames(sessionCtx), Store: ep.Messages, Contact: contact, Now: ep.Clock}
-	result, err := s.Serve(storeCtx)
+	counted := &messaging.Counted{Frames: conn.MessageFrames(sessionCtx)}
+	s := messaging.Session{Frames: counted, Store: ep.Messages, Contact: contact, Now: ep.Clock}
+	result, version, err := s.OpenServe(storeCtx)
 	end(result.Moved())
 	if err != nil {
 		p.log.Info("message session ended", "cause", hub.PairingCause(err))
-		return
+		return nil, nil
 	}
 	p.log.Info("message session answered", "received", result.Received, "sent", result.Sent)
+	if version < messaging.LiveVersion {
+		return nil, nil
+	}
+	return p.stayOpen(s, contact, ep), counted
+}
+
+// stayOpen answers whether the connection stays open as a live link.
+func (p *PairingServer) stayOpen(s messaging.Session, contact string, ep hub.PairingEndpoint) *hub.LiveClaim {
+	var claim *hub.LiveClaim
+	can := false
+	if ep.ClaimLink != nil {
+		claim, can = ep.ClaimLink(contact)
+	}
+	on, err := s.AnswerLive(can)
+	if err == nil && on {
+		return claim
+	}
+	if can {
+		claim.Release()
+	}
+	return nil
 }
 
 // settle answers a paired workspace's settlement on a pinned contact

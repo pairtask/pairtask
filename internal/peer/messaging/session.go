@@ -46,20 +46,65 @@ type Session struct {
 // Dial runs the dialing side: its hello, its messages, the peer's, then the
 // receipts the same way.
 func (s Session) Dial(ctx context.Context) (Result, error) {
-	s.Store = sessionStore{s.Store}
-	if err := s.offerHello(); err != nil {
-		return Result{}, err
-	}
-	return s.phases(ctx, true)
+	r, _, err := s.OpenDial(ctx)
+	return r, err
 }
 
 // Serve runs the side that was dialed.
 func (s Session) Serve(ctx context.Context) (Result, error) {
+	r, _, err := s.OpenServe(ctx)
+	return r, err
+}
+
+// OpenDial is Dial, also reporting the version both sides speak: at
+// LiveVersion the session may stay open (OfferLive).
+func (s Session) OpenDial(ctx context.Context) (Result, byte, error) {
 	s.Store = sessionStore{s.Store}
-	if err := s.answerHello(); err != nil {
-		return Result{}, err
+	version, err := s.offerHello()
+	if err != nil {
+		return Result{}, 0, err
 	}
-	return s.phases(ctx, false)
+	r, err := s.phases(ctx, true)
+	return r, version, err
+}
+
+// OpenServe is Serve, also reporting the version both sides speak.
+func (s Session) OpenServe(ctx context.Context) (Result, byte, error) {
+	s.Store = sessionStore{s.Store}
+	version, err := s.answerHello()
+	if err != nil {
+		return Result{}, 0, err
+	}
+	r, err := s.phases(ctx, false)
+	return r, version, err
+}
+
+// OfferLive, after a LiveVersion first round, says whether the dialing side
+// wants to stay connected, and reports whether both will.
+func (s Session) OfferLive(want bool) (bool, error) {
+	if err := s.send(EncodeLive(want)); err != nil {
+		return false, err
+	}
+	frame, err := s.Frames.Recv()
+	if err != nil {
+		return false, err
+	}
+	on, err := DecodeLive(frame)
+	return want && on, err
+}
+
+// AnswerLive is the dialed side's half: it stays only if both can.
+func (s Session) AnswerLive(can bool) (bool, error) {
+	frame, err := s.Frames.Recv()
+	if err != nil {
+		return false, err
+	}
+	want, err := DecodeLive(frame)
+	if err != nil {
+		return false, err
+	}
+	on := want && can
+	return on, s.send(EncodeLive(on))
 }
 
 // phases runs the four phases in order; dialer sends in the first and third.
@@ -77,49 +122,50 @@ func (s Session) phases(ctx context.Context, dialer bool) (Result, error) {
 	return r, nil
 }
 
-func (s Session) offerHello() error {
+func (s Session) offerHello() (byte, error) {
 	if err := s.send(EncodeHello(Hello{Min: MinVersion, Max: MaxVersion})); err != nil {
-		return err
+		return 0, err
 	}
 	frame, err := s.Frames.Recv()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if kind, _ := Kind(frame); kind == FrameUnsupported {
 		if _, err := DecodeUnsupported(frame); err != nil {
-			return err // a malformed answer is a protocol error, not a version one
+			return 0, err // a malformed answer is a protocol error, not a version one
 		}
-		return ErrUnsupported
+		return 0, ErrUnsupported
 	}
 	h, err := DecodeHello(frame)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	return common(h)
 }
 
-func (s Session) answerHello() error {
+func (s Session) answerHello() (byte, error) {
 	frame, err := s.Frames.Recv()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	h, err := DecodeHello(frame)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if err := common(h); err != nil {
+	version, err := common(h)
+	if err != nil {
 		s.send(EncodeUnsupported(Unsupported{Min: MinVersion, Max: MaxVersion}))
-		return err
+		return 0, err
 	}
-	return s.send(EncodeHello(Hello{Min: MinVersion, Max: MaxVersion}))
+	return version, s.send(EncodeHello(Hello{Min: MinVersion, Max: MaxVersion}))
 }
 
-// common requires a version both sides speak.
-func common(h Hello) error {
+// common is the highest version both sides speak.
+func common(h Hello) (byte, error) {
 	if h.Max < MinVersion || h.Min > MaxVersion {
-		return ErrUnsupported
+		return 0, ErrUnsupported
 	}
-	return nil
+	return min(h.Max, MaxVersion), nil
 }
 
 func (s Session) send(frame []byte, err error) error {
