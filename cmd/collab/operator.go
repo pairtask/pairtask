@@ -42,6 +42,7 @@ var operatorCommands = map[string]operatorCommand{
 	"inbox":   runOperatorInbox,
 	"room":    runOperatorRoom,
 	"pair":    runOperatorPair,
+	"contact": runOperatorContact,
 	"review":  runOperatorReview,
 	"peer":    runOperatorPeer,
 }

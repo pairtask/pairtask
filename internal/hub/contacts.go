@@ -206,7 +206,7 @@ func contactMessageView(r messaging.Row) protocol.ContactMessageView {
 // contactSyncView is the sync status as the operator sees it.
 func (h *Hub) contactSyncView(contact string) protocol.ContactSyncView {
 	s := h.MessageSyncStatus(contact)
-	view := protocol.ContactSyncView{Contact: contact, Dials: s.Dials, LastFailure: s.LastFailure, Failures: s.Failures}
+	view := protocol.ContactSyncView{Contact: contact, Dials: s.Dials, Live: s.Live, LastFailure: s.LastFailure, Failures: s.Failures}
 	view.LastAttempt, view.LastSuccess, view.NextAt = optionalTime(s.LastAttempt), optionalTime(s.LastSuccess), optionalTime(s.NextAt)
 	return view
 }

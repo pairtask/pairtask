@@ -58,6 +58,7 @@ type MessageSync struct {
 	LastFailure string
 	Failures    int
 	NextAt      time.Time
+	Live        bool // a live link is open: messages leave at once, either way
 }
 
 // messageWiring is the hub's message sessions; safe from any goroutine.
@@ -154,6 +155,9 @@ func (h *Hub) beginMessages(contact string) (end func(moved bool), ok bool) {
 // it never blocks.
 func (h *Hub) SyncMessages(contact string) {
 	h.msgs.init()
+	if h.wakeLive(contact) {
+		return
+	}
 	select {
 	case h.msgs.wake <- contact:
 	default: // a full queue syncs on its next tick anyway
@@ -166,10 +170,12 @@ func (h *Hub) MessageSyncStatus(contact string) MessageSync {
 	w.init()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if s := w.syncs[contact]; s != nil {
-		return *s
+	s := MessageSync{}
+	if got := w.syncs[contact]; got != nil {
+		s = *got
 	}
-	return MessageSync{}
+	s.Live = h.Live(contact)
+	return s
 }
 
 // dials: this side holds the contact's address, and, if both sides do,

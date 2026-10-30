@@ -96,7 +96,7 @@ func TestMessageSessionAcceptanceRejectsMalformedUnsupported(t *testing.T) {
 }
 
 func TestMessageSessionAcceptanceNegotiatesUnsupportedBeforeStore(t *testing.T) {
-	hello, err := messaging.EncodeHello(messaging.Hello{Min: 2, Max: 3})
+	hello, err := messaging.EncodeHello(messaging.Hello{Min: messaging.MaxVersion + 1, Max: messaging.MaxVersion + 2})
 	if err != nil {
 		t.Fatal(err)
 	}

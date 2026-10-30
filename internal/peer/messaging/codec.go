@@ -18,11 +18,15 @@ import (
 // MaxFrameBytes bounds every message frame.
 const MaxFrameBytes = 32 << 10
 
-// Protocol versions this side speaks, as Hello carries them.
+// Protocol versions this side speaks, as Hello carries them. Version 2
+// keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 1
+	MaxVersion byte = 2
 )
+
+// LiveVersion is the first version whose sessions can stay open.
+const LiveVersion byte = 2
 
 const frameVersion byte = 1
 
@@ -36,6 +40,13 @@ const (
 	FrameRead        byte = 6
 	FrameReadStored  byte = 7
 	FrameUnsupported byte = 8
+	// Version 2 only, never sent to a version 1 peer.
+	FrameLive     byte = 9  // after the first round: whether this side stays connected
+	FrameRound    byte = 10 // the dialer starts a round
+	FrameRoundAck byte = 11 // the dialed side is ready for it
+	FramePing     byte = 12 // the dialer, while idle
+	FramePong     byte = 13 // the answer to a Ping
+	FramePending  byte = 14 // the dialed side has something for the dialer
 )
 
 // ErrProtocol is a malformed, unexpected or oversized frame.
@@ -103,7 +114,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameUnsupported
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FramePending
 }
 
 // shape is a frame type and its exact number of fields.

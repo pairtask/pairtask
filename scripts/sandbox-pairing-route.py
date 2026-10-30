@@ -42,6 +42,7 @@ import uuid
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import pairing_live_checks  # noqa: E402
 import pairing_publish_checks  # noqa: E402
 import pairing_route_checks  # noqa: E402
 
@@ -157,6 +158,10 @@ class Deployment:
         """secured's own CLI against its operator socket, as root."""
         return self.execute("secured", "pairtask", "operator", "pair", *args, "--socket", SECURED_OPERATOR, stdin=stdin)
 
+    def operator_cli(self, *args):
+        """Any `pairtask operator` command in secured, as root."""
+        return self.execute("secured", "pairtask", "operator", *args, "--socket", SECURED_OPERATOR)
+
 
 class HostBroker:
     """A standalone broker on this host: a private pairing socket behind a
@@ -194,7 +199,10 @@ class HostBroker:
             return db.execute(query, (key,)).fetchone()
 
     def pair(self, *args, stdin=None):
-        return subprocess.run([str(self.binaries["pairtask"]), "operator", "pair", *args, "--socket", self.operator_socket],
+        return self.operator_cli("pair", *args, stdin=stdin)
+
+    def operator_cli(self, *args, stdin=None):
+        return subprocess.run([str(self.binaries["pairtask"]), "operator", *args, "--socket", self.operator_socket],
                               input=stdin, capture_output=True, text=True, timeout=120)
 
     def stop(self):
@@ -401,6 +409,21 @@ def route_ready(deployment):
         deployment.await_active(role, unit)
 
 
+def prove_live(deployment, host):
+    """Instant messages both ways over the live link, then after restarting
+    the relay and the egress forwarder that carry it."""
+    secured_key = snapshot(deployment.operator("status", "--json"))["self_identity"]
+    host_key = snapshot(host.pair("status", "--json"))["self_identity"]
+
+    def restart_relays():
+        for unit in ("pairtask-peer-relay.service", "pairtask-peer-egress.service"):
+            deployment.output("connector", "systemctl", "restart", unit)
+            deployment.await_active("connector", unit)
+
+    sides = ((deployment.operator_cli, host_key), (host.operator_cli, secured_key))
+    pairing_live_checks.prove_live(sides, restart_relays)
+
+
 def exercise(args, deployment, local, publication):
     """local is (binaries, workdir): the host fixture's build and directory."""
     binaries, workdir = local
@@ -419,6 +442,7 @@ def exercise(args, deployment, local, publication):
         codes += both_ways(deployment, host, connector_ip, first=False)
         print("PASS: both directions, settlement included, again after crashing the broker and the forwarder.", flush=True)
         pairing_route_checks.check_all(args.remote, deployment.base[2])
+        prove_live(deployment, host)
         redeem = lambda destination: redeem_published(deployment, host, destination)  # noqa: E731
         published, ports = pairing_publish_checks.prove_publishing(publication, redeem)
         codes += published

@@ -133,19 +133,39 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 	if !free {
 		return // a session with this contact is running already; it isn't a failure
 	}
-	result, err := h.dialSession(ctx, c)
+	result, live, err := h.dialSession(ctx, c)
 	end(result.Moved())
 	if err != nil {
 		h.log.Info("message sync failed", "class", classifySync(err))
 		h.recordSync(contact, classifySync(err), false)
+		h.retryLive(ctx, contact)
 		return
 	}
 	h.recordSync(contact, "", h.messagesWaiting(ctx, contact))
+	if live != nil {
+		h.goLive(ctx, live)
+	}
+}
+
+// retryLive redials soon a contact whose link dropped and whose redial
+// failed, rather than waiting for the poll's backoff.
+func (h *Hub) retryLive(ctx context.Context, contact string) {
+	w := &h.live
+	w.mu.Lock()
+	w.ready()
+	linked := w.failures[contact] > 0
+	w.mu.Unlock()
+	if linked && ctx.Err() == nil {
+		time.AfterFunc(h.liveDelay(contact), func() { h.SyncMessages(contact) })
+	}
 }
 
 // dialedContact is the contact when it is confirmed and this side dials it.
 func (h *Hub) dialedContact(ctx context.Context, contact string) (peer.Contact, bool) {
-	if !h.canDial() || !h.messagePins(contact) {
+	if !h.canDial() || h.Live(contact) {
+		return peer.Contact{}, false
+	}
+	if !h.messagePins(contact) {
 		return peer.Contact{}, false
 	}
 	c, found, err := h.store.Contact(ctx, contact)
@@ -165,24 +185,50 @@ func (h *Hub) canDial() bool {
 }
 
 // dialSession reaches the contact, pins its identity and runs the dialing
-// side of a session. The network is bounded by MessageBudget; the store is
-// given PairingGrace beyond it, so a received message settles.
-func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result, error) {
+// side of a first round. The network is bounded by MessageBudget; the store
+// is given PairingGrace beyond it, so a received message settles. When both
+// sides speak LiveVersion and have a slot, the connection stays open: the
+// caller keeps the returned link.
+func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result, *dialedLink, error) {
 	netCtx, cancelNet := context.WithTimeout(ctx, MessageBudget)
 	defer cancelNet()
 	storeCtx, cancelStore := context.WithTimeout(context.WithoutCancel(ctx), MessageBudget+PairingGrace)
 	defer cancelStore()
 	raw, err := h.pair.cfg.Dial(netCtx, c.Destination)
 	if err != nil {
-		return messaging.Result{}, errUnreachable{err}
+		return messaging.Result{}, nil, errUnreachable{err}
 	}
 	conn, err := firstcontact.MessageClient(netCtx, raw, h.identity, h.pair.cfg.Clock, c.IdentityKey)
 	if err != nil {
-		return messaging.Result{}, err
+		return messaging.Result{}, nil, err
 	}
-	defer conn.Close()
-	s := messaging.Session{Frames: conn.MessageFrames(netCtx), Store: h.store.PeerMessages(), Contact: c.IdentityKey, Now: h.pair.cfg.Clock}
-	return s.Dial(storeCtx)
+	counted := &messaging.Counted{Frames: conn.MessageFrames(netCtx)}
+	s := messaging.Session{Frames: counted, Store: h.store.PeerMessages(), Contact: c.IdentityKey, Now: h.pair.cfg.Clock}
+	r, version, err := s.OpenDial(storeCtx)
+	if err != nil || version < messaging.LiveVersion {
+		conn.Close()
+		return r, nil, err
+	}
+	d, err := h.stayOpen(s, conn, c.IdentityKey)
+	if d != nil {
+		d.carried = counted
+	}
+	return r, d, err
+}
+
+// stayOpen agrees with the peer whether the connection stays open as a live
+// link, and closes it otherwise.
+func (h *Hub) stayOpen(s messaging.Session, conn *firstcontact.Conn, contact string) (*dialedLink, error) {
+	link, claimed := h.claimLive(contact, false)
+	on, err := s.OfferLive(claimed)
+	if err == nil && on {
+		return &dialedLink{conn: conn, link: link}, nil
+	}
+	if claimed {
+		h.releaseLive(contact, link)
+	}
+	conn.Close()
+	return nil, err
 }
 
 // errUnreachable is a dial that never reached the contact.

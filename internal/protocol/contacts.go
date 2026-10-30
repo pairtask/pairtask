@@ -82,7 +82,8 @@ type ContactMessagePage struct {
 // Requested means a session was asked for, not that one ran.
 type ContactSyncView struct {
 	Contact     string     `json:"contact"`
-	Dials       bool       `json:"dials"` // this side opens the sessions; otherwise it waits to be dialed
+	Dials       bool       `json:"dials"`          // this side opens the sessions; otherwise it waits to be dialed
+	Live        bool       `json:"live,omitempty"` // a live link is open: messages leave at once, either way
 	LastAttempt *time.Time `json:"last_attempt,omitempty"`
 	LastSuccess *time.Time `json:"last_success,omitempty"`
 	NextAt      *time.Time `json:"next_at,omitempty"`
