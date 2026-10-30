@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -36,6 +37,10 @@ func TestReviewAcceptanceEscapedVerdictCannotCreateUnreadableResult(t *testing.T
 func TestReviewAcceptanceListBoundsSerializedBytesWithoutLosingDetails(t *testing.T) {
 	f := newOperatorFixture(t, os.Getuid(), "")
 	p := reviewTestPeer(f, "alpha")
+	// This exercises serialization bounds, not latency. Encoding the large
+	// retained history under -race can exceed the ordinary two-second read
+	// budget on shared CI runners; keep the wait bounded without retrying.
+	p.readTimeout = 15 * time.Second
 	reviewTestComplete(f, p, "list-seed")
 	base := reviewTestView(t, reviewTestCall(p, "review_get", "list-seed", nil), "review_result")
 	base.Verdict.Findings = make([]protocol.Finding, 32)
