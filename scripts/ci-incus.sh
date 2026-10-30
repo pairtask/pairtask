@@ -40,7 +40,10 @@ apt-get install -y incus btrfs-progs
 # newuidmap/newgidmap also require this host-level allowance, independently of
 # the restricted Incus project's UID/GID allowlist.
 usermod --add-subuids 60000-60000 --add-subgids 60000-60000 root
-modprobe btrfs
+# Some runner kernels (e.g. Blacksmith) build btrfs in rather than as a module.
+if ! grep -qw btrfs /proc/filesystems; then
+    modprobe btrfs
+fi
 systemctl start incus.socket
 incus admin init --preseed <infra/image/ci-host.json
 server_version=$(incus query /1.0 | python3 -c 'import json,sys; print(json.load(sys.stdin)["environment"]["server_version"])')
