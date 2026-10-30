@@ -3,6 +3,7 @@ package chat
 import (
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // /pair share in a ⇄ tab offers this workspace's own registered agents,
@@ -25,11 +26,24 @@ func (m *Model) shareCompletions(l argLine) []string {
 	}
 	var out []string
 	for _, id := range m.localAgents(l.current) {
-		if !typed[id] {
-			out = append(out, id)
+		if token, ok := shareToken(id); ok && !typed[id] {
+			out = append(out, token)
 		}
 	}
 	return out
+}
+
+// shareToken is how an agent is written on a share line: as it is, or
+// with one more @ when it starts with one, since one leading @ is
+// stripped. An ID with spaces in it can't be one word, so isn't offered.
+func shareToken(id string) (string, bool) {
+	if strings.ContainsFunc(id, unicode.IsSpace) {
+		return "", false
+	}
+	if strings.HasPrefix(id, "@") {
+		return "@" + id, true
+	}
+	return id, true
 }
 
 // afterPick: an agent is on the line and nothing is typed after it.

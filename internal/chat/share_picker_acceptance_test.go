@@ -32,7 +32,7 @@ func sharePickerHarness(t *testing.T, agents ...string) (*chatHarness, string) {
 }
 
 func TestSharePickerAcceptanceBareShareOffersLocalAgentsAndRequiresSubmit(t *testing.T) {
-	h, key := sharePickerHarness(t, "bob", "alice")
+	h, key := sharePickerHarness(t, "bob", "alice", "id with spaces")
 	v2Type(h, "keep my draft")
 	v2Command(h, "/pair share")
 	commandCompleteItems(t, h, []string{"alice", "bob"})
@@ -58,6 +58,18 @@ func TestSharePickerAcceptanceMentionCompletionUsesLocalDirectory(t *testing.T) 
 	commandCompleteLine(h, "pair share @")
 	commandCompleteItems(t, h, []string{"@alice", "@bob"})
 	chatEqual(t, "completion changes no grants", h.m.State().InFlight, 0)
+}
+
+func TestSharePickerAcceptanceLiteralMentionNameKeepsItsIdentity(t *testing.T) {
+	h, _ := sharePickerHarness(t, "@literal")
+	v2Command(h, "/pair share")
+	commandCompleteItems(t, h, []string{"@@literal"})
+	h.input(chatKey(tea.KeyEnter, 0))
+	h.input(chatKey(tea.KeyEnter, 0))
+	req := h.take(protocol.TypeOperatorContact)
+	if !slices.Equal(req.ContactAgents, []string{"@literal"}) {
+		t.Fatalf("picker changed the selected agent identity: %q", req.ContactAgents)
+	}
 }
 
 func TestSharePickerAcceptanceNormalizesExactlyOneMentionPrefix(t *testing.T) {
