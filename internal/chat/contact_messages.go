@@ -32,11 +32,12 @@ type contactThread struct {
 	oldest    int64                                  // the cursor below which older pages lie
 	more      bool                                   // older messages exist below oldest
 	sync      protocol.ContactSyncView
-	shared    []string        // this workspace's agents the contact may message
-	directory []string        // what the contact says it shares
-	offset    int             // rows scrolled up from the newest
-	read      map[string]bool // inbound IDs a read was confirmed for
-	refused   map[string]bool // inbound IDs a read was refused for; not asked again until reloaded
+	shared    []string                   // this workspace's agents the contact may message
+	directory []string                   // what the contact says it shares
+	grants    []protocol.ReviewGrantView // what the contact may ask of agents here (#235)
+	offset    int                        // rows scrolled up from the newest
+	read      map[string]bool            // inbound IDs a read was confirmed for
+	refused   map[string]bool            // inbound IDs a read was refused for; not asked again until reloaded
 }
 
 // contactOp is a send or a read whose ID and content are fixed when made,
@@ -184,7 +185,7 @@ func (t *contactThread) merge(views []protocol.ContactMessageView) {
 // fetches the rest again, so no gap is ever drawn as continuous.
 func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bool) {
 	if !t.loaded || current {
-		t.sync, t.shared, t.directory = page.Sync, page.Shared, page.Directory
+		t.sync, t.shared, t.directory, t.grants = page.Sync, page.Shared, page.Directory, page.ReviewGrants
 		clear(t.refused) // a fresh page gives refused reads one more try
 	}
 	c := oldestCursor(page.Messages)

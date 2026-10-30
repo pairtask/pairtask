@@ -43,7 +43,10 @@ type RemoteImport struct {
 	Text       string
 	CreatedAt  time.Time // the sender's time
 	StagedAt   time.Time
-	Order      int64 // its place in staging order, for paging
+	Order      int64                // its place in staging order, for paging
+	Kind       string               // importMessage or importReview
+	Review     *messaging.ReviewAsk // a review request's ask, frozen at Accept
+	Approved   bool                 // this side's operator approved the request
 	// Sessions are the recipients connected now, by agent; not frozen, and
 	// the others are enrolled as offline durable recipients are.
 	Sessions map[string]string
@@ -55,12 +58,13 @@ type ImportResult struct {
 	Changed    bool                 // this call settled it; false when settled before
 	Msg        protocol.Message     // the durable message as stored, when imported by this call
 	Recipients []protocol.Recipient // its inbox rows, for live delivery
+	ReviewID   string               // the review a request became, when it did
 }
 
 // pendingImport is an inbound row whose message isn't imported yet: its
 // text and its row must stay.
 const pendingImport = `EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = peer_messages.contact
-    AND ri.remote_id = peer_messages.message_id AND ri.state = 'pending')`
+    AND ri.remote_id = peer_messages.message_id AND ri.state IN ('pending', 'awaiting'))`
 
 // stageImport stages an inbound message for agents with its row.
 func stageImport(ctx context.Context, tx *sql.Tx, r newRow) error {
@@ -71,12 +75,27 @@ func stageImport(ctx context.Context, tx *sql.Tx, r newRow) error {
 	if err != nil {
 		return err
 	}
+	kind, state, err := stagedAs(ctx, tx, r)
+	if err != nil {
+		return err
+	}
 	recipients, _ := json.Marshal(r.m.To) // a []string always encodes
 	_, err = tx.ExecContext(ctx, `INSERT INTO remote_imports
-(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`, r.key.contact, r.m.ID, localID, r.m.From, string(recipients),
-		r.m.ReplyTo.ID, int(r.m.ReplyTo.Author), msgStamp(r.now))
+(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.key.contact, r.m.ID, localID, r.m.From, string(recipients),
+		r.m.ReplyTo.ID, int(r.m.ReplyTo.Author), state, msgStamp(r.now), kind)
 	return err
+}
+
+// stagedAs is what a staged message is and where it starts: a message
+// waits for import; a review request for its operator or for dispatch, by
+// the grant it came under.
+func stagedAs(ctx context.Context, tx *sql.Tx, r newRow) (string, string, error) {
+	if r.m.Review == nil {
+		return importMessage, ImportPending, nil
+	}
+	g, _, err := reviewGrant(ctx, tx, r.key.contact, r.m.To[0])
+	return importReview, askState(g), err
 }
 
 // importedBefore: a message for agents reuses the ID of one staged before
@@ -132,7 +151,9 @@ func freeLocalID(ctx context.Context, tx *sql.Tx, contact, remoteID string) (str
 			id = fmt.Sprintf("%s-%d", base, i)
 		}
 		var taken bool
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM message_metadata WHERE message_id = ?1)
+		// An import's local ID may become a review's, and its notice's.
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM message_metadata WHERE message_id IN (?1, 'review:' || ?1))
+    OR EXISTS (SELECT 1 FROM reviews WHERE review_id = ?1)
     OR EXISTS (SELECT 1 FROM remote_imports WHERE local_id = ?1 AND NOT (contact = ?2 AND remote_id = ?3))`,
 			id, contact, remoteID).Scan(&taken)
 		if err != nil || !taken {
@@ -143,7 +164,8 @@ func freeLocalID(ctx context.Context, tx *sql.Tx, contact, remoteID string) (str
 }
 
 const importColumns = `ri.contact, ri.remote_id, ri.local_id, ri.sender, ri.recipients, ri.reply_id, ri.reply_author,
-    ri.staged_at, ri.state, COALESCE(pm.text, ''), COALESCE(pm.created_at, ri.staged_at), ri.rowid`
+    ri.staged_at, ri.state, COALESCE(pm.text, ''), COALESCE(pm.created_at, ri.staged_at), ri.rowid,
+    COALESCE(ri.kind, 'message'), pm.review_ask, ri.approved_at IS NOT NULL`
 
 const importFrom = ` FROM remote_imports ri LEFT JOIN peer_messages pm
     ON pm.contact = ri.contact AND pm.direction = 'in' AND pm.message_id = ri.remote_id`
@@ -151,9 +173,13 @@ const importFrom = ` FROM remote_imports ri LEFT JOIN peer_messages pm
 func scanImport(row rowScanner) (RemoteImport, string, error) {
 	var imp RemoteImport
 	var recipients, staged, state, created string
+	var ask sql.NullString
 	err := row.Scan(&imp.Contact, &imp.RemoteID, &imp.LocalID, &imp.Sender, &recipients, &imp.ReplyTo.ID, &imp.ReplyTo.Author,
-		&staged, &state, &imp.Text, &created, &imp.Order)
+		&staged, &state, &imp.Text, &created, &imp.Order, &imp.Kind, &ask, &imp.Approved)
 	if err != nil {
+		return imp, "", err
+	}
+	if imp.Review, err = scanReviewAsk(ask); err != nil {
 		return imp, "", err
 	}
 	if err := json.Unmarshal([]byte(recipients), &imp.Recipients); err != nil {
@@ -229,6 +255,9 @@ type importSlot struct {
 
 // importIn settles a pending import inside its transaction.
 func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
+	if imp.Kind == importReview {
+		return dispatchReview(ctx, tx, imp, at)
+	}
 	ts := at.ts
 	shared, err := allGranted(ctx, tx, imp.Contact, imp.Recipients)
 	if err != nil {

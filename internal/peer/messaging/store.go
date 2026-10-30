@@ -18,6 +18,8 @@ type Outgoing struct {
 	// LocalID is the local agent message this one was queued from, if any:
 	// what a reply to it from the contact answers here.
 	LocalID string
+	// Review, sent only at ReviewVersion: a review request (#235).
+	Review *ReviewAsk
 }
 
 // Limit is how many messages, and how many bytes of their text, one call

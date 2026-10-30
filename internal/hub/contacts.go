@@ -27,6 +27,10 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	protocol.ContactOpSync:    (*Hub).contactSync,
 	protocol.ContactOpShare:   (*Hub).contactShare,
 	protocol.ContactOpUnshare: (*Hub).contactShare,
+	// Review requests (#235).
+	protocol.ContactOpReviewGrant:  (*Hub).contactReviewGrant,
+	protocol.ContactOpReviewAsk:    (*Hub).contactReviewAsk,
+	protocol.ContactOpReviewDecide: (*Hub).contactReviewDecide,
 }
 
 // operatorContact serves operator_contact.
@@ -77,6 +81,9 @@ func (h *Hub) contactChange(ctx context.Context, req operatorRequest) protocol.M
 // contactRefusal is what the operator hears of a failed change; store
 // details stay in the log.
 func contactRefusal(err error) *routingError {
+	if rerr, ok := reviewRefusal(err); ok {
+		return rerr
+	}
 	switch {
 	case errors.Is(err, messaging.ErrConflict):
 		return &routingError{protocol.ErrContactRefused, "message_id already names another operation"}
@@ -254,12 +261,11 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 	peer := h.store.PeerMessages()
 	for _, r := range rows {
 		view := contactMessageView(r)
-		if r.Direction == messaging.DirOut && len(r.To) > 0 {
-			acks, err := peer.AgentAcks(ctx, r.Contact, r.ID)
-			if err != nil {
-				return err
-			}
-			view.AgentAcks = acks
+		if err := h.agentAcks(ctx, &view, r); err != nil {
+			return err
+		}
+		if err := h.reviewView(ctx, &view, r); err != nil {
+			return err
 		}
 		page.Messages = append(page.Messages, view)
 	}
@@ -267,6 +273,20 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 	if page.Shared, err = peer.SharedAgents(ctx, page.Contact); err != nil {
 		return err
 	}
+	if page.ReviewGrants, err = h.grantViews(ctx, page.Contact); err != nil {
+		return err
+	}
 	page.Directory, err = peer.PeerDirectory(ctx, page.Contact)
+	return err
+}
+
+// agentAcks adds to a message sent to the contact's agents those that
+// acknowledged it.
+func (h *Hub) agentAcks(ctx context.Context, view *protocol.ContactMessageView, r messaging.Row) error {
+	if r.Direction != messaging.DirOut || len(r.To) == 0 {
+		return nil
+	}
+	acks, err := h.store.PeerMessages().AgentAcks(ctx, r.Contact, r.ID)
+	view.AgentAcks = acks
 	return err
 }

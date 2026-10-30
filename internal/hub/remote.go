@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/review"
 	"github.com/pairtask/pairtask/internal/store"
 )
 
@@ -107,16 +109,23 @@ func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp sto
 		h.seq++
 		h.deliverImport(clients, result)
 	}
+	if result.ReviewID != "" {
+		h.emit(protocol.SessionEvent{Kind: protocol.EventReviewsChanged, ReviewID: result.ReviewID})
+	}
 }
 
 // importHeld logs why an import waits, unless a full inbox or taken IDs
 // hold it, which a later pass retries.
 func (h *Hub) importHeld(err error) {
-	if errors.Is(err, store.ErrInboxFull) || errors.Is(err, store.ErrLocalIDsTaken) {
+	if slices.ContainsFunc(retriedImports, func(r error) bool { return errors.Is(err, r) }) {
 		return
 	}
 	h.log.Error("staged message not imported", "error", err)
 }
+
+// retriedImports hold an import back for a later pass: a full inbox, IDs
+// all taken, or the open reviews at their bound.
+var retriedImports = []error{store.ErrInboxFull, store.ErrLocalIDsTaken, review.ErrFull}
 
 // deliverImport hands an imported message to its recipients connected now.
 func (h *Hub) deliverImport(clients map[string]*Client, result store.ImportResult) {
@@ -210,7 +219,8 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 	}
 	if in.Msg.InReplyTo == "" {
 		return remoteRoute{contact, func(ctx context.Context, out protocol.Message, text string, at time.Time) (store.RemoteReplyResult, error) {
-			return h.store.QueueWorkspaceSend(ctx, store.WorkspaceSend{Msg: out, SenderSession: in.From.SessionID, Contact: contact, Text: text, Now: at})
+			return h.store.QueueWorkspaceSend(ctx, store.WorkspaceSend{Msg: out, SenderSession: in.From.SessionID, Contact: contact, Text: text,
+				Review: wireAsk(in.Msg.ReviewAsk), Now: at})
 		}}, nil
 	}
 	parent, found, err := h.store.RemoteParent(ctx, in.Msg.InReplyTo)
@@ -236,7 +246,7 @@ func workspaceError(err error) *routingError {
 // sendRemote queues the message by its route, then confirms it and wakes
 // the link.
 func (h *Hub) sendRemote(ctx context.Context, clients map[string]*Client, in Inbound, route remoteRoute) *routingError {
-	text, ok := payloadText(in.Msg.Payload)
+	text, ok := remoteText(in.Msg)
 	if !ok {
 		return &routingError{protocol.ErrMalformedFrame, "a message to a paired workspace carries a text payload"}
 	}
@@ -295,4 +305,24 @@ func remoteReplyError(err error) *routingError {
 		}
 	}
 	return &routingError{protocol.ErrInternal, "reply not queued"}
+}
+
+// remoteText is what a message to a paired workspace says: its text, or
+// for a review request without one, what it asks.
+func remoteText(msg protocol.Message) (string, bool) {
+	text, ok := payloadText(msg.Payload)
+	if ok || msg.ReviewAsk == nil {
+		return text, ok
+	}
+	a := msg.ReviewAsk
+	return "Review request: " + a.Repository + "#" + a.Change, true
+}
+
+// wireAsk is a review request as it travels, or nil for a message.
+func wireAsk(a *protocol.ReviewAsk) *messaging.ReviewAsk {
+	if a == nil {
+		return nil
+	}
+	return &messaging.ReviewAsk{Forge: a.Forge, Repository: a.Repository, Change: a.Change, Scope: a.Scope,
+		Base: a.Base, Head: a.Head, Publish: a.Publish, Formal: a.Formal}
 }

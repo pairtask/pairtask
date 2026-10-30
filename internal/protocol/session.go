@@ -24,7 +24,7 @@ const (
 )
 
 // SessionCapabilities are advertised in the operator_session response.
-var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityReviews, CapabilityContactMessages, CapabilityContactRouting}
+var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityReviews, CapabilityContactMessages, CapabilityContactRouting, CapabilityContactReviews}
 
 // CapabilityMentions: operator_send to a room or group may carry mentions
 // (#164); a broker without it would drop them, so the chat refuses such a

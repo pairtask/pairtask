@@ -96,7 +96,8 @@ func (m *Model) contactShareResult(req pendingRequest, resp protocol.Message) te
 		return nil
 	}
 	t := m.contacts.thread(contact)
-	t.shared, t.directory = resp.ContactPage.Shared, resp.ContactPage.Directory
+	t.shared, t.directory, t.grants = resp.ContactPage.Shared, resp.ContactPage.Directory, resp.ContactPage.ReviewGrants
+	t.merge(resp.ContactPage.Messages)
 	m.status = "shared with this workspace: " + agentNames(t.shared, "no agents")
 	return nil
 }
@@ -135,5 +136,6 @@ func routeHead(v protocol.ContactMessageView) string {
 	if len(v.AgentAcks) > 0 {
 		head += " · acknowledged by " + agentNames(v.AgentAcks, "")
 	}
+	head += reviewHead(v)
 	return head
 }

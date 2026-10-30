@@ -286,13 +286,34 @@ var agentEnvelopeChecks = []func(protocol.Message, int) *routingError{
 func checkWorkspace(msg protocol.Message, version int) *routingError {
 	switch {
 	case msg.Workspace == "":
-		return nil
+		return checkNoAsk(msg)
 	case version < protocol.WorkspaceVersion:
 		return &routingError{protocol.ErrMalformedFrame, "workspace requires protocol_version 13"}
 	case msg.To == protocol.Broadcast || msg.Room != "":
 		return &routingError{protocol.ErrMalformedFrame, "a message to a paired workspace goes to one agent there or its operator"}
 	case len(msg.Workspace) > 128:
 		return &routingError{protocol.ErrMalformedFrame, "workspace is a contact's key or name, at most 128 bytes"}
+	}
+	return checkAsk(msg, version)
+}
+
+// checkNoAsk: a review request goes to a paired workspace.
+func checkNoAsk(msg protocol.Message) *routingError {
+	if msg.ReviewAsk != nil {
+		return &routingError{protocol.ErrMalformedFrame, "review_ask goes with workspace"}
+	}
+	return nil
+}
+
+// checkAsk admits a review request from v14: new, to one agent there.
+func checkAsk(msg protocol.Message, version int) *routingError {
+	switch {
+	case msg.ReviewAsk == nil:
+		return nil
+	case version < protocol.ReviewAskVersion:
+		return &routingError{protocol.ErrMalformedFrame, "review_ask requires protocol_version 14"}
+	case msg.InReplyTo != "" || msg.To == protocol.OperatorID:
+		return &routingError{protocol.ErrMalformedFrame, "a review request asks one agent of the workspace and answers nothing"}
 	}
 	return nil
 }

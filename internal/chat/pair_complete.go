@@ -17,7 +17,7 @@ const pendingAcceptance = "pending_acceptance"
 var pairVerbs = []string{"open", "status", "cancel", "accept", "reject", "redeem", "settle"}
 
 // contactPairVerbs are offered too in a contact's tab, where they act.
-var contactPairVerbs = []string{pairShare, pairUnshare}
+var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairReview, pairApprove, pairDecline}
 
 // pairVerbsHere are the /pair words that act in the open tab.
 func (m *Model) pairVerbsHere() []string {
@@ -38,6 +38,10 @@ var pairUsages = map[string]string{
 	"settle":  "settle [OPERATION_ID]: finish a redemption the other side accepted",
 	"share":   "share AGENT...|*: in a ⇄ tab, that workspace may message these agents",
 	"unshare": "unshare AGENT...|*: in a ⇄ tab, it may message them no more",
+	"reviews": "reviews AGENT... ask|auto|off [--publish] [--formal]: in a ⇄ tab, what that workspace may ask of these agents",
+	"review":  "review AGENT TARGET BASE HEAD [SCOPE] [--publish] [--formal]: in a ⇄ tab, ask one of its agents for a review",
+	"approve": "approve ID: in a ⇄ tab, let one of its review requests through",
+	"decline": "decline ID: in a ⇄ tab, refuse one of its review requests",
 }
 
 func decidesRequest(word string) bool {

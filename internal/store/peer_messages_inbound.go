@@ -69,10 +69,13 @@ type inboundCheck struct {
 // quota.
 var inboundChecks = []inboundCheck{
 	{messaging.ReasonInvalid, func(_ context.Context, _ *sql.Tx, _ string, m messaging.Message) (bool, error) {
-		return !validSequence(m.N) || !messaging.ValidID(m.ID) || !messaging.ValidRouting(m), nil
+		if !validSequence(m.N) || !messaging.ValidID(m.ID) {
+			return true, nil
+		}
+		return !messaging.ValidRouting(m) || !validAsk(m), nil
 	}},
 	{messaging.ReasonNotShared, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
-		ok, err := allGranted(ctx, tx, contact, m.To)
+		ok, err := recipientsGranted(ctx, tx, contact, m)
 		return !ok, err
 	}},
 	{messaging.ReasonConflict, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
@@ -93,6 +96,22 @@ var inboundChecks = []inboundCheck{
 		}
 		return peerInboxFull(ctx, tx, contact, len(m.Text))
 	}},
+	{messaging.ReasonInboxFull, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+		if m.Review == nil {
+			return false, nil
+		}
+		return asksFull(ctx, tx, contact, m.To[0])
+	}},
+}
+
+// recipientsGranted: a message's recipients are shared with the contact;
+// a review request's one agent may be asked by it, whatever it shares.
+func recipientsGranted(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+	if m.Review == nil {
+		return allGranted(ctx, tx, contact, m.To)
+	}
+	_, granted, err := reviewGrant(ctx, tx, contact, m.To[0])
+	return granted, err
 }
 
 // decideInbound is the answer to a message that is not a replay; Stored

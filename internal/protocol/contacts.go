@@ -39,6 +39,19 @@ const (
 	// ContactOpUnshare stops it for contact_agents, "*" alone for all:
 	// messages staged for them are withheld, and their queued ones refused.
 	ContactOpUnshare = "unshare"
+	// ContactOpReviewGrant sets what the contact may ask of contact_agents
+	// here (#235): contact_review_grant's mode ask, auto or off, and
+	// whether a verdict may be published, and formally.
+	ContactOpReviewGrant = "review_grant"
+	// ContactOpReviewAsk asks the one agent in contact_to for the review in
+	// review_ask, under message_id; contact_text is an optional note.
+	ContactOpReviewAsk = "review_ask"
+	// ContactOpReviewDecide approves or declines (contact_approve) the
+	// contact's review request with the one ID in contact_read, while it
+	// waits for this side's operator.
+	ContactOpReviewDecide = "review_decide"
+	// CapabilityContactReviews: the broker serves the three review ops.
+	CapabilityContactReviews = "contact_reviews"
 
 	// CapabilityContactRouting: the broker serves share and unshare, a send
 	// to the contact's agents (contact_to), and routing in the views.
@@ -91,6 +104,13 @@ type ContactMessageView struct {
 	ReplyID   string   `json:"reply_id,omitempty"`
 	ReplySide string   `json:"reply_side,omitempty"`
 	AgentAcks []string `json:"agent_acks,omitempty"`
+	// A review request (#235): what it asks, and for one the contact sent
+	// here, where it is: awaiting this side's operator, pending dispatch,
+	// imported as ReviewID, or withheld with ReviewReason.
+	ReviewAsk    *ReviewAsk `json:"review_ask,omitempty"`
+	ReviewState  string     `json:"review_state,omitempty"`
+	ReviewID     string     `json:"review_id,omitempty"`
+	ReviewReason string     `json:"review_reason,omitempty"`
 }
 
 // ContactHeldForUpgrade is the refusal_reason of a queued message to or
@@ -114,6 +134,8 @@ type ContactMessagePage struct {
 	// what the contact last said it shares, a hint for addressing (#222).
 	Shared    []string `json:"shared,omitempty"`
 	Directory []string `json:"directory,omitempty"`
+	// ReviewGrants are what the contact may ask of agents here (#235).
+	ReviewGrants []ReviewGrantView `json:"review_grants,omitempty"`
 }
 
 // ContactSyncView is what this side knows of syncing with a contact.
@@ -139,9 +161,13 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpSync:    {key: true},
 	ContactOpShare:   {key: true, id: true, agents: true},
 	ContactOpUnshare: {key: true, id: true, agents: true},
+	// Review requests (#235).
+	ContactOpReviewGrant:  {key: true, id: true, agents: true, grant: true},
+	ContactOpReviewAsk:    {key: true, id: true, to: true, note: true, ask: true},
+	ContactOpReviewDecide: {key: true, id: true, read: true, approve: true},
 }
 
-type contactFieldSet struct{ key, text, read, before, id, to, agents bool }
+type contactFieldSet struct{ key, text, note, read, before, id, to, agents, grant, ask, approve bool }
 
 // ValidateContactRequest checks an operator_contact frame before anything
 // is looked up, audited or changed: a known operation with exactly its
@@ -149,13 +175,14 @@ type contactFieldSet struct{ key, text, read, before, id, to, agents bool }
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share or unshare")
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask or review_decide")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err
 	}
 	return errors.Join(validContactKey(msg.ContactKey), validContactID(msg, allowed), validContactText(msg, allowed),
-		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed))
+		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
+		validContactReview(msg, allowed))
 }
 
 // contactFieldsPresent refuses a field the operation doesn't take, any
@@ -169,11 +196,14 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		present bool
 		allowed bool
 	}{
-		{"contact_text", msg.ContactText != "", allowed.text},
 		{"contact_read", msg.ContactRead != nil, allowed.read},
 		{"contact_before", msg.ContactBefore != 0, allowed.before},
 		{"contact_to", msg.ContactTo != nil, allowed.to},
 		{"contact_agents", msg.ContactAgents != nil, allowed.agents},
+		{"contact_text", msg.ContactText != "", allowed.text || allowed.note},
+		{"contact_review_grant", msg.ContactReviewGrant != nil, allowed.grant},
+		{"review_ask", msg.ReviewAsk != nil, allowed.ask},
+		{"contact_approve", msg.ContactApprove != nil, allowed.approve},
 		{"contact_message", msg.ContactMessage != nil, false},
 		{"contact_page", msg.ContactPage != nil, false},
 		{"contact_sync", msg.ContactSync != nil, false},
@@ -229,7 +259,7 @@ func validContactID(msg Message, allowed contactFieldSet) error {
 }
 
 func validContactText(msg Message, allowed contactFieldSet) error {
-	if !allowed.text {
+	if !textChecked(msg, allowed) {
 		return nil
 	}
 	if !validText(msg.ContactText) {
@@ -316,4 +346,75 @@ func distinctAgents(agents []string) bool {
 		seen[a] = true
 	}
 	return true
+}
+
+// textChecked: the operation takes text, or a note it was given.
+func textChecked(msg Message, allowed contactFieldSet) bool {
+	if allowed.text {
+		return true
+	}
+	return allowed.note && msg.ContactText != ""
+}
+
+// ContactReviewGrant is what a contact may ask of agents here (#235).
+type ContactReviewGrant struct {
+	Mode    string `json:"mode"` // ask, auto or off
+	Publish bool   `json:"publish,omitempty"`
+	Formal  bool   `json:"formal,omitempty"` // needs publish
+}
+
+// ReviewGrantView is one agent's review grant for a contact.
+type ReviewGrantView struct {
+	Agent   string `json:"agent"`
+	Mode    string `json:"mode"`
+	Publish bool   `json:"publish,omitempty"`
+	Formal  bool   `json:"formal,omitempty"`
+}
+
+// reviewModes are the modes a review grant takes.
+var reviewModes = map[string]bool{"ask": true, "auto": true, "off": true}
+
+// validContactReview checks the review ops' own fields: a grant, a
+// request for one agent pinned to a change, or one decision.
+func validContactReview(msg Message, allowed contactFieldSet) error {
+	switch {
+	case allowed.grant:
+		return validReviewGrant(msg.ContactReviewGrant)
+	case allowed.ask:
+		return validReviewAsk(msg)
+	case allowed.approve:
+		return validReviewDecide(msg)
+	}
+	return nil
+}
+
+func validReviewGrant(g *ContactReviewGrant) error {
+	if g == nil || !reviewModes[g.Mode] {
+		return errors.New("contact_review_grant needs a mode: ask, auto or off")
+	}
+	if g.Formal && !g.Publish {
+		return errors.New("contact_review_grant: formal needs publish")
+	}
+	return nil
+}
+
+func validReviewAsk(msg Message) error {
+	a := msg.ReviewAsk
+	if len(msg.ContactTo) != 1 || a == nil {
+		return errors.New("review_ask asks exactly one agent in contact_to")
+	}
+	if slices.Contains([]string{a.Forge, a.Repository, a.Change}, "") {
+		return errors.New("review_ask needs the change: forge, repository and change")
+	}
+	if a.Base == "" || a.Head == "" {
+		return errors.New("review_ask needs both pins: base and head")
+	}
+	return nil
+}
+
+func validReviewDecide(msg Message) error {
+	if len(msg.ContactRead) != 1 || msg.ContactApprove == nil {
+		return errors.New("review_decide takes one request ID in contact_read and contact_approve")
+	}
+	return nil
 }

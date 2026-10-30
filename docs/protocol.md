@@ -456,6 +456,22 @@ operator shared with it ([pairing guide](pairing.md#7-let-agents-talk-across)).
   confirmed contacts the caller is shared with, and the agents each says it
   shares, a hint for addressing.
 
+## Review requests across workspaces (v14)
+
+- **Asking.** A `msg` with `workspace` and `review_ask: {forge, repository,
+  change, base, head, scope?, publish?, formal?}` asks the one agent in `to`
+  there for a review of that change, pinned to `base` and `head`. It needs
+  `protocol_version` 14 and no `in_reply_to`; the sender must be shared with
+  that workspace. `publish` and `formal` are what the requester asks for.
+- **Receiving.** This side's operator grants each contact, per agent, `ask`
+  (each request waits for the operator), `auto`, or nothing, and whether a
+  verdict may be published, and formally. A request for an agent without a
+  grant is refused `not_shared`. The review it becomes has requester
+  `remote`, `remote: {contact, label, sender}`, and `pinned` revisions: a
+  change that moved can't be prepared (`review_conflict`). Its policy is at
+  most what was asked and granted, and publishing is checked against the
+  grant again when it starts. The reviewer's notice has origin `remote`.
+
 ## State
 
 SQLite retains `agents` (session lifecycle and harness/model) and `messages`

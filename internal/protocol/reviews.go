@@ -190,9 +190,14 @@ type Publication struct {
 
 // ReviewView is one review request as the broker holds it.
 type ReviewView struct {
-	ID          string      `json:"review_id"`
-	Spec        ReviewSpec  `json:"spec"`
-	Requester   string      `json:"requester"` // the operator principal that asked
+	ID        string     `json:"review_id"`
+	Spec      ReviewSpec `json:"spec"`
+	Requester string     `json:"requester"` // the operator principal that asked, or "remote"
+	// Remote is the paired workspace that asked, and who there, for a
+	// request from one (#235); Pinned the revisions it pinned, which the
+	// change must still have.
+	Remote      *Remote     `json:"remote,omitempty"`
+	Pinned      *Revisions  `json:"pinned,omitempty"`
 	State       string      `json:"state"`
 	Revisions   *Revisions  `json:"revisions,omitempty"` // from ready on
 	Attempt     int         `json:"attempt"`             // 0 until accepted
@@ -210,4 +215,17 @@ type ReviewPage struct {
 	Reviews   []ReviewView `json:"reviews"`
 	Total     int          `json:"reviews_total"`
 	Truncated bool         `json:"reviews_truncated"`
+}
+
+// ReviewAsk is a review request for a paired workspace's agent (#235): the
+// change, pinned to the revisions the requester resolved, what to focus on,
+// and whether the requester wants the verdict published, and formally. The
+// receiving workspace allows at most that.
+type ReviewAsk struct {
+	ReviewTarget
+	Scope   string `json:"scope,omitempty"`
+	Base    string `json:"base"`
+	Head    string `json:"head"`
+	Publish bool   `json:"publish,omitempty"`
+	Formal  bool   `json:"formal,omitempty"`
 }

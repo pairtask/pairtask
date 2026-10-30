@@ -249,7 +249,10 @@ func (s Session) offer(ctx context.Context) ([]Row, error) {
 
 func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
 	encode := EncodeMessage
-	if m.Routed() {
+	switch {
+	case m.Review != nil:
+		encode = EncodeReviewAsk
+	case m.Routed():
 		encode = EncodeRouted
 	}
 	if err := s.send(encode(m)); err != nil {
@@ -311,10 +314,20 @@ func (s Session) receiveMessages(ctx context.Context, r *Result) error {
 
 // decodeMessage reads a Message, or a routed one at RoutingVersion.
 func (s Session) decodeMessage(kind byte, frame []byte) (Message, error) {
-	if kind == FrameRouted && s.Version >= RoutingVersion {
-		return DecodeRouted(frame)
+	if decode := frameDecoders[kind]; decode.version != 0 && s.Version >= decode.version {
+		return decode.decode(frame)
 	}
 	return DecodeMessage(frame)
+}
+
+// frameDecoders are the message frames of later versions, from the version
+// that carries each.
+var frameDecoders = map[byte]struct {
+	version byte
+	decode  func([]byte) (Message, error)
+}{
+	FrameRouted:    {RoutingVersion, DecodeRouted},
+	FrameReviewAsk: {ReviewVersion, DecodeReviewAsk},
 }
 
 // answerMessage stores, then answers; a store failure ends the session

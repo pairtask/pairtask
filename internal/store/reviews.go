@@ -194,15 +194,25 @@ func (s *Store) ChangeReview(ctx context.Context, id string, act ReviewAction, s
 	if err != nil {
 		return next, false, err
 	}
-	if changed {
-		if err := saveReview(ctx, tx, next, false); err != nil {
-			return review.Record{}, false, err
-		}
-	}
-	if err := record(ctx, tx, reviewChange{next, changed, act}); err != nil {
+	if err := applyChange(ctx, tx, rec, reviewChange{next, changed, act}); err != nil {
 		return review.Record{}, false, err
 	}
 	return next, changed, tx.Commit()
+}
+
+// applyChange writes a step's result inside its transaction: a write
+// intent only the grants still allow, the review if it changed, and its
+// record.
+func applyChange(ctx context.Context, tx *sql.Tx, before review.Record, c reviewChange) error {
+	if err := publicationAllowed(ctx, tx, before, c.rec); err != nil {
+		return err
+	}
+	if c.changed {
+		if err := saveReview(ctx, tx, c.rec, false); err != nil {
+			return err
+		}
+	}
+	return record(ctx, tx, c)
 }
 
 // GetReview is one stored review.
