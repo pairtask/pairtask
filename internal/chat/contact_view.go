@@ -80,7 +80,7 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 		lines = append(lines, "  "+contactConfirming)
 	default:
 		lines = append(lines, mutedStyle.Render("  "+m.syncLine(c.IdentityKey)))
-		if share := m.sharingLine(c.IdentityKey); share != "" && m.routingAvailable() {
+		if share := sharingLine(m.contacts.threads[c.IdentityKey]); share != "" && m.routingAvailable() {
 			lines = append(lines, mutedStyle.Render("  "+share))
 		}
 	}
@@ -155,6 +155,9 @@ func (m *Model) outboundState(v protocol.ContactMessageView) string {
 	label := stateLabels[v.State]
 	if label == "" {
 		label = safe(v.State)
+	}
+	if v.RefusalReason == protocol.ContactHeldForUpgrade {
+		return "queued: leaves once they upgrade pairtask"
 	}
 	if v.State == "refused" && v.RefusalReason != "" {
 		label += " (" + safe(v.RefusalReason) + ")"

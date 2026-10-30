@@ -94,7 +94,7 @@ func textHash(text string) []byte {
 // message from an agent needs the agent shared with the contact.
 func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messaging.Row, error) {
 	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo}
-	if !messaging.ValidID(o.ID) || !messaging.ValidText(o.Text) || !messaging.ValidRouting(m) {
+	if !validOutgoing(m) {
 		return messaging.Row{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
 	}
 	tx, err := p.db.BeginTx(ctx, nil)
@@ -111,6 +111,14 @@ func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messagi
 		return messaging.Row{}, err
 	}
 	return row, nil
+}
+
+// validOutgoing: a message's ID, text and routing are within the rules.
+func validOutgoing(m messaging.Message) bool {
+	if !messaging.ValidID(m.ID) {
+		return false
+	}
+	return messaging.ValidText(m.Text) && messaging.ValidRouting(m)
 }
 
 // outgoing is one message the operator or an agent queues: its ID, text
@@ -270,20 +278,26 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return err
 }
 
-// Offer is the oldest queued messages that fit the session bounds; queued
-// messages past QueuedExpiry are expired first and never offered.
-func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
-	return p.OfferFor(ctx, contact, now, l, messaging.MaxVersion)
+// holdForUpgrade says why queued messages to or from agents stay queued
+// when the session's peer can't carry them; a delivery clears it.
+func holdForUpgrade(ctx context.Context, tx *sql.Tx, contact, carried string) error {
+	if carried != unroutedRow {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET class = ?, reason = ?
+WHERE contact = ? AND direction = 'out' AND state = 'queued' AND NOT (`+unroutedRow+`)`, messaging.Transient, messaging.ReasonPeerUpgrade, contact)
+	return err
 }
 
 // unroutedRow is a row any version carries.
 const unroutedRow = `from_agent IS NULL AND to_agents IS NULL AND reply_id IS NULL`
 
-// OfferFor is Offer for a session at version: before RoutingVersion, rows
-// to or from agents stay queued for a peer that can carry them.
-func (p *PeerMessages) OfferFor(ctx context.Context, contact string, now time.Time, l messaging.Limit, version byte) ([]messaging.Row, error) {
+// Offer is the oldest queued messages that fit the session bounds; queued
+// messages past QueuedExpiry are expired first and never offered.
+// Before RoutingVersion, messages to or from agents stay queued.
+func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
 	carried := "1"
-	if version < messaging.RoutingVersion {
+	if l.Version != 0 && l.Version < messaging.RoutingVersion {
 		carried = unroutedRow
 	}
 	limit := sessionBudget.clamp(budget{l.Count, l.Bytes})
@@ -293,6 +307,9 @@ func (p *PeerMessages) OfferFor(ctx context.Context, contact string, now time.Ti
 	}
 	defer tx.Rollback()
 	if err := expireQueued(ctx, tx, contact, now); err != nil {
+		return nil, err
+	}
+	if err := holdForUpgrade(ctx, tx, contact, carried); err != nil {
 		return nil, err
 	}
 	rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)

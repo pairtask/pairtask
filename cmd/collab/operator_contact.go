@@ -104,7 +104,7 @@ func writeContact(w io.Writer, resp protocol.Message) {
 	}
 	if p := resp.ContactPage; p != nil {
 		for _, m := range p.Messages {
-			fmt.Fprintf(w, "%s %s %s id=%q%s %q\n", m.CreatedAt.Local().Format("15:04"), m.Direction, m.State, m.ID, routeNote(m), m.Text)
+			fmt.Fprintf(w, "%s %s %s id=%q%s %q\n", m.CreatedAt.Local().Format("15:04"), m.Direction, stateNote(m), m.ID, routeNote(m), m.Text)
 		}
 		fmt.Fprintf(w, "shared here: %q; they share: %q\n", p.Shared, p.Directory)
 	}
@@ -127,4 +127,12 @@ func routeNote(m protocol.ContactMessageView) string {
 		note += fmt.Sprintf(" acked=%q", m.AgentAcks)
 	}
 	return note
+}
+
+// stateNote is a message's state, with why when one is given.
+func stateNote(m protocol.ContactMessageView) string {
+	if m.RefusalReason == "" {
+		return m.State
+	}
+	return fmt.Sprintf("%s(%s)", m.State, m.RefusalReason)
 }

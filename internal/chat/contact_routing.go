@@ -27,11 +27,17 @@ func (m *Model) routingAvailable() bool {
 }
 
 // sharesAgents: /pair share and unshare name agents after the verb.
-func sharesAgents(verb string) bool { return verb == pairShare || verb == pairUnshare }
+func (f pairWords) sharesAgents() bool { return f[0] == pairShare || f[0] == pairUnshare }
 
-// contactAddress splits a draft's leading @agent words from its text: the
-// contact's agents it is to, none for its operator.
-func contactAddress(draft string) ([]string, string) {
+// address is a draft's recipients and text: the contact's agents named by
+// its leading @agent words, then the rest; with none, the whole draft goes
+// to the contact's operator as written.
+type address struct {
+	to   []string
+	text string
+}
+
+func contactAddress(draft string) address {
 	var to []string
 	rest := strings.TrimLeft(draft, " ")
 	for strings.HasPrefix(rest, "@") {
@@ -39,20 +45,23 @@ func contactAddress(draft string) ([]string, string) {
 		to = append(to, strings.TrimPrefix(word, "@"))
 		rest = strings.TrimLeft(after, " ")
 	}
-	return to, rest
+	if len(to) == 0 {
+		return address{text: draft}
+	}
+	return address{to, rest}
 }
 
 // addressProblem is why an addressed draft can't be sent, or "".
-func (m *Model) addressProblem(to []string, text string) string {
+func (m *Model) addressProblem(a address) string {
 	switch {
-	case len(to) == 0:
+	case len(a.to) == 0:
 		return ""
 	case !m.routingAvailable():
 		return "this broker can't send to a workspace's agents; upgrade it"
-	case strings.TrimSpace(text) == "":
+	case strings.TrimSpace(a.text) == "":
 		return "write the message after the @agents"
 	case protocol.ValidateContactRequest(protocol.Message{ContactOp: protocol.ContactOpSend, ContactKey: "sha256:" + strings.Repeat("0", 64),
-		MessageID: "check", ContactText: text, ContactTo: to}) != nil:
+		MessageID: "check", ContactText: a.text, ContactTo: a.to}) != nil:
 		return "@ names up to 64 distinct agents of that workspace"
 	}
 	return ""
@@ -93,8 +102,7 @@ func (m *Model) contactShareResult(req pendingRequest, resp protocol.Message) te
 }
 
 // sharingLine is what each side shares, for the contact's card.
-func (m *Model) sharingLine(fingerprint string) string {
-	t := m.contacts.threads[fingerprint]
+func sharingLine(t *contactThread) string {
 	if t == nil || !t.loaded {
 		return ""
 	}
@@ -122,18 +130,10 @@ func routeHead(v protocol.ContactMessageView) string {
 		head += " · " + safe(v.From)
 	}
 	if len(v.To) > 0 {
-		head += " → @" + strings.Join(escapedAll(v.To), ", @")
+		head += " → " + agentNames(v.To, "")
 	}
 	if len(v.AgentAcks) > 0 {
 		head += " · acknowledged by " + agentNames(v.AgentAcks, "")
 	}
 	return head
-}
-
-func escapedAll(items []string) []string {
-	out := make([]string, len(items))
-	for i, s := range items {
-		out[i] = safe(s)
-	}
-	return out
 }

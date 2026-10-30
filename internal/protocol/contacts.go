@@ -93,6 +93,11 @@ type ContactMessageView struct {
 	AgentAcks []string `json:"agent_acks,omitempty"`
 }
 
+// ContactHeldForUpgrade is the refusal_reason of a queued message to or
+// from agents held back while the contact runs a pairtask that can't carry
+// it.
+const ContactHeldForUpgrade = "peer_upgrade"
+
 // Reply sides of a ContactMessageView.
 const (
 	ReplyBySender   = "by_sender"
@@ -150,7 +155,7 @@ func ValidateContactRequest(msg Message) error {
 		return err
 	}
 	return errors.Join(validContactKey(msg.ContactKey), validContactID(msg, allowed), validContactText(msg, allowed),
-		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed))
+		validContactRead(msg, allowed), validContactBefore(msg), contactToError(msg.ContactTo), validContactAgents(msg, allowed))
 }
 
 // contactFieldsPresent refuses a field the operation doesn't take, any
@@ -279,8 +284,12 @@ func printableASCII(s string) bool {
 
 // validContactTo: the contact's agents a send is to, none for its operator;
 // distinct, each a valid agent ID.
-func validContactTo(to []string) error {
-	if len(to) > ContactAgentsMax || !distinctAgents(to) {
+func validContactTo(to []string) bool {
+	return len(to) <= ContactAgentsMax && distinctAgents(to)
+}
+
+func contactToError(to []string) error {
+	if !validContactTo(to) {
 		return fmt.Errorf("contact_to names up to %d distinct agents", ContactAgentsMax)
 	}
 	return nil
@@ -289,14 +298,17 @@ func validContactTo(to []string) error {
 // validContactAgents: the agents share and unshare name, "*" alone for all.
 func validContactAgents(msg Message, allowed contactFieldSet) error {
 	agents := msg.ContactAgents
-	if !allowed.agents || len(agents) == 1 && agents[0] == Broadcast {
+	if !allowed.agents || everyAgent(agents) {
 		return nil
 	}
-	if len(agents) == 0 || len(agents) > ContactAgentsMax || !distinctAgents(agents) {
+	if len(agents) == 0 || !validContactTo(agents) {
 		return fmt.Errorf("contact_agents is \"*\" or 1 to %d distinct agents", ContactAgentsMax)
 	}
 	return nil
 }
+
+// everyAgent: "*" alone.
+func everyAgent(agents []string) bool { return len(agents) == 1 && agents[0] == Broadcast }
 
 // distinctAgents: each a valid agent ID, none twice.
 func distinctAgents(agents []string) bool {

@@ -73,7 +73,7 @@ const shareAll = "*"
 // one registering later isn't shared.
 func (p *PeerMessages) Share(ctx context.Context, contact string, agents []string, now time.Time) ([]string, error) {
 	return p.grantChange(ctx, contact, func(tx *sql.Tx) error {
-		named, err := namedAgents(ctx, tx, agents, `SELECT agent_id FROM durable_agents WHERE agent_id != 'operator'`)
+		named, err := namedAgents(ctx, tx, agents, everyAgent{query: `SELECT agent_id FROM durable_agents WHERE agent_id != 'operator'`})
 		if err != nil {
 			return err
 		}
@@ -97,7 +97,7 @@ ON CONFLICT DO NOTHING`, contact, agent, msgStamp(now)); err != nil {
 // revoked agent's messages still queued to the contact are refused here.
 func (p *PeerMessages) Unshare(ctx context.Context, contact string, agents []string, now time.Time) ([]string, error) {
 	return p.grantChange(ctx, contact, func(tx *sql.Tx) error {
-		named, err := namedAgents(ctx, tx, agents, `SELECT agent FROM peer_grants WHERE contact = ?`, contact)
+		named, err := namedAgents(ctx, tx, agents, everyAgent{`SELECT agent FROM peer_grants WHERE contact = ?`, []any{contact}})
 		if err != nil {
 			return err
 		}
@@ -138,11 +138,17 @@ func (p *PeerMessages) grantChange(ctx context.Context, contact string, change f
 	return granted, tx.Commit()
 }
 
+// everyAgent is what "*" names: the agents its query lists.
+type everyAgent struct {
+	query string
+	args  []any
+}
+
 // namedAgents is the agents a grant change names: each valid, or "*" alone
-// for what all lists.
-func namedAgents(ctx context.Context, tx *sql.Tx, agents []string, all string, args ...any) ([]string, error) {
+// for every one.
+func namedAgents(ctx context.Context, tx *sql.Tx, agents []string, all everyAgent) ([]string, error) {
 	if len(agents) == 1 && agents[0] == shareAll {
-		return queryStrings(ctx, tx, all, args...)
+		return queryStrings(ctx, tx, all.query, all.args...)
 	}
 	if len(agents) == 0 {
 		return nil, fmt.Errorf("%w: no agents named", messaging.ErrInvalid)
@@ -354,29 +360,4 @@ func queryStrings(ctx context.Context, q rowsQuerier, query string, args ...any)
 		out = append(out, s)
 	}
 	return out, rows.Err()
-}
-
-// pruneRouting keeps routing's tables within the messages' bounds: agent
-// acknowledgments pending past ReceiptAge drop, settled ones go, and a
-// settled import goes once the replay floor forgot its message and no
-// recipient still holds it unacknowledged. Grants and the directory are
-// bounded by MaxAgents; the peer's agent acknowledgments by the recipients
-// of this side's messages.
-func pruneRouting(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
-	for _, step := range []struct {
-		query string
-		args  []any
-	}{
-		{`UPDATE peer_agent_reads SET state = 'dropped' WHERE contact = ? AND state = 'pending' AND read_at < ?`,
-			[]any{contact, msgStamp(now.Add(-messaging.ReceiptAge))}},
-		{`DELETE FROM peer_agent_reads WHERE contact = ? AND state != 'pending'`, []any{contact}},
-		{`DELETE FROM remote_imports WHERE contact = ? AND state != 'pending'
-    AND NOT EXISTS (SELECT 1 FROM peer_messages pm WHERE pm.contact = remote_imports.contact AND pm.direction = 'in' AND pm.message_id = remote_imports.remote_id)
-    AND NOT EXISTS (SELECT 1 FROM durable_inbox d WHERE d.message_id = remote_imports.local_id AND d.acknowledged_at IS NULL)`, []any{contact}},
-	} {
-		if _, err := tx.ExecContext(ctx, step.query, step.args...); err != nil {
-			return err
-		}
-	}
-	return nil
 }

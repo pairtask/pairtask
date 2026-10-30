@@ -24,8 +24,8 @@ type routingSessionProbe struct {
 	directoryErr error
 }
 
-func (s *routingSessionProbe) OfferFor(_ context.Context, _ string, _ time.Time, _ messaging.Limit, byteVersion byte) ([]messaging.Row, error) {
-	s.versions = append(s.versions, byteVersion)
+func (s *routingSessionProbe) Offer(_ context.Context, _ string, _ time.Time, limit messaging.Limit) ([]messaging.Row, error) {
+	s.versions = append(s.versions, limit.Version)
 	return nil, nil
 }
 func (s *routingSessionProbe) PendingAgentReads(context.Context, string, int) ([]messaging.AgentRead, error) {
@@ -73,7 +73,7 @@ func TestRoutingSessionAcceptanceDowngradeSkipsRoutingPhases(t *testing.T) {
 			sessionOK(t, err)
 			sessionEqual(t, got, version)
 			if !reflect.DeepEqual(probe.versions, []byte{version}) {
-				t.Fatalf("OfferFor versions: %v", probe.versions)
+				t.Fatalf("Offer versions: %v", probe.versions)
 			}
 			sessionEqual(t, len(f.sent), 3) // Hello, message End, read End; no directory or agent receipts.
 		})

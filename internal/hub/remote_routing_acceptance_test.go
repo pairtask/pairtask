@@ -321,8 +321,8 @@ func TestRemoteHubAcceptanceAckDuringScanRevisitsEarlierBlockedRows(t *testing.T
 	// shares the one-slot channel with the continuation already queued.
 	for range 4 {
 		select {
-		case <-h.imports:
-			h.drainImports(ctx, clients)
+		case <-h.pair.changed:
+			h.background(ctx, clients)
 		default:
 		}
 	}

@@ -124,11 +124,6 @@ type routingSessionStore struct {
 	rs RoutingStore
 }
 
-func (s routingSessionStore) OfferFor(ctx context.Context, contact string, now time.Time, l Limit, version byte) ([]Row, error) {
-	rows, err := s.rs.OfferFor(ctx, contact, now, l, version)
-	return rows, storeErr(err)
-}
-
 func (s routingSessionStore) PendingAgentReads(ctx context.Context, contact string, max int) ([]AgentRead, error) {
 	reads, err := s.rs.PendingAgentReads(ctx, contact, max)
 	return reads, storeErr(err)

@@ -214,15 +214,22 @@ WHERE ri.contact = ? AND ri.remote_id = ?`, imp.Contact, imp.RemoteID))
 		return ImportResult{State: state}, err
 	}
 	frozen.Sessions = imp.Sessions
-	result, err := importIn(ctx, tx, frozen, seq, ts)
+	result, err := importIn(ctx, tx, frozen, importSlot{seq, ts})
 	if err != nil {
 		return ImportResult{}, err
 	}
 	return result, tx.Commit()
 }
 
+// importSlot is where an import goes in the message order, and when.
+type importSlot struct {
+	seq uint64
+	ts  time.Time
+}
+
 // importIn settles a pending import inside its transaction.
-func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, seq uint64, ts time.Time) (ImportResult, error) {
+func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
+	ts := at.ts
 	shared, err := allGranted(ctx, tx, imp.Contact, imp.Recipients)
 	if err != nil {
 		return ImportResult{}, err
@@ -235,7 +242,7 @@ func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, seq uint64, ts 
 	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
 		return ImportResult{}, err
 	}
-	msg, recipients, err := importedMessage(ctx, tx, imp, seq, ts)
+	msg, recipients, err := importedMessage(ctx, tx, imp, at)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -253,7 +260,8 @@ WHERE message_id = ?`, imp.Contact, imp.Sender, nullString(imp.ReplyTo.ID), int(
 
 // importedMessage is the durable message an import becomes: from the remote
 // sender, or "operator" for the contact's operator, under origin remote.
-func importedMessage(ctx context.Context, tx *sql.Tx, imp RemoteImport, seq uint64, ts time.Time) (protocol.Message, []protocol.Recipient, error) {
+func importedMessage(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (protocol.Message, []protocol.Recipient, error) {
+	seq, ts := at.seq, at.ts.UTC()
 	payload, _ := json.Marshal(map[string]string{"text": imp.Text}) // a map of strings always encodes
 	parent, err := localParent(ctx, tx, imp)
 	if err != nil {
@@ -267,8 +275,7 @@ func importedMessage(ctx context.Context, tx *sql.Tx, imp RemoteImport, seq uint
 	if sender == "" {
 		sender = protocol.OperatorID
 	}
-	at := ts.UTC()
-	msg := protocol.Message{Type: protocol.TypeMsg, Seq: seq, TS: &at, From: sender, To: imp.Recipients[0],
+	msg := protocol.Message{Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: sender, To: imp.Recipients[0],
 		Payload: payload, MessageID: imp.LocalID, Origin: protocol.OriginRemote, InReplyTo: parent,
 		AckRequested: true, Durable: true,
 		Remote: &protocol.Remote{Contact: imp.Contact, Label: label, Sender: imp.Sender, ReplyID: imp.ReplyTo.ID, ReplyAuthor: imp.ReplyTo.Author}}
@@ -320,15 +327,29 @@ WHERE pm.contact = ? AND pm.direction = 'out' AND pm.message_id = ? AND pm.local
 		return "", err
 	}
 	addressed, err := groupList(to)
-	if err != nil {
+	if err != nil || !answers(imp, sentParent{from, sender, addressed}) {
 		return "", err
 	}
-	answers := from == sender && slices.Contains(imp.Recipients, from) &&
-		(slices.Contains(addressed, imp.Sender) || imp.Sender == "" && len(addressed) == 0)
-	if !answers {
-		return "", nil
-	}
 	return localID, nil
+}
+
+// sentParent is a message one of this side's agents sent the contact: the
+// agent its row names, the sender its history names, and whom it was to.
+type sentParent struct {
+	from, sender string
+	to           []string
+}
+
+// answers: the parent's agent sent it and is among the reply's
+// recipients, and the parent was to the reply's sender.
+func answers(imp RemoteImport, parent sentParent) bool {
+	if parent.from != parent.sender || !slices.Contains(imp.Recipients, parent.from) {
+		return false
+	}
+	if imp.Sender == "" {
+		return len(parent.to) == 0
+	}
+	return slices.Contains(parent.to, imp.Sender)
 }
 
 // optionalString is a row's one text column, "" for no row.
@@ -393,8 +414,11 @@ func (s *Store) QueueRemoteReply(ctx context.Context, r RemoteReply) (RemoteRepl
 		return RemoteReplyResult{}, err
 	}
 	held, found, err := messageRow(ctx, tx, o.key)
-	if err != nil || found {
-		return repeatedReply(ctx, tx, held, o, err)
+	if err != nil {
+		return RemoteReplyResult{}, err
+	}
+	if found {
+		return repeatedReply(ctx, tx, held, o)
 	}
 	local := r.Msg
 	local.Durable = false // kept as history: it has no inbox here
@@ -410,29 +434,39 @@ func (s *Store) QueueRemoteReply(ctx context.Context, r RemoteReply) (RemoteRepl
 
 // replyOutgoing is the message a reply queues, once its parent allows it.
 func replyOutgoing(ctx context.Context, tx *sql.Tx, r RemoteReply) (outgoing, error) {
-	parent, state, err := scanImport(tx.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
-WHERE ri.local_id = ?`, r.Parent))
-	if err != nil || state != ImportImported {
-		return outgoing{}, errors.Join(err, ErrNoImport)
-	}
-	if !slices.Contains(parent.Recipients, r.Msg.From) || r.Msg.To != parent.RemoteSender() {
-		return outgoing{}, messaging.ErrNotRecipient
+	parent, err := replyParent(ctx, tx, r)
+	if err != nil {
+		return outgoing{}, err
 	}
 	reply := messaging.Message{ID: r.Msg.MessageID, Text: r.Text, From: r.Msg.From,
 		ReplyTo: messaging.ReplyRef{ID: parent.RemoteID, Author: messaging.ReplyByReceiver}}
 	if parent.Sender != "" {
 		reply.To = []string{parent.Sender}
 	}
-	if !messaging.ValidID(reply.ID) || !messaging.ValidText(reply.Text) || !messaging.ValidRouting(reply) {
+	if !validOutgoing(reply) {
 		return outgoing{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
 	}
 	return outgoing{key: messageKey{parent.Contact, messaging.DirOut, reply.ID}, m: reply, now: r.Now, localID: r.Msg.MessageID}, nil
 }
 
+// replyParent is the import a reply answers: imported, with the reply's
+// sender among its recipients and the reply to its sender.
+func replyParent(ctx context.Context, tx *sql.Tx, r RemoteReply) (RemoteImport, error) {
+	parent, state, err := scanImport(tx.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
+WHERE ri.local_id = ?`, r.Parent))
+	if err != nil || state != ImportImported {
+		return RemoteImport{}, errors.Join(err, ErrNoImport)
+	}
+	if !slices.Contains(parent.Recipients, r.Msg.From) || r.Msg.To != parent.RemoteSender() {
+		return RemoteImport{}, messaging.ErrNotRecipient
+	}
+	return parent, nil
+}
+
 // repeatedReply answers a reply whose ID is queued already: the same text
 // and routing, queued from the same agent's message, is the same reply.
-func repeatedReply(ctx context.Context, tx *sql.Tx, held storedRow, o outgoing, err error) (RemoteReplyResult, error) {
-	row, err := replayed(held, o, err)
+func repeatedReply(ctx context.Context, tx *sql.Tx, held storedRow, o outgoing) (RemoteReplyResult, error) {
+	row, err := replayed(held, o, nil)
 	if err != nil {
 		return RemoteReplyResult{}, err
 	}
@@ -441,8 +475,13 @@ func repeatedReply(ctx context.Context, tx *sql.Tx, held storedRow, o outgoing, 
 	err = tx.QueryRowContext(ctx, `SELECT m.seq, m.sender FROM peer_messages pm
     JOIN message_metadata mm ON mm.message_id = pm.local_id JOIN messages m ON m.seq = mm.seq
 WHERE pm.cursor = ? AND pm.local_id = ?`, held.Cursor, o.localID).Scan(&seq, &sender)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && sender != o.m.From {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return RemoteReplyResult{}, messaging.ErrConflict
+	case err != nil:
+		return RemoteReplyResult{}, err
+	case sender != o.m.From:
 		return RemoteReplyResult{}, messaging.ErrConflict
 	}
-	return RemoteReplyResult{Row: row, Seq: seq, Repeated: true}, err
+	return RemoteReplyResult{Row: row, Seq: seq, Repeated: true}, nil
 }

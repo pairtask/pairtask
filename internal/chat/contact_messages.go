@@ -295,20 +295,28 @@ func (m *Model) contactSubmit() tea.Cmd {
 	if m.guardSend() {
 		return nil
 	}
-	draft := m.compose.editor.Value()
-	to, text := contactAddress(draft)
-	if problem := m.addressProblem(to, text); problem != "" {
-		m.status = problem
+	op, ok := m.contactDraft(contact)
+	if !ok {
 		return nil
 	}
-	if len(to) == 0 {
-		text = draft // a draft to the operator is sent as written
-	}
-	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend, ContactKey: contact,
-		MessageID: uuid.NewString(), ContactText: text, ContactTo: to}
-	m.contacts.send = &contactOp{msg: msg, draft: draft}
+	msg := op.msg
+	m.contacts.send = op
 	m.status = "sending to the workspace…"
 	return m.request(kindContactSend, msg, contact, msg.MessageID)
+}
+
+// contactDraft is the send the draft makes: to the agents it starts with
+// @, or as written to the contact's operator; a problem goes to the status.
+func (m *Model) contactDraft(contact string) (*contactOp, bool) {
+	draft := m.compose.editor.Value()
+	a := contactAddress(draft)
+	if problem := m.addressProblem(a); problem != "" {
+		m.status = problem
+		return nil, false
+	}
+	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend, ContactKey: contact,
+		MessageID: uuid.NewString(), ContactText: a.text, ContactTo: a.to}
+	return &contactOp{msg: msg, draft: draft}, true
 }
 
 // contactSendResult settles the send: the draft clears only if it still

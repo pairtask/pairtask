@@ -37,15 +37,22 @@ func (side instantSide) awaitRemoteView(t *testing.T, matches func(protocol.Cont
 		if r.ContactPage == nil {
 			t.Fatalf("list failed: %+v", r)
 		}
-		for _, m := range r.ContactPage.Messages {
-			if matches(m) {
-				return m
-			}
+		if found, ok := findRemoteView(r.ContactPage.Messages, matches); ok {
+			return found
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("remote message or receipt did not arrive over live link")
 	return protocol.ContactMessageView{}
+}
+
+func findRemoteView(rows []protocol.ContactMessageView, matches func(protocol.ContactMessageView) bool) (protocol.ContactMessageView, bool) {
+	for _, row := range rows {
+		if matches(row) {
+			return row, true
+		}
+	}
+	return protocol.ContactMessageView{}, false
 }
 
 func requireRemoteOperatorDelivery(t *testing.T, got protocol.Message, contact string) {

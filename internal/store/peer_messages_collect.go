@@ -186,3 +186,28 @@ func closeRows(rows *sql.Rows) error {
 	}
 	return rows.Close()
 }
+
+// pruneRouting keeps routing's tables within the messages' bounds: agent
+// acknowledgments pending past ReceiptAge drop, settled ones go, and a
+// settled import goes once the replay floor forgot its message and no
+// recipient still holds it unacknowledged. Grants and the directory are
+// bounded by MaxAgents; the peer's agent acknowledgments by the recipients
+// of this side's messages.
+func pruneRouting(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
+	for _, step := range []struct {
+		query string
+		args  []any
+	}{
+		{`UPDATE peer_agent_reads SET state = 'dropped' WHERE contact = ? AND state = 'pending' AND read_at < ?`,
+			[]any{contact, msgStamp(now.Add(-messaging.ReceiptAge))}},
+		{`DELETE FROM peer_agent_reads WHERE contact = ? AND state != 'pending'`, []any{contact}},
+		{`DELETE FROM remote_imports WHERE contact = ? AND state != 'pending'
+    AND NOT EXISTS (SELECT 1 FROM peer_messages pm WHERE pm.contact = remote_imports.contact AND pm.direction = 'in' AND pm.message_id = remote_imports.remote_id)
+    AND NOT EXISTS (SELECT 1 FROM durable_inbox d WHERE d.message_id = remote_imports.local_id AND d.acknowledged_at IS NULL)`, []any{contact}},
+	} {
+		if _, err := tx.ExecContext(ctx, step.query, step.args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}

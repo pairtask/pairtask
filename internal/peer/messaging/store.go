@@ -22,10 +22,15 @@ type Outgoing struct {
 
 // Limit is how many messages, and how many bytes of their text, one call
 // may take.
-type Limit struct{ Count, Bytes int }
+type Limit struct {
+	Count, Bytes int
+	// Version is the session's: before RoutingVersion, messages to or from
+	// agents stay queued for a peer that can carry them. 0 is the newest.
+	Version byte
+}
 
 // SessionLimit is what one session carries each way.
-var SessionLimit = Limit{SessionMessages, SessionBytes}
+var SessionLimit = Limit{Count: SessionMessages, Bytes: SessionBytes}
 
 // Row is one message as a side holds it, either direction.
 type Row struct {
@@ -88,9 +93,6 @@ type Store interface {
 // each side shares. A Store without it speaks at most version 2.
 type RoutingStore interface {
 	Store
-	// OfferFor is Offer for a session at version: routed rows only from
-	// RoutingVersion on, so an older peer never receives them.
-	OfferFor(ctx context.Context, contact string, now time.Time, l Limit, version byte) ([]Row, error)
 	// PendingAgentReads is up to max agent acknowledgments still to send.
 	PendingAgentReads(ctx context.Context, contact string, max int) ([]AgentRead, error)
 	// AgentReadConfirmed records the peer's AgentReadStored.

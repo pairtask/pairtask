@@ -57,6 +57,9 @@ const (
 	ReasonInboxFull = "inbox_full"
 	ReasonBusy      = "busy"
 	ReasonNotShared = "not_shared" // a recipient agent isn't shared with the sender
+	// ReasonPeerUpgrade marks, on this side only, a queued message to or
+	// from agents held back while the peer speaks a version before routing.
+	ReasonPeerUpgrade = "peer_upgrade"
 )
 
 var reasonClass = map[string]string{
@@ -148,7 +151,7 @@ func ValidAgent(id string) bool {
 // distinct recipient agents, and a reply reference whose author is set
 // exactly when its ID is, with a valid ID.
 func ValidRouting(m Message) bool {
-	if m.From != "" && !ValidAgent(m.From) || len(m.To) > MaxAgents {
+	if !validSender(m.From) || len(m.To) > MaxAgents {
 		return false
 	}
 	seen := map[string]bool{}
@@ -160,6 +163,9 @@ func ValidRouting(m Message) bool {
 	}
 	return validReply(m.ReplyTo)
 }
+
+// validSender: the operator ("") or an agent.
+func validSender(from string) bool { return from == "" || ValidAgent(from) }
 
 func validReply(r ReplyRef) bool {
 	if r.Author == ReplyAuthorNone {

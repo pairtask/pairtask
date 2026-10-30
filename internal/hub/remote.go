@@ -34,10 +34,21 @@ func (h *Hub) importsDue() {
 }
 
 // importPass asks the loop for the next pass, which goes on with a scan.
+// It rides on the background signal.
 func (h *Hub) importPass() {
+	h.importDue.Store(true)
 	select {
-	case h.imports <- struct{}{}:
+	case h.pair.changed <- struct{}{}:
 	default: // one is due already
+	}
+}
+
+// background is the loop's work behind the signal: announcements, and an
+// import pass when one is due.
+func (h *Hub) background(ctx context.Context, clients map[string]*Client) {
+	h.announceBackground()
+	if h.importDue.Swap(false) {
+		h.drainImports(ctx, clients)
 	}
 }
 
@@ -54,24 +65,33 @@ func (h *Hub) drainImports(ctx context.Context, clients map[string]*Client) {
 		h.rescan.Store(false) // this scan sees everything staged before it
 	}
 	for tried := 0; tried < importPass; tried += importBatch {
-		pending, err := h.store.PendingImportsAfter(ctx, h.importAt, importBatch)
-		if err != nil {
-			h.log.Error("staged messages not read", "error", err)
-			return
-		}
-		for _, imp := range pending {
-			h.importOne(ctx, clients, imp)
-			h.importAt = imp.Order
-		}
-		if len(pending) < importBatch {
-			h.importAt = 0 // the scan reached the end
-			if h.rescan.Load() {
-				h.importPass()
-			}
+		if h.importPage(ctx, clients) {
 			return
 		}
 	}
 	h.importPass()
+}
+
+// importPage imports one page of the scan; done when the pass has nothing
+// further to do.
+func (h *Hub) importPage(ctx context.Context, clients map[string]*Client) bool {
+	pending, err := h.store.PendingImportsAfter(ctx, h.importAt, importBatch)
+	if err != nil {
+		h.log.Error("staged messages not read", "error", err)
+		return true
+	}
+	for _, imp := range pending {
+		h.importOne(ctx, clients, imp)
+		h.importAt = imp.Order
+	}
+	if len(pending) == importBatch {
+		return false
+	}
+	h.importAt = 0 // the scan reached the end
+	if h.rescan.Load() {
+		h.importPass()
+	}
+	return true
 }
 
 // importOne imports one staged message at the next sequence, which only an
@@ -80,15 +100,26 @@ func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp sto
 	imp.Sessions = remoteSessions(clients, imp.Recipients)
 	result, err := h.store.ImportRemote(ctx, imp, h.seq+1, time.Now())
 	if err != nil {
-		if !errors.Is(err, store.ErrInboxFull) && !errors.Is(err, store.ErrLocalIDsTaken) {
-			h.log.Error("staged message not imported", "error", err)
-		}
+		h.importHeld(err)
 		return
 	}
-	if !result.Changed || result.State != store.ImportImported {
+	if result.Changed && result.State == store.ImportImported {
+		h.seq++
+		h.deliverImport(clients, result)
+	}
+}
+
+// importHeld logs why an import waits, unless a full inbox or taken IDs
+// hold it, which a later pass retries.
+func (h *Hub) importHeld(err error) {
+	if errors.Is(err, store.ErrInboxFull) || errors.Is(err, store.ErrLocalIDsTaken) {
 		return
 	}
-	h.seq++
+	h.log.Error("staged message not imported", "error", err)
+}
+
+// deliverImport hands an imported message to its recipients connected now.
+func (h *Hub) deliverImport(clients map[string]*Client, result store.ImportResult) {
 	for _, r := range result.Recipients {
 		if c := sessionOwner(clients, r); c != nil {
 			h.enqueue(clients, c, result.Msg)

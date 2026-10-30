@@ -35,24 +35,42 @@ class Agent:
         self.sock.sendall((json.dumps(frame) + "\n").encode())
 
     def next_of(self, kind, timeout):
-        """The next frame of this type; an error frame fails the proof."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            line = self.reader.readline()
-            require(line, "the broker closed the agent's connection")
-            frame = json.loads(line)
-            require(frame.get("type") != "error", f"the broker refused: {frame}")
-            if frame.get("type") == kind:
+        """The next frame of this type within timeout seconds."""
+        return self.await_frame(lambda f: f.get("type") == kind, time.monotonic() + timeout)
+
+    def await_frame(self, wanted, deadline):
+        """The next frame wanted accepts, read by the deadline; an error
+        frame fails the proof, and other frames are passed over, never
+        taken for the one wanted."""
+        while True:
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, "the agent's frame did not arrive in time")
+            self.sock.settimeout(remaining)
+            frame = self.read_frame()
+            require(time.monotonic() <= deadline, "the agent's frame arrived too late")
+            if wanted(frame):
                 return frame
-        raise ValueError(f"no {kind} frame within {timeout}s")
+
+    def read_frame(self):
+        line = self.reader.readline()
+        require(line, "the broker closed the agent's connection")
+        frame = json.loads(line)
+        require(frame.get("type") != "error", f"the broker refused: {frame}")
+        return frame
 
     def acknowledge(self, message_id):
+        """Both receipt stages; the broker's confirmations are passed over."""
         for stage in ("adapter_received", "agent_acknowledged"):
             self.send({"type": "ack", "message_id": message_id, "stage": stage})
 
     def close(self):
         self.reader.close()
         self.sock.close()
+
+
+def ack_of(message_id, stage):
+    """Matches the broker's ack of this message at this stage."""
+    return lambda f: f.get("type") == "ack" and (f.get("message_id"), f.get("stage")) == (message_id, stage)
 
 
 def check_import(msg, sender_key, sent):
@@ -65,20 +83,18 @@ def check_import(msg, sender_key, sent):
     require((msg.get("payload") or {}).get("text") == text, f"{message_id} arrived with other text")
 
 
-def await_acknowledged(run, key, message_id, timeout=INSTANT):
+def await_acknowledged(run, key, message_id, deadline):
     """The sent message lists the agent as having acknowledged it."""
-    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         rows = [m for m in page(run, key).get("messages", []) if m.get("direction") == "out" and m.get("id") == message_id]
         if rows and rows[0].get("agent_acks") == [AGENT]:
             return
         time.sleep(0.2)
-    raise ValueError(f"{AGENT}'s acknowledgment of {message_id} did not come back within {timeout}s")
+    raise ValueError(f"{AGENT}'s acknowledgment of {message_id} did not come back in time")
 
 
 def to_agent(sides, agent):
-    """The secured operator writes to the host's agent; the agent's copy,
-    after its elapsed time."""
+    """The secured operator writes to the host's agent; the agent's copy."""
     (secured, host_key), (_, secured_key) = sides
     ping = f"route-{uuid.uuid4().hex[:12]}"
     started = time.monotonic()
@@ -92,21 +108,24 @@ def to_agent(sides, agent):
 
 
 def reply_back(sides, agent, ping, msg):
-    """The agent acknowledges and replies; both reach the secured operator."""
+    """The agent acknowledges and replies; within INSTANT seconds the reply
+    shows in the secured operator's page, from the agent and answering the
+    ping, and the ping shows the agent's acknowledgment."""
     (secured, host_key), _ = sides
+    started = time.monotonic()
+    deadline = started + INSTANT
     agent.acknowledge(msg["message_id"])
     reply = f"reply-{uuid.uuid4().hex[:12]}"
-    started = time.monotonic()
     agent.send({"type": "msg", "to": "operator", "message_id": reply, "in_reply_to": msg["message_id"],
                 "payload": {"text": f"pong {reply}"}, "durable": True, "ack_requested": True})
-    accepted = agent.next_of("ack", INSTANT)
-    require(accepted.get("message_id") == reply and accepted.get("stage") == "accepted", f"reply not accepted: {accepted}")
-    await_received(secured, host_key, (reply, f"pong {reply}"), timeout=INSTANT)
-    elapsed = time.monotonic() - started
+    agent.await_frame(ack_of(reply, "accepted"), deadline)
+    await_received(secured, host_key, (reply, f"pong {reply}"), timeout=deadline - time.monotonic())
     row = next(m for m in page(secured, host_key)["messages"] if m.get("direction") == "in" and m.get("id") == reply)
     require(row.get("from") == AGENT and row.get("reply_id") == ping, f"reply arrived without its agent or parent: {row}")
-    await_acknowledged(secured, host_key, ping)
-    print(f"PASS: {AGENT}'s reply and acknowledgment back to the operator in {elapsed:.1f}s.", flush=True)
+    await_acknowledged(secured, host_key, ping, deadline)
+    elapsed = time.monotonic() - started
+    require(elapsed <= INSTANT, f"the reply and acknowledgment took {elapsed:.1f}s, over {INSTANT}s")
+    print(f"PASS: {AGENT}'s acknowledgment and reply back to the operator in {elapsed:.1f}s.", flush=True)
 
 
 def prove_routing(sides, agent_socket):

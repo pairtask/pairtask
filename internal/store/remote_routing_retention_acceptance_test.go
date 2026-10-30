@@ -18,7 +18,7 @@ func TestRemoteRoutingAcceptanceExhaustedLocalIDsLeaveImportPending(t *testing.T
 	routingRegister(t, db, "recipient")
 	_, err := db.PeerMessages().Share(ctx, contact, []string{"recipient"}, messageAt)
 	pairOK(t, err)
-	imp := routingStage(t, db, contact, "all-candidates-taken", "recipient")
+	imp := (routingScope{db, contact}).stage(t, "all-candidates-taken", "recipient")
 	for i := 0; i <= 64; i++ {
 		id := imp.LocalID
 		if i > 0 {
@@ -48,7 +48,7 @@ func TestRemoteRoutingAcceptanceCollectionRetainsUnacknowledgedImportMapping(t *
 	s := db.PeerMessages()
 	_, err := s.Share(ctx, contact, []string{"recipient"}, messageAt)
 	pairOK(t, err)
-	imp := routingStage(t, db, contact, "retain-until-ack", "recipient")
+	imp := (routingScope{db, contact}).stage(t, "retain-until-ack", "recipient")
 	result, err := db.ImportRemote(ctx, imp, 1, messageAt)
 	pairOK(t, err)
 	later := messageAt.Add(365 * 24 * time.Hour)
@@ -95,7 +95,7 @@ func TestRemoteRoutingAcceptancePendingAgentReceiptExpires(t *testing.T) {
 	s := db.PeerMessages()
 	_, err := s.Share(ctx, contact, []string{"recipient"}, messageAt)
 	pairOK(t, err)
-	imp := routingStage(t, db, contact, "expire-receipt", "recipient")
+	imp := (routingScope{db, contact}).stage(t, "expire-receipt", "recipient")
 	result, err := db.ImportRemote(ctx, imp, 1, messageAt)
 	pairOK(t, err)
 	pairOK(t, s.QueueAgentRead(ctx, result.Msg.MessageID, "recipient", messageAt))

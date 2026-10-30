@@ -44,7 +44,7 @@ type pairWords []string
 
 // pairArity: the words a verb takes; share and unshare take agents.
 func pairArity(fields pairWords) bool {
-	if sharesAgents(fields[0]) {
+	if fields.sharesAgents() {
 		return len(fields) >= 2
 	}
 	return slices.Contains(pairVerbArgs[fields[0]], len(fields))
@@ -91,6 +91,13 @@ var pairingStatus = map[string]string{
 	protocol.PairingOpReject: "pairing request rejected",
 }
 
+// pairCommands are the /pair words with their own command.
+var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
+	protocol.PairingOpRedeem: (*Model).redeemCommand,
+	pairShare:                (*Model).shareCommand,
+	pairUnshare:              (*Model).shareCommand,
+}
+
 // pairCommand is /pair: list by default, or one operation. Accept and reject
 // resolve a typed prefix to a full identity key here, never on the broker.
 func (m *Model) pairCommand(arg argument) tea.Cmd {
@@ -106,11 +113,8 @@ func (m *Model) pairCommand(arg argument) tea.Cmd {
 	if len(fields) == 0 {
 		fields = pairWords{protocol.PairingOpList}
 	}
-	if fields[0] == protocol.PairingOpRedeem {
-		return m.redeemCommand(fields)
-	}
-	if sharesAgents(fields[0]) {
-		return m.shareCommand(fields)
+	if command := pairCommands[fields[0]]; command != nil {
+		return command(m, fields)
 	}
 	if fields[0] == protocol.PairingOpSettle && !m.session.HasCapability(protocol.CapabilityPairingContacts) {
 		m.status = "this broker can't settle pairings; upgrade it to use /pair settle"

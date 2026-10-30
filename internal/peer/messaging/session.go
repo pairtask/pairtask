@@ -132,30 +132,37 @@ func (s Session) AnswerLive(can bool) (bool, error) {
 	return on, s.send(EncodeLive(on))
 }
 
+// phase is one side of a phase: sending or receiving.
+type phase func(context.Context, *Result) error
+
 // phases runs the phases in order, each a pair the dialer opens: messages,
 // read receipts, and from RoutingVersion on agent acknowledgments and the
 // directories.
 func (s Session) phases(ctx context.Context, dialer bool) (Result, error) {
 	var r Result
-	pairs := [][2]func(context.Context, *Result) error{{s.sendMessages, s.receiveMessages}, {s.sendReads, s.receiveReads}}
-	if _, ok := s.routing(); ok {
-		pairs = append(pairs, [2]func(context.Context, *Result) error{s.sendAgentReads, s.receiveAgentReads},
-			[2]func(context.Context, *Result) error{s.sendDirectory, s.receiveDirectory})
-	}
-	var steps []func(context.Context, *Result) error
-	for _, pair := range pairs {
-		if dialer {
-			steps = append(steps, pair[0], pair[1])
-		} else {
-			steps = append(steps, pair[1], pair[0])
-		}
-	}
-	for _, step := range steps {
+	for _, step := range s.steps(dialer) {
 		if err := step(ctx, &r); err != nil {
 			return r, err
 		}
 	}
 	return r, nil
+}
+
+// steps are the phases in this side's order: in each pair, the dialer
+// sends first.
+func (s Session) steps(dialer bool) []phase {
+	pairs := [][2]phase{{s.sendMessages, s.receiveMessages}, {s.sendReads, s.receiveReads}}
+	if _, ok := s.routing(); ok {
+		pairs = append(pairs, [2]phase{s.sendAgentReads, s.receiveAgentReads}, [2]phase{s.sendDirectory, s.receiveDirectory})
+	}
+	steps := make([]phase, 0, 2*len(pairs))
+	for _, pair := range pairs {
+		if !dialer {
+			pair[0], pair[1] = pair[1], pair[0]
+		}
+		steps = append(steps, pair[0], pair[1])
+	}
+	return steps
 }
 
 func (s Session) offerHello(max byte) (byte, error) {
@@ -235,13 +242,9 @@ func (s Session) sendMessages(ctx context.Context, r *Result) error {
 // offer is this session's messages to send: routed ones only when the
 // agreed version carries them.
 func (s Session) offer(ctx context.Context) ([]Row, error) {
-	if rs, ok := s.routing(); ok {
-		return rs.OfferFor(ctx, s.Contact, s.Now(), SessionLimit, s.Version)
-	}
-	if rs, ok := s.Store.(RoutingStore); ok {
-		return rs.OfferFor(ctx, s.Contact, s.Now(), SessionLimit, s.Version)
-	}
-	return s.Store.Offer(ctx, s.Contact, s.Now(), SessionLimit)
+	l := SessionLimit
+	l.Version = s.Version
+	return s.Store.Offer(ctx, s.Contact, s.Now(), l)
 }
 
 func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {

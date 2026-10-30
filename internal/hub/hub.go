@@ -44,9 +44,9 @@ type Inbound struct {
 type Hub struct {
 	membership chan membership
 	inbound    chan Inbound
-	imports    chan struct{} // an import pass is due (#222)
-	importAt   int64         // where the next import pass goes on; owned by Run
-	rescan     atomic.Bool   // an import pass was asked for since the scan began
+	importAt   int64       // where the next import pass goes on; owned by Run
+	rescan     atomic.Bool // an import pass was asked for since the scan began
+	importDue  atomic.Bool // an import pass is due; signalled on pair.changed (#222)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -74,7 +74,6 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 	h := &Hub{
 		membership: make(chan membership),
 		inbound:    make(chan Inbound, 64),
-		imports:    make(chan struct{}, 1),
 		store:      st,
 		seq:        startSeq,
 		log:        log,
@@ -163,10 +162,7 @@ func (h *Hub) Run(ctx context.Context) {
 			h.handleOperator(req.ctx, clients, req)
 
 		case <-h.pair.changed:
-			h.announceBackground()
-
-		case <-h.imports:
-			h.drainImports(ctx, clients)
+			h.background(ctx, clients)
 		}
 	}
 }
@@ -216,9 +212,6 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
 		return
 	}
-	if h.routeRemoteReply(ctx, clients, in) {
-		return
-	}
 	if !h.newSend(ctx, clients, in) {
 		return
 	}
@@ -239,9 +232,13 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	h.deliver(clients, in.From, out, recipients)
 }
 
-// newSend reports whether the message is a new send to route: a retry gets
-// its retained outcome, and a room post needs the sender's membership.
+// newSend reports whether the message is a new send to route here: a reply
+// to a paired workspace's message goes there instead, a retry gets its
+// retained outcome, and a room post needs the sender's membership.
 func (h *Hub) newSend(ctx context.Context, clients map[string]*Client, in Inbound) bool {
+	if h.routeRemoteReply(ctx, clients, in) {
+		return false
+	}
 	if h.reportRetry(ctx, clients, in) {
 		return false
 	}

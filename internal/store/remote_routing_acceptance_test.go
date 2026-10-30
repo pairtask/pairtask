@@ -111,6 +111,33 @@ func TestRemoteRoutingAcceptanceAtomicGroupRefusalAndReplay(t *testing.T) {
 	pairEqual(t, len(reads), 0)
 }
 
+func assertRoutingReplayConflicts(t *testing.T, s *store.PeerMessages, o messaging.Outgoing) {
+	t.Helper()
+	for _, field := range []string{"from", "to", "reply-id", "reply-author"} {
+		changed := o
+		switch field {
+		case "from":
+			changed.From = "other"
+		case "to":
+			changed.To = []string{"another-target"}
+		case "reply-id":
+			changed.ReplyTo.ID = "other-parent"
+		case "reply-author":
+			changed.ReplyTo.Author = messaging.ReplyBySender
+		}
+		_, err := s.Queue(context.Background(), changed)
+		if !errors.Is(err, messaging.ErrConflict) {
+			t.Fatalf("changed %s: %v", field, err)
+		}
+	}
+}
+
+func routingLimit(version byte) messaging.Limit {
+	limit := messaging.SessionLimit
+	limit.Version = version
+	return limit
+}
+
 func TestRemoteRoutingAcceptanceQueueBindsRoutingAndDowngrade(t *testing.T) {
 	db, contact := messageFixture(t)
 	ctx := context.Background()
@@ -124,29 +151,16 @@ func TestRemoteRoutingAcceptanceQueueBindsRoutingAndDowngrade(t *testing.T) {
 	again, err := s.Queue(ctx, o)
 	pairOK(t, err)
 	pairEqual(t, again.Cursor, first.Cursor)
-	for _, field := range []string{"from", "to", "reply-id", "reply-author"} {
-		changed := o
-		switch field {
-		case "from":
-			changed.From = "other"
-		case "to":
-			changed.To = []string{"another-target"}
-		case "reply-id":
-			changed.ReplyTo.ID = "other-parent"
-		case "reply-author":
-			changed.ReplyTo.Author = messaging.ReplyBySender
-		}
-		_, err := s.Queue(ctx, changed)
-		if !errors.Is(err, messaging.ErrConflict) {
-			t.Fatalf("changed %s: %v", field, err)
-		}
-	}
+	assertRoutingReplayConflicts(t, s, o)
 	for _, version := range []byte{1, 2} {
-		rows, err := s.OfferFor(ctx, contact, messageAt, messaging.SessionLimit, version)
+		rows, err := s.Offer(ctx, contact, messageAt, routingLimit(version))
 		pairOK(t, err)
 		pairEqual(t, len(rows), 0)
+		held := messagePage(t, s, contact)[0]
+		pairEqual(t, held.State, messaging.StateQueued)
+		pairEqual(t, held.Refusal, messaging.Refusal{Class: messaging.Transient, Reason: messaging.ReasonPeerUpgrade})
 	}
-	rows, err := s.OfferFor(ctx, contact, messageAt, messaging.SessionLimit, 3)
+	rows, err := s.Offer(ctx, contact, messageAt, routingLimit(3))
 	pairOK(t, err)
 	pairEqual(t, len(rows), 1)
 	if !reflect.DeepEqual(rows[0].To, o.To) {
@@ -160,6 +174,24 @@ func TestRemoteRoutingAcceptanceQueueBindsRoutingAndDowngrade(t *testing.T) {
 	row := messagePage(t, s, contact)[0]
 	pairEqual(t, row.State, messaging.StateRefused)
 	pairEqual(t, row.Refusal, messaging.Refuse(messaging.ReasonNotShared))
+}
+
+func TestRemoteRoutingAcceptanceUpgradeHoldClearsOnDelivery(t *testing.T) {
+	db, contact := messageFixture(t)
+	ctx := context.Background()
+	s := db.PeerMessages()
+	_, err := s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: "upgrade", Text: "payload", Now: messageAt, To: []string{"remote-target"}})
+	pairOK(t, err)
+	_, err = s.Offer(ctx, contact, messageAt, routingLimit(2))
+	pairOK(t, err)
+	pairEqual(t, messagePage(t, s, contact)[0].Refusal.Reason, messaging.ReasonPeerUpgrade)
+	rows, err := s.Offer(ctx, contact, messageAt, routingLimit(3))
+	pairOK(t, err)
+	pairEqual(t, len(rows), 1)
+	pairOK(t, s.Delivered(ctx, contact, "upgrade", messageAt))
+	delivered := messagePage(t, s, contact)[0]
+	pairEqual(t, delivered.State, messaging.StateDelivered)
+	pairEqual(t, delivered.Refusal, messaging.Refusal{})
 }
 
 func TestRemoteRoutingAcceptancePendingImportSurvivesRestartAndCollection(t *testing.T) {
@@ -208,8 +240,14 @@ func TestRemoteRoutingAcceptancePendingImportSurvivesRestartAndCollection(t *tes
 	pairEqual(t, len(remaining), 0)
 }
 
-func routingStage(t *testing.T, db *store.Store, contact, id string, recipients ...string) store.RemoteImport {
+type routingScope struct {
+	db      *store.Store
+	contact string
+}
+
+func (scope routingScope) stage(t *testing.T, id string, recipients ...string) store.RemoteImport {
 	t.Helper()
+	db, contact := scope.db, scope.contact
 	m := messageWire(id, 1)
 	m.From, m.To = "remote-sender", recipients
 	a, err := db.PeerMessages().Accept(context.Background(), contact, m, messageAt)
@@ -226,8 +264,14 @@ func routingStage(t *testing.T, db *store.Store, contact, id string, recipients 
 	return store.RemoteImport{}
 }
 
-func routingLocalMessage(t *testing.T, db *store.Store, id string, seq uint64, recipient string) {
+type routingLocalSender struct {
+	db        *store.Store
+	recipient string
+}
+
+func (sender routingLocalSender) persist(t *testing.T, id string, seq uint64) {
 	t.Helper()
+	db, recipient := sender.db, sender.recipient
 	at := messageAt
 	m := protocol.Message{Type: protocol.TypeMsg, MessageID: id, Seq: seq, TS: &at, From: "local-sender", To: recipient, Payload: []byte(`{"text":"local content"}`), Durable: true, AckRequested: true}
 	pairOK(t, db.PersistMessage(context.Background(), m, "local-session", []protocol.Recipient{{AgentID: recipient, SessionID: "session-" + recipient}}))
@@ -239,9 +283,9 @@ func TestRemoteRoutingAcceptanceCollisionBetweenStageAndImport(t *testing.T) {
 	routingRegister(t, db, "recipient", "local-recipient")
 	_, err := db.PeerMessages().Share(ctx, contact, []string{"recipient"}, messageAt)
 	pairOK(t, err)
-	imp := routingStage(t, db, contact, "same-id", "recipient")
+	imp := (routingScope{db, contact}).stage(t, "same-id", "recipient")
 	// A local sender takes the candidate AFTER Accept reserved the import.
-	routingLocalMessage(t, db, imp.LocalID, 1, "local-recipient")
+	(routingLocalSender{db, "local-recipient"}).persist(t, imp.LocalID, 1)
 	stale := imp
 	stale.Sender, stale.Text, stale.Recipients = "operator", "forged stale content", []string{"local-recipient"}
 	result, err := db.ImportRemote(ctx, stale, 2, messageAt)
@@ -275,7 +319,7 @@ func TestRemoteRoutingAcceptanceRevocationWithholdsEntireFrozenGroup(t *testing.
 	routingRegister(t, db, "first", "second")
 	_, err := db.PeerMessages().Share(ctx, contact, []string{"first", "second"}, messageAt)
 	pairOK(t, err)
-	imp := routingStage(t, db, contact, "revoke", "first", "second")
+	imp := (routingScope{db, contact}).stage(t, "revoke", "first", "second")
 	_, err = db.PeerMessages().Unshare(ctx, contact, []string{"second"}, messageAt)
 	pairOK(t, err)
 	_, err = db.PeerMessages().Share(ctx, contact, []string{"second"}, messageAt)
@@ -300,9 +344,9 @@ func TestRemoteRoutingAcceptanceFullInboxRollsBackWholeGroupAndRetries(t *testin
 	_, err := db.PeerMessages().Share(ctx, contact, []string{"available", "full"}, messageAt)
 	pairOK(t, err)
 	for i := 0; i < store.MaxPendingMessages; i++ {
-		routingLocalMessage(t, db, fmt.Sprintf("fill-%d", i), uint64(i+1), "full")
+		(routingLocalSender{db, "full"}).persist(t, fmt.Sprintf("fill-%d", i), uint64(i+1))
 	}
-	imp := routingStage(t, db, contact, "wait-capacity", "available", "full")
+	imp := (routingScope{db, contact}).stage(t, "wait-capacity", "available", "full")
 	_, err = db.ImportRemote(ctx, imp, 100, messageAt)
 	if !errors.Is(err, store.ErrInboxFull) {
 		t.Fatalf("full recipient: %v", err)
@@ -332,7 +376,7 @@ func TestRemoteRoutingAcceptanceUnshareWithholdsImportedReplay(t *testing.T) {
 	routingRegister(t, db, "recipient")
 	_, err := db.PeerMessages().Share(ctx, contact, []string{"recipient"}, messageAt)
 	pairOK(t, err)
-	imp := routingStage(t, db, contact, "already-imported", "recipient")
+	imp := (routingScope{db, contact}).stage(t, "already-imported", "recipient")
 	_, err = db.ImportRemote(ctx, imp, 1, messageAt)
 	pairOK(t, err)
 	_, err = db.PeerMessages().Unshare(ctx, contact, []string{"recipient"}, messageAt)
@@ -352,7 +396,7 @@ func TestRemoteRoutingAcceptanceAgentReceiptsAreRecipientSpecific(t *testing.T) 
 	s := db.PeerMessages()
 	_, err := s.Share(ctx, contact, []string{"first", "second"}, messageAt)
 	pairOK(t, err)
-	imp := routingStage(t, db, contact, "agent-receipts", "first", "second")
+	imp := (routingScope{db, contact}).stage(t, "agent-receipts", "first", "second")
 	result, err := db.ImportRemote(ctx, imp, 1, messageAt)
 	pairOK(t, err)
 	for i := 0; i < 2; i++ {
@@ -384,7 +428,7 @@ func TestRemoteRoutingAcceptanceChosenOutboundIDCannotForgeLocalParent(t *testin
 	s := db.PeerMessages()
 	_, err := s.Share(ctx, contact, []string{"recipient"}, messageAt)
 	pairOK(t, err)
-	routingLocalMessage(t, db, "chosen-parent", 1, "recipient")
+	(routingLocalSender{db, "recipient"}).persist(t, "chosen-parent", 1)
 	// The operator's contact message ID happens to equal an unrelated local ID.
 	_, err = s.Queue(ctx, messaging.Outgoing{Contact: contact, ID: "chosen-parent", Text: "operator contact text", Now: messageAt})
 	pairOK(t, err)
