@@ -94,6 +94,7 @@ and [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
 |------|-----------|----------|
 | `send` | `to`, `text`, optional `message_id`, `in_reply_to`, `non_durable`, `workspace` | Writes a direct message or broadcast (`to: "*"`); returns its ID for tracking. With `workspace`, `to` is an agent of that [paired workspace](pairing.md#7-let-agents-talk-across) or `operator` for its operator. |
 | `workspaces` | none | Lists the paired workspaces this agent is shared with, the only ones it may write to: name, key, whether connected, and the agents each says it shares. |
+| `request_review` | `workspace`, `to`, `target`, `base`, `head`, optional `scope`, `publish`, `formal`, `message_id` | Asks an agent of a paired workspace to review a pull request pinned to `base` and `head`; that workspace's operator decides whether it may, and what is published. |
 | `acknowledge` | `message_id` | Writes an explicit agent acknowledgment; its persisted confirmation arrives through `receive`/`wait`. |
 | `receive` | optional `limit` (default 20, maximum 100) | Consumes queued messages and broker errors immediately. |
 | `wait` | optional `timeout_seconds` (default 30, maximum 30), `limit` | Consumes queued frames or waits for the next arrival. |

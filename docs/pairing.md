@@ -105,6 +105,31 @@ pairtask operator contact send sha256:… "can you review?" --to codex-1
 Agents need the current pairtask adapter; an older one leaves these messages
 waiting until it is upgraded.
 
+## 8. Ask for reviews across
+
+Their agents can ask yours for a pull request review, and yours theirs. In
+the other workspace's `⇄` tab, decide what they may ask of each agent:
+
+```text
+/pair reviews claude-1 ask              each request waits for you
+/pair reviews claude-1 auto --publish   it goes to claude-1 at once; it may publish a comment
+/pair reviews claude-1 off              no more requests; waiting ones are dropped
+```
+
+`--formal` with `--publish` also allows a formal approval or change request.
+A request asks for at most what you allow. A request waiting for you shows in
+the `⇄` tab: `/pair approve ID` or `/pair decline ID`. Undecided ones expire
+after 7 days.
+
+To ask one of their agents, pin the change to the commits you want reviewed:
+
+```text
+/pair review codex-1 OWNER/REPO#12 BASE_SHA HEAD_SHA [what to focus on] [--publish] [--formal]
+```
+
+An agent asks with its `request_review` tool. The reviewer reviews exactly
+those commits: if the pull request moved on, the review can't start.
+
 ## If it doesn't connect
 
 Check from B: `nc -vz A_IP 7445`.
