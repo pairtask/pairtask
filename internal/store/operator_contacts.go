@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS operator_contact_requests (
 // ContactSend is one operator send: its operation ID names the message.
 type ContactSend struct {
 	OperationID, Contact, Text string
+	To                         []string // the contact's agents, none for its operator (#222)
 	AuditID                    int64
 	Now                        time.Time
 }
@@ -74,7 +75,7 @@ func canonicalIDs(ids []string) []string {
 // message as first queued (its ID, sequence and time; collected text stays
 // collected); the operation ID reused for anything else is ErrConflict.
 func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messaging.Row, error) {
-	op := operation{c.OperationID, "send", c.Contact, operationFingerprint("send", c.Contact, c.Text), c.AuditID, c.Now}
+	op := operation{c.OperationID, "send", c.Contact, operationFingerprint("send", c.Contact, append([]string{c.Text}, c.To...)...), c.AuditID, c.Now}
 	key := messageKey{c.Contact, messaging.DirOut, c.OperationID}
 	var row messaging.Row
 	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
@@ -85,7 +86,7 @@ func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messagi
 			row = held.Row
 			return err
 		}
-		row, err = queueIn(ctx, tx, outgoing{key: key, m: messaging.Message{ID: c.OperationID, Text: c.Text}, now: c.Now})
+		row, err = queueIn(ctx, tx, outgoing{key: key, m: messaging.Message{ID: c.OperationID, Text: c.Text, To: c.To}, now: c.Now})
 		return err
 	})
 	if err != nil {

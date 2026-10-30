@@ -219,6 +219,8 @@ type Message struct {
 	ContactKey         string              `json:"contact_key,omitempty"`     // operator_contact: the contact's identity key
 	ContactText        string              `json:"contact_text,omitempty"`    // operator_contact send
 	ContactRead        []string            `json:"contact_read,omitempty"`    // operator_contact read: the received IDs shown
+	ContactTo          []string            `json:"contact_to,omitempty"`      // operator_contact send: the contact's agents it is to (#222)
+	ContactAgents      []string            `json:"contact_agents,omitempty"`  // operator_contact share and unshare: this workspace's agents
 	ContactBefore      int64               `json:"contact_before,omitempty"`  // operator_contact list: a cursor, 0 for the newest
 	ContactMessage     *ContactMessageView `json:"contact_message,omitempty"` // operator_contact_result for send
 	ContactPage        *ContactMessagePage `json:"contact_page,omitempty"`    // operator_contact_result for list and read
