@@ -302,6 +302,7 @@ func joinMoved(before, after peer.JoinRecord) bool {
 // PairingChanged has the operator session told, once for any burst, that
 // durable pairing state changed in the background. Safe from any goroutine.
 func (h *Hub) PairingChanged() {
+	h.fenceDials()
 	h.pair.dirty.Store(true)
 	select {
 	case h.pair.changed <- struct{}{}:

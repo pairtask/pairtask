@@ -23,7 +23,10 @@ type Contact struct {
 	Name        string
 	Destination string // where to reach it, when this side redeemed its code
 	// LocalName is what this side's operator calls it; never from the peer.
-	LocalName     string
+	LocalName string
+	// DestinationAt orders destinations: when the redemption that gave
+	// Destination started. A newer completed redemption moves the contact.
+	DestinationAt time.Time
 	EstablishedAt time.Time
 	Joined        bool // this workspace redeemed its code
 	Invited       bool // it redeemed this workspace's code
@@ -36,8 +39,8 @@ type ContactStore interface {
 }
 
 // MergeContact adds one direction to an identity's contact: the flags
-// accumulate, a known name and destination are kept unless empty, and the
-// first establishment time stays.
+// accumulate, a known name is kept unless empty, the destination of the
+// newest redemption wins, and the first establishment time stays.
 func MergeContact(existing Contact, found bool, c Contact) Contact {
 	if !found {
 		return c
@@ -45,7 +48,9 @@ func MergeContact(existing Contact, found bool, c Contact) Contact {
 	existing.Joined = existing.Joined || c.Joined
 	existing.Invited = existing.Invited || c.Invited
 	existing.Name = mergedName(existing.Name, c.Name)
-	existing.Destination = firstNonEmpty(existing.Destination, c.Destination)
+	if NewerDestination(existing, c) {
+		existing.Destination, existing.DestinationAt = c.Destination, c.DestinationAt
+	}
 	return existing
 }
 
@@ -62,11 +67,14 @@ func mergedName(existing, offered string) string {
 	return existing
 }
 
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
+// NewerDestination: c's destination replaces existing's. One fills an
+// empty destination; otherwise only a redemption that started later moves
+// it, the same address too, so an older one can never roll it back.
+func NewerDestination(existing, c Contact) bool {
+	if c.Destination == "" {
+		return false
 	}
-	return b
+	return existing.Destination == "" || c.DestinationAt.After(existing.DestinationAt)
 }
 
 // AdmitContact refuses a new identity to a full store; a known one always

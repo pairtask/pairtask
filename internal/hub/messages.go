@@ -59,6 +59,10 @@ type MessageSync struct {
 	Failures    int
 	NextAt      time.Time
 	Live        bool // a live link is open: messages leave at once, either way
+
+	dest   string    // the destination dialled
+	destAt time.Time // its redemption's start: an older read never replaces it
+	gen    uint64    // moves on with each move; fences dials from before it
 }
 
 // messageWiring is the hub's message sessions; safe from any goroutine.
@@ -69,6 +73,7 @@ type messageWiring struct {
 	traffic map[string]time.Time
 	wake    chan string
 	pending map[string]bool // contacts whose change the Run goroutine hasn't announced yet
+	epoch   uint64          // moves on with each pairing change: dials from before read their contact again
 	changed chan struct{}   // the hub's background announcement signal, shared with pairing
 }
 

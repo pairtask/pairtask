@@ -20,17 +20,19 @@ CREATE TABLE IF NOT EXISTS peer_contacts (
     established_at TEXT NOT NULL,
     joined         INTEGER NOT NULL,
     invited        INTEGER NOT NULL,
-    local_name     TEXT NOT NULL DEFAULT ''
+    local_name     TEXT NOT NULL DEFAULT '',
+    destination_at TEXT NOT NULL DEFAULT ''
 );
 `
 
 var _ peer.ContactStore = (*Store)(nil)
 
-const contactColumns = `identity_key, name, destination, established_at, joined, invited, local_name`
+const contactColumns = `identity_key, name, destination, established_at, joined, invited, local_name, destination_at`
 
 // upsertContact merges one direction into an identity's contact, inside the
-// caller's transaction, refusing a new identity to a full table.
-func upsertContact(ctx context.Context, tx *sql.Tx, c peer.Contact) error {
+// caller's transaction, refusing a new identity to a full table; opID is the
+// pairing operation it comes from, named in the audit of a move.
+func upsertContact(ctx context.Context, tx *sql.Tx, c peer.Contact, opID string) error {
 	existing, found, err := getContact(ctx, tx, c.IdentityKey)
 	if err != nil {
 		return err
@@ -44,14 +46,39 @@ func upsertContact(ctx context.Context, tx *sql.Tx, c peer.Contact) error {
 	}
 	merged := peer.MergeContact(existing, found, c)
 	// local_name is the operator's alone: a merge never writes it.
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_contacts (`+contactColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_contacts (`+contactColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(identity_key) DO UPDATE SET name = excluded.name, destination = excluded.destination,
-    joined = excluded.joined, invited = excluded.invited`,
-		merged.IdentityKey, merged.Name, merged.Destination, stamp(merged.EstablishedAt), merged.Joined, merged.Invited, merged.LocalName)
+    joined = excluded.joined, invited = excluded.invited, destination_at = excluded.destination_at`,
+		merged.IdentityKey, merged.Name, merged.Destination, stamp(merged.EstablishedAt), merged.Joined, merged.Invited, merged.LocalName,
+		destinationStamp(merged.DestinationAt))
 	if err != nil {
 		return fmt.Errorf("store contact: %w", err)
 	}
-	return nil
+	return auditMove(ctx, tx, contactMove{existing, merged, opID})
+}
+
+// contactMove is a contact before and after a merge, and the pairing
+// operation that merged it.
+type contactMove struct {
+	before, after peer.Contact
+	opID          string
+}
+
+// auditMove records a known contact's move to another destination.
+func auditMove(ctx context.Context, tx *sql.Tx, m contactMove) error {
+	if m.before.Destination == "" || m.before.Destination == m.after.Destination {
+		return nil
+	}
+	return insertAudit(ctx, tx, OperatorAudit{Action: "contact destination", MessageID: m.opID, Scope: m.after.IdentityKey,
+		Result: AuditAccepted, Detail: m.before.Destination + " -> " + m.after.Destination})
+}
+
+// destinationStamp is a destination's time as stored: "" before any.
+func destinationStamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return stamp(t)
 }
 
 func getContact(ctx context.Context, q rowQuerier, identityKey string) (peer.Contact, bool, error) {
@@ -60,15 +87,20 @@ func getContact(ctx context.Context, q rowQuerier, identityKey string) (peer.Con
 
 func scanContact(row rowScanner) (peer.Contact, bool, error) {
 	var c peer.Contact
-	var established string
-	err := row.Scan(&c.IdentityKey, &c.Name, &c.Destination, &established, &c.Joined, &c.Invited, &c.LocalName)
+	var established, destinationAt string
+	err := row.Scan(&c.IdentityKey, &c.Name, &c.Destination, &established, &c.Joined, &c.Invited, &c.LocalName, &destinationAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.Contact{}, false, nil
 	}
 	if err != nil {
 		return peer.Contact{}, false, err
 	}
-	c.EstablishedAt, err = time.Parse(time.RFC3339Nano, established)
+	if c.EstablishedAt, err = time.Parse(time.RFC3339Nano, established); err != nil {
+		return c, false, err
+	}
+	if destinationAt != "" {
+		c.DestinationAt, err = time.Parse(time.RFC3339Nano, destinationAt)
+	}
 	return c, err == nil, err
 }
 
