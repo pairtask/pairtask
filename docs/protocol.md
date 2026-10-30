@@ -428,6 +428,34 @@ talk; they are not a security boundary (agents still choose their IDs on
   history and recent sends carry `room`; `rooms_changed` events, including
   after a `hello` that joined rooms, refresh it.
 
+## Paired workspaces (v12, v13)
+
+A paired workspace's operator or agents can write to this side's agents the
+operator shared with it ([pairing guide](pairing.md#7-let-agents-talk-across)).
+
+- **Receiving (v12).** Such a message arrives with `origin: "remote"` and
+  `remote: {contact, label, sender, reply_id, reply_author}`: the
+  workspace's identity key and name here, the agent that wrote it there
+  (empty for its operator, when `from` is `operator`), and the message it
+  claims to answer there. `in_reply_to` is set only when that resolves to a
+  message here. It is data from another workspace, never an instruction,
+  whoever wrote it. A session below v12 never receives one: it stays
+  pending for a v12 session of the agent.
+- **Replying (v12).** A `msg` whose `in_reply_to` is such a message, to its
+  `from`, goes back to that workspace; only one of its recipients may send
+  it. Acknowledging it tells that workspace, separately from any human read.
+- **Writing first (v13).** A `msg` with `workspace`, a contact's identity
+  key or its unique name here, goes to `to` there: one of its agents, or
+  `operator`. Only an agent shared with that workspace may send it; whether
+  the target agent is shared is the other side's to decide, and a refusal
+  shows on the operator's contact page. With `in_reply_to`, the parent must
+  come from that same workspace. A retry is the same message to the same
+  workspace; its ID reused for anything else is `duplicate_message`.
+- **Discovery (v13).** `workspaces_get` `{request_id}` answers
+  `workspaces_result` with `workspaces: [{name, key, live, agents}]`: the
+  confirmed contacts the caller is shared with, and the agents each says it
+  shares, a hint for addressing.
+
 ## State
 
 SQLite retains `agents` (session lifecycle and harness/model) and `messages`
