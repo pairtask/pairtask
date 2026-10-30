@@ -162,7 +162,7 @@ WHERE contact = ?3 AND kind = 'review' AND state IN ('pending', 'awaiting') AND 
 func askOutcomes(ctx context.Context, tx *sql.Tx, s askScope, remoteIDs []string) error {
 	reason := map[string]string{"withheld": "unshared"}[s.reason]
 	for _, id := range remoteIDs {
-		if err := askOutcome(ctx, tx, RemoteImport{Contact: s.contact, RemoteID: id}, s.reason, reason, s.at); err != nil {
+		if err := askOutcome(ctx, tx, RemoteImport{Contact: s.contact, RemoteID: id}, askEnd{s.reason, reason, s.at}); err != nil {
 			return err
 		}
 	}
@@ -273,7 +273,7 @@ func (s *Store) DecideRemoteReview(ctx context.Context, d RemoteDecision) (strin
 		return "", err
 	}
 	if next == ImportWithheld {
-		if err := askOutcome(ctx, tx, RemoteImport{Contact: contact, RemoteID: remoteID}, reason, "", now); err != nil {
+		if err := askOutcome(ctx, tx, RemoteImport{Contact: contact, RemoteID: remoteID}, askEnd{reason, "", now}); err != nil {
 			return "", err
 		}
 	}

@@ -38,20 +38,34 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 	if err != nil {
 		return ImportResult{}, err
 	}
-	if created {
-		if err := askOutcome(ctx, tx, imp, "requested", "", at.ts); err != nil {
-			return ImportResult{}, err
-		}
-	}
 	notice := remoteReviewNotice(rec, imp, at)
-	if created {
-		if err := persistMessage(ctx, tx, routedMessage{msg: notice.Msg, recipients: notice.Recipients}); err != nil {
-			return ImportResult{}, err
-		}
+	if err := announceReview(ctx, tx, newReview{imp, notice, at, created}); err != nil {
+		return ImportResult{}, err
 	}
 	result, err := settleAsk(ctx, tx, imp, askSettle{ImportImported, "", at})
 	result.Msg, result.Recipients, result.ReviewID = notice.Msg, notice.Recipients, rec.View.ID
 	return result, err
+}
+
+// newReview is a review just made from a request, its notice, and
+// whether it is new rather than a replay.
+type newReview struct {
+	imp     RemoteImport
+	notice  ReviewNotice
+	at      importSlot
+	created bool
+}
+
+// announceReview tells a new review: "requested" to the workspace that
+// asked, and the notice to its reviewer. A replay was told already.
+func announceReview(ctx context.Context, tx *sql.Tx, n newReview) error {
+	if !n.created {
+		return nil
+	}
+	if err := askOutcome(ctx, tx, n.imp, askEnd{"requested", "", n.at.ts}); err != nil {
+		return err
+	}
+	return persistMessage(ctx, tx, routedMessage{msg: n.notice.Msg, recipients: n.notice.Recipients})
 }
 
 // heldReasons are why a request that can't be dispatched now is held.
@@ -81,7 +95,7 @@ func heldOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, s askSettle)
 		return result, err
 	}
 	state := map[string]string{ImportWithheld: "withheld", ImportAwaiting: "waiting"}[s.state]
-	return result, askOutcome(ctx, tx, imp, state, s.reason, s.at.ts)
+	return result, askOutcome(ctx, tx, imp, askEnd{state, s.reason, s.at.ts})
 }
 
 // askSettle is where a request goes, why, and when.

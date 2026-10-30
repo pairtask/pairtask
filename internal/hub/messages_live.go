@@ -9,6 +9,7 @@ import (
 
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/store"
 )
 
 // Live links (#222): after its first round a session between two workspaces
@@ -176,21 +177,26 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 func (h *Hub) hasOutgoing(l *liveLink) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
 	defer cancel()
-	return h.outgoing(ctx, l.contact)
+	return outbox{h.store.PeerMessages(), l.contact, h.pair.cfg.Clock()}.waiting(ctx)
 }
 
-// outgoing: messages, read receipts or review outcomes still to send to
-// contact.
-func (h *Hub) outgoing(ctx context.Context, contact string) bool {
-	s := h.store.PeerMessages()
-	queued, err := s.Offer(ctx, contact, h.pair.cfg.Clock(), messaging.Limit{Count: 1, Bytes: messaging.SessionBytes})
+// outbox is what this side still has to send one contact.
+type outbox struct {
+	s       *store.PeerMessages
+	contact string
+	now     time.Time
+}
+
+// waiting: messages, read receipts or review outcomes still to send.
+func (o outbox) waiting(ctx context.Context) bool {
+	queued, err := o.s.Offer(ctx, o.contact, o.now, messaging.Limit{Count: 1, Bytes: messaging.SessionBytes})
 	if err == nil && len(queued) > 0 {
 		return true
 	}
-	if reads, err := s.PendingReads(ctx, contact, 1); err == nil && len(reads) > 0 {
+	if reads, err := o.s.PendingReads(ctx, o.contact, 1); err == nil && len(reads) > 0 {
 		return true
 	}
-	outcomes, err := s.PendingOutcomes(ctx, contact, 1)
+	outcomes, err := o.s.PendingOutcomes(ctx, o.contact, 1)
 	return err == nil && len(outcomes) > 0
 }
 

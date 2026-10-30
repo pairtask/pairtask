@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 	"unicode/utf8"
 
@@ -96,10 +97,11 @@ ON CONFLICT (contact, ask_id) DO UPDATE SET seq = excluded.seq, payload = exclud
 	return err
 }
 
-// askOutcome is an outcome of a request before it is a review.
-func askOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, state, reason string, at time.Time) error {
+// askOutcome is an outcome of a request before it is a review: its state,
+// why, and when.
+func askOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, e askEnd) error {
 	return emitOutcome(ctx, tx, outcomeEvent{contact: imp.Contact, askID: imp.RemoteID,
-		o: messaging.ReviewOutcome{State: state, Reason: reason}, terminal: askTerminal[state], at: at})
+		o: messaging.ReviewOutcome{State: e.state, Reason: e.reason}, terminal: askTerminal[e.state], at: e.at})
 }
 
 // askTerminal are the outcomes that end a request before it is a review.
@@ -132,27 +134,44 @@ func (p *PeerMessages) OutcomeAnswered(ctx context.Context, contact string, r me
 		return err
 	}
 	defer tx.Rollback()
-	var sent uint64
-	err = tx.QueryRowContext(ctx, `SELECT seq FROM review_outcome_seq WHERE contact = ? AND ask_id = ?`, contact, r.AskID).Scan(&sent)
-	if err == sql.ErrNoRows || err == nil && r.Seq > sent {
-		return nil // an answer to no outcome of ours: ignored
-	}
+	sent, err := queryOptional[uint64](ctx, tx, `SELECT seq FROM review_outcome_seq WHERE contact = ? AND ask_id = ?`, contact, r.AskID)
 	if err != nil {
 		return err
+	}
+	if sent == nil || r.Seq > *sent {
+		return nil // an answer to no outcome of ours: ignored
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM review_outcomes_out WHERE contact = ? AND ask_id = ? AND seq <= ?`, contact, r.AskID, r.Seq); err != nil {
 		return err
 	}
-	mark := `UPDATE review_outcome_seq SET acked_seq = MAX(acked_seq, ?3) WHERE contact = ?1 AND ask_id = ?2 AND seq >= ?3`
-	args := []any{contact, r.AskID, r.Seq}
-	if r.Reason != "" {
-		mark = `UPDATE review_outcome_seq SET refused = ?3 WHERE contact = ?1 AND ask_id = ?2`
-		args = []any{contact, r.AskID, r.Reason}
-	}
+	mark, args := answerMark(contact, r)
 	if _, err := tx.ExecContext(ctx, mark, args...); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// answerMark is how an answer marks its request's numbering: Stored moves
+// the answered mark up, a refusal keeps why.
+func answerMark(contact string, r messaging.OutcomeReply) (string, []any) {
+	if r.Reason != "" {
+		return `UPDATE review_outcome_seq SET refused = ?3 WHERE contact = ?1 AND ask_id = ?2`, []any{contact, r.AskID, r.Reason}
+	}
+	return `UPDATE review_outcome_seq SET acked_seq = MAX(acked_seq, ?3) WHERE contact = ?1 AND ask_id = ?2 AND seq >= ?3`,
+		[]any{contact, r.AskID, r.Seq}
+}
+
+// queryOptional is the one value a query gives, or nil without a row.
+func queryOptional[T any](ctx context.Context, q rowQuerier, query string, args ...any) (*T, error) {
+	var v T
+	err := q.QueryRowContext(ctx, query, args...).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 // reviewOutcome is where a review a paired workspace asked for stands, as
@@ -209,7 +228,7 @@ func reviewOutcomeState(v protocol.ReviewView) string {
 
 // reviewChanged emits a review's outcome when a change moved what its
 // requester sees: its state, attempt, intent or verdict.
-func reviewChanged(ctx context.Context, tx *sql.Tx, before, after review.Record, at time.Time) error {
+func reviewChanged(ctx context.Context, tx *sql.Tx, before, after review.Record) error {
 	v := after.View
 	if v.Remote == nil || v.RemoteRequest == "" {
 		return nil
@@ -219,7 +238,7 @@ func reviewChanged(ctx context.Context, tx *sql.Tx, before, after review.Record,
 	if was == now {
 		return nil
 	}
-	return emitOutcome(ctx, tx, outcomeEvent{contact: v.Remote.Contact, askID: v.RemoteRequest, o: now, terminal: terminal, at: at})
+	return emitOutcome(ctx, tx, outcomeEvent{contact: v.Remote.Contact, askID: v.RemoteRequest, o: now, terminal: terminal, at: v.UpdatedAt})
 }
 
 // pruneOutcomes forgets the outcome numbering of requests whose outcomes

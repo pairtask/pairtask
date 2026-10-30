@@ -77,12 +77,22 @@ func DecodeOutcome(frame []byte) (ReviewOutcome, error) {
 	if err != nil {
 		return ReviewOutcome{}, err
 	}
-	if len(f[2]) != 8 || len(f[3]) != 4 || len(f[4]) != 4 {
+	if !fixedWidths(f[2:5], 8, 4, 4) {
 		return ReviewOutcome{}, fmt.Errorf("%w: outcome numbers", ErrProtocol)
 	}
 	return ReviewOutcome{AskID: string(f[0]), Reviewer: string(f[1]), Seq: binary.BigEndian.Uint64(f[2]),
 		Attempt: binary.BigEndian.Uint32(f[3]), Intent: binary.BigEndian.Uint32(f[4]), State: string(f[5]),
 		Verdict: string(f[6]), Summary: string(f[7]), URL: string(f[8]), Reason: string(f[9])}, nil
+}
+
+// fixedWidths: each field exactly its width in bytes.
+func fixedWidths(fields [][]byte, widths ...int) bool {
+	for i, w := range widths {
+		if len(fields[i]) != w {
+			return false
+		}
+	}
+	return true
 }
 
 // OutcomeReply answers one outcome: Stored, or Refused with why.

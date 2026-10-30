@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -103,7 +104,7 @@ FROM review_asks_out WHERE settled_at IS NULL`, o.key.contact, o.m.From).Scan(&m
 	if err != nil {
 		return err
 	}
-	if mine >= AsksOutPerRequester || theirs >= AsksOutPerContact || total >= AsksOutTotal {
+	if slices.Contains([]bool{mine >= AsksOutPerRequester, theirs >= AsksOutPerContact, total >= AsksOutTotal}, true) {
 		return ErrAsksFull
 	}
 	return nil
@@ -111,10 +112,22 @@ FROM review_asks_out WHERE settled_at IS NULL`, o.key.contact, o.m.From).Scan(&m
 
 // settleAsks moves requests to a final state of this side's own: refused,
 // unsent, or their contact removed.
-func settleAsks(ctx context.Context, tx *sql.Tx, s askEnd, where string, args ...any) error {
+func settleAsks(ctx context.Context, tx *sql.Tx, s askEnd, m askMatch) error {
 	_, err := tx.ExecContext(ctx, `UPDATE review_asks_out SET state = ?, reason = ?, updated_at = ?, settled_at = ?
-WHERE settled_at IS NULL AND `+where, append([]any{s.state, s.reason, msgStamp(s.at), msgStamp(s.at)}, args...)...)
+WHERE settled_at IS NULL AND `+m.where, append([]any{s.state, s.reason, msgStamp(s.at), msgStamp(s.at)}, m.args...)...)
 	return err
+}
+
+// askMatch is which requests a statement touches: a condition and its
+// arguments.
+type askMatch struct {
+	where string
+	args  []any
+}
+
+// oneAsk matches one request of a contact.
+func oneAsk(contact, askID string) askMatch {
+	return askMatch{`contact = ? AND ask_id = ?`, []any{contact, askID}}
 }
 
 // askEnd is a final state this side gives a request, and why.
@@ -178,7 +191,7 @@ func judgeOutcome(a AskOut, digest []byte, o messaging.ReviewOutcome) outcomeVer
 
 // movesOn: a newer outcome that goes forward from where the request is.
 func movesOn(a AskOut, o messaging.ReviewOutcome) bool {
-	if o.Attempt < a.Attempt || o.Intent < a.Intent || !knownOutcome(o) {
+	if goesBack(a, o) || !knownOutcome(o) {
 		return false
 	}
 	if askFinal[a.State] || a.Settled {
@@ -190,22 +203,44 @@ func movesOn(a AskOut, o messaging.ReviewOutcome) bool {
 	return askRanks[o.State] >= askRanks[a.State]
 }
 
+// goesBack: an earlier attempt or write intent than the request has seen.
+func goesBack(a AskOut, o messaging.ReviewOutcome) bool {
+	return o.Attempt < a.Attempt || o.Intent < a.Intent
+}
+
 // knownOutcome: a state the reviewer's side gives, with what that state
-// needs: an attempt once accepted, a verdict once submitted, a write intent
-// for a publication, and fields within their bounds. States only this side
-// gives are never taken from the other.
+// needs, and fields within their bounds.
 func knownOutcome(o messaging.ReviewOutcome) bool {
-	_, open := askRanks[o.State]
-	if localOnly[o.State] || !open && !askFinal[o.State] || !outcomeBounded(o) {
+	if !givenState(o.State) || !outcomeBounded(o) {
 		return false
 	}
-	if reviewedStates[o.State] && o.Attempt == 0 {
+	for _, n := range outcomeNeeds {
+		if n.states[o.State] && !n.has(o) {
+			return false
+		}
+	}
+	return true
+}
+
+// givenState: a state the reviewer's side gives. States only this side
+// gives are never taken from the other.
+func givenState(state string) bool {
+	if localOnly[state] {
 		return false
 	}
-	if verdictStates[o.State] && o.Verdict == "" {
-		return false
-	}
-	return !publishingStates[o.State] || o.Intent > 0
+	_, open := askRanks[state]
+	return open || askFinal[state]
+}
+
+// outcomeNeeds are what states need: an attempt once accepted, a verdict
+// once submitted, a write intent for a publication.
+var outcomeNeeds = []struct {
+	states map[string]bool
+	has    func(messaging.ReviewOutcome) bool
+}{
+	{reviewedStates, func(o messaging.ReviewOutcome) bool { return o.Attempt > 0 }},
+	{verdictStates, func(o messaging.ReviewOutcome) bool { return o.Verdict != "" }},
+	{publishingStates, func(o messaging.ReviewOutcome) bool { return o.Intent > 0 }},
 }
 
 // localOnly are the final states this side gives a request on its own.
@@ -237,7 +272,7 @@ func outcomeBounded(o messaging.ReviewOutcome) bool {
 // still land, as published or uncertain. The request stays settled while
 // that write is uncertain, so the fence holds through it.
 func reconciles(a AskOut, o messaging.ReviewOutcome) bool {
-	if !cancelFenced(a) || a.Intent == 0 || o.Intent != a.Intent {
+	if !cancelFenced(a) || !inFlight(a, o) {
 		return false
 	}
 	return o.State == "published" || o.State == "uncertain"
@@ -246,11 +281,30 @@ func reconciles(a AskOut, o messaging.ReviewOutcome) bool {
 // cancelFenced: a cancelled request, or one whose in-flight write is being
 // reconciled after it was cancelled.
 func cancelFenced(a AskOut) bool {
-	return a.State == "cancelled" || a.Settled && a.State == "uncertain"
+	switch a.State {
+	case "cancelled":
+		return true
+	case "uncertain":
+		return a.Settled
+	}
+	return false
+}
+
+// inFlight: the outcome is of the write the request already held.
+func inFlight(a AskOut, o messaging.ReviewOutcome) bool {
+	return a.Intent != 0 && o.Intent == a.Intent
+}
+
+// takenOutcome is an outcome that moves its request on, and when it came.
+type takenOutcome struct {
+	a  AskOut
+	o  messaging.ReviewOutcome
+	at time.Time
 }
 
 // applyOutcome records an outcome that moved the request on.
-func applyOutcome(ctx context.Context, tx *sql.Tx, a AskOut, o messaging.ReviewOutcome, at time.Time) error {
+func applyOutcome(ctx context.Context, tx *sql.Tx, t takenOutcome) error {
+	a, o, at := t.a, t.o, t.at
 	sum := o.Digest()
 	var settled any
 	if askFinal[o.State] {
@@ -276,19 +330,21 @@ func (p *PeerMessages) AcceptOutcome(ctx context.Context, contact string, o mess
 	if err != nil || !found {
 		return refusedOutcome(messaging.ReasonInvalid), err
 	}
-	switch judgeOutcome(a, digest, o) {
-	case outcomeStale:
-		return messaging.OutcomeAnswer{Stored: true}, nil
-	case outcomeConflict:
-		return refusedOutcome(messaging.ReasonConflict), nil
-	case outcomeInvalid:
-		return refusedOutcome(messaging.ReasonInvalid), nil
+	if answer, judged := judgedAnswers[judgeOutcome(a, digest, o)]; judged {
+		return answer, nil
 	}
-	answer, err := takeOutcome(ctx, tx, a, o, at)
+	answer, err := takeOutcome(ctx, tx, takenOutcome{a, o, at})
 	if err != nil || !answer.Stored {
 		return answer, err
 	}
 	return answer, tx.Commit()
+}
+
+// judgedAnswers answer an outcome that doesn't move its request on.
+var judgedAnswers = map[outcomeVerdict]messaging.OutcomeAnswer{
+	outcomeStale:    {Stored: true},
+	outcomeConflict: refusedOutcome(messaging.ReasonConflict),
+	outcomeInvalid:  refusedOutcome(messaging.ReasonInvalid),
 }
 
 func refusedOutcome(reason string) messaging.OutcomeAnswer {
@@ -298,14 +354,14 @@ func refusedOutcome(reason string) messaging.OutcomeAnswer {
 // takeOutcome records an applied outcome and, for a request an agent here
 // sent, stages its notice; with that agent's notices at their bound, it is
 // held back for now.
-func takeOutcome(ctx context.Context, tx *sql.Tx, a AskOut, o messaging.ReviewOutcome, at time.Time) (messaging.OutcomeAnswer, error) {
-	if err := applyOutcome(ctx, tx, a, o, at); err != nil {
+func takeOutcome(ctx context.Context, tx *sql.Tx, t takenOutcome) (messaging.OutcomeAnswer, error) {
+	if err := applyOutcome(ctx, tx, t); err != nil {
 		return messaging.OutcomeAnswer{}, err
 	}
-	if a.RequesterAgent == "" {
+	if t.a.RequesterAgent == "" {
 		return messaging.OutcomeAnswer{Stored: true}, nil
 	}
-	full, err := stageOutcomeNotice(ctx, tx, a, o, at)
+	full, err := stageOutcomeNotice(ctx, tx, t)
 	if err != nil || full {
 		return refusedOutcome(messaging.ReasonInboxFull), err
 	}
@@ -320,7 +376,8 @@ const NoticesPerAgent = 16
 // of its outcome: keyed by request and number, so it never needs the
 // message, and replacing one of the same request still waiting. It reports
 // full when that agent's notices are at their bound.
-func stageOutcomeNotice(ctx context.Context, tx *sql.Tx, a AskOut, o messaging.ReviewOutcome, at time.Time) (bool, error) {
+func stageOutcomeNotice(ctx context.Context, tx *sql.Tx, t takenOutcome) (bool, error) {
+	a, o, at := t.a, t.o, t.at
 	if _, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', reason = 'superseded', settled_at = ?
 WHERE contact = ? AND kind = 'outcome' AND state = 'pending' AND reply_id = ?`, msgStamp(at), a.Contact, a.AskID); err != nil {
 		return false, err
@@ -382,7 +439,7 @@ func collectAsks(ctx context.Context, tx *sql.Tx, contact string, now time.Time)
 		return err
 	}
 	if !confirmed {
-		if err := settleAsks(ctx, tx, askEnd{"contact_removed", "", now}, `contact = ?`, contact); err != nil {
+		if err := settleAsks(ctx, tx, askEnd{"contact_removed", "", now}, askMatch{`contact = ?`, []any{contact}}); err != nil {
 			return err
 		}
 	}

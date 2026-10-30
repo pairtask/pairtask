@@ -96,7 +96,7 @@ func stagedAsk(ctx context.Context, tx *sql.Tx, r newRow, state string) error {
 	if err := reserveOutcomes(ctx, tx, r); err != nil || state != ImportAwaiting {
 		return err
 	}
-	return askOutcome(ctx, tx, RemoteImport{Contact: r.key.contact, RemoteID: r.m.ID}, "waiting", "", r.now)
+	return askOutcome(ctx, tx, RemoteImport{Contact: r.key.contact, RemoteID: r.m.ID}, askEnd{"waiting", "", r.now})
 }
 
 // stagedAs is what a staged message is and where it starts: a message
@@ -273,6 +273,12 @@ func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) 
 	case importOutcome:
 		return dispatchOutcome(ctx, tx, imp, at)
 	}
+	return importPlain(ctx, tx, imp, at)
+}
+
+// importPlain settles a pending message: withheld unless every recipient
+// is shared with the contact, else the durable message it becomes.
+func importPlain(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
 	ts := at.ts
 	shared, err := allGranted(ctx, tx, imp.Contact, imp.Recipients)
 	if err != nil {

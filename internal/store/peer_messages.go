@@ -152,19 +152,25 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	if err := outboxRoom(ctx, tx, o); err != nil {
 		return messaging.Row{}, err
 	}
-	n, err := nextSequence(ctx, tx, contactKey(key.contact))
+	return queueNew(ctx, tx, o)
+}
+
+// queueNew queues a new message with the next sequence, and records the
+// review request it is, if it is one.
+func queueNew(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
+	n, err := nextSequence(ctx, tx, contactKey(o.key.contact))
 	if err != nil {
 		return messaging.Row{}, err
 	}
 	m := o.m
 	m.N, m.CreatedAt = n, o.now.UTC()
-	if err := insertMessage(ctx, tx, newRow{key: key, m: m, now: o.now, localID: o.localID}); err != nil {
+	if err := insertMessage(ctx, tx, newRow{key: o.key, m: m, now: o.now, localID: o.localID}); err != nil {
 		return messaging.Row{}, err
 	}
 	if err := recordedAsk(ctx, tx, o); err != nil {
 		return messaging.Row{}, err
 	}
-	row, _, err = messageRow(ctx, tx, key)
+	row, _, err := messageRow(ctx, tx, o.key)
 	return row.Row, err
 }
 
@@ -377,7 +383,7 @@ WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ? 
 	}
 	for _, id := range ids {
 		// A review request never sent ends unsent.
-		if err := settleAsks(ctx, tx, askEnd{"unsent", "", now}, `contact = ? AND ask_id = ?`, contact, id); err != nil {
+		if err := settleAsks(ctx, tx, askEnd{"unsent", "", now}, oneAsk(contact, id)); err != nil {
 			return err
 		}
 	}
@@ -419,7 +425,7 @@ WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`
 	}
 	if state == messaging.StateRefused {
 		// A review request refused for good ends there; a held one waits.
-		if err := settleAsks(ctx, tx, askEnd{"refused", r.Reason, time.Now()}, `contact = ? AND ask_id = ?`, contact, id); err != nil {
+		if err := settleAsks(ctx, tx, askEnd{"refused", r.Reason, time.Now()}, oneAsk(contact, id)); err != nil {
 			return err
 		}
 	}

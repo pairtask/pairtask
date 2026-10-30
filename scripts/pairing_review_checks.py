@@ -116,16 +116,29 @@ def check_outcome(msg, origin, ask_id, final):
     """An outcome from the other workspace's reviewer, answering the request,
     on its change, in the state expected with what the reviewer decided, and
     nothing published; origin is (reviewer, contact)."""
-    reviewer, contact_key = origin
+    check_answer(msg, origin, ask_id)
     outcome = msg.get("review_outcome") or {}
+    require(outcome.get("reviewer") == origin[0], f"another reviewer's outcome: {outcome}")
+    require((outcome.get("repository"), outcome.get("change")) == (REPOSITORY, CHANGE), f"another change's outcome: {outcome}")
+    require(outcome.get("state") == final, f"outcome {outcome.get('state')}, not {final}")
+    require(not outcome.get("intent") and not outcome.get("url"), f"published although nothing may be: {outcome}")
+    check_decided(outcome, final)
+
+
+def check_answer(msg, origin, ask_id):
+    """A message from that reviewer of that workspace, answering the
+    request with that ID."""
+    reviewer, contact_key = origin
     remote = msg.get("remote") or {}
     require(msg.get("origin") == "remote" and msg.get("from") == reviewer, f"not from {reviewer} there: {msg}")
     require(remote.get("contact") == contact_key and remote.get("sender") == reviewer, f"from another workspace or sender: {remote}")
     require(msg.get("in_reply_to") == ask_id, f"answers {msg.get('in_reply_to')}, not {ask_id}")
-    require(outcome.get("ask_id") == ask_id and outcome.get("reviewer") == reviewer, f"another request's outcome: {outcome}")
-    require((outcome.get("repository"), outcome.get("change")) == (REPOSITORY, CHANGE), f"another change's outcome: {outcome}")
-    require(outcome.get("state") == final, f"outcome {outcome.get('state')}, not {final}")
-    require(not outcome.get("intent") and not outcome.get("url"), f"published although nothing may be: {outcome}")
+    require((msg.get("review_outcome") or {}).get("ask_id") == ask_id, f"another request's outcome: {msg}")
+
+
+def check_decided(outcome, final):
+    """What the reviewer decided: the verdict given, or the reason it
+    declined."""
     if final == "completed":
         decided = (outcome.get("verdict"), outcome.get("summary"), outcome.get("attempt"))
         require(decided == (VERDICT["outcome"], VERDICT["summary"], 1), f"not the verdict given: {outcome}")
