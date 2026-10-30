@@ -27,7 +27,9 @@ func (p *PeerMessages) Collect(ctx context.Context, now time.Time) error {
 }
 
 func messageContacts(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT contact FROM peer_messages ORDER BY contact`)
+	// Routing's tables outlive a contact's last message row until pruned.
+	rows, err := db.QueryContext(ctx, `SELECT contact FROM peer_messages UNION SELECT contact FROM remote_imports
+UNION SELECT contact FROM peer_agent_reads ORDER BY contact`)
 	if err != nil {
 		return nil, err
 	}
