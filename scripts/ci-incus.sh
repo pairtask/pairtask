@@ -1,13 +1,8 @@
 #!/bin/bash
-# Only for a disposable GitHub-hosted or Blacksmith Ubuntu runner, never a developer machine.
+# Only for a disposable GitHub-hosted Ubuntu runner, never a developer machine.
 set -euo pipefail
 test "${GITHUB_ACTIONS:-}" = true
-case "${RUNNER_ENVIRONMENT:-}:${CI_RUNNER_LABEL:-}" in
-    github-hosted:*) ;;
-    # Blacksmith runners are disposable VMs but report self-hosted.
-    self-hosted:blacksmith-*) ;;
-    *) echo "Refusing to run outside a disposable CI runner" >&2; exit 1 ;;
-esac
+test "${RUNNER_ENVIRONMENT:-}" = github-hosted
 test "$EUID" = 0
 if test -e /var/lib/incus/database; then
     echo 'Refusing to initialize an existing Incus server' >&2
@@ -40,10 +35,7 @@ apt-get install -y incus btrfs-progs
 # newuidmap/newgidmap also require this host-level allowance, independently of
 # the restricted Incus project's UID/GID allowlist.
 usermod --add-subuids 60000-60000 --add-subgids 60000-60000 root
-# Some runner kernels (e.g. Blacksmith) build btrfs in rather than as a module.
-if ! grep -qw btrfs /proc/filesystems; then
-    modprobe btrfs
-fi
+modprobe btrfs
 systemctl start incus.socket
 incus admin init --preseed <infra/image/ci-host.json
 server_version=$(incus query /1.0 | python3 -c 'import json,sys; print(json.load(sys.stdin)["environment"]["server_version"])')

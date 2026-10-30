@@ -161,9 +161,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-4vcpu-ubuntu-2404
+          - runner: ubuntu-24.04
             arch: amd64
-          - runner: blacksmith-4vcpu-ubuntu-2404-arm
+          - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -176,7 +176,7 @@ jobs:
         env:
           REASON: ${{ needs.classify.outputs.reason }}
         run: echo "Skipped by policy ($REASON) - this pull request changes only docs or the chat TUI; main and release tags still build the images."
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.classify.outputs.images != 'false'
         with:
           fetch-depth: 0
@@ -189,9 +189,7 @@ jobs:
       - name: Initialize disposable Incus host
         id: incus
         if: needs.classify.outputs.images != 'false'
-        env:
-          CI_RUNNER_LABEL: ${{ matrix.runner }}
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,CI_RUNNER_LABEL bash scripts/ci-incus.sh
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT bash scripts/ci-incus.sh
       - name: Cache the verified base image pair without publishing it
         if: needs.classify.outputs.images != 'false'
         env:
