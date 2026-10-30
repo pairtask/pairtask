@@ -141,11 +141,7 @@ func (s routingSessionStore) AgentReadConfirmed(ctx context.Context, contact str
 // PeerAgentRead keeps ErrNotRecipient unmarked: it is the peer's protocol
 // error, not this side's store failing.
 func (s routingSessionStore) PeerAgentRead(ctx context.Context, contact string, r AgentRead, at time.Time) error {
-	err := s.rs.PeerAgentRead(ctx, contact, r, at)
-	if errors.Is(err, ErrNotRecipient) {
-		return fmt.Errorf("%w: %v", ErrProtocol, err)
-	}
-	return storeErr(err)
+	return peerErr(s.rs.PeerAgentRead(ctx, contact, r, at), ErrNotRecipient)
 }
 
 func (s routingSessionStore) SharedAgents(ctx context.Context, contact string) ([]string, error) {
@@ -153,6 +149,17 @@ func (s routingSessionStore) SharedAgents(ctx context.Context, contact string) (
 	return agents, storeErr(err)
 }
 
+// SetPeerDirectory keeps ErrInvalid unmarked: a directory outside the rules
+// is the peer's protocol error.
 func (s routingSessionStore) SetPeerDirectory(ctx context.Context, contact string, agents []string, at time.Time) error {
-	return storeErr(s.rs.SetPeerDirectory(ctx, contact, agents, at))
+	return peerErr(s.rs.SetPeerDirectory(ctx, contact, agents, at), ErrInvalid)
+}
+
+// peerErr is a store error, or a protocol error when it is the peer's: the
+// store refused what the peer sent as kind.
+func peerErr(err, kind error) error {
+	if errors.Is(err, kind) {
+		return fmt.Errorf("%w: %v", ErrProtocol, err)
+	}
+	return storeErr(err)
 }

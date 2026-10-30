@@ -10,8 +10,9 @@ import (
 
 // Collect keeps every contact's messages within their bounds, one contact
 // per transaction: queued messages expire, old pending receipts drop, text
-// beyond the retention bounds is collected (never an unread message's or a
-// queued one's), and the replay floor rises past old tombstones.
+// beyond the retention bounds is collected (never an unread message's, a
+// queued one's or one staged for agents), the replay floor rises past old
+// tombstones, and what routing kept for forgotten messages goes.
 func (p *PeerMessages) Collect(ctx context.Context, now time.Time) error {
 	contacts, err := messageContacts(ctx, p.db)
 	if err != nil {
@@ -49,7 +50,7 @@ func (p *PeerMessages) collectContact(ctx context.Context, contact string, now t
 	}
 	defer tx.Rollback()
 	for _, step := range []func(context.Context, *sql.Tx, string, time.Time) error{
-		expireQueued, expireReceipts, collectText, raiseFloor,
+		expireQueued, expireReceipts, collectText, raiseFloor, pruneRouting,
 	} {
 		if err := step(ctx, tx, contact, now); err != nil {
 			return err
@@ -68,7 +69,8 @@ WHERE contact = ? AND direction = 'in' AND receipt = 'pending' AND receipt_at < 
 }
 
 // collectText drops the text of the oldest settled messages beyond the
-// retention bounds: inbound ones read here, outbound ones no longer queued.
+// retention bounds: inbound ones read here or imported for agents (or
+// withheld), outbound ones no longer queued.
 // The row, its sequence and its hashes stay.
 func collectText(ctx context.Context, tx *sql.Tx, contact string, _ time.Time) error {
 	texts, err := settledTexts(ctx, tx, contact)
@@ -93,7 +95,8 @@ type heldText struct {
 func settledTexts(ctx context.Context, tx *sql.Tx, contact string) ([]heldText, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT cursor, text_bytes FROM peer_messages
 WHERE contact = ? AND text IS NOT NULL AND (
-    (direction = 'in' AND state = 'read') OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')))
+    (direction = 'in' AND state = 'read') OR (direction = 'in' AND state = 'routed' AND NOT `+pendingImport+`)
+    OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')))
 ORDER BY cursor DESC`, contact)
 	if err != nil {
 		return nil, err
@@ -148,7 +151,7 @@ ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact,
 // forgettable is the leading run of inbound rows, by sequence, that may be
 // forgotten, and the last one's sequence.
 func forgettable(ctx context.Context, tx *sql.Tx, contact string, now time.Time) ([]int64, int64, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND state = 'read' AND receipt != 'pending'
+	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND (state = 'read' AND receipt != 'pending' OR state = 'routed' AND NOT `+pendingImport+`)
 FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(now.Add(-messaging.TombstoneAge)), contact)
 	if err != nil {
 		return nil, 0, err

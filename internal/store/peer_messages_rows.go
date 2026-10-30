@@ -10,7 +10,8 @@ import (
 )
 
 const messageColumns = `cursor, contact, direction, message_id, n, created_at, COALESCE(text, ''), text_hash, hash,
-    state, class, reason, COALESCE(delivered_at, ''), COALESCE(read_at, ''), receipt`
+    state, class, reason, COALESCE(delivered_at, ''), COALESCE(read_at, ''), receipt,
+    COALESCE(from_agent, ''), to_agents, COALESCE(reply_id, ''), COALESCE(reply_author, 0)`
 
 // storedRow is a row with what only the store compares.
 type storedRow struct {
@@ -56,9 +57,14 @@ func scanMessage(row rowScanner) (storedRow, error) {
 	var r storedRow
 	var n int64
 	var created, delivered, read string
+	var to sql.NullString
 	err := row.Scan(&r.Cursor, &r.Contact, &r.Direction, &r.ID, &n, &created, &r.Text, &r.textHash, &r.hash,
-		&r.State, &r.Refusal.Class, &r.Refusal.Reason, &delivered, &read, &r.Receipt)
+		&r.State, &r.Refusal.Class, &r.Refusal.Reason, &delivered, &read, &r.Receipt,
+		&r.From, &to, &r.ReplyTo.ID, &r.ReplyTo.Author)
 	if err != nil {
+		return storedRow{}, err
+	}
+	if r.To, err = groupList(to); err != nil {
 		return storedRow{}, err
 	}
 	r.N = uint64(n)

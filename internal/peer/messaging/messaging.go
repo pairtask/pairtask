@@ -30,6 +30,8 @@ const (
 	RetainedText      = 10_000  // read or delivered texts kept per contact
 	RetainedTextBytes = 64 << 20
 	IDBytes           = 128
+	ImportBacklog     = 256 // messages for this side's agents not yet in their inboxes, per contact
+	AgentIDBytes      = 128
 )
 
 // Ages.
@@ -87,6 +89,7 @@ const (
 	StateExpired   = "expired"   // no longer offered; delivery unconfirmed, never denied
 	StateRefused   = "refused"   // refused terminally
 	StateReceived  = "received"  // inbound, not yet shown here
+	StateRouted    = "routed"    // inbound for this side's agents, never a human read
 )
 
 // Receipt states of an inbound message read here.
@@ -111,6 +114,8 @@ var (
 	ErrUnknownContact = errors.New("messaging: not a confirmed contact")
 	// ErrInvalid is an ID or text outside the rules.
 	ErrInvalid = errors.New("messaging: invalid message")
+	// ErrNotShared is a message from an agent not shared with the contact.
+	ErrNotShared = errors.New("messaging: agent not shared with that contact")
 )
 
 // ValidID reports an ID a message may carry: 1 to IDBytes of printable
@@ -131,4 +136,34 @@ func ValidID(id string) bool {
 // TextBytes.
 func ValidText(text string) bool {
 	return text != "" && len(text) <= TextBytes && utf8.ValidString(text)
+}
+
+// ValidAgent is an agent ID as the broker admits one: 1 to AgentIDBytes
+// bytes, never the broadcast or the operator.
+func ValidAgent(id string) bool {
+	return id != "" && len(id) <= AgentIDBytes && id != "*" && id != "operator"
+}
+
+// ValidRouting: a sender that is the operator or an agent, at most MaxAgents
+// distinct recipient agents, and a reply reference whose author is set
+// exactly when its ID is, with a valid ID.
+func ValidRouting(m Message) bool {
+	if m.From != "" && !ValidAgent(m.From) || len(m.To) > MaxAgents {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, a := range m.To {
+		if !ValidAgent(a) || seen[a] {
+			return false
+		}
+		seen[a] = true
+	}
+	return validReply(m.ReplyTo)
+}
+
+func validReply(r ReplyRef) bool {
+	if r.Author == ReplyAuthorNone {
+		return r.ID == ""
+	}
+	return r.Author <= ReplyByReceiver && ValidID(r.ID)
 }

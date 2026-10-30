@@ -68,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -90,6 +90,16 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"peer_joins", "destination", "TEXT"},             // NULL for joins before operator redemption (#178)
 	{"peer_joins", "decision_confirmed_at", "TEXT"},   // NULL until the inviter confirms (#178)
 	{"peer_pairing_requests", "delivered_at", "TEXT"}, // NULL until the joiner acknowledges (#178)
+	// Messages to and from agents (#222): NULL on rows without routing.
+	{"peer_messages", "from_agent", "TEXT"},
+	{"peer_messages", "to_agents", "TEXT"}, // a JSON array
+	{"peer_messages", "reply_id", "TEXT"},
+	{"peer_messages", "reply_author", "INTEGER"},
+	{"peer_messages", "local_id", "TEXT"}, // an outbound row queued from a local agent's message
+	{"message_metadata", "remote_contact", "TEXT"},
+	{"message_metadata", "remote_sender", "TEXT"},
+	{"message_metadata", "remote_reply_id", "TEXT"},
+	{"message_metadata", "remote_reply_author", "INTEGER"},
 }
 
 func migrate(db *sql.DB) error {

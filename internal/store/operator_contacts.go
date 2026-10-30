@@ -85,7 +85,7 @@ func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messagi
 			row = held.Row
 			return err
 		}
-		row, err = queueIn(ctx, tx, outgoing{key, c.Text, c.Now})
+		row, err = queueIn(ctx, tx, outgoing{key: key, m: messaging.Message{ID: c.OperationID, Text: c.Text}, now: c.Now})
 		return err
 	})
 	if err != nil {

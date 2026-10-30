@@ -45,6 +45,7 @@ const (
 	ClaimVersion           = 8  // claim_set/release/done/get and claim_result
 	RoomVersion            = 9  // project rooms: room on msg, rooms on hello and welcome
 	ContactMessagesVersion = 11 // operator_contact and contact_messages_changed (#210), operator only
+	RemoteVersion          = 12 // msg with origin remote: from a paired workspace's agents or operator (#222)
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -55,7 +56,22 @@ const (
 	OriginOperator = "operator"
 	OriginAgent    = "agent"
 	OriginUnknown  = "unknown"
+	// OriginRemote is a message from a paired workspace, set when the broker
+	// imports it; Remote says which and who sent it.
+	OriginRemote = "remote"
 )
+
+// Remote is where a message with origin remote came from: the contact's
+// identity key and name here, the agent that sent it there ("" for its
+// operator), and the message it claims to answer there, which InReplyTo
+// names only when it resolves to a message here.
+type Remote struct {
+	Contact     string `json:"contact"`
+	Label       string `json:"label,omitempty"`
+	Sender      string `json:"sender,omitempty"`
+	ReplyID     string `json:"reply_id,omitempty"`
+	ReplyAuthor byte   `json:"reply_author,omitempty"` // 1: by the sender's side, 2: by this side
+}
 
 // Broadcast is the reserved recipient for messages to all connected agents.
 const Broadcast = "*"
@@ -92,7 +108,7 @@ func WithDisplayOrigin(msg Message) Message {
 // DisplayOrigin renders a missing origin as unknown, never as operator or agent.
 func DisplayOrigin(origin string) string {
 	switch origin {
-	case OriginOperator, OriginAgent:
+	case OriginOperator, OriginAgent, OriginRemote:
 		return origin
 	}
 	return OriginUnknown
@@ -159,7 +175,8 @@ type Message struct {
 	Model              string              `json:"model,omitempty"`               // hello: e.g. "claude-sonnet-4"
 	From               string              `json:"from,omitempty"`                // msg (broker -> client)
 	To                 string              `json:"to,omitempty"`                  // msg: agent id or "*"
-	Origin             string              `json:"origin,omitempty"`              // msg (broker -> client): operator, agent or unknown
+	Origin             string              `json:"origin,omitempty"`              // msg (broker -> client): operator, agent, remote (v12) or unknown
+	Remote             *Remote             `json:"remote,omitempty"`              // msg with origin remote (v12)
 	Group              []string            `json:"group,omitempty"`               // operator_send: explicit recipient set
 	Excluded           []string            `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
 	Room               string              `json:"room,omitempty"`                // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
