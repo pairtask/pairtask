@@ -142,28 +142,25 @@ type PairingRequestView struct {
 
 var (
 	ErrPairingNoInvitation = errors.New("no open invitation")
-	ErrPairingEmptyKey     = errors.New("a key or key prefix is required")
+	ErrPairingEmptyKey     = errors.New("type the start of the key after sha256:")
 	ErrPairingAmbiguous    = errors.New("matches more than one request; type more of the key")
 	ErrPairingPartial      = errors.New("the request list is partial; use a full listed key")
 	ErrPairingUnknown      = errors.New("no listed request starts with it")
 )
 
 // ResolveKey resolves a typed prefix to the one listed identity key it
-// starts, so a decision always names a full key. An empty prefix never
-// resolves, an exact key always does, and a partial listing can't prove a
-// prefix unique.
+// starts, so a decision always names a full key. Keys are compared without
+// their "sha256:" scheme, which every key shares, so only digest characters
+// choose a request. An empty prefix never resolves, an exact key always does,
+// and a partial listing can't prove a prefix unique.
 func (s *PairingSnapshot) ResolveKey(prefix string) (string, error) {
-	if strings.TrimSpace(prefix) == "" {
+	typed := KeyDigest(strings.TrimSpace(prefix))
+	if !digestTyped(typed) {
 		return "", ErrPairingEmptyKey
 	}
-	var matches []string
-	for _, r := range s.Requests {
-		if r.IdentityKey == prefix {
-			return prefix, nil
-		}
-		if strings.HasPrefix(r.IdentityKey, prefix) {
-			matches = append(matches, r.IdentityKey)
-		}
+	exact, matches := s.keysStarting(typed)
+	if exact != "" {
+		return exact, nil
 	}
 	switch {
 	case len(matches) > 1:
@@ -174,6 +171,41 @@ func (s *PairingSnapshot) ResolveKey(prefix string) (string, error) {
 		return "", ErrPairingUnknown
 	}
 	return matches[0], nil
+}
+
+// digestTyped: something of a digest was typed, not only the scheme.
+func digestTyped(typed string) bool {
+	return typed != "" && typed != "sha256"
+}
+
+// keysStarting is the listed key whose digest is typed, or else every
+// listed key whose digest starts with it.
+func (s *PairingSnapshot) keysStarting(typed string) (string, []string) {
+	var matches []string
+	for _, r := range s.Requests {
+		digest := KeyDigest(r.IdentityKey)
+		if digest == typed {
+			return r.IdentityKey, nil
+		}
+		if strings.HasPrefix(digest, typed) {
+			matches = append(matches, r.IdentityKey)
+		}
+	}
+	return "", matches
+}
+
+// KeyDigest is an identity key without its "sha256:" scheme: the part that
+// tells keys apart.
+func KeyDigest(key string) string {
+	digest, _ := strings.CutPrefix(key, "sha256:")
+	return digest
+}
+
+// ShortKey is the first 12 digest characters of an identity key, enough to
+// tell contacts apart on screen; the full key stays authoritative.
+func ShortKey(key string) string {
+	digest := KeyDigest(key)
+	return digest[:min(len(digest), 12)]
 }
 
 // InvitationID is the open invitation's ID, for a cancel.

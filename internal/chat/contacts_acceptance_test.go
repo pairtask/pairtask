@@ -60,7 +60,7 @@ func TestContactsChatAcceptanceDeduplicatesIdentityAndRebuildsAfterReconnect(t *
 	chatEqual(t, "explicit contact distinct from group and All", views[0].Contact != "" && len(views[0].Group) == 0 && !views[0].All, true)
 	h.input(chatKey(tea.KeyTab, 0))
 	view := ansi.Strip(h.m.View().Content)
-	for _, want := range []string{"⇄ workspace", `workspace "operator"`, key, "confirming", "nothing is sent until it is"} {
+	for _, want := range []string{"⇄ operator", key, "confirming", "nothing is sent until it is"} {
 		v3Contains(t, view, want)
 	}
 	h.input(chatKey(tea.KeyTab, tea.ModShift))

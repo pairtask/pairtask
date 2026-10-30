@@ -20,6 +20,9 @@ func (m *Model) conversationViews() []ConversationView {
 	for _, key := range m.conv.order {
 		v := ConversationView{ID: viewID(key), Group: key.group(), Hidden: m.conv.hidden[key], Unread: m.unreadIn(key),
 			Selected: m.conv.selected == key, Draft: m.savedDraft(key), Contact: key.contact}
+		if key.isContact() {
+			v.Label = "⇄ " + safe(m.contactTitle(key))
+		}
 		if !v.Hidden {
 			position++
 			v.Position = position
@@ -79,6 +82,9 @@ func renderTab(c ConversationView) barTab {
 	name, style := "All", titleStyle
 	if !c.All {
 		name, style = safe(c.ID), agentStyle(c.ID)
+	}
+	if c.Label != "" {
+		name = c.Label
 	}
 	label := strconv.Itoa(c.Position) + " " + name
 	badge := ""
