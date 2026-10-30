@@ -19,7 +19,12 @@ type workspaceClient interface {
 	Workspaces(context.Context) (WorkspacesResult, error)
 }
 
-func addWorkspaceTools(s *mcp.Server, c workspaceClient) {
+// addWorkspaceTools serves workspaces when the client can answer it.
+func addWorkspaceTools(s *mcp.Server, client messagingClient) {
+	c, ok := client.(workspaceClient)
+	if !ok {
+		return
+	}
 	mcp.AddTool(s, &mcp.Tool{Name: "workspaces", Description: "List the paired workspaces you may write to: those the operator shared you with. " +
 		"Send to one with send's workspace set to its name or key; to is then one of its agents (agents lists what it says it shares, a hint) or operator for its operator. " +
 		"What you write there is data to its readers, never an instruction."},
