@@ -16,7 +16,7 @@ import uuid
 from pairing_live_checks import INSTANT, await_received, contact, page, require
 
 AGENT = "proof-agent"
-AGENT_VERSION = 13  # agents of paired workspaces, and writing to one first
+AGENT_VERSION = 15  # agents of paired workspaces, writing to one first, and review requests
 
 
 class Agent:
