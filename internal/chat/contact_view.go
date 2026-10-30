@@ -121,7 +121,8 @@ func (m *Model) syncLine(fingerprint string) string {
 	case s.Live:
 		line = "connected: messages leave at once, both ways"
 	case s.Dials:
-		line = "this side dials" + m.dialedAt(fingerprint)
+		c, _ := m.contact(fingerprint)
+		line = "this side dials" + dialedAt(c)
 	}
 	if s.LastSuccess != nil {
 		line += " · last sync " + s.LastSuccess.Local().Format(time.Kitchen)
@@ -133,11 +134,11 @@ func (m *Model) syncLine(fingerprint string) string {
 }
 
 // dialedAt is " <address>" this side dials the contact at, or "".
-func (m *Model) dialedAt(fingerprint string) string {
-	if c, ok := m.contact(fingerprint); ok && c.Destination != "" {
-		return " " + safe(c.Destination)
+func dialedAt(c protocol.PairingContactView) string {
+	if c.Destination == "" {
+		return ""
 	}
-	return ""
+	return " " + safe(c.Destination)
 }
 
 // messageLines is one message: who and its state, then its text, every

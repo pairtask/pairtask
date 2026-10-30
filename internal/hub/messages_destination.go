@@ -22,6 +22,7 @@ type dialToken struct {
 
 // syncOutcome is how one session, or one round of a live link, ended.
 type syncOutcome struct {
+	contact string
 	token   dialToken
 	failure string // "" when it got through
 	active  bool   // anything still waiting, or recent traffic
@@ -30,32 +31,33 @@ type syncOutcome struct {
 // recordDial records how a dial, or the link it opened, ended, unless the
 // contact moved since; it reports whether it did.
 func (h *Hub) recordDial(contact string, o syncOutcome) bool {
-	return h.recordUnder(contact, o, &o.token)
+	o.contact = contact
+	return h.recordUnder(o, &o.token)
 }
 
 // recordUnder is recordDial carrying token on: a pairing change that
 // didn't move the contact renews its epoch, so a live link keeps recording.
-func (h *Hub) recordUnder(contact string, o syncOutcome, token *dialToken) bool {
+func (h *Hub) recordUnder(o syncOutcome, token *dialToken) bool {
 	for {
 		o.token = *token
-		epoch, done, recorded := h.tryRecord(contact, o)
+		epoch, done, recorded := h.tryRecord(o)
 		if done {
 			return recorded
 		}
-		if !h.readDestination(contact) {
+		if !h.readDestination(o.contact) {
 			return false
 		}
 		token.epoch = epoch
 	}
 }
 
-// tryRecord records an outcome if token is current: done unless only the
-// epoch moved on, which is then returned to read the contact under.
-func (h *Hub) tryRecord(contact string, o syncOutcome) (epoch uint64, done, recorded bool) {
+// tryRecord records an outcome if its token is current: done unless only
+// the epoch moved on, which is then returned to read the contact under.
+func (h *Hub) tryRecord(o syncOutcome) (epoch uint64, done, recorded bool) {
 	w := &h.msgs
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	s := w.syncOf(contact)
+	s := w.syncOf(o.contact)
 	switch {
 	case s.gen != o.token.gen:
 		return 0, true, false
@@ -86,7 +88,7 @@ func (h *Hub) recordRound(l *liveLink) {
 		h.recordSync(l.contact, "", true)
 		return
 	}
-	h.recordUnder(l.contact, syncOutcome{active: true}, &l.token)
+	h.recordUnder(syncOutcome{contact: l.contact, active: true}, &l.token)
 }
 
 // adopt takes c's destination, unless the read is older than the one s
@@ -167,37 +169,30 @@ func (h *Hub) destinationMoved(c peer.Contact) {
 	}
 	w.mu.Unlock()
 	if moved {
-		h.leaveAddress(c.IdentityKey, true)
+		h.leaveAddress(c, true)
 	}
 }
 
-// leaveAddress drops what belonged to a moved contact's old address: its
-// live link, which redials as it ends, and its redial backoff. wake syncs
-// at once when there was no link to end.
-func (h *Hub) leaveAddress(contact string, wake bool) {
-	h.log.Info("contact moved; redialling", "contact", contact)
-	h.resetLiveBackoff(contact)
-	if !h.haltDialer(contact) && wake {
-		h.SyncMessages(contact)
+// leaveAddress drops what belonged to a moved contact's old address. wake
+// syncs at once when there was no link to end; a halted one redials as it
+// ends.
+func (h *Hub) leaveAddress(c peer.Contact, wake bool) {
+	h.log.Info("contact moved; redialling", "contact", c.IdentityKey)
+	if !h.dropAddress(c) && wake {
+		h.SyncMessages(c.IdentityKey)
 	}
 }
 
-// resetLiveBackoff forgets contact's live link failures in a row.
-func (h *Hub) resetLiveBackoff(contact string) {
+// dropAddress forgets the contact's live redial backoff and stops the live
+// link this side dialled, reporting whether there was one; a link the
+// contact dialled stays.
+func (h *Hub) dropAddress(c peer.Contact) bool {
 	w := &h.live
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.ready()
-	delete(w.failures, contact)
-}
-
-// haltDialer stops this side's live link to contact, if it dialled one.
-func (h *Hub) haltDialer(contact string) bool {
-	w := &h.live
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.ready()
-	l := w.links[contact]
+	delete(w.failures, c.IdentityKey)
+	l := w.links[c.IdentityKey]
 	if l == nil || l.serving {
 		return false
 	}
@@ -206,10 +201,10 @@ func (h *Hub) haltDialer(contact string) bool {
 }
 
 // dropLink closes a link a fenced dial opened, before it carries anything.
-func (h *Hub) dropLink(contact string, d *dialedLink) {
+func (h *Hub) dropLink(d *dialedLink) {
 	if d == nil {
 		return
 	}
-	h.releaseLive(contact, d.link)
+	h.releaseLive(d.link.contact, d.link)
 	d.conn.Close()
 }

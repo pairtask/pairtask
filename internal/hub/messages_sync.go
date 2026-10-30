@@ -143,7 +143,7 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 		return
 	}
 	if !h.recordDial(contact, syncOutcome{token: token, active: h.messagesWaiting(ctx, contact)}) {
-		h.dropLink(contact, live) // a pairing change since it started: the contact may have moved
+		h.dropLink(live) // the contact moved since it started
 		return
 	}
 	if live != nil {
@@ -258,7 +258,7 @@ func (h *Hub) messagesWaiting(ctx context.Context, contact string) bool {
 func (h *Hub) markDialed(c peer.Contact) (dialToken, bool) {
 	token, current, moved := h.adoptDial(c)
 	if moved {
-		h.leaveAddress(c.IdentityKey, false) // this dial is the redial
+		h.leaveAddress(c, false) // this dial is the redial
 	}
 	return token, current
 }

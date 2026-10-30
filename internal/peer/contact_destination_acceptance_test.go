@@ -17,18 +17,22 @@ func TestContactDestinationAcceptanceMergePreservesContactAuthority(t *testing.T
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := peer.MergeContact(old, true, incoming)
-			if got.Destination != old.Destination || !got.DestinationAt.Equal(old.DestinationAt) || got.Name != old.Name || !got.EstablishedAt.Equal(old.EstablishedAt) || got.IdentityKey != old.IdentityKey || !got.Joined {
-				t.Fatalf("incoming contact changed established authority: %+v", got)
-			}
-			if incoming.Invited && !got.Invited {
-				t.Fatal("reciprocal pairing direction was lost")
-			}
+			invEqual(t, got.Destination, old.Destination)
+			invEqual(t, got.DestinationAt.Equal(old.DestinationAt), true)
+			invEqual(t, got.Name, old.Name)
+			invEqual(t, got.EstablishedAt.Equal(old.EstablishedAt), true)
+			invEqual(t, got.IdentityKey, old.IdentityKey)
+			invEqual(t, got.Joined, true)
+			invEqual(t, got.Invited, incoming.Invited)
 		})
 	}
+}
+
+func TestContactDestinationAcceptanceLegacyEmptyAddressCanBeFilled(t *testing.T) {
 	// Old stores could have a known identity without an address or timestamp.
 	legacy := peer.Contact{IdentityKey: "peer", Invited: true}
 	got := peer.MergeContact(legacy, true, peer.Contact{IdentityKey: "peer", Destination: "new:443", Joined: true})
-	if got.Destination != "new:443" || !got.Invited || !got.Joined {
-		t.Fatalf("legacy empty destination was not filled: %+v", got)
-	}
+	invEqual(t, got.Destination, "new:443")
+	invEqual(t, got.Invited, true)
+	invEqual(t, got.Joined, true)
 }

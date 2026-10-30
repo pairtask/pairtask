@@ -10,7 +10,13 @@ import (
 	"github.com/pairtask/pairtask/internal/peer"
 )
 
-func destinationReady(t *testing.T, s peer.JoinStore, op, address string, at time.Time) peer.JoinRecord {
+type destinationJoin struct {
+	op, address string
+	at          time.Time
+}
+
+func destinationReady(t *testing.T, s peer.JoinStore, in destinationJoin) peer.JoinRecord {
+	op, address, at := in.op, in.address, in.at
 	t.Helper()
 	ctx := context.Background()
 	_, err := s.BeginJoin(ctx, peer.JoinStart{OperationID: op, Joiner: joinKey(1), Name: "Local name", Destination: address, At: at})
@@ -32,10 +38,10 @@ func destinationAccept(t *testing.T, s peer.JoinStore, r peer.JoinRecord, at tim
 
 func TestContactDestinationAcceptanceNewPairingReplacesAddress(t *testing.T) {
 	contactBackends(t, func(t *testing.T, db contactBackend) {
-		first := destinationReady(t, db.joins, "first", "192.168.1.164:7445", joinAt)
+		first := destinationReady(t, db.joins, destinationJoin{"first", "192.168.1.164:7445", joinAt})
 		destinationAccept(t, db.joins, first, joinAt.Add(time.Minute))
 		before := contactGet(t, db.contacts, first.Peer)
-		newer := destinationReady(t, db.joins, "newer", "192.168.1.32:7445", joinAt.Add(time.Hour))
+		newer := destinationReady(t, db.joins, destinationJoin{"newer", "192.168.1.32:7445", joinAt.Add(time.Hour)})
 		// A verified exchange and receipt alone cannot replace the address.
 		pairEqual(t, contactGet(t, db.contacts, first.Peer).Destination, before.Destination)
 		destinationAccept(t, db.joins, newer, joinAt.Add(2*time.Hour))
@@ -56,18 +62,18 @@ func TestContactDestinationAcceptanceNewPairingReplacesAddress(t *testing.T) {
 
 func TestContactDestinationAcceptanceStartOrderSurvivesLateDecisions(t *testing.T) {
 	contactBackends(t, func(t *testing.T, db contactBackend) {
-		first := destinationReady(t, db.joins, "first", "first.test:7445", joinAt)
+		first := destinationReady(t, db.joins, destinationJoin{"first", "first.test:7445", joinAt})
 		destinationAccept(t, db.joins, first, joinAt)
-		older := destinationReady(t, db.joins, "older", "older.test:7445", joinAt.Add(time.Hour))
-		newer := destinationReady(t, db.joins, "newer", "first.test:7445", joinAt.Add(2*time.Hour))
+		older := destinationReady(t, db.joins, destinationJoin{"older", "older.test:7445", joinAt.Add(time.Hour)})
+		newer := destinationReady(t, db.joins, destinationJoin{"newer", "first.test:7445", joinAt.Add(2 * time.Hour)})
 		// Even a newer pairing to the SAME address advances its ordering.
 		destinationAccept(t, db.joins, newer, joinAt.Add(3*time.Hour))
 		destinationAccept(t, db.joins, older, joinAt.Add(4*time.Hour))
 		pairEqual(t, contactGet(t, db.contacts, first.Peer).Destination, newer.Destination)
-		tie := destinationReady(t, db.joins, "tie", "tie.test:7445", newer.CreatedAt)
+		tie := destinationReady(t, db.joins, destinationJoin{"tie", "tie.test:7445", newer.CreatedAt})
 		destinationAccept(t, db.joins, tie, joinAt.Add(5*time.Hour))
 		pairEqual(t, contactGet(t, db.contacts, first.Peer).Destination, newer.Destination)
-		empty := destinationReady(t, db.joins, "empty", "", joinAt.Add(6*time.Hour))
+		empty := destinationReady(t, db.joins, destinationJoin{"empty", "", joinAt.Add(6 * time.Hour)})
 		destinationAccept(t, db.joins, empty, joinAt.Add(7*time.Hour))
 		pairEqual(t, contactGet(t, db.contacts, first.Peer).Destination, newer.Destination)
 	})
@@ -75,9 +81,9 @@ func TestContactDestinationAcceptanceStartOrderSurvivesLateDecisions(t *testing.
 
 func TestContactDestinationAcceptanceRejectedPairingKeepsAddress(t *testing.T) {
 	contactBackends(t, func(t *testing.T, db contactBackend) {
-		first := destinationReady(t, db.joins, "first", "first.test:7445", joinAt)
+		first := destinationReady(t, db.joins, destinationJoin{"first", "first.test:7445", joinAt})
 		destinationAccept(t, db.joins, first, joinAt)
-		declined := destinationReady(t, db.joins, "declined", "declined.test:7445", joinAt.Add(time.Hour))
+		declined := destinationReady(t, db.joins, destinationJoin{"declined", "declined.test:7445", joinAt.Add(time.Hour)})
 		_, err := db.joins.RecordDecision(context.Background(), declined.OperationID, peer.PairingRejected, joinAt.Add(2*time.Hour))
 		pairOK(t, err)
 		pairEqual(t, contactGet(t, db.contacts, first.Peer).Destination, first.Destination)
@@ -97,12 +103,12 @@ established_at TEXT NOT NULL, joined INTEGER NOT NULL, invited INTEGER NOT NULL)
 	pairOK(t, old.Close())
 	db := pairSQLite(t, path)
 	pairEqual(t, contactGet(t, db, joinKey(2)).Destination, "old.test:7445")
-	newer := destinationReady(t, db, "newer", "new.test:7445", joinAt.Add(2*time.Hour))
+	newer := destinationReady(t, db, destinationJoin{"newer", "new.test:7445", joinAt.Add(2 * time.Hour)})
 	destinationAccept(t, db, newer, joinAt.Add(3*time.Hour))
 	pairEqual(t, contactGet(t, db, joinKey(2)).Destination, newer.Destination)
 	pairOK(t, db.Close())
 	db = pairSQLite(t, path)
-	older := destinationReady(t, db, "older", "stale.test:7445", joinAt.Add(time.Hour))
+	older := destinationReady(t, db, destinationJoin{"older", "stale.test:7445", joinAt.Add(time.Hour)})
 	destinationAccept(t, db, older, joinAt.Add(4*time.Hour))
 	got := contactGet(t, db, joinKey(2))
 	pairEqual(t, got.Destination, newer.Destination)
@@ -112,9 +118,9 @@ established_at TEXT NOT NULL, joined INTEGER NOT NULL, invited INTEGER NOT NULL)
 func TestContactDestinationAcceptanceAuditFailureRollsBackMove(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.db")
 	db := pairSQLite(t, path)
-	first := destinationReady(t, db, "first", "old.test:7445", joinAt)
+	first := destinationReady(t, db, destinationJoin{"first", "old.test:7445", joinAt})
 	destinationAccept(t, db, first, joinAt)
-	newer := destinationReady(t, db, "newer", "new.test:7445", joinAt.Add(time.Hour))
+	newer := destinationReady(t, db, destinationJoin{"newer", "new.test:7445", joinAt.Add(time.Hour)})
 	raw, err := sql.Open("sqlite", path)
 	pairOK(t, err)
 	defer raw.Close()
