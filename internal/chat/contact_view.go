@@ -156,13 +156,19 @@ func (m *Model) outboundState(v protocol.ContactMessageView) string {
 	if label == "" {
 		label = safe(v.State)
 	}
-	if v.RefusalReason == protocol.ContactHeldForUpgrade {
+	if heldForUpgrade(v) {
 		return "queued: leaves once they upgrade pairtask"
 	}
 	if v.State == "refused" && v.RefusalReason != "" {
 		label += " (" + safe(v.RefusalReason) + ")"
 	}
 	return label
+}
+
+// heldForUpgrade: still queued, and held only until the contact upgrades;
+// an expired one will never leave.
+func heldForUpgrade(v protocol.ContactMessageView) bool {
+	return v.State == "queued" && v.RefusalReason == protocol.ContactHeldForUpgrade
 }
 
 // ordered is the thread oldest first by local cursor.

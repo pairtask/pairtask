@@ -107,3 +107,13 @@ func TestContactRoutingAcceptanceRemoteNamesAreDisplayData(t *testing.T) {
 	v3Contains(t, ansi.Strip(view), "acknowledged by")
 	chatEqual(t, "render did not issue a command", h.m.State().InFlight, 0)
 }
+
+func TestContactRoutingAcceptanceExpiredUpgradeHoldDoesNotPromiseDelivery(t *testing.T) {
+	h, _ := contactMessagesHarness(t, protocol.ContactMessageView{ID: "held", Cursor: 1, Direction: "out", State: "expired", Text: "expired payload", RefusalReason: protocol.ContactHeldForUpgrade})
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	view := ansi.Strip(h.m.View().Content)
+	v3Contains(t, view, "expired")
+	if strings.Contains(view, "leaves once they upgrade") {
+		t.Fatal("expired message promises delivery after upgrade")
+	}
+}
