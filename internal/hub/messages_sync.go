@@ -143,7 +143,6 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 	}
 	h.recordSync(contact, "", h.messagesWaiting(ctx, contact))
 	if live != nil {
-		h.linkUp(contact)
 		h.goLive(ctx, live)
 	}
 }

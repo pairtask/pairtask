@@ -203,8 +203,14 @@ type dialedLink struct {
 }
 
 // goLive keeps a dialed link in its own goroutine, so the sync slot that
-// opened it is free again, and reconnects when it ends.
+// opened it is free again, and reconnects when it ends. A round got
+// through, so the contact's reconnection backoff starts again.
 func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
+	w := &h.live
+	w.mu.Lock()
+	w.ready()
+	delete(w.failures, d.link.contact)
+	w.mu.Unlock()
 	h.pair.workers.Add(1)
 	go func() {
 		defer h.pair.workers.Done()
@@ -247,37 +253,3 @@ func (h *Hub) liveDelay(contact string) time.Duration {
 	wait := min(liveFirstRetry<<min(failures-1, 6), liveBackoffMax)
 	return min(wait+time.Duration(rand.Int64N(int64(wait)/5*2+1))-wait/5, liveBackoffMax)
 }
-
-// linkUp resets a contact's reconnection backoff after a round got through.
-func (h *Hub) linkUp(contact string) {
-	w := &h.live
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.ready()
-	delete(w.failures, contact)
-}
-
-// LiveClaim is a serving link claimed for a contact's connection.
-type LiveClaim struct {
-	h    *Hub
-	link *liveLink
-}
-
-// ClaimLink claims a serving link for contact, replacing one still open.
-func (h *Hub) ClaimLink(contact string) (*LiveClaim, bool) {
-	l, ok := h.claimLive(contact, true)
-	if !ok {
-		return nil, false
-	}
-	return &LiveClaim{h: h, link: l}, true
-}
-
-// Run keeps the serving link until it ends, is replaced, or ctx ends;
-// carried is what the first round moved.
-func (c *LiveClaim) Run(ctx context.Context, open func(context.Context) messaging.Frames, carried *messaging.Counted) error {
-	defer c.Release()
-	return c.h.runLink(ctx, c.link, c.h.link(open, c.link, carried).RunServer)
-}
-
-// Release frees a claim that won't run.
-func (c *LiveClaim) Release() { c.h.releaseLive(c.link.contact, c.link) }
