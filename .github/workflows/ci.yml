@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   mac-sharing:
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +51,7 @@ jobs:
         run: python3 -m unittest discover -s scripts/tests -v
 
   checks:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,7 +93,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [blacksmith-4vcpu-ubuntu-2404, blacksmith-4vcpu-ubuntu-2404-arm]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     env:
@@ -121,7 +121,7 @@ jobs:
     # touches nothing but unshipped top-level docs and the operator chat TUI
     # may skip them, and its ci:full-images label forces them; see
     # scripts/ci-classify.py. Outputs are fixed tokens, never file names.
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       images: ${{ steps.decide.outputs.images }}
@@ -146,7 +146,6 @@ jobs:
           python3 scripts/ci-classify.py --event "$EVENT" --base "$BASE" --head "$HEAD" "${force[@]}" | tee -a "$GITHUB_OUTPUT"
 
   images:
-    # Image setup requires a disposable GitHub-hosted runner (scripts/ci-incus.sh).
     # On pushes, wait for base-mirror so images build from the just-published mirror; elsewhere it is skipped.
     # Both matrix checks always run. A pull request the classifier lets skip
     # (docs only, or docs and the chat TUI by policy) skips their steps
@@ -282,7 +281,7 @@ jobs:
   go-arm64:
     # The full Go suite natively on arm64, on every run: a pull request that
     # skips the image proofs still tests arm64. checks covers amd64 with -race.
-    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -300,7 +299,7 @@ jobs:
     # Every published workspace must have its base images retained, whatever upstream prunes.
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v'))
     needs: checks
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     concurrency:
       group: base-mirror-${{ github.repository }}
@@ -323,7 +322,7 @@ jobs:
       github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
       needs.classify.outputs.images == 'true'
     needs: [classify, images]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     concurrency:
       group: bundle-publish-${{ github.repository }}
@@ -350,7 +349,7 @@ jobs:
       github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
       needs.classify.outputs.images == 'true'
     needs: [checks, go-arm64, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
