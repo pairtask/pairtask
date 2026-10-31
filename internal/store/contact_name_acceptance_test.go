@@ -7,9 +7,35 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pairtask/pairtask/internal/store"
 )
+
+func TestContactNameAcceptanceAliasSurvivesDestinationMoveAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "contact.db")
+	db := pairSQLite(t, path)
+	first := destinationReady(t, db, destinationJoin{"first", "old.test:7445", joinAt})
+	destinationAccept(t, db, first, joinAt)
+	ctx := context.Background()
+	audit, err := db.RecordOperatorAudit(ctx, store.OperatorAudit{Action: "contact name", MessageID: "alias-before-move", Scope: first.Peer, Result: store.AuditPending})
+	pairOK(t, err)
+	_, err = db.SetContactLocalName(ctx, store.ContactName{Contact: first.Peer, Name: "Home Mac", AuditID: audit})
+	pairOK(t, err)
+	newer := destinationReady(t, db, destinationJoin{"newer", "new.test:7445", joinAt.Add(time.Hour)})
+	destinationAccept(t, db, newer, joinAt.Add(2*time.Hour))
+	pairOK(t, db.Close())
+	db = pairSQLite(t, path)
+	got := contactGet(t, db, first.Peer)
+	pairEqual(t, got.LocalName, "Home Mac")
+	pairEqual(t, got.Destination, newer.Destination)
+	pairEqual(t, got.DestinationAt.Equal(newer.CreatedAt), true)
+	destinationAccept(t, db, first, joinAt.Add(3*time.Hour))
+	got = contactGet(t, db, first.Peer)
+	pairEqual(t, got.LocalName, "Home Mac")
+	pairEqual(t, got.Destination, newer.Destination)
+	contactsCount(t, db, 1)
+}
 
 func TestContactNameAcceptancePersistsAndClearsWithoutChangingIdentity(t *testing.T) {
 	f := newOperatorContactFixture(t)
