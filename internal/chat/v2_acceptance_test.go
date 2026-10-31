@@ -174,7 +174,9 @@ func TestChatV2ReplyFreezesLiteralTargetAndRejectsAudienceChanges(t *testing.T) 
 	chatEqual(t, "reply bound", h.m.State().InReplyTo, msg.MessageID)
 	for _, command := range []string{`/to ["bob"]`, "/to", "/reply #999"} {
 		v2Command(h, command)
-		h.input(chatKey(tea.KeyEscape, 0))
+		if h.m.State().CommandLine != nil {
+			h.input(chatKey(tea.KeyEscape, 0))
+		}
 		chatEqual(t, "failed command preserves reply", h.m.State().InReplyTo, msg.MessageID)
 		chatEqual(t, "failed command preserves body", h.m.State().Draft, "reply body")
 	}

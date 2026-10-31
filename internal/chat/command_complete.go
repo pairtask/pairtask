@@ -49,6 +49,8 @@ func (m *Model) argumentCandidates(l argLine) []string {
 		return m.chatCompletions(l)
 	case "ack":
 		return m.ackCompletions(l)
+	case "reply", "r":
+		return m.replyCompletions(l)
 	case "review":
 		return m.reviewCompletions(l)
 	case "pair":

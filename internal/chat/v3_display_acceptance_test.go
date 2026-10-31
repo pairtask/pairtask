@@ -78,7 +78,7 @@ func TestChatV3DisplayAudienceLabelsPreserveScope(t *testing.T) {
 		{name: "group", draft: "@codex-1 @claude-1 body", want: "to claude-1, codex-1"},
 		{name: "unknown", draft: "@unseen body", want: "to unseen (not seen: unseen)"},
 		{name: "literal", command: `/to ["agent with spaces"]`, want: "to agent with spaces (not seen: agent with spaces)"},
-		{name: "reply", command: "/reply #7", want: "reply to #7 → codex-1"},
+		{name: "reply", command: "/reply #7", want: "reply to #7 → codex-1 · Esc cancels"},
 		{name: "invalid", draft: "@all @codex-1 body", want: "✗ @all can't be combined with other mentions"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

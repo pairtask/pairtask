@@ -99,7 +99,7 @@ func (m *Model) replyRun(arg argument) tea.Cmd {
 // audience; it never widens an already addressed draft.
 func (m *Model) replyCommand(arg argument) {
 	if arg == "cancel" {
-		m.compose.reply = nil
+		m.cancelReply()
 		m.status = "reply cancelled"
 		return
 	}
@@ -118,10 +118,14 @@ func (m *Model) replyCommand(arg argument) {
 	m.status = ""
 }
 
-// inSelected restricts the default reply target to the selected 1:1's agent;
-// in All any received message qualifies.
+// inSelected restricts reply targets to the open conversation: a room's own
+// messages, a 1:1's or group's senders'; in All any received message.
 func (m *Model) inSelected(e *entry) bool {
-	return m.conv.selected.common() || e.msg.From == m.conv.selected.agent() || slices.Contains(m.conv.selected.group(), e.msg.From)
+	key := m.conv.selected
+	if key.isRoom() {
+		return e.msg.Room == key.room
+	}
+	return key.common() || e.msg.From == key.agent() || slices.Contains(key.group(), e.msg.From)
 }
 
 func (m *Model) replyRefusal(e *entry) string {
