@@ -17,6 +17,15 @@ import (
 // ErrContactCapacity refuses a new contact to a full store.
 var ErrContactCapacity = errors.New("peer: contact capacity reached")
 
+var (
+	// ErrDestinationChanged refuses an address change whose contact moved
+	// meanwhile: the newer destination stays.
+	ErrDestinationChanged = errors.New("their address changed meanwhile; nothing changed")
+	// ErrNotDialing refuses an address change on the side that doesn't
+	// dial the contact.
+	ErrNotDialing = errors.New("this side doesn't dial them; they must update your address")
+)
+
 // Contact is one paired workspace.
 type Contact struct {
 	IdentityKey string

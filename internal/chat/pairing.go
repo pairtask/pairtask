@@ -45,7 +45,7 @@ type pairingView struct {
 var pairVerbArgs = map[string][]int{
 	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1}, protocol.PairingOpStatus: {1, 2},
 	protocol.PairingOpCancel: {1, 2}, protocol.PairingOpAccept: {2}, protocol.PairingOpReject: {2},
-	protocol.PairingOpRedeem: {3, 4}, protocol.PairingOpSettle: {1, 2},
+	protocol.PairingOpRedeem: {3, 4}, protocol.PairingOpSettle: {1, 2}, pairAddress: {2},
 }
 
 // pairWords are a /pair command's words, the verb first.
@@ -108,6 +108,7 @@ var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
 	protocol.PairingOpRedeem: (*Model).redeemCommand,
 	pairShare:                (*Model).shareCommand,
 	pairName:                 (*Model).nameCommand,
+	pairAddress:              (*Model).addressCommand,
 	pairUnshare:              (*Model).shareCommand,
 	pairReviews:              (*Model).contactReviewCommand,
 	pairReview:               (*Model).contactReviewCommand,

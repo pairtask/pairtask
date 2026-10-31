@@ -64,6 +64,7 @@ type Hub struct {
 	identity    *peer.WorkspaceIdentity // loaded at Run's start or on a pairing request; never replaced
 	pair        pairingWiring           // redemption and the inbound endpoint
 	msgs        messageWiring           // message sessions with contacts (#210)
+	addresses   addressChecks           // /pair address probes running now
 	live        liveWiring              // their live links (#222)
 	reviewClock func() time.Time        // review lifecycle times (#201); nil is time.Now
 }

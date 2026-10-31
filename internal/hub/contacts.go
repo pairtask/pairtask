@@ -43,8 +43,11 @@ func (h *Hub) operatorContact(ctx context.Context, _ map[string]*Client, req ope
 	if rerr := h.confirmedContact(ctx, msg.ContactKey); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}
-	if msg.ContactOp == protocol.ContactOpList {
+	switch msg.ContactOp {
+	case protocol.ContactOpList:
 		return h.contactList(ctx, msg)
+	case protocol.ContactOpAddress:
+		return h.contactAddress(ctx, req)
 	}
 	return h.contactChange(ctx, req)
 }

@@ -160,12 +160,23 @@ Check from B: `nc -vz A_IP 7445`.
 
 The ⇄ line on B says which address it dials: `this side dials A_IP:7445`.
 When A gets another address (a new DHCP lease, another network), B keeps
-dialling the old one, and messages stay queued. Pair again from B to the new
-address: repeat steps 2 to 5. A recognises B as the same workspace, so the
-contact, its name and the history on both sides stay; B dials the new
-address from then on, drops any link to the old one and retries at once.
-Only a newer pairing moves the address, so an older one finishing late
-never moves it back.
+dialling the old one, and messages stay queued; `/pair status` shows
+`last attempt failed`. In A's `⇄` tab on B:
+
+```text
+/pair address NEW_A_IP:7445
+```
+
+B dials the new address and checks that the workspace there presents A's
+identity key; nothing is exchanged. Only if it does is the address stored:
+the contact, its name, its grants and the history stay, B drops any link to
+the old address and syncs there from then on. A refusal (unreachable, or
+another workspace's identity) leaves the old address. Only the side that
+dials keeps the other's address; on A, the command says B must update it.
+
+Pairing again from B to the new address (steps 2 to 5) works too. Either
+way, only a newer change moves the address, so one finishing late never
+moves it back.
 
 ## Change or stop
 
