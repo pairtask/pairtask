@@ -152,5 +152,5 @@ func (m *Model) pickedWorkspace() string {
 	if !ok {
 		return ""
 	}
-	return mutedStyle.Render("@" + workspaceTag(c))
+	return mutedStyle.Render("@" + string(workspaceTag(c)))
 }
