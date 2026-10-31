@@ -289,7 +289,7 @@ func (m *Model) contactReadResult(req pendingRequest, resp protocol.Message) tea
 // at the top, older messages load when there are any.
 func (m *Model) contactScroll(direction int) tea.Cmd {
 	l := m.contactLines(m.conv.selected.contact)
-	return m.contactMove(direction * max(1, m.contactRoom(l)-1))
+	return m.contactMove(lineDelta(direction * max(1, m.contactRoom(l)-1)))
 }
 
 // contactRoom is how many message lines fit under the card.
@@ -297,14 +297,17 @@ func (m *Model) contactRoom(l contactLayout) int {
 	return max(1, m.layout().transcript-len(l.header))
 }
 
-// contactMove moves a contact tab's messages by delta lines (negative: up);
-// at the top, older messages load when there are any.
-func (m *Model) contactMove(delta int) tea.Cmd {
+// lineDelta is how many lines to move a view; negative is up.
+type lineDelta int
+
+// contactMove moves a contact tab's messages by delta; at the top, older
+// messages load when there are any.
+func (m *Model) contactMove(delta lineDelta) tea.Cmd {
 	contact := m.conv.selected.contact
 	t := m.contacts.thread(contact)
 	l := m.contactLines(contact)
 	top := max(0, len(l.lines)-m.contactRoom(l))
-	t.offset = max(0, min(top, t.offset-delta))
+	t.offset = max(0, min(top, t.offset-int(delta)))
 	if delta < 0 && m.olderDue(contact, t, top) {
 		return m.refreshContact(contact, t.oldest)
 	}

@@ -33,7 +33,7 @@ func (m *Model) wheel(msg tea.MouseWheelMsg) tea.Cmd {
 		m.scrollComposer(direction)
 		return nil
 	case m.conv.selected.isContact():
-		return m.contactMove(direction * wheelLines)
+		return m.contactMove(lineDelta(direction * wheelLines))
 	}
 	return m.scrollLines(direction * wheelLines)
 }
