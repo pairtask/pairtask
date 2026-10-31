@@ -42,27 +42,23 @@ func (l argLine) typed() map[string]bool {
 
 // argumentCandidates lists the completions for the word being typed.
 func (m *Model) argumentCandidates(l argLine) []string {
-	switch l.name {
-	case "room", "rooms":
-		return m.roomCompletions(l)
-	case "chat":
-		return m.chatCompletions(l)
-	case "ack":
-		return m.ackCompletions(l)
-	case "reply", "r":
-		return m.replyCompletions(l)
-	case "stages", "claims":
-		return m.sentCompletions(l)
-	case "copy":
-		return m.copyCompletions(l)
-	case "diagram":
-		return m.diagramCompletions(l)
-	case "review":
-		return m.reviewCompletions(l)
-	case "pair":
-		return m.pairCompletions(l)
+	if choices, ok := argumentChoices[l.name]; ok {
+		return choices(m, l)
 	}
 	return nil
+}
+
+// argumentChoices offer each command's arguments.
+var argumentChoices = map[string]func(*Model, argLine) []string{
+	"room": (*Model).roomCompletions, "rooms": (*Model).roomCompletions,
+	"chat":  (*Model).chatCompletions,
+	"ack":   (*Model).ackCompletions,
+	"reply": (*Model).replyCompletions, "r": (*Model).replyCompletions,
+	"stages": (*Model).sentCompletions, "claims": (*Model).sentCompletions,
+	"copy":    (*Model).copyCompletions,
+	"diagram": (*Model).diagramCompletions,
+	"review":  (*Model).reviewCompletions,
+	"pair":    (*Model).pairCompletions,
 }
 
 // reviewCompletions offers status and cancel, then the listed review IDs

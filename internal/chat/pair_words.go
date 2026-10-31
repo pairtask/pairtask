@@ -49,15 +49,29 @@ func (l argLine) typedWord(w string) bool { return slices.Contains(l.words, w) }
 // unshareCompletions are the agents this side shares with the ⇄ tab's
 // workspace and the line doesn't name yet.
 func (m *Model) unshareCompletions(l argLine) []string {
-	t := m.contacts.threads[m.conv.selected.contact]
-	if t == nil || !t.loaded || afterPick(l) {
+	t := m.loadedThread()
+	if t == nil || afterPick(l) {
 		return nil
 	}
-	shared := slices.DeleteFunc(slices.Clone(t.shared), func(id string) bool {
-		return l.typedWord(id) || strings.ContainsFunc(id, isSpace)
+	return wordChoices(t.shared, l, l.typedWord)
+}
+
+// loadedThread is the ⇄ tab's thread once it has loaded, or nil.
+func (m *Model) loadedThread() *contactThread {
+	if t := m.contacts.threads[m.conv.selected.contact]; t != nil && t.loaded {
+		return t
+	}
+	return nil
+}
+
+// wordChoices are ids that fit in one word and aren't skipped, sorted,
+// starting with the word being typed.
+func wordChoices(ids []string, l argLine, skip func(string) bool) []string {
+	ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+		return skip(id) || strings.ContainsFunc(id, isSpace)
 	})
-	slices.Sort(shared)
-	return withPrefix(shared, l.current)
+	slices.Sort(ids)
+	return withPrefix(ids, l.current)
 }
 
 // awaitingRequests are the ⇄ tab workspace's review requests waiting for
@@ -91,13 +105,11 @@ func isSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' }
 // reviewerChoices are the agents the ⇄ tab's workspace shares, for its
 // /pair review: theirs, never ours.
 func (m *Model) reviewerChoices(l argLine) []string {
-	t := m.contacts.threads[m.conv.selected.contact]
-	if t == nil || !t.loaded || len(l.words) != 1 {
+	t := m.loadedThread()
+	if t == nil || len(l.words) != 1 {
 		return nil
 	}
-	ids := slices.DeleteFunc(slices.Clone(t.directory), func(id string) bool { return strings.ContainsFunc(id, isSpace) })
-	slices.Sort(ids)
-	return withPrefix(ids, l.current)
+	return wordChoices(t.directory, l, func(string) bool { return false })
 }
 
 // nameChoices offer forgetting the name; any other is typed.

@@ -25,15 +25,24 @@ func (m *Model) runIfComplete() tea.Cmd {
 	if cmd, handled := m.awaitsWord(); handled {
 		return cmd
 	}
-	name, arg, _ := strings.Cut(strings.TrimSpace(m.compose.cmd.input.Value()), " ")
+	name, rest, _ := strings.Cut(strings.TrimSpace(m.compose.cmd.input.Value()), " ")
 	c, _ := lookupCommand(argument(name))
-	if c.run == nil || lacksWord(c, argument(strings.TrimSpace(arg))) || m.choiceRequired(c) {
-		if c.run != nil && m.compose.openPicker(PickerArgument) == nil {
-			m.status = missingWord(c, argument(strings.TrimSpace(arg)))
+	arg := argument(strings.TrimSpace(rest))
+	if c.run == nil {
+		return nil
+	}
+	if m.incomplete(c, arg) {
+		if m.compose.openPicker(PickerArgument) == nil {
+			m.status = missingWord(c, arg)
 		}
 		return nil
 	}
 	return m.runCommandLine()
+}
+
+// incomplete: the line still lacks a word, or a choice its command needs.
+func (m *Model) incomplete(c command, arg argument) bool {
+	return lacksWord(c, arg) || m.choiceRequired(c)
 }
 
 // choiceRequired: the line parses, but its command can't run without one
