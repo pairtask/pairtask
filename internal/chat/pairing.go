@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -34,6 +35,10 @@ type pairingView struct {
 	// for a /pair picker, so a picker offers it without reading again.
 	listed     bool
 	menuWanted bool // a /pair picker waits for a quiet read
+	// at is when the snapshot was read; refreshErr, why the last read for
+	// the operator failed while an older snapshot is still shown.
+	at         time.Time
+	refreshErr string
 }
 
 // pairVerbArgs is how many words each /pair verb takes, itself included.
@@ -215,7 +220,8 @@ func (m *Model) pairingResult(req pendingRequest, resp protocol.Message) tea.Cmd
 	if op != protocol.PairingOpOpen {
 		code = ""
 	}
-	m.pairing.snapshot, m.pairing.listed = &snapshot, true
+	m.keepSnapshot(&snapshot)
+	m.pairing.listed = true
 	m.refreshDirectory() // contact conversations follow the snapshot
 	m.panel = &panel{kind: panelPairing, code: code}
 	m.status = pairingStatus[op]
@@ -248,12 +254,15 @@ func secretCommandLine(text string) bool {
 func (m *Model) pairingRows() []string {
 	rows := []string{titleStyle.Render("Pairing") + mutedStyle.Render("  (Esc closes)"),
 		mutedStyle.Render("  " + protocol.PairingPreview)}
-	rows = append(rows, m.selfRow())
-	rows = append(rows, m.invitationRows()...)
-	rows = append(rows, m.pairingRequestRows()...)
-	rows = append(rows, m.pairingJoinRows()...)
+	rows = append(rows, m.refreshRows()...)
 	rows = append(rows, m.pairedRows()...)
-	return append(rows, mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY · /pair settle · /pair name NAME in a ⇄ tab"))
+	rows = append(rows, m.waitingForYou()...)
+	rows = append(rows, m.waitingForThem()...)
+	rows = append(rows, "")
+	rows = append(rows, m.invitationRows()...)
+	rows = append(rows, m.selfRow())
+	rows = append(rows, m.settledRows()...)
+	return append(rows, "", mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY · /pair settle · /pair name NAME in a ⇄ tab"))
 }
 
 func (m *Model) invitationRows() []string {
@@ -267,21 +276,6 @@ func (m *Model) invitationRows() []string {
 		return append(rows, "  code "+titleStyle.Render(safe(m.panel.code))+"  one-time; never send it in chat")
 	}
 	return append(rows, mutedStyle.Render("  the code is shown once, when opened; /pair cancel, then /pair open for a new one"))
-}
-
-func (m *Model) pairingRequestRows() []string {
-	s := m.pairing.snapshot
-	if s == nil || s.RequestsTotal == 0 {
-		return []string{"  no pairing requests"}
-	}
-	rows := []string{fmt.Sprintf("  requests (%d)", s.RequestsTotal)}
-	for _, r := range s.Requests {
-		rows = append(rows, m.requestRow(r)...)
-	}
-	if s.RequestsTruncated {
-		rows = append(rows, fmt.Sprintf("  (list is partial: %d more not shown; pending requests list first, so deciding these brings the rest into view)", s.RequestsTotal-len(s.Requests)))
-	}
-	return rows
 }
 
 // requestRow is one request on a line, or its state on a line of its own
@@ -306,21 +300,12 @@ func (m *Model) pairingRefused(req pendingRequest, resp protocol.Message) {
 		return
 	}
 	m.status = "pairing " + op + " refused: " + brokerReason(resp)
+	if readsState[op] && m.pairing.snapshot != nil {
+		m.pairing.refreshErr = brokerReason(resp)
+		m.panel = &panel{kind: panelPairing}
+	}
 }
 
-// pairingJoinRows are this workspace's redemptions; awaiting_acceptance is
-// not yet a contact.
-func (m *Model) pairingJoinRows() []string {
-	s := m.pairing.snapshot
-	if s == nil || s.JoinsTotal == 0 {
-		return nil
-	}
-	rows := []string{fmt.Sprintf("  redemptions (%d)", s.JoinsTotal)}
-	for _, j := range s.Joins {
-		rows = append(rows, m.joinRow(j))
-	}
-	if s.JoinsTruncated {
-		rows = append(rows, fmt.Sprintf("  (list is partial: %d more not shown)", s.JoinsTotal-len(s.Joins)))
-	}
-	return rows
-}
+// readsState are the /pair words that only read the state: a failed one
+// still shows the last state read, saying it is older.
+var readsState = map[string]bool{protocol.PairingOpList: true, protocol.PairingOpStatus: true}
