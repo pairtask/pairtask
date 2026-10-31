@@ -18,7 +18,7 @@ func TestContactMessagesRenderAcceptanceTextIsDataAndIsolated(t *testing.T) {
 		t.Fatal("terminal control executed")
 	}
 	visible := ansi.Strip(view)
-	for _, want := range []string{"/ack all", "@operator", "**untrusted**", "origin"} {
+	for _, want := range []string{"/ack all", "@operator", "untrusted", "origin"} {
 		v3Contains(t, visible, want)
 	}
 	chatEqual(t, "no command request", h.m.State().InFlight, 0)

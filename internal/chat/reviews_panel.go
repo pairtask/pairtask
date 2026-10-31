@@ -130,7 +130,11 @@ func findingPlace(f protocol.Finding) string {
 // Markdown subset, controls escaped, wrapped to the panel's width under a
 // further indent.
 func (m *Model) markdownRows(text string, indent int) []string {
-	b := lineBuilder{id: "review"}
+	return m.formattedRows(lineBuilder{id: "review"}, text, indent)
+}
+
+// formattedRows lays out text with b under a further indent.
+func (m *Model) formattedRows(b lineBuilder, text string, indent int) []string {
 	b.formatBody(text, max(minWidth/2, m.width-indent))
 	pad := strings.Repeat(" ", indent)
 	rows := make([]string, 0, len(b.lines))
