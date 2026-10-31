@@ -83,7 +83,7 @@ func (m *Model) shareCommand(fields pairWords) tea.Cmd {
 		return nil
 	}
 	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: fields[0], ContactKey: key.contact,
-		MessageID: uuid.NewString(), ContactAgents: fields[1:]}
+		MessageID: uuid.NewString(), ContactAgents: sharedAgents(fields[1:])}
 	m.status = fields[0] + "…"
 	return m.request(kindContactShare, msg, key.contact, fields[0])
 }
