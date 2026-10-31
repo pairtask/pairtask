@@ -44,8 +44,8 @@ Use the Mac's own address, not the Colima VM's.
 - On B, `/pair status` shows `this workspace: sha256:…`. Read the first characters
   after `sha256:` to A's operator.
 - On A, type `/pair accept `: a list of waiting requests opens, each with its
-  key and name. Pick the one whose key starts with what B read out (↑/↓),
-  press Enter to fill it in, then Enter again to accept.
+  key and name. Pick the one whose key starts with what B read out (↑/↓) and
+  press Enter to accept it.
 - If nothing matches, use `/pair reject` the same way.
 
 ## 5. On B: settle
@@ -54,7 +54,19 @@ Use the Mac's own address, not the Colima VM's.
 /pair settle
 ```
 
-`/pair status` on both sides should now show the contact as confirmed.
+`/pair status` on both sides now lists the other workspace first, under
+**Paired workspaces**, with a colored dot and words for how it stands:
+
+- `connected`: a link is open, and messages leave at once.
+- `pending`: not confirmed on both sides yet.
+- `idle · last synced …`: no link open right now, which is not a fault.
+- `last attempt failed …`: when it failed and why. See
+  [If it doesn't connect](#if-it-doesnt-connect).
+- `not yet observed`: no sync attempt since this broker started.
+
+Below that, **Waiting for you** lists what needs your decision, and
+**Waiting for them** what the other side still has to do. If a refresh
+fails, the last state stays on screen with the time it was read.
 
 ## 6. Say hello
 
@@ -64,6 +76,9 @@ address this side dials, else its short key; `/pair name NAME` in the tab
 sets what this side calls it, and `/pair status` shows its key beside it. Once B has synced, the
 two workspaces stay connected and messages leave at once, both ways; the
 tab says "connected". Without `@`, these messages go between operators.
+Their text shows with the same Markdown styles as local messages, with
+terminal controls escaped; a diagram stays code. The mouse wheel and
+PgUp/PgDn scroll the tab, and at the top load older messages.
 From a terminal, in `secured`:
 
 ```sh
@@ -124,8 +139,9 @@ the other workspace's `⇄` tab, decide what they may ask of each agent:
 
 `--formal` with `--publish` also allows a formal approval or change request.
 A request asks for at most what you allow. A request waiting for you shows in
-the `⇄` tab: `/pair approve ID` or `/pair decline ID`. Undecided ones expire
-after 7 days.
+the `⇄` tab: `/pair approve ID` or `/pair decline ID`. `/pair status` also
+counts them per workspace under **Waiting for you**, so you see them without
+opening each tab. Undecided ones expire after 7 days.
 
 To ask one of their agents, pin the change to the commits you want reviewed:
 
@@ -155,6 +171,9 @@ Check from B: `nc -vz A_IP 7445`.
   firewall on A.
 - **`/pair status` shows the redemption `failed`:** fix the network, then repeat
   steps 2 to 5 with a new code.
+- **A paired workspace shows `last attempt failed`:** the reason and time are
+  beside it. If the other side now has another address, use
+  [`/pair address`](#if-as-address-changed) on the side that dials.
 
 ## If A's address changed
 
