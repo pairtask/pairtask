@@ -172,6 +172,40 @@ class GenerationTests(StoreHarness):
         self.assertEqual(self.store.complete_artifacts(), {second_sha, third_sha})
         self.assertEqual(self.store.resolve("go").read_text(), "three")
 
+    def test_prune_keeps_actual_previous_despite_equal_or_reversed_timestamps(self):
+        for older_time in (1_700_000_000, 1_700_000_100):
+            with self.subTest(older_time=older_time):
+                first, first_sha = self.activate_fresh("old-" + str(older_time))
+                second, second_sha = self.activate_fresh("previous-" + str(older_time))
+                os.utime(self.store.generations / first, (older_time, older_time))
+                os.utime(self.store.generations / second, (1_700_000_000, 1_700_000_000))
+                original_iterdir = Path.iterdir
+
+                def older_first(path):
+                    entries = list(original_iterdir(path))
+                    if path == self.store.generations:
+                        entries.sort(key=lambda item: item.name != first)
+                    return iter(entries)
+
+                # Equal timestamps must work even when the filesystem lists
+                # the obsolete generation first. No sleeping or clock luck.
+                with unittest.mock.patch.object(Path, "iterdir", older_first):
+                    third, third_sha = self.activate_fresh("current-" + str(older_time))
+                self.assertEqual({p.name for p in self.store.generations.iterdir()}, {second, third})
+                self.assertEqual(self.store.complete_artifacts(), {second_sha, third_sha})
+                self.assertFalse((self.store.artifacts / first_sha).exists())
+                self.assertEqual(self.store.resolve("go").read_text(), "current-" + str(older_time))
+
+    def test_reactivation_keeps_the_previous_generation_and_its_artifacts(self):
+        first, first_sha = self.activate_fresh("previous")
+        second, second_sha = self.activate_fresh("current")
+        tools = json.loads((self.store.generations / second / "manifest.json").read_text())
+        self.store.state_path.unlink()
+        self.assertEqual(self.store.activate(tools, self.incoming), second)
+        self.assertEqual({p.name for p in self.store.generations.iterdir()}, {first, second})
+        self.assertEqual(self.store.complete_artifacts(), {first_sha, second_sha})
+        self.assertEqual(self.store.resolve("go").read_text(), "current")
+
     def test_incomplete_leftovers_are_removed_before_staging(self):
         (self.store.artifacts).mkdir(parents=True)
         (self.store.artifacts / "garbage").mkdir()

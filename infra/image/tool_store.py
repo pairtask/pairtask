@@ -441,8 +441,9 @@ class Store:
             self.build_generation(generation, manifest)
             os.chmod(self.artifacts, 0o755)
             os.chmod(self.generations, 0o755)
+            previous = self.current_generation()
             self.flip(generation)
-            self.prune()
+            self.prune(previous)
             write_state({"state": "ready", "generation": generation, "activated": time.time()}, self.state_path)
         return generation
 
@@ -517,13 +518,21 @@ class Store:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def prune(self):
-        """Keep the current and the newest previous generation and the
+    def current_generation(self):
+        """The generation current points at, or None before the first."""
+        if not self.current.is_symlink():
+            return None
+        return Path(os.readlink(self.current)).name
+
+    def prune(self, previous=None):
+        """Keep the current generation, the one it replaced, and the
         artifacts they reference; this only ever runs inside an activation,
-        with no tool process alive on this root."""
+        with no tool process alive on this root. The replaced one is known
+        by name: timestamps tie on a fast disk. Without it (a first or a
+        repeated activation), the newest other generation is kept."""
         current = self.current.resolve().name
         others = sorted((path for path in self.generations.iterdir() if path.name != current),
-                        key=lambda path: path.stat().st_mtime, reverse=True)
+                        key=lambda path: (path.name == previous, path.stat().st_mtime_ns), reverse=True)
         keep = {current} | {path.name for path in others[:1]}
         referenced = set()
         for name in keep:
