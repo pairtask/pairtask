@@ -36,3 +36,13 @@ func writeContactName(w io.Writer, key string, contacts []protocol.PairingContac
 		return
 	}
 }
+
+// namesServed: a name goes only to a broker that serves it; an older one
+// is refused here, before anything is sent.
+func namesServed(req protocol.Message, snapshot *protocol.PairingSnapshot, stderr io.Writer) bool {
+	if req.ContactOp != protocol.ContactOpName || snapshot.NamesAvailable {
+		return true
+	}
+	fmt.Fprintln(stderr, "operator peer name: this broker can't name a workspace; upgrade it; nothing sent")
+	return false
+}
