@@ -44,7 +44,7 @@ draft. `#n` is a message's number.
 | `/pair`, `/pair open`, `/pair status`, `/pair cancel`, `/pair accept KEY`, `/pair reject KEY`, `/pair redeem HOST:PORT CODE [NAME]`, `/pair settle [OPERATION_ID]` | Experimental pairing. `/pair` is a menu: Enter offers its words, and after `accept`, `reject` or `cancel` the pending requests (name, key, when asked) or the open invitation; picking one only fills it in, and the next Enter runs it. `/pair status` lists this workspace's name and key, the invitation, requests and redemptions with their times, and the paired workspaces: what each is called, who dials, and since when. Open a one-time code, shown only in the panel until Esc or a disconnect; cancel the invitation; decide a request by a unique prefix of a listed key; redeem another workspace's code. The redeem command line is cleared however it ends and the code is never shown, kept or recalled. The exchange is unaudited CPace; confirmed contacts can exchange operator messages in their `⇄` conversations |
 | In a `⇄` tab: `/pair share AGENT...\|*`, `/pair unshare AGENT...\|*`, `/pair reviews AGENT... ask\|auto\|off [--publish] [--formal]`, `/pair review AGENT TARGET BASE HEAD [SCOPE]`, `/pair approve ID`, `/pair decline ID`, `/pair name NAME\|--clear` | What that workspace may message and ask for reviews here; ask one of its agents for a review; decide one of its review requests; what this side calls it (its tab and `/pair status` show that name; the identity key still addresses it). `@agent text` writes to one of its agents ([pairing guide](pairing.md#7-let-agents-talk-across)) |
 | `/reply [#n]` (Ctrl+R) | Reply; acknowledges the answered message once the broker accepts the reply |
-| `/ack`, `/ack all`, `/ack from id` | Acknowledge messages ("seen, no reply needed") |
+| `/ack`, `/ack #n`, `/ack all`, `/ack from id` | Acknowledge messages ("seen, no reply needed"; received, never approval). `/ack` offers `all` (every received message, in all conversations), `from`, then each message still needing it, newest first; after `from`, the agents by name, with their tab number. `from` takes an agent's name: `/ack from #3` names a tab or message only if no agent is called `#3`, and then says which to type |
 | `/claims #n` | Task claims on a message with topics and ages |
 | `/history`, `/find`, `/copy #n`, `/stages #n`, `/to` | History, search, copy, delivery stages, set audience |
 | `/diagram #n [K]` | Save a `mermaid` or `plantuml` block's source to `~/.local/state/pairtask/diagrams` (under `$XDG_STATE_HOME` when set); nothing is run, and no file is overwritten. Simple Mermaid diagrams are also drawn in the transcript ([formatting](chat-formatting.md#diagrams)) |
@@ -52,8 +52,12 @@ draft. `#n` is a message's number.
 | `/forget` | Remove the selected group or 1:1 from the bar until `/chat` reopens it, for this chat session (up to 64); its messages stay in All and an unsent draft is kept |
 | `/clear`, `/help`, `/quit` | Clear the view, help, quit |
 
-While you type `/room` or `/chat` arguments, a picker offers room names and
-`@agent` IDs: Up/Down select, Tab or Enter completes, Esc dismisses it.
+While you type `/room`, `/chat`, `/ack` or `/review` arguments, a picker offers
+their choices (room names, `@agent` IDs, messages): Up/Down select, Tab or Enter
+completes, Esc dismisses it. Enter on a command still missing a word never runs
+it half-typed and never drops it: it opens that word's choices, or, with none,
+keeps the line and says what is missing. Picking a choice only fills it in; the
+next Enter runs the command.
 
 Aliases: `/who` = `/agents`, `/exit` = `/quit`, `/r` = `/reply`.
 
