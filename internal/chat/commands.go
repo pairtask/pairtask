@@ -209,6 +209,9 @@ func (m *Model) runCommandLine() tea.Cmd {
 		return cmd
 	}
 	name, arg, _ := strings.Cut(text, " ")
+	if c, _ := lookupCommand(argument(name)); c.run != nil && m.offersWord(c, argument(strings.TrimSpace(arg))) {
+		return nil
+	}
 	return m.runCommand(argument(name), argument(strings.TrimSpace(arg)))
 }
 
