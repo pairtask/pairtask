@@ -150,14 +150,22 @@ func joinWaits(j protocol.PairingJoinView) waiting {
 
 // waitRows are the listed requests, then the redemptions, that wait as w.
 func (m *Model) waitRows(w waiting) []string {
-	s := m.pairing.snapshot
+	return append(m.requestsWaiting(w), m.joinsWaiting(w)...)
+}
+
+func (m *Model) requestsWaiting(w waiting) []string {
 	var rows []string
-	for _, r := range s.Requests {
+	for _, r := range m.pairing.snapshot.Requests {
 		if requestWaits(r) == w {
 			rows = append(rows, m.requestRow(r)...)
 		}
 	}
-	for _, j := range s.Joins {
+	return rows
+}
+
+func (m *Model) joinsWaiting(w waiting) []string {
+	var rows []string
+	for _, j := range m.pairing.snapshot.Joins {
 		if joinWaits(j) == w {
 			rows = append(rows, m.joinRow(j))
 		}
