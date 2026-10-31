@@ -29,6 +29,9 @@ For pairing across hosts, start with the
 [pairing guide](pairing.md). Once both sides
 confirm the contact, select its `⇄` conversation with Tab to send messages
 and read replies. These are messages between operators, not agent commands.
+Their text shows with the same Markdown styles as local messages, controls
+escaped; a diagram in it stays code, with no `/diagram` and no drawing. The
+mouse wheel and PgUp/PgDn scroll the tab, and at the top load older messages.
 
 ## Commands
 

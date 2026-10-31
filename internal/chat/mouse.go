@@ -8,8 +8,8 @@ import (
 const wheelLines = 3
 
 // wheel scrolls what is under the pointer: an open panel, a composer taller
-// than its visible rows, otherwise the transcript, with the same anchoring
-// as PgUp/PgDn. The wheel at the top loads older history like PgUp; the
+// than its visible rows, a ⇄ tab's messages, otherwise the transcript, with
+// the same anchoring as PgUp/PgDn. The wheel at the top loads older history like PgUp; the
 // wheel at the bottom resumes following.
 func (m *Model) wheel(msg tea.MouseWheelMsg) tea.Cmd {
 	direction := 0
@@ -32,6 +32,8 @@ func (m *Model) wheel(msg tea.MouseWheelMsg) tea.Cmd {
 	case m.overComposer(msg.Y, l):
 		m.scrollComposer(direction)
 		return nil
+	case m.conv.selected.isContact():
+		return m.contactStep(direction, wheelLines)
 	}
 	return m.scrollLines(direction * wheelLines)
 }

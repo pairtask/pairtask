@@ -3,7 +3,6 @@ package chat
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -141,8 +140,9 @@ func dialedAt(c protocol.PairingContactView) string {
 	return " " + safe(c.Destination)
 }
 
-// messageLines is one message: who and its state, then its text, every
-// line escaped and wrapped; a contact's text is never parsed.
+// messageLines is one message: who and its state, then its text laid out
+// like a local message's, controls escaped. A contact's text only styles:
+// a diagram in it gets no /diagram command and is never drawn.
 func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView) []string {
 	at := v.CreatedAt.Local().Format("15:04")
 	head := agentStyle(c.IdentityKey).Render("  ⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(routeHead(v)+" · "+at)
@@ -154,13 +154,7 @@ func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMe
 	if text == "" {
 		text = "(text no longer kept)"
 	}
-	width := max(minWidth, m.width-4)
-	for _, line := range strings.Split(text, "\n") {
-		for _, part := range wrap(safeText(line), width) {
-			lines = append(lines, "    "+part)
-		}
-	}
-	return lines
+	return append(lines, m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, len(body))...)
 }
 
 func (m *Model) outboundState(v protocol.ContactMessageView) string {
@@ -293,13 +287,20 @@ func (m *Model) contactReadResult(req pendingRequest, resp protocol.Message) tea
 
 // contactScroll moves a contact tab's messages by a page under its card;
 // at the top, older messages load when there are any.
-func (m *Model) contactScroll(direction int) tea.Cmd {
+func (m *Model) contactScroll(direction int) tea.Cmd { return m.contactStep(direction, 0) }
+
+// contactStep moves a contact tab's messages by lines, or by a page when
+// lines is 0; at the top, older messages load when there are any.
+func (m *Model) contactStep(direction, lines int) tea.Cmd {
 	contact := m.conv.selected.contact
 	t := m.contacts.thread(contact)
 	l := m.contactLines(contact)
 	room := max(1, m.layout().transcript-len(l.header))
 	top := max(0, len(l.lines)-room)
-	t.offset = max(0, min(top, t.offset-direction*max(1, room-1)))
+	if lines == 0 {
+		lines = max(1, room-1)
+	}
+	t.offset = max(0, min(top, t.offset-direction*lines))
 	if direction < 0 && m.olderDue(contact, t, top) {
 		return m.refreshContact(contact, t.oldest)
 	}

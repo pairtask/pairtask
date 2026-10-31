@@ -30,7 +30,10 @@ var (
 // formatBody lays out a message's text as wrapped, styled lines.
 func (b *lineBuilder) formatBody(text string, width int) {
 	lines := messageText(text).lines()
-	f := formatter{b: b, width: width, diagrams: b.diagramViews(lines.diagrams())}
+	f := formatter{b: b, width: width}
+	if !b.inert {
+		f.diagrams = b.diagramViews(lines.diagrams())
+	}
 	for i := 0; i < len(lines); i++ {
 		i = f.line(lines, i)
 	}

@@ -74,6 +74,7 @@ type lineBuilder struct {
 	id      string
 	seq     uint64          // the message number diagram labels refer to; 0 for none
 	renders *diagramRenders // nil draws without a cache
+	inert   bool            // diagrams stay plain code: no label, no drawing
 	src     int
 	lines   []renderLine
 }
