@@ -437,10 +437,10 @@ func (m *Model) hintText() string {
 func (m *Model) audienceText(a audience) string {
 	switch {
 	case a.source == SourceReply && a.room != "":
-		return fmt.Sprintf("reply to #%d → #%s", m.compose.reply.seq, safe(a.room))
+		return fmt.Sprintf("reply to #%d → #%s · Esc cancels", m.compose.reply.seq, safe(a.room))
 	case a.source == SourceReply:
 		r := m.compose.reply
-		return fmt.Sprintf("reply to #%d → %s", r.seq, safe(r.sender))
+		return fmt.Sprintf("reply to #%d → %s · Esc cancels", r.seq, safe(r.sender))
 	case a.room != "":
 		return fmt.Sprintf("to #%s (%d members)", safe(a.room), len(m.roomMembers(a.room))) + addressedNote(a.mentions)
 	case a.everyone:

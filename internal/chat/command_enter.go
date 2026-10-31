@@ -10,11 +10,11 @@ import (
 
 // bareMenus are commands that run nothing bare: Enter offers their first
 // word instead.
-var bareMenus = map[string]bool{"ack": true, "room": true, "review": true, "chat": true}
+var bareMenus = map[string]bool{"ack": true, "room": true, "review": true, "chat": true, "reply": true}
 
 // nothingToChoose says, for a command with a reason of its own, why there
 // is nothing to pick.
-var nothingToChoose = map[string]string{"ack": "nothing to acknowledge"}
+var nothingToChoose = map[string]string{"ack": "nothing to acknowledge", "reply": "no received message to reply to here; give #n"}
 
 // offersWord handles Enter on a line lacking its word; false lets the line
 // run.

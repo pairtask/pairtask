@@ -124,14 +124,18 @@ func (m *Model) editorKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 // draftKey handles the keys the editor never sees: Enter sends, Esc ends a
-// recall (a reply is cancelled only by /reply cancel), Tab cycles views, and
-// Up/Down walk sent messages while a recall owns the draft.
+// recall, or else cancels a bound reply, keeping the text; Tab cycles
+// views, and Up/Down walk sent messages while a recall owns the draft.
 func (m *Model) draftKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "enter":
 		return m.enter(), true
 	case "esc":
-		m.endRecall()
+		if m.recalling != nil {
+			m.endRecall()
+			return nil, true
+		}
+		m.cancelReply()
 		return nil, true
 	case "tab", "shift+tab":
 		m.switchView(msg.String())

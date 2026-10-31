@@ -30,11 +30,12 @@ func TestChatV2ReviewEscapeDoesNotBroadenEmptyReply(t *testing.T) {
 	v2History(h, chatIncoming("target", 7))
 	v2Command(h, "/reply #7")
 	h.input(chatKey(tea.KeyEscape, 0))
-	chatEqual(t, "Escape preserves reply", h.m.State().InReplyTo, "target")
+	chatEqual(t, "Escape cancels reply", h.m.State().InReplyTo, "")
+	chatEqual(t, "Escape sends nothing", h.m.State().InFlight, 0)
 	v2Type(h, "private reply")
 	req := v2Send(h)
 	chatEqual(t, "reply audience preserved", req.To, "author")
-	chatEqual(t, "reply binding preserved", req.InReplyTo, "target")
+	chatEqual(t, "ordinary direct message after cancellation", req.InReplyTo, "")
 }
 
 func TestChatV2ReviewHistoryRestoresClearedRows(t *testing.T) {
