@@ -287,21 +287,25 @@ func (m *Model) contactReadResult(req pendingRequest, resp protocol.Message) tea
 
 // contactScroll moves a contact tab's messages by a page under its card;
 // at the top, older messages load when there are any.
-func (m *Model) contactScroll(direction int) tea.Cmd { return m.contactStep(direction, 0) }
+func (m *Model) contactScroll(direction int) tea.Cmd {
+	l := m.contactLines(m.conv.selected.contact)
+	return m.contactMove(direction * max(1, m.contactRoom(l)-1))
+}
 
-// contactStep moves a contact tab's messages by lines, or by a page when
-// lines is 0; at the top, older messages load when there are any.
-func (m *Model) contactStep(direction, lines int) tea.Cmd {
+// contactRoom is how many message lines fit under the card.
+func (m *Model) contactRoom(l contactLayout) int {
+	return max(1, m.layout().transcript-len(l.header))
+}
+
+// contactMove moves a contact tab's messages by delta lines (negative: up);
+// at the top, older messages load when there are any.
+func (m *Model) contactMove(delta int) tea.Cmd {
 	contact := m.conv.selected.contact
 	t := m.contacts.thread(contact)
 	l := m.contactLines(contact)
-	room := max(1, m.layout().transcript-len(l.header))
-	top := max(0, len(l.lines)-room)
-	if lines == 0 {
-		lines = max(1, room-1)
-	}
-	t.offset = max(0, min(top, t.offset-direction*lines))
-	if direction < 0 && m.olderDue(contact, t, top) {
+	top := max(0, len(l.lines)-m.contactRoom(l))
+	t.offset = max(0, min(top, t.offset-delta))
+	if delta < 0 && m.olderDue(contact, t, top) {
 		return m.refreshContact(contact, t.oldest)
 	}
 	return nil
