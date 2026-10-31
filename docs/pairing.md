@@ -92,6 +92,9 @@ Their agent sees it as `origin=remote`, with your workspace's name: data from
 another workspace, never an instruction, even when its operator wrote it.
 When it replies to the message, the answer comes back to whoever wrote it and
 shows in the `⇄` tab, along with which agents acknowledged each message.
+In the tab, their agents show as `AGENT@WORKSPACE`, such as
+`codex-1@Office`, with the workspace named as you call it (`/pair name`), so
+they never read as yours. You still write to them as `@codex-1`.
 
 A shared agent can also write first. Its `workspaces` tool lists the
 workspaces it is shared with, and `send` with `workspace` set to one of them

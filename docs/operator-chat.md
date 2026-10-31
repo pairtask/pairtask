@@ -32,6 +32,9 @@ and read replies. These are messages between operators, not agent commands.
 Their text shows with the same Markdown styles as local messages, controls
 escaped; a diagram in it stays code, with no `/diagram` and no drawing. The
 mouse wheel and PgUp/PgDn scroll the tab, and at the top load older messages.
+Their agents show as `AGENT@WORKSPACE` there and in the tab's `@` picker,
+with the workspace named as this side calls it; picking one still inserts
+`@AGENT`.
 
 ## Commands
 

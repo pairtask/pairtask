@@ -140,3 +140,17 @@ func typingLast(value string, tokens []string) bool {
 	fields := strings.Fields(value)
 	return fields[len(fields)-1] == "@"+tokens[len(tokens)-1]
 }
+
+// pickedWorkspace is the muted "@WORKSPACE" after an @ picker row in a ⇄
+// tab, whose agents are all theirs; picking still inserts only @AGENT.
+func (m *Model) pickedWorkspace() string {
+	key := m.conv.selected
+	if !key.isContact() {
+		return ""
+	}
+	c, ok := m.contact(key.contact)
+	if !ok {
+		return ""
+	}
+	return mutedStyle.Render("@" + workspaceTag(c))
+}
