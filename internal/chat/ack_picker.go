@@ -46,12 +46,20 @@ func (m *Model) ackRows() []string {
 func (m *Model) ackSenders() []string {
 	var ids []string
 	for _, id := range m.agentCandidates("") {
-		if !slices.Contains(ids, id) && !strings.ContainsFunc(id, unicode.IsSpace) && protocol.ValidateAgentID(id) == nil {
+		if oneWordAgent(id) {
 			ids = append(ids, id)
 		}
 	}
 	slices.Sort(ids)
-	return ids
+	return slices.Compact(ids)
+}
+
+// oneWordAgent: a valid agent ID that a command line can carry as one word.
+func oneWordAgent(id string) bool {
+	if strings.ContainsFunc(id, unicode.IsSpace) {
+		return false
+	}
+	return protocol.ValidateAgentID(id) == nil
 }
 
 // ackPickLabel is an /ack picker row.
