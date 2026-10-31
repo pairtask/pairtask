@@ -137,8 +137,8 @@ func (m *Model) tabs() map[int]viewKey {
 // agent's name, not a tab or a message number. An agent really called so
 // is acknowledged as any other.
 func (m *Model) fromHint(from string, usage protocol.InboxStatus) string {
-	n, err := strconv.Atoi(strings.TrimPrefix(from, "#"))
-	if err != nil || n <= 0 || slices.ContainsFunc(usage.Senders, func(s protocol.SenderUsage) bool { return s.AgentID == from }) {
+	n, numeric := tabNumber(from)
+	if !numeric || slices.ContainsFunc(usage.Senders, func(s protocol.SenderUsage) bool { return s.AgentID == from }) {
 		return ""
 	}
 	hint := fmt.Sprintf("no messages from %q: /ack from takes an agent's name", from)
@@ -146,4 +146,13 @@ func (m *Model) fromHint(from string, usage protocol.InboxStatus) string {
 		hint += fmt.Sprintf("; tab %d is %s: /ack from %s", n, safe(agent), safe(agent))
 	}
 	return hint + fmt.Sprintf("; message #%d: /ack #%d", n, n)
+}
+
+// tabNumber is the positive number a "#n" or "n" names, if it is one.
+func tabNumber(word string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(word, "#"))
+	if err != nil {
+		return 0, false
+	}
+	return n, n > 0
 }
