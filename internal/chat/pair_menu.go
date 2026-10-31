@@ -211,6 +211,9 @@ func (m *Model) pairLabel(item string) (string, bool) {
 	if len(l.words) == 0 {
 		return fmt.Sprintf("  %-8s %s", safe(item), mutedStyle.Render(pairMenu[item])), true
 	}
+	if label, ok := m.pairWordLabel(item); ok {
+		return label, true
+	}
 	label, found := pairWordLabels[l.words[0]]
 	if !found || !labelsHere(l) {
 		return "", false
@@ -224,6 +227,8 @@ var pairWordLabels = map[string]func(*Model, string) (string, bool){
 	protocol.PairingOpReject: (*Model).pendingRequestLabel,
 	protocol.PairingOpCancel: (*Model).invitationLabel,
 	pairShare:                (*Model).shareLabel,
+	pairReviews:              (*Model).shareLabel,
+	pairUnshare:              (*Model).shareLabel,
 }
 
 // labelsHere: the word being typed is the one the /pair word's choices

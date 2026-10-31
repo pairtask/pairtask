@@ -65,9 +65,6 @@ func TestChatAckPickerEnterAcknowledgesOnlySelectedMessage(t *testing.T) {
 	}
 	chatEqual(t, "down selects older message", h.m.State().Picker.Selected, 3)
 	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "selection only fills command", h.m.State().CommandLine.Text, "ack #2 ")
-	chatEqual(t, "selection cannot acknowledge", h.m.State().InFlight, 0)
-	h.input(chatKey(tea.KeyEnter, 0))
 	req := h.take(protocol.TypeOperatorAck)
 	chatEqual(t, "selected message acknowledged", req.MessageID, "second")
 	h.reply(req, protocol.Message{Type: protocol.TypeAck, MessageID: "second", Stage: protocol.StageAgentAcknowledged})
@@ -97,8 +94,8 @@ func TestChatAckPickerKeepsReceiptBeforeAckAndExcludesQueuedRows(t *testing.T) {
 	ackPickerItems(t, h, "all", "from", "#3", "#2", "#1")
 	h.input(chatKey(tea.KeyDown, 0))
 	h.input(chatKey(tea.KeyDown, 0))
-	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "completion queues no acknowledgment", len(h.m.State().QueuedAcks), 0)
+	h.input(chatKey(tea.KeyTab, 0))
+	chatEqual(t, "Tab queues no acknowledgment", len(h.m.State().QueuedAcks), 0)
 	h.input(chatKey(tea.KeyEnter, 0))
 	chatEqual(t, "only receipt request in flight", h.m.State().InFlight, 1)
 	chatEqual(t, "selected acknowledgment queued", len(h.m.State().QueuedAcks), 1)
@@ -138,8 +135,8 @@ func TestAckPickerAcceptanceAllIsExplicitAndLabelsGlobalScope(t *testing.T) {
 			text := strings.ToLower(ansi.Strip(h.m.View().Content))
 			v3Contains(t, text, "all conversations")
 			v3Contains(t, text, "not approval")
-			h.input(chatKey(tea.KeyEnter, 0))
-			chatEqual(t, "all only filled", h.m.State().CommandLine.Text, "ack all ")
+			h.input(chatKey(tea.KeyTab, 0))
+			chatEqual(t, "Tab only fills all", h.m.State().CommandLine.Text, "ack all ")
 			chatEqual(t, "no status or mutation before submit", h.m.State().InFlight, 0)
 			h.input(chatKey(tea.KeyEnter, 0))
 			req := h.take(protocol.TypeOperatorInboxStatus)
@@ -174,8 +171,8 @@ func TestAckPickerAcceptanceFromOffersNamesWithTabPositions(t *testing.T) {
 	for i := 0; i < slices.Index(p.Items, "alice"); i++ {
 		h.input(chatKey(tea.KeyDown, 0))
 	}
-	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "completion inserts identity not tab number", h.m.State().CommandLine.Text, "ack from alice ")
+	h.input(chatKey(tea.KeyTab, 0))
+	chatEqual(t, "Tab inserts identity not tab number", h.m.State().CommandLine.Text, "ack from alice ")
 	chatEqual(t, "choosing an agent changes no receipts", h.m.State().InFlight, 0)
 }
 

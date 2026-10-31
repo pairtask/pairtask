@@ -19,6 +19,9 @@ func (m *Model) replyCompletions(l argLine) []string {
 			rows = append(rows, fmt.Sprintf("#%d", e.msg.Seq))
 		}
 	}
+	if m.compose.reply != nil {
+		rows = append(rows, "cancel") // a bound reply can be left from here too
+	}
 	return withPrefix(rows, l.current)
 }
 

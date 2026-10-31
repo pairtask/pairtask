@@ -37,16 +37,18 @@ func TestReviewCompletionOffersSubcommandsAndListedIDs(t *testing.T) {
 	}
 }
 
-func TestReviewCompletionCompletesBeforeStatusOrCancel(t *testing.T) {
+func TestReviewCompletionTabFillsAndEnterRunsStatusOrCancel(t *testing.T) {
 	for _, op := range []string{"status", "cancel"} {
 		for _, key := range []rune{tea.KeyTab, tea.KeyEnter} {
 			t.Run(op+string(key), func(t *testing.T) {
 				h := reviewCompletionHarness(t)
 				commandCompleteLine(h, "review "+op+" review-o")
 				h.input(chatKey(key, 0))
-				chatEqual(t, "completed exact ID", h.m.State().CommandLine.Text, "review "+op+" review-one ")
-				chatEqual(t, "completion does not execute", h.m.State().InFlight, 0)
-				h.input(chatKey(tea.KeyEnter, 0))
+				if key == tea.KeyTab {
+					chatEqual(t, "completed exact ID", h.m.State().CommandLine.Text, "review "+op+" review-one ")
+					chatEqual(t, "Tab does not execute", h.m.State().InFlight, 0)
+					h.input(chatKey(tea.KeyEnter, 0))
+				}
 				req := h.take(protocol.TypeOperatorReview)
 				chatEqual(t, "exact ID", req.ReviewID, "review-one")
 				chatEqual(t, "requested operation", string(req.ReviewOp), op)

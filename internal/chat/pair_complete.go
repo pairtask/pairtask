@@ -62,7 +62,20 @@ func (m *Model) pairCompletions(l argLine) []string {
 	case l.words[0] == pairShare:
 		return m.shareCompletions(l)
 	}
+	if words, ok := pairWordChoices[l.words[0]]; ok {
+		return words(m, l)
+	}
 	return nil
+}
+
+// pairWordChoices offer the next word of the ⇄ tab's /pair words.
+var pairWordChoices = map[string]func(*Model, argLine) []string{
+	pairReviews: (*Model).reviewsCompletions,
+	pairUnshare: (*Model).unshareCompletions,
+	pairApprove: (*Model).awaitingRequests,
+	pairDecline: (*Model).awaitingRequests,
+	pairReview:  (*Model).reviewerChoices,
+	pairName:    (*Model).nameChoices,
 }
 
 // pendingRequestKeys are the keys of the listed requests that wait for a

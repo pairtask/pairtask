@@ -51,6 +51,12 @@ func (m *Model) argumentCandidates(l argLine) []string {
 		return m.ackCompletions(l)
 	case "reply", "r":
 		return m.replyCompletions(l)
+	case "stages", "claims":
+		return m.sentCompletions(l)
+	case "copy":
+		return m.copyCompletions(l)
+	case "diagram":
+		return m.diagramCompletions(l)
 	case "review":
 		return m.reviewCompletions(l)
 	case "pair":
@@ -220,12 +226,16 @@ func (m *Model) refreshArgumentPicker(l argLine) {
 		c.picker = nil
 		return
 	}
-	c.picker = &picker{kind: PickerArgument, items: items, selected: c.keptSelection(items)}
+	c.picker = &picker{kind: PickerArgument, items: items, selected: c.keptSelection(items, l.current)}
 }
 
-// keptSelection keeps the highlighted row while the candidates are
-// unchanged, and starts at the top otherwise.
-func (c *composer) keptSelection(items []string) int {
+// keptSelection highlights the word typed out in full, so Enter takes it
+// rather than a longer one; otherwise it keeps the highlighted row while
+// the candidates are unchanged, and starts at the top.
+func (c *composer) keptSelection(items []string, typed string) int {
+	if i := slices.Index(items, typed); typed != "" && i >= 0 {
+		return i
+	}
 	p := c.openPicker(PickerArgument)
 	if p == nil || !slices.Equal(p.items, items) {
 		return 0

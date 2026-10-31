@@ -40,8 +40,8 @@ func TestSharePickerAcceptanceBareShareOffersLocalAgentsAndRequiresSubmit(t *tes
 	view := ansi.Strip(h.m.View().Content)
 	v3Contains(t, view, "Office")
 	v3Contains(t, strings.ToLower(view), "local")
-	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "selection fills command", h.m.State().CommandLine.Text, "pair share alice ")
+	h.input(chatKey(tea.KeyTab, 0))
+	chatEqual(t, "Tab fills command", h.m.State().CommandLine.Text, "pair share alice ")
 	chatEqual(t, "selection changes no grants", h.m.State().InFlight, 0)
 	chatEqual(t, "message draft retained", h.m.State().Draft, "keep my draft")
 	h.input(chatKey(tea.KeyEnter, 0))
@@ -64,7 +64,6 @@ func TestSharePickerAcceptanceLiteralMentionNameKeepsItsIdentity(t *testing.T) {
 	h, _ := sharePickerHarness(t, "@literal")
 	v2Command(h, "/pair share")
 	commandCompleteItems(t, h, []string{"@@literal"})
-	h.input(chatKey(tea.KeyEnter, 0))
 	h.input(chatKey(tea.KeyEnter, 0))
 	req := h.take(protocol.TypeOperatorContact)
 	if !slices.Equal(req.ContactAgents, []string{"@literal"}) {

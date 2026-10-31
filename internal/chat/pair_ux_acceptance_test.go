@@ -37,9 +37,9 @@ func TestPairUXAcceptanceVerbsAndPendingRequestRows(t *testing.T) {
 	v3Contains(t, view, "no name given")
 	chatEqual(t, "suggestions do not send", h.m.State().InFlight, 0)
 	h.input(chatKey(tea.KeyDown, 0))
-	h.input(chatKey(tea.KeyEnter, 0))
+	h.input(chatKey(tea.KeyTab, 0))
 	chatEqual(t, "selected key is visible before decision", h.m.State().CommandLine.Text, "pair accept "+strings.Repeat("b", 12)+" ")
-	chatEqual(t, "selection only completes", h.m.State().InFlight, 0)
+	chatEqual(t, "Tab only completes", h.m.State().InFlight, 0)
 	h.input(chatKey(tea.KeyEnter, 0))
 	req := pairingChatRequest(h, "accept")
 	chatEqual(t, "wire uses full selected identity", req.PairingTarget, second)
@@ -88,7 +88,9 @@ func TestPairUXAcceptanceAmbiguousShortKeyNeverDecides(t *testing.T) {
 	h := pairingChatHarness(t, true)
 	prefix := strings.Repeat("a", 12)
 	pairingChatList(h, []string{"sha256:" + prefix + strings.Repeat("b", 52), "sha256:" + prefix + strings.Repeat("c", 52)}, 2)
-	v2Command(h, "/pair accept "+prefix)
+	commandCompleteLine(h, "pair accept "+prefix)
+	h.input(chatKey(tea.KeyEscape, 0)) // submit the typed key without choosing a completion
+	h.input(chatKey(tea.KeyEnter, 0))
 	chatEqual(t, "collision never chooses first request", h.m.State().InFlight, 0)
 	chatEqual(t, "collision does not queue", h.m.State().Queued, 0)
 }
@@ -184,9 +186,6 @@ func TestPairUXAcceptancePickerCandidatesResolveAcrossCollisionsAndPartialLists(
 			for i := 0; i < tc.selected; i++ {
 				h.input(chatKey(tea.KeyDown, 0))
 			}
-			h.input(chatKey(tea.KeyEnter, 0))
-			chatEqual(t, "picker choice only completes", h.m.State().InFlight, 0)
-			chatEqual(t, "offered identity visible", h.m.State().CommandLine.Text, "pair accept "+tc.want[tc.selected]+" ")
 			h.input(chatKey(tea.KeyEnter, 0))
 			req := pairingChatRequest(h, "accept")
 			chatEqual(t, "offered prefix resolves to intended full key", req.PairingTarget, "sha256:"+[]string{first, second}[tc.selected])
