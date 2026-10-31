@@ -39,11 +39,20 @@ func standing(c protocol.PairingContactView) standingView {
 	case !c.Confirmed:
 		return standingView{"●", queueStyle, "pending: not confirmed on both sides yet"}
 	case sync.LastFailure != "" || sync.Failures > 0:
-		return standingView{"●", errStyle, failedWords(sync)}
+		return standingView{"●", errStyle, failedWords(sync) + movedHint(c)}
 	case sync.LastSuccess != nil:
 		return standingView{"○", doneStyle, "idle · last synced " + when(*sync.LastSuccess)}
 	}
 	return standingView{"○", mutedStyle, "not yet observed"}
+}
+
+// movedHint points the side that dials a failing workspace at /pair
+// address, in case it came back somewhere else.
+func movedHint(c protocol.PairingContactView) string {
+	if !c.Dials {
+		return ""
+	}
+	return " · moved? /pair address HOST:PORT in its ⇄ tab"
 }
 
 // failedWords say when the last attempt failed and why, and the last

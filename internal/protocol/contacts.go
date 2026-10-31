@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/pairtask/pairtask/internal/peer"
 )
 
 // Contact messages (#210): the operator writes to the operator of a paired
@@ -59,6 +61,14 @@ const (
 	ContactOpName = "name"
 	// CapabilityContactNames: the broker serves name.
 	CapabilityContactNames = "contact_names"
+
+	// ContactOpAddress moves the contact to the HOST:PORT in contact_text,
+	// under message_id, once a probe there proved the same identity; only
+	// the side that dials it may. The one answer comes after the probe:
+	// the pairing snapshot, or why not.
+	ContactOpAddress = "address"
+	// CapabilityContactAddress: the broker serves address.
+	CapabilityContactAddress = "contact_address"
 
 	// CapabilityContactRouting: the broker serves share and unshare, a send
 	// to the contact's agents (contact_to), and routing in the views.
@@ -175,6 +185,7 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpReviewAsk:    {key: true, id: true, to: true, note: true, ask: true},
 	ContactOpReviewDecide: {key: true, id: true, read: true, approve: true},
 	ContactOpName:         {key: true, id: true, note: true},
+	ContactOpAddress:      {key: true, id: true, text: true},
 }
 
 type contactFieldSet struct{ key, text, note, read, before, id, to, agents, grant, ask, approve bool }
@@ -185,14 +196,23 @@ type contactFieldSet struct{ key, text, note, read, before, id, to, agents, gran
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide or name")
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name or address")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err
 	}
 	return errors.Join(validContactKey(msg.ContactKey), validContactID(msg, allowed), validContactText(msg, allowed),
 		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
-		validContactReview(msg, allowed))
+		validContactReview(msg, allowed), validContactAddress(msg))
+}
+
+// validContactAddress requires an address change's HOST:PORT: a host and
+// a port from 1 to 65535, as a redemption's destination.
+func validContactAddress(msg Message) error {
+	if msg.ContactOp != ContactOpAddress || peer.CheckDestination(msg.ContactText) == nil {
+		return nil
+	}
+	return errors.New("contact_text must be HOST:PORT, with a port from 1 to 65535")
 }
 
 // contactFieldsPresent refuses a field the operation doesn't take, any

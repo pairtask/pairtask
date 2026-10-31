@@ -52,8 +52,14 @@ func (h *Hub) handleOperator(ctx context.Context, clients map[string]*Client, re
 		h.routeSession(ctx, clients, req)
 	case reqClose:
 		h.closeSession(ctx, req.sess)
+	case reqFinish:
+		finishCtx, cancel := context.WithTimeout(ctx, PairingGrace)
+		defer cancel()
+		deliver(req, req.finish(finishCtx))
 	default:
-		req.reply <- h.routeOperator(ctx, clients, req)
+		if out := h.routeOperator(ctx, clients, req); !deferred(out) {
+			req.reply <- out
+		}
 	}
 }
 
@@ -99,6 +105,9 @@ func (h *Hub) routeSession(ctx context.Context, clients map[string]*Client, req 
 		resp = protocol.Message{Type: protocol.TypeError, Code: protocol.ErrInvalidState, Detail: "this session is already open"}
 	default:
 		resp = h.routeOperator(ctx, clients, req)
+	}
+	if deferred(resp) {
+		return
 	}
 	resp.RequestID = req.msg.RequestID
 	req.sess.pushResponse(resp)

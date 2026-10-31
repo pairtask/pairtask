@@ -18,6 +18,7 @@ const (
 	reqOpen
 	reqSession
 	reqClose
+	reqFinish // a deferred answer's last step, on the Run goroutine
 )
 
 type operatorRequest struct {
@@ -27,6 +28,37 @@ type operatorRequest struct {
 	reply chan protocol.Message
 	kind  operatorRequestKind
 	sess  *OperatorSession
+	// finish is a reqFinish's step; its answer goes to the request it
+	// carries the reply and session of.
+	finish func(context.Context) protocol.Message
+}
+
+// answerLater is what a handler returns when a worker answers the request
+// later: nothing is sent now.
+var answerLater = protocol.Message{Type: "\x00answer later"}
+
+func deferred(m protocol.Message) bool { return m.Type == answerLater.Type }
+
+// deliver sends a request's answer where it is awaited: queued on its
+// session, or to the one-shot caller.
+func deliver(req operatorRequest, resp protocol.Message) {
+	if req.sess != nil {
+		resp.RequestID = req.msg.RequestID
+		req.sess.pushResponse(resp)
+		return
+	}
+	req.reply <- resp
+}
+
+// finishOperator runs a worker's last step for req on the Run goroutine and
+// answers it there; once Run has stopped, req hears that the broker is
+// shutting down, while what the worker stored stays.
+func (h *Hub) finishOperator(runCtx context.Context, req operatorRequest, finish func(context.Context) protocol.Message) {
+	step := operatorRequest{ctx: context.Background(), uid: req.uid, msg: req.msg, reply: req.reply, kind: reqFinish, sess: req.sess, finish: finish}
+	if !h.enqueueOperator(runCtx, step) {
+		deliver(req, protocol.Message{Type: protocol.TypeError, Code: protocol.ErrInternal, Detail: "broker is shutting down; the outcome is stored",
+			MessageID: req.msg.MessageID})
+	}
 }
 
 // SubmitOperator routes one request from an authenticated operator connection
