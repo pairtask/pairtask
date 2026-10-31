@@ -24,14 +24,18 @@ func (m *Model) replyCompletions(l argLine) []string {
 
 // replyPickLabel is a /reply picker row: the message, as /ack shows it.
 func (m *Model) replyPickLabel(item string) (string, bool) {
-	l, ok := m.argumentLine()
-	if !ok || l.name != "reply" && l.name != "r" {
+	if l, ok := m.argumentLine(); !ok || !replyLine(l) {
 		return "", false
 	}
 	if e := m.entryAt(item); e != nil {
 		return m.ackLabel(e.msg.MessageID), true
 	}
 	return "", false
+}
+
+// replyLine: the command line is /reply, or its alias /r.
+func replyLine(l argLine) bool {
+	return l.name == "reply" || l.name == "r"
 }
 
 // cancelReply forgets a bound reply; the draft stays, to the same view.

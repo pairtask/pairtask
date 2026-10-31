@@ -12,7 +12,11 @@ import (
 func replyPickerItems(t *testing.T, h *chatHarness, want ...string) {
 	t.Helper()
 	p := h.m.State().Picker
-	if p == nil || p.Kind != "argument" || !reflect.DeepEqual(p.Items, want) {
+	if p == nil {
+		t.Fatal("reply picker is missing")
+	}
+	chatEqual(t, "reply uses argument completion", p.Kind, "argument")
+	if !reflect.DeepEqual(p.Items, want) {
 		t.Fatalf("reply choices = %+v, want %v", p, want)
 	}
 }
