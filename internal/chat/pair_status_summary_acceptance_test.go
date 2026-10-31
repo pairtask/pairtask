@@ -42,10 +42,8 @@ func TestPairStatusSummaryAcceptanceHonestConnectionStates(t *testing.T) {
 			h, view := pairSummaryView(t, c)
 			v3Contains(t, view, tc.want)
 			chatEqual(t, "summary needs no contact fetch", h.m.State().InFlight, 0)
-			if tc.name == "idle" || tc.name == "never" || tc.name == "missing" {
-				if strings.Contains(view, "offline") {
-					t.Fatal("lack of a live link was presented as offline")
-				}
+			if strings.Contains(view, "offline") {
+				t.Fatal("observed connection state was presented as offline")
 			}
 		})
 	}

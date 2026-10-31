@@ -81,12 +81,7 @@ func (m *Model) waitingForYou() []string {
 	if s == nil {
 		return nil
 	}
-	var rows []string
-	for _, r := range s.Requests {
-		if r.State == pendingAcceptance {
-			rows = append(rows, m.requestRow(r)...)
-		}
-	}
+	rows := m.waitRows(forYou)
 	if s.RequestsTruncated {
 		rows = append(rows, fmt.Sprintf("  (requests list is partial: %d more not shown; pending requests list first, so deciding these brings the rest into view)", s.RequestsTotal-len(s.Requests)))
 	}
@@ -121,28 +116,62 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
+// waiting is who a listed request or redemption waits for, if anyone.
+type waiting int
+
+const (
+	forYou waiting = iota
+	forThem
+	settled
+)
+
+// requestWaits: a pending request waits for this side; an acceptance not
+// yet confirmed, for the other side.
+func requestWaits(r protocol.PairingRequestView) waiting {
+	switch {
+	case r.State == pendingAcceptance:
+		return forYou
+	case r.State == "accepted" && r.DeliveredAt == nil:
+		return forThem
+	}
+	return settled
+}
+
 // settledJoins are redemptions that need nothing more from either side.
 var settledJoins = []string{"failed", "declined", "contact"}
 
-// waitingForThem are this side's acceptances not yet confirmed and its
-// redemptions still in progress.
-func (m *Model) waitingForThem() []string {
-	s := m.pairing.snapshot
-	if s == nil {
-		return nil
+// joinWaits: a redemption still in progress waits for the other side.
+func joinWaits(j protocol.PairingJoinView) waiting {
+	if slices.Contains(settledJoins, j.State) {
+		return settled
 	}
+	return forThem
+}
+
+// waitRows are the listed requests, then the redemptions, that wait as w.
+func (m *Model) waitRows(w waiting) []string {
+	s := m.pairing.snapshot
 	var rows []string
 	for _, r := range s.Requests {
-		if r.State == "accepted" && r.DeliveredAt == nil {
+		if requestWaits(r) == w {
 			rows = append(rows, m.requestRow(r)...)
 		}
 	}
 	for _, j := range s.Joins {
-		if !slices.Contains(settledJoins, j.State) {
+		if joinWaits(j) == w {
 			rows = append(rows, m.joinRow(j))
 		}
 	}
-	return section("Waiting for them", rows)
+	return rows
+}
+
+// waitingForThem are this side's acceptances not yet confirmed and its
+// redemptions still in progress.
+func (m *Model) waitingForThem() []string {
+	if m.pairing.snapshot == nil {
+		return nil
+	}
+	return section("Waiting for them", m.waitRows(forThem))
 }
 
 // settledRows are the decided requests and the settled redemptions.
@@ -151,17 +180,7 @@ func (m *Model) settledRows() []string {
 	if s == nil {
 		return nil
 	}
-	var rows []string
-	for _, r := range s.Requests {
-		if r.State != pendingAcceptance && (r.State != "accepted" || r.DeliveredAt != nil) {
-			rows = append(rows, m.requestRow(r)...)
-		}
-	}
-	for _, j := range s.Joins {
-		if slices.Contains(settledJoins, j.State) {
-			rows = append(rows, m.joinRow(j))
-		}
-	}
+	rows := m.waitRows(settled)
 	if s.JoinsTruncated {
 		rows = append(rows, fmt.Sprintf("  (redemptions list is partial: %d more not shown)", s.JoinsTotal-len(s.Joins)))
 	}
