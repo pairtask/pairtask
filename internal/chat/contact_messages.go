@@ -145,6 +145,7 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 	page := resp.ContactPage
 	if before == "0" {
 		t.newestPage(page, gen == strconv.FormatUint(t.gen, 10))
+		m.directoryChanged(contact)
 	} else {
 		t.olderPage(page)
 	}

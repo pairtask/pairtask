@@ -66,19 +66,47 @@ func (m *Model) eligibleMembers() ([]string, bool) {
 }
 
 // mentionCandidates are the @ picker's choices: in a room or group only its
-// members (offline ones too) not yet named, elsewhere every known agent.
+// members (offline ones too) not yet named; in a ⇄ tab only the agents that
+// workspace shares, never one of ours; elsewhere every known agent.
 func (m *Model) mentionCandidates(fragment string) []string {
 	key := m.conv.selected
+	if key.isContact() {
+		return m.unnamed(m.sharedByContact(key.contact), fragment)
+	}
 	if !key.isGroup() && !key.isRoom() {
 		return m.agentCandidates(fragment)
 	}
 	members, _ := m.eligibleMembers()
+	return m.unnamed(members, fragment)
+}
+
+// sharedByContact is the directory a paired workspace shares with this
+// one, as last loaded; none before its tab has loaded.
+func (m *Model) sharedByContact(contact string) []string {
+	if t := m.contacts.threads[contact]; t != nil && t.loaded {
+		return t.directory
+	}
+	return nil
+}
+
+// directoryChanged refreshes an open @ picker in contact's tab when what it
+// shares was read again; a closed or dismissed picker stays closed.
+func (m *Model) directoryChanged(contact string) {
+	if m.conv.selected.contact != contact || m.compose.openPicker(PickerAgent) == nil {
+		return
+	}
+	m.refreshAgentPicker()
+}
+
+// unnamed are ids not yet named on the line that a mention can carry,
+// sorted, starting with fragment.
+func (m *Model) unnamed(ids []string, fragment string) []string {
 	typed := m.namedBefore()
-	members = slices.DeleteFunc(slices.Clone(members), func(id string) bool {
+	ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
 		return slices.Contains(typed, id) || id == "all" || !mentionID.MatchString(id) // the inline grammar can't carry it
 	})
-	slices.Sort(members)
-	return withPrefix(members, fragment)
+	slices.Sort(ids)
+	return withPrefix(ids, fragment)
 }
 
 // addressedNote is " · addressed @a @b" for mentioned members, or "".
