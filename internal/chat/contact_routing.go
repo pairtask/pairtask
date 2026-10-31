@@ -97,6 +97,7 @@ func (m *Model) contactShareResult(req pendingRequest, resp protocol.Message) te
 	}
 	t := m.contacts.thread(contact)
 	t.shared, t.directory, t.grants = resp.ContactPage.Shared, resp.ContactPage.Directory, resp.ContactPage.ReviewGrants
+	m.directoryChanged(contact)
 	t.merge(resp.ContactPage.Messages)
 	m.status = "shared with this workspace: " + agentNames(t.shared, "no agents")
 	return nil
