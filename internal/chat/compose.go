@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -222,11 +223,18 @@ func (m *Model) refreshAgentPicker() {
 		c.picker = nil
 		return
 	}
-	selected := 0
-	if p := c.openPicker(PickerAgent); p != nil && p.selected < len(items) {
-		selected = p.selected
+	c.picker = &picker{kind: PickerAgent, items: items, selected: c.keptAgent(items)}
+}
+
+// keptAgent keeps the highlighted agent highlighted when the choices change
+// under it, by its ID, never by its position; a choice that went away
+// starts at the top.
+func (c *composer) keptAgent(items []string) int {
+	p := c.openPicker(PickerAgent)
+	if p == nil || p.selected >= len(p.items) {
+		return 0
 	}
-	c.picker = &picker{kind: PickerAgent, items: items, selected: selected}
+	return max(slices.Index(items, p.items[p.selected]), 0)
 }
 
 // openPicker is the open picker of kind, or nil.

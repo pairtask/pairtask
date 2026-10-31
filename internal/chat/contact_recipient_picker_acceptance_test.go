@@ -77,3 +77,19 @@ func TestContactRecipientPickerAcceptancePrefixAndAlreadyNamed(t *testing.T) {
 	contactRecipientItems(t, h, "codex-1", "zeta")
 	chatEqual(t, "choosing changes no sharing", h.m.State().InFlight, 0)
 }
+
+func TestContactRecipientPickerAcceptanceRefreshKeepsSelectedIdentity(t *testing.T) {
+	h, key := sharePickerHarness(t)
+	contactRecipientRefresh(t, h, key, "claude-1", "codex-1")
+	v2Type(h, "@")
+	h.input(chatKey(tea.KeyDown, 0))
+	contactRecipientItems(t, h, "claude-1", "codex-1")
+	chatEqual(t, "codex selected", h.m.State().Picker.Selected, 1)
+	contactRecipientRefresh(t, h, key, "alpha", "claude-1", "codex-1")
+	contactRecipientItems(t, h, "alpha", "claude-1", "codex-1")
+	p := h.m.State().Picker
+	chatEqual(t, "refresh retains selected agent", p.Items[p.Selected], "codex-1")
+	h.input(chatKey(tea.KeyEnter, 0))
+	chatEqual(t, "completion retains intended agent", h.m.State().Draft, "@codex-1 ")
+	chatEqual(t, "completion sends nothing", h.m.State().InFlight, 0)
+}
