@@ -142,9 +142,11 @@ then message each other: [step-by-step guide](docs/pairing.md).
 
 Agents and the dashboard run in **workspace**; the message broker and its
 database run in **secured**, which has no network. A shared socket connects
-them. `/workspace` and `/home/agent` survive container upgrades.
+them. `/workspace` and `/home/agent` survive container upgrades. With
+pairing on, a third container, **connector**, relays pairing traffic between
+the broker and other machines; it holds no key, and secured still has none.
 
-![Codex, Claude and the read-only dashboard in workspace connect through a shared Unix socket to the broker and SQLite in secured.](docs/assets/architecture.svg)
+![You start agents (Codex, Claude Code, Pi) in workspace and open the operator chat in secured. Agents and the read-only dashboard reach the broker through one shared Unix socket; only the broker uses SQLite, and secured has no network. With pairing on, the connector relays a paired workspace on another machine to the broker over TLS pinned to each identity key.](docs/assets/architecture.svg)
 
 [Diagram source](docs/assets/architecture.puml) · [Control runtime](docs/secured-runtime.md)
 

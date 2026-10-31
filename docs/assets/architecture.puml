@@ -1,92 +1,61 @@
 @startuml architecture
-' Render from the repository root:
-' plantuml -tsvg -nometadata docs/assets/architecture.puml
+' Render from docs/assets (it includes styles.puml):
+' docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/data -w /data plantuml/plantuml -tsvg -nometadata architecture.puml
 
-title collab-ai · Shared broker and dev workspace
+!include styles.puml
 
-<style>
-title {
-    FontSize 25
-}
-document {
-    Margin 24
-    BackgroundColor #fafafa
-}
-rectangle {
-    LineStyle 5
-    LineColor #grey
-    LineThickness 2
-}
-.HumanControl {
-    BackgroundColor #fff3b0
-}
-.Control {
-    BackgroundColor #e3efff
-}
-.Dev {
-    BackgroundColor #e7f5eb
-}
-.Socket {
-    BackgroundColor #fce4f0
-}
-.Storage {
-    BackgroundColor #f0eaff
-}
-legend {
-    FontSize 15
-    Padding 12
-}
-</style>
+title pairtask · workspace, broker and a paired workspace
 
-hide stereotype
-skinparam {
-    backgroundColor #fafafa
-    shadowing false
-    componentStyle rectangle
-    defaultFontSize 16
-    padding 10
-    nodesep 40
-    ranksep 35
+actor "You\nhost terminals" as Operator
+
+rectangle "workspace · dev container\nnetwork access by default" <<group>> {
+    rectangle "=Agents\nCodex · Claude Code · Pi\n--\none terminal each: pairtask start\nshell, builds and tests run here" as Agents <<Agent>>
+    rectangle "=Dashboard\nread-only: agents and messages" as Dashboard <<Operator>>
+    database "=Projects and agent home\n/workspace · /home/agent\nsurvive upgrades" as Files <<Storage>>
 }
 
-actor "You · host terminals" as Human
+file "=broker.sock\nshared Unix socket\nread-only mount in workspace" as Socket <<Socket>>
 
-rectangle "workspace · dev container\nNetwork access by default · opt-out available" as Dev {
-    component "=Read-only dashboard\ncollab dashboard · collab status\nAgent connections and pending messages" as Dashboard <<HumanControl>>
-    component "=Codex\nTerminal + collab-codex\nManaged proxy / listener" as Codex <<Dev>>
-    component "=Claude Code\nTerminal + collab-mcp\nMCP over stdin / stdout" as Claude <<Dev>>
-    component "=Persistent workspace\n/workspace · independent Incus volume\nOptional: selected host directories\nMac writes: restricted sharing helper\n--\nSandbox data owned by agent (1001:1001)\nHost writes: dedicated sharing account\nShell commands, builds and tests inside dev\nRootless Docker + Compose as agent\nDocker data: separate persistent Incus volume" as Project <<Dev>>
-    file "=Persistent agent home\n/home/agent on a separate Incus volume\nSurvives container replacement\nCodex + Claude settings, skills, memory and sessions\n--\nAgents update sandbox-owned state\nSelected host-state import tooling · future\nNo live host-home sync" as AgentHome <<Storage>>
-    file "=broker.sock · Unix socket\n/mnt/collab-ipc/broker.sock\nDirectory mounted READ-ONLY in dev\nOwner: broker · group: collab-clients\nSocket mode: 0660\n--\nClients may connect and send requests\nCannot replace or remove the socket" as Socket <<Socket>>
+rectangle "secured · control container\noffline: no network interface" <<group>> {
+    rectangle "=Operator chat\npairtask chat" as Chat <<Operator>>
+    rectangle "=Broker\nmessages · status · claims\nreviews · pairing" as Broker <<Broker>>
+    database "=SQLite\nonly the broker reads and writes it\nnever mounted in workspace" as DB <<Storage>>
 }
 
-rectangle "secured · control container\nOffline · no network interface" as Control {
-    component "=One collab-ai broker\nCreates / listens on broker.sock\nOnly process accessing SQLite" as Broker <<Control>>
-    database "=One collaboration SQLite database\nPrivate persistent volume\nNever mounted in dev" as DB <<Control>>
+rectangle "connector · pairing route\nonly with pairtask pairing on" <<group>> {
+    rectangle "=Relay and egress\nforward sealed connections\nhold no key, see no content" as Relay <<Route>>
 }
 
-Human -down-> Codex : SSH · prompts / output
-Human -down-> Claude : SSH · prompts / output
-Human -down-> Dashboard : SSH · terminal status
+cloud "=Paired workspace\nanother machine on the LAN or a tailnet" as Peer <<Peer>>
 
-Codex -down-> Socket : Broker protocol
-Claude -down-> Socket : Broker protocol
-Socket -[hidden]down-> Project
-Project -[hidden]down-> AgentHome
+Operator --> Chat <<operatorFlow>> : pairtask chat
+Operator --> Agents <<operatorFlow>> : pairtask start · shell
 
-Dashboard -down-> Socket : Read-only status requests
-Broker <-left-> Socket : Same shared Incus volume\n/mnt/collab-ipc\nREAD-WRITE mount in control
-Broker -down-> DB : Read / write
+Agents --> Socket <<messageFlow>> : broker protocol
+Dashboard --> Socket <<messageFlow>> : status requests
+Socket --> Broker <<messageFlow>> : same socket in both containers
+Chat --> Broker <<operatorFlow>> : operator socket
+Broker --> DB <<dataFlow>> : read / write
+Agents --> Files <<dataFlow>> : read / write
 
-legend bottom
-    <back:#e7f5eb> Agents in dev </back>   <back:#e3efff> Services in control </back>   <back:#fce4f0> One shared Unix socket </back>   <back:#fff3b0> Read-only dashboard </back>
-    Directory: broker:collab-clients, 0750. Socket: broker:collab-clients, 0660.
-    Broker UID 1002 / client GID 1003 are mapped by the shifted IPC volume; directory mounted at boot.
-    Read-only mount protects the socket path. It does not prevent sending socket requests.
-    Dev clients share access; this does not isolate Codex from Claude or other code running as their user.
-    Workspace, agent-home and Docker volumes survive replacement; Terraform blocks their deletion until explicitly allowed.
-    Host mounts do not prevent execution. Writable sharing allows changes to host scripts and configuration.
-    Host-state import remains future work. File retention is not a resume guarantee.
+Peer <--> Relay <<pairingFlow>> : host port 7445 in, redemptions out
+Relay <--> Broker <<pairingFlow>> : pairing and egress sockets
+
+note right of Relay <<note>>
+  TLS pinned to each workspace's
+  identity key, end to end
+  between the two brokers
+end note
+
+legend right
+  | Flow | | Color | |
+  | <color:indigo><size:28><&arrow-right></size></color> | You, through a terminal | <$operatorColor> | Your views |
+  | <color:lawnGreen><size:28><&arrow-right></size></color> | Messages through the broker | <$agentColor> | Agents |
+  | <color:deepPink><size:28><&arrow-right></size></color> | Pairing between workspaces | <$brokerColor> | Broker |
+  | <color:grey><size:28><&arrow-right></size></color> | Storage | <$socketColor> | Shared socket |
+  | | | <$storageColor> | Persistent data |
+  | | | <$routeColor> | Pairing route |
+  | | | <$peerColor> | Another workspace |
 endlegend
 
 @enduml
