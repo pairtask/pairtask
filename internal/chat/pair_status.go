@@ -122,12 +122,15 @@ func (m *Model) joinRow(j protocol.PairingJoinView) string {
 // key, who dials, and since when.
 func (m *Model) pairedRows() []string {
 	s := m.pairing.snapshot
-	if s == nil || s.ContactsTotal == 0 {
+	switch {
+	case s == nil:
 		return nil
+	case s.ContactsTotal == 0:
+		return []string{"", titleStyle.Render("  Paired workspaces"), "  no paired workspaces yet; /pair open makes a code to share"}
 	}
-	rows := []string{fmt.Sprintf("  Paired workspaces (%d)", s.ContactsTotal)}
+	rows := []string{"", titleStyle.Render(fmt.Sprintf("  Paired workspaces (%d)", s.ContactsTotal))}
 	for _, c := range s.Contacts {
-		rows = append(rows, pairedRow(c))
+		rows = append(rows, pairedRow(c)...)
 	}
 	if s.ContactsTruncated {
 		rows = append(rows, fmt.Sprintf("  (list is partial: %d more not shown)", s.ContactsTotal-len(s.Contacts)))
@@ -135,17 +138,16 @@ func (m *Model) pairedRows() []string {
 	return rows
 }
 
-func pairedRow(c protocol.PairingContactView) string {
+// pairedRow is a paired workspace: how it stands and what this side calls
+// it, then its key, who dials and since when.
+func pairedRow(c protocol.PairingContactView) []string {
 	name := safe(contactDisplay(c)) + selfNameNote(c)
 	dials := "waits to be dialed"
 	if c.Dials {
 		dials = "this side dials " + safe(c.Destination)
 	}
-	row := fmt.Sprintf("  %s  %s · %s · paired %s", name, protocol.ShortKey(c.IdentityKey), dials, when(c.EstablishedAt))
-	if !c.Confirmed {
-		row += " · not confirmed yet"
-	}
-	return row
+	return []string{standing(c).row(name),
+		fmt.Sprintf("      %s · %s · paired %s", protocol.ShortKey(c.IdentityKey), dials, when(c.EstablishedAt))}
 }
 
 // selfNamed: this workspace pairs under a name of its own, or isn't

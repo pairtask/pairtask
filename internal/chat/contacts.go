@@ -148,7 +148,7 @@ func (m *Model) quietPairingResult(_ pendingRequest, resp protocol.Message) tea.
 	if resp.Type == protocol.TypeOperatorPairingResult && resp.PairingResult != nil {
 		snapshot := *resp.PairingResult
 		snapshot.Invitation = withoutCode(snapshot.Invitation)
-		m.pairing.snapshot = &snapshot
+		m.keepSnapshot(&snapshot)
 		m.refreshDirectory()
 		m.pairMenuLoaded()
 	} else if m.pairing.menuWanted {

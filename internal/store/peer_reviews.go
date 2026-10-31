@@ -234,6 +234,27 @@ FROM remote_imports WHERE kind = 'review' AND state IN ('pending', 'awaiting')`,
 	return mine >= ReviewAsksPerAgent || theirs >= ReviewAsksPerContact || total >= ReviewAsksTotal, nil
 }
 
+// AwaitingReviewCounts are, by contact, the review requests waiting for
+// this side's operator; a contact with none is absent.
+func (s *PeerMessages) AwaitingReviewCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT contact, COUNT(*) FROM remote_imports
+WHERE kind = 'review' AND state = 'awaiting' GROUP BY contact`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var contact string
+		var n int
+		if err := rows.Scan(&contact, &n); err != nil {
+			return nil, err
+		}
+		counts[contact] = n
+	}
+	return counts, rows.Err()
+}
+
 // DecideRemoteReview is this side's operator's decision on a request that
 // waits for one: approved, it goes to dispatch; declined, it is withheld.
 // A request past ReviewAskExpiry is withheld as expired instead. Anything

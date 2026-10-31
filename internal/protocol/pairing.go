@@ -40,6 +40,9 @@ const (
 	CapabilityPairingRedeem = "pairing_redeem"
 	// CapabilityPairingContacts: the broker settles joins and reports contacts.
 	CapabilityPairingContacts = "pairing_contacts"
+	// CapabilityPairingContactSummary: each listed contact carries its sync
+	// state and the review requests waiting for this side.
+	CapabilityPairingContactSummary = "pairing_contact_summary"
 	// EventPairingChanged tells the operator session that durable pairing
 	// state changed in the background; it carries nothing, so a client
 	// reads the pairing state again.
@@ -98,6 +101,16 @@ type PairingContactView struct {
 	// side opens the sessions with it.
 	LocalName string `json:"local_name,omitempty"`
 	Dials     bool   `json:"dials,omitempty"`
+	// Summary is nil from a broker that reports none: unknown, not idle.
+	Summary *PairingContactSummary `json:"summary,omitempty"`
+}
+
+// PairingContactSummary is how a contact stands now: its sync as this broker
+// observed it since it started, and its review requests waiting for this
+// side's operator.
+type PairingContactSummary struct {
+	Sync            ContactSyncView `json:"sync"`
+	ReviewsAwaiting int             `json:"reviews_awaiting"`
 }
 
 // PairingSettleView is what a settle request scheduled locally; nothing in

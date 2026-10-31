@@ -425,6 +425,10 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 		return err
 	}
 	confirmed := confirmedIdentities(requests, joins)
+	awaiting, err := h.store.PeerMessages().AwaitingReviewCounts(ctx)
+	if err != nil {
+		return err
+	}
 	slices.SortFunc(contacts, func(a, b peer.Contact) int { return b.EstablishedAt.Compare(a.EstablishedAt) })
 	snapshot.Contacts, snapshot.ContactsTotal = []protocol.PairingContactView{}, len(contacts)
 	if len(contacts) > protocol.ListedPairingContacts {
@@ -437,7 +441,8 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 	for _, c := range contacts {
 		snapshot.Contacts = append(snapshot.Contacts, protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
 			Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
-			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own)})
+			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own),
+			Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: awaiting[c.IdentityKey]}})
 	}
 	return nil
 }
