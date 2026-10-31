@@ -61,14 +61,15 @@ func assertAddressGrants(t *testing.T, f *operatorContactFixture) {
 	t.Helper()
 	shared, err := f.db.PeerMessages().SharedAgents(context.Background(), f.contact)
 	pairOK(t, err)
-	if len(shared) != 1 || shared[0] != "worker" {
-		t.Fatalf("address move lost message sharing: %v", shared)
-	}
+	pairEqual(t, len(shared), 1)
+	pairEqual(t, shared[0], "worker")
 	grants, err := f.db.PeerMessages().ReviewGrants(context.Background(), f.contact)
 	pairOK(t, err)
-	if len(grants) != 1 || grants[0].Agent != "reviewer" || grants[0].Mode != store.ReviewAuto || !grants[0].Publish || !grants[0].Formal {
-		t.Fatalf("address move lost review grant: %+v", grants)
-	}
+	pairEqual(t, len(grants), 1)
+	pairEqual(t, grants[0].Agent, "reviewer")
+	pairEqual(t, grants[0].Mode, store.ReviewAuto)
+	pairEqual(t, grants[0].Publish, true)
+	pairEqual(t, grants[0].Formal, true)
 }
 
 func TestContactAddressAcceptanceStaleProbeCannotOverwriteNewerDestination(t *testing.T) {

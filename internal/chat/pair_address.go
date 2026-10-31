@@ -39,13 +39,23 @@ func (m *Model) addressChangeProblem(key viewKey, fields pairWords) string {
 		return "open the workspace's ⇄ tab, then /pair address HOST:PORT"
 	case !m.session.HasCapability(protocol.CapabilityContactAddress):
 		return "this broker doesn't support changing a workspace's address; upgrade it"
-	case len(fields) != 2 || peer.CheckDestination(fields[1]) != nil:
+	case !addressLine(fields):
 		return addressUsage
-	}
-	if c, ok := m.contact(key.contact); !ok || !c.Dials {
+	case !m.dialsContact(key.contact):
 		return "this side doesn't dial them; they update your address on their side, with /pair address there"
 	}
 	return ""
+}
+
+// addressLine: /pair address and one valid HOST:PORT.
+func addressLine(fields pairWords) bool {
+	return len(fields) == 2 && peer.CheckDestination(fields[1]) == nil
+}
+
+// dialsContact: the snapshot lists the contact, and this side dials it.
+func (m *Model) dialsContact(contact string) bool {
+	c, ok := m.contact(contact)
+	return ok && c.Dials
 }
 
 // contactAddressResult takes the snapshot the change answered with and

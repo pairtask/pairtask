@@ -102,13 +102,16 @@ func addressReplay(known addressOp, found bool, op AddressOp, err error) (Addres
 
 // addressOp is an operation as stored.
 type addressOp struct {
-	contact, candidate string
-	outcome            AddressOutcome
-	auditID            int64
+	id, contact, candidate string
+	outcome                AddressOutcome
+	auditID                int64
 }
 
+// running: the operation is still waiting for its outcome.
+func (op addressOp) running() bool { return op.outcome.State == AddressRunning }
+
 func getAddressOp(ctx context.Context, q rowQuerier, id string) (addressOp, bool, error) {
-	var op addressOp
+	op := addressOp{id: id}
 	err := q.QueryRowContext(ctx, `SELECT contact, candidate, state, reason, audit_id FROM contact_address_ops WHERE message_id = ?`, id).
 		Scan(&op.contact, &op.candidate, &op.outcome.State, &op.outcome.Reason, &op.auditID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -148,7 +151,7 @@ func (s *Store) ChangeContactAddress(ctx context.Context, a ContactAddress) (pee
 		return peer.Contact{}, errors.Join(err, notFound(found))
 	}
 	if refusal := addressRefusal(c, a); refusal != nil {
-		if err := settleRefused(ctx, tx, a.OpID, op.auditID, refusal); err != nil {
+		if err := settleRefused(ctx, tx, op, refusal); err != nil {
 			return peer.Contact{}, err
 		}
 		return peer.Contact{}, errors.Join(tx.Commit(), refusal)
@@ -170,7 +173,7 @@ func runningOp(ctx context.Context, tx *sql.Tx, a ContactAddress) (addressOp, er
 		return addressOp{}, err
 	case !found || op.contact != a.Contact || op.candidate != a.To:
 		return addressOp{}, ErrAddressOpConflict
-	case op.outcome.State != AddressRunning:
+	case !op.running():
 		return addressOp{}, ErrAddressOpSettled
 	}
 	return op, nil
@@ -221,10 +224,13 @@ func (s *Store) RefuseContactAddress(ctx context.Context, opID, reason string) e
 	}
 	defer tx.Rollback()
 	op, found, err := getAddressOp(ctx, tx, opID)
-	if err != nil || !found || op.outcome.State != AddressRunning {
+	if err != nil || !found {
 		return err
 	}
-	if err := settleRefused(ctx, tx, opID, op.auditID, errors.New(reason)); err != nil {
+	if !op.running() {
+		return nil
+	}
+	if err := settleRefused(ctx, tx, op, errors.New(reason)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -232,9 +238,9 @@ func (s *Store) RefuseContactAddress(ctx context.Context, opID, reason string) e
 
 // settleRefused marks an operation refused and finishes its audit, inside
 // tx; the caller commits.
-func settleRefused(ctx context.Context, tx *sql.Tx, opID string, auditID int64, why error) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE contact_address_ops SET state = ?, reason = ? WHERE message_id = ?`, AddressRefused, why.Error(), opID); err != nil {
+func settleRefused(ctx context.Context, tx *sql.Tx, op addressOp, why error) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE contact_address_ops SET state = ?, reason = ? WHERE message_id = ?`, AddressRefused, why.Error(), op.id); err != nil {
 		return err
 	}
-	return finishAudit(ctx, tx, auditID, AuditOutcome{Result: AuditRejected, Detail: why.Error()})
+	return finishAudit(ctx, tx, op.auditID, AuditOutcome{Result: AuditRejected, Detail: why.Error()})
 }

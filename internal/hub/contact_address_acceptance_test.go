@@ -56,91 +56,115 @@ func addressContact(t *testing.T, h *Hub, key string) {
 }
 
 func TestContactAddressAcceptanceTLSIdentityPinBeforeCommit(t *testing.T) {
-	for _, wrong := range []bool{true, false} {
-		name := "same-key"
-		if wrong {
-			name = "wrong-key"
-		}
-		t.Run(name, func(t *testing.T) {
-			h := newTestHub(t)
-			if got := h.loadIdentity(context.Background()); got != "" {
-				t.Fatalf("load identity: %s", got)
-			}
-			contactID := addressPeer(t)
-			presented := contactID
-			if wrong {
-				presented = addressPeer(t)
-			}
-			addressContact(t, h, contactID.Fingerprint())
-			_, err := h.store.PeerMessages().Queue(context.Background(), messaging.Outgoing{
-				Contact: contactID.Fingerprint(), ID: "queued-before-probe", Text: "must not leave in probe", Now: time.Now()})
-			if err != nil {
-				t.Fatal(err)
-			}
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer listener.Close()
-			serverDone := make(chan error, 1)
-			probePayload := make(chan []byte, 1)
-			go func() {
-				server, err := listener.Accept()
-				if err == nil {
-					var conn *firstcontact.Conn
-					conn, err = firstcontact.ServerWith(context.Background(), server, presented, time.Now, firstcontact.ServerOptions{
-						MessagePins: func(fp string) bool { return fp == h.identity.Fingerprint() },
-					})
-					if err == nil {
-						readCtx, stop := context.WithTimeout(context.Background(), time.Second)
-						payload, _ := conn.MessageFrames(readCtx).Recv()
-						probePayload <- payload
-						stop()
-						conn.Close()
-					}
-				}
-				serverDone <- err
-			}()
-			h.SetPairing(PairingConfig{Clock: time.Now, Dial: func(ctx context.Context, destination string) (net.Conn, error) {
-				if destination != "new.example:7445" {
-					return nil, context.DeadlineExceeded
-				}
-				return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
-			}})
-			ctx, cancel := context.WithCancel(context.Background())
-			defer func() { cancel(); <-h.Done() }()
-			go h.Run(ctx)
-			probe, stop := context.WithTimeout(ctx, 3*time.Second)
-			defer stop()
-			out := h.SubmitOperator(probe, 0, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpAddress,
-				ContactKey: contactID.Fingerprint(), ContactText: "new.example:7445", MessageID: "move-pin"})
-			contact, found, err := h.store.Contact(context.Background(), contactID.Fingerprint())
-			if err != nil || !found {
-				t.Fatalf("contact unavailable after probe: found=%v err=%v", found, err)
-			}
-			if wrong {
-				if out.Type != protocol.TypeError || contact.Destination != "old.example:7445" {
-					t.Fatalf("wrong identity changed address: out=%+v contact=%+v", out, contact)
-				}
-			} else if out.Type != protocol.TypeOperatorContactResult || out.PairingResult == nil || contact.Destination != "new.example:7445" {
-				t.Fatalf("same identity failed to move and refresh snapshot: out=%+v contact=%+v", out, contact)
-			}
-			select {
-			case <-serverDone:
-			case <-time.After(2 * time.Second):
-				t.Fatal("TLS probe left server blocked")
-			}
-			if !wrong {
-				select {
-				case payload := <-probePayload:
-					if payload != nil {
-						t.Fatalf("probe sent a message before changing address: %q", payload)
-					}
-				default:
-					t.Fatal("successful probe did not check for premature messages")
-				}
-			}
+	for _, tc := range []struct {
+		name  string
+		wrong bool
+	}{
+		{"wrong-key", true}, {"same-key", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addressProbeCase(t, tc.wrong)
 		})
+	}
+}
+
+type addressProbeServer struct {
+	listener net.Listener
+	done     chan error
+	payload  chan []byte
+}
+
+func startAddressProbeServer(t *testing.T, own, presented *peer.WorkspaceIdentity) addressProbeServer {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	s := addressProbeServer{listener: listener, done: make(chan error, 1), payload: make(chan []byte, 1)}
+	go s.serve(own, presented)
+	return s
+}
+
+func (s addressProbeServer) serve(own, presented *peer.WorkspaceIdentity) {
+	server, err := s.listener.Accept()
+	if err == nil {
+		var conn *firstcontact.Conn
+		conn, err = firstcontact.ServerWith(context.Background(), server, presented, time.Now, firstcontact.ServerOptions{
+			MessagePins: func(fp string) bool { return fp == own.Fingerprint() },
+		})
+		if err == nil {
+			readCtx, stop := context.WithTimeout(context.Background(), time.Second)
+			payload, _ := conn.MessageFrames(readCtx).Recv()
+			s.payload <- payload
+			stop()
+			conn.Close()
+		}
+	}
+	s.done <- err
+}
+
+func (s addressProbeServer) dial(ctx context.Context, destination string) (net.Conn, error) {
+	if destination != "new.example:7445" {
+		return nil, context.DeadlineExceeded
+	}
+	return (&net.Dialer{}).DialContext(ctx, "tcp", s.listener.Addr().String())
+}
+
+func addressProbeCase(t *testing.T, wrong bool) {
+	t.Helper()
+	h := newTestHub(t)
+	if got := h.loadIdentity(context.Background()); got != "" {
+		t.Fatalf("load identity: %s", got)
+	}
+	contactID := addressPeer(t)
+	presented := contactID
+	if wrong {
+		presented = addressPeer(t)
+	}
+	addressContact(t, h, contactID.Fingerprint())
+	_, err := h.store.PeerMessages().Queue(context.Background(), messaging.Outgoing{
+		Contact: contactID.Fingerprint(), ID: "queued-before-probe", Text: "must not leave in probe", Now: time.Now()})
+	messageWorkerOK(t, err)
+	server := startAddressProbeServer(t, h.identity, presented)
+	h.SetPairing(PairingConfig{Clock: time.Now, Dial: server.dial})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); <-h.Done() }()
+	go h.Run(ctx)
+	probe, stop := context.WithTimeout(ctx, 3*time.Second)
+	defer stop()
+	out := h.SubmitOperator(probe, 0, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpAddress,
+		ContactKey: contactID.Fingerprint(), ContactText: "new.example:7445", MessageID: "move-pin"})
+	contact, found, err := h.store.Contact(context.Background(), contactID.Fingerprint())
+	if err != nil || !found {
+		t.Fatalf("contact unavailable after probe: found=%v err=%v", found, err)
+	}
+	assertAddressProbe(t, wrong, out, contact, server)
+}
+
+func assertAddressProbe(t *testing.T, wrong bool, out protocol.Message, contact peer.Contact, server addressProbeServer) {
+	t.Helper()
+	if wrong {
+		if out.Type != protocol.TypeError || contact.Destination != "old.example:7445" {
+			t.Fatalf("wrong identity changed address: out=%+v contact=%+v", out, contact)
+		}
+	} else if out.Type != protocol.TypeOperatorContactResult || out.PairingResult == nil || contact.Destination != "new.example:7445" {
+		t.Fatalf("same identity failed to move and refresh snapshot: out=%+v contact=%+v", out, contact)
+	}
+	select {
+	case <-server.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("TLS probe left server blocked")
+	}
+	if !wrong {
+		select {
+		case payload := <-server.payload:
+			if payload != nil {
+				t.Fatalf("probe sent a message before changing address: %q", payload)
+			}
+		default:
+			t.Fatal("successful probe did not check for premature messages")
+		}
 	}
 }
 
