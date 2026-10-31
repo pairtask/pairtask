@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/google/uuid"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -124,18 +125,52 @@ func agentNames(agents []string, none string) string {
 	return strings.Join(names, ", ")
 }
 
+// workspaceTagCells bounds the workspace a remote agent's label names.
+const workspaceTagCells = 24
+
+// workspaceLabel is a paired workspace as its agents' labels name it,
+// already escaped and bounded.
+type workspaceLabel string
+
+// workspaceTag is what this side calls a paired workspace, else its short
+// key, escaped and cut to workspaceTagCells with a visible ellipsis: never
+// its address, which moves.
+func workspaceTag(c protocol.PairingContactView) workspaceLabel {
+	name := workspaceName(c)
+	if name == "" {
+		name = protocol.ShortKey(c.IdentityKey)
+	}
+	return workspaceLabel(ansi.Truncate(safe(name), workspaceTagCells, "…"))
+}
+
+// theirAgents are the contact's agents as AGENT@WORKSPACE, so they never
+// read as this side's.
+func theirAgents(agents []string, ws workspaceLabel) string {
+	names := make([]string, len(agents))
+	for i, a := range agents {
+		names[i] = safe(a) + "@" + string(ws)
+	}
+	return strings.Join(names, ", ")
+}
+
 // routeHead is a message's agents for its first line: who sent it there,
-// whom it is to, and which of them acknowledged it.
-func routeHead(v protocol.ContactMessageView) string {
+// whom it is to, and which of them acknowledged it. Received, its sender
+// is theirs and its recipients ours; sent, the reverse, and only their
+// agents acknowledge.
+func routeHead(v protocol.ContactMessageView, ws workspaceLabel) string {
+	from, to := agentNames([]string{v.From}, ""), theirAgents(v.To, ws)
+	if v.Direction == "in" {
+		from, to = theirAgents([]string{v.From}, ws), agentNames(v.To, "")
+	}
 	head := ""
 	if v.From != "" {
-		head += " · " + safe(v.From)
+		head += " · " + from
 	}
 	if len(v.To) > 0 {
-		head += " → " + agentNames(v.To, "")
+		head += " → " + to
 	}
 	if len(v.AgentAcks) > 0 {
-		head += " · acknowledged by " + agentNames(v.AgentAcks, "")
+		head += " · acknowledged by " + theirAgents(v.AgentAcks, ws)
 	}
 	head += reviewHead(v)
 	return head

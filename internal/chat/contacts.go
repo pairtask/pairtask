@@ -39,16 +39,22 @@ const defaultPairingName = peer.DefaultPairingName
 // has for it, else the address this side dials, else its short key. A name
 // is display only; the ⇄ before it always marks a workspace, never an agent.
 func contactDisplay(c protocol.PairingContactView) string {
-	if c.LocalName != "" {
-		return c.LocalName
-	}
-	if name := shownName(c.Name); name != "" {
+	if name := workspaceName(c); name != "" {
 		return name
 	}
 	if host := dialedHost(c); host != "" {
 		return host
 	}
 	return protocol.ShortKey(c.IdentityKey)
+}
+
+// workspaceName is the name this side has for a paired workspace, else
+// the one it gives itself, or "".
+func workspaceName(c protocol.PairingContactView) string {
+	if c.LocalName != "" {
+		return c.LocalName
+	}
+	return shownName(c.Name)
 }
 
 // shownName is a workspace's name worth showing, or "".

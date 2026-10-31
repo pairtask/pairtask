@@ -145,9 +145,10 @@ func dialedAt(c protocol.PairingContactView) string {
 // a diagram in it gets no /diagram command and is never drawn.
 func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView) []string {
 	at := v.CreatedAt.Local().Format("15:04")
-	head := agentStyle(c.IdentityKey).Render("  ⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(routeHead(v)+" · "+at)
+	route := routeHead(v, workspaceTag(c))
+	head := agentStyle(c.IdentityKey).Render("  ⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(route+" · "+at)
 	if v.Direction == "out" {
-		head = titleStyle.Render("  you →") + mutedStyle.Render(routeHead(v)+" · "+at+" · "+m.outboundState(v))
+		head = titleStyle.Render("  you →") + mutedStyle.Render(route+" · "+at+" · "+m.outboundState(v))
 	}
 	lines := []string{head}
 	text := v.Text

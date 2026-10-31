@@ -296,7 +296,7 @@ func (m *Model) pickerRows(l frameLayout) []string {
 func (m *Model) pickerLabel(p *picker, item string) string {
 	switch p.kind {
 	case PickerAgent:
-		return "  @" + safe(item)
+		return "  @" + safe(item) + m.pickedWorkspace()
 	case PickerArgument:
 		return m.argumentLabel(item)
 	case PickerReview:
