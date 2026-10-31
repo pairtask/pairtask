@@ -2,6 +2,8 @@ package chat
 
 import (
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Enter never runs a command line still lacking the word it needs, nor
@@ -15,6 +17,50 @@ var bareMenus = map[string]bool{"ack": true, "room": true, "review": true, "chat
 // nothingToChoose says, for a command with a reason of its own, why there
 // is nothing to pick.
 var nothingToChoose = map[string]string{"ack": "nothing to acknowledge", "reply": "no received message to reply to here; give #n"}
+
+// runIfComplete runs the line Enter just completed, when the pick made it
+// whole; otherwise the next word's choices stay offered, or the line says
+// what it still lacks. Tab only completes, and never comes here.
+func (m *Model) runIfComplete() tea.Cmd {
+	if cmd, handled := m.awaitsWord(); handled {
+		return cmd
+	}
+	name, rest, _ := strings.Cut(strings.TrimSpace(m.compose.cmd.input.Value()), " ")
+	c, _ := lookupCommand(argument(name))
+	arg := argument(strings.TrimSpace(rest))
+	if c.run == nil {
+		return nil
+	}
+	if m.incomplete(c, arg) {
+		if m.compose.openPicker(PickerArgument) == nil {
+			m.status = missingWord(c, arg)
+		}
+		return nil
+	}
+	return m.runCommandLine()
+}
+
+// incomplete: the line still lacks a word, or a choice its command needs.
+func (m *Model) incomplete(c command, arg argument) bool {
+	return lacksWord(c, arg) || m.choiceRequired(c)
+}
+
+// choiceRequired: the line parses, but its command can't run without one
+// of the choices now offered, such as which diagram of a message holding
+// several.
+func (m *Model) choiceRequired(c command) bool {
+	need, ok := requiredChoices[c.name]
+	if !ok {
+		return false
+	}
+	l, _ := m.argumentLine()
+	return need(m, l)
+}
+
+// requiredChoices are the commands with such a word.
+var requiredChoices = map[string]func(*Model, argLine) bool{
+	"diagram": func(m *Model, l argLine) bool { return len(l.words) == 1 && len(m.diagramCompletions(l)) > 0 },
+}
 
 // offersWord handles Enter on a line lacking its word; false lets the line
 // run.

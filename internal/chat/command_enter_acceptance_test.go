@@ -27,7 +27,7 @@ func TestCommandEnterAcceptanceIncompleteCommandsKeepInputAndOfferChoices(t *tes
 }
 
 func TestCommandEnterAcceptanceMissingFreeTextKeepsInputAndHelp(t *testing.T) {
-	for _, line := range []string{"diagram", "copy", "stages", "claims", "pair redeem"} {
+	for _, line := range []string{"pair redeem"} {
 		t.Run(line, func(t *testing.T) {
 			h := commandCompleteHarness(t)
 			v2Command(h, "/"+line)

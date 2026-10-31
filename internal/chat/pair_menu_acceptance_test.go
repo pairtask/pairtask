@@ -19,9 +19,6 @@ func TestPairMenuAcceptanceBareEnterOffersCommandsWithoutRunning(t *testing.T) {
 	chatEqual(t, "draft retained", h.m.State().Draft, "keep my draft")
 	v3Contains(t, ansi.Strip(h.m.View().Content), "paired workspaces stay")
 	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "choice only fills command", h.m.State().CommandLine.Text, "pair open ")
-	chatEqual(t, "choosing open does not create invitation", h.m.State().InFlight, 0)
-	h.input(chatKey(tea.KeyEnter, 0))
 	pairingChatRequest(h, "open")
 }
 
@@ -41,8 +38,6 @@ func TestPairMenuAcceptanceBareAcceptOffersIdentifiedPendingRequests(t *testing.
 	}
 	chatEqual(t, "opening picker makes no decision", h.m.State().InFlight, 0)
 	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "selection makes no decision", h.m.State().InFlight, 0)
-	h.input(chatKey(tea.KeyEnter, 0))
 	req := pairingChatRequest(h, "accept")
 	chatEqual(t, "selected identity", req.PairingTarget, key)
 }
@@ -59,8 +54,8 @@ func TestPairMenuAcceptanceCancelNamesInvitationAndNeverRevealsCode(t *testing.T
 	v3Contains(t, view, "3 attempts left")
 	pairingChatNoCode(h)
 	chatEqual(t, "opening cancel picker changes nothing", h.m.State().InFlight, 0)
-	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "selected invitation is visible", h.m.State().CommandLine.Text, "pair cancel invitation-1 ")
+	h.input(chatKey(tea.KeyTab, 0))
+	chatEqual(t, "Tab makes selected invitation visible", h.m.State().CommandLine.Text, "pair cancel invitation-1 ")
 	chatEqual(t, "selecting invitation changes nothing", h.m.State().InFlight, 0)
 	h.input(chatKey(tea.KeyEnter, 0))
 	req := pairingChatRequest(h, "cancel")

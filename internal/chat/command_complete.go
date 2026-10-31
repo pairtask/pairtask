@@ -42,21 +42,23 @@ func (l argLine) typed() map[string]bool {
 
 // argumentCandidates lists the completions for the word being typed.
 func (m *Model) argumentCandidates(l argLine) []string {
-	switch l.name {
-	case "room", "rooms":
-		return m.roomCompletions(l)
-	case "chat":
-		return m.chatCompletions(l)
-	case "ack":
-		return m.ackCompletions(l)
-	case "reply", "r":
-		return m.replyCompletions(l)
-	case "review":
-		return m.reviewCompletions(l)
-	case "pair":
-		return m.pairCompletions(l)
+	if choices, ok := argumentChoices[l.name]; ok {
+		return choices(m, l)
 	}
 	return nil
+}
+
+// argumentChoices offer each command's arguments.
+var argumentChoices = map[string]func(*Model, argLine) []string{
+	"room": (*Model).roomCompletions, "rooms": (*Model).roomCompletions,
+	"chat":  (*Model).chatCompletions,
+	"ack":   (*Model).ackCompletions,
+	"reply": (*Model).replyCompletions, "r": (*Model).replyCompletions,
+	"stages": (*Model).sentCompletions, "claims": (*Model).sentCompletions,
+	"copy":    (*Model).copyCompletions,
+	"diagram": (*Model).diagramCompletions,
+	"review":  (*Model).reviewCompletions,
+	"pair":    (*Model).pairCompletions,
 }
 
 // reviewCompletions offers status and cancel, then the listed review IDs
@@ -220,12 +222,16 @@ func (m *Model) refreshArgumentPicker(l argLine) {
 		c.picker = nil
 		return
 	}
-	c.picker = &picker{kind: PickerArgument, items: items, selected: c.keptSelection(items)}
+	c.picker = &picker{kind: PickerArgument, items: items, selected: c.keptSelection(items, l.current)}
 }
 
-// keptSelection keeps the highlighted row while the candidates are
-// unchanged, and starts at the top otherwise.
-func (c *composer) keptSelection(items []string) int {
+// keptSelection highlights the word typed out in full, so Enter takes it
+// rather than a longer one; otherwise it keeps the highlighted row while
+// the candidates are unchanged, and starts at the top.
+func (c *composer) keptSelection(items []string, typed string) int {
+	if i := slices.Index(items, typed); typed != "" && i >= 0 {
+		return i
+	}
 	p := c.openPicker(PickerArgument)
 	if p == nil || !slices.Equal(p.items, items) {
 		return 0

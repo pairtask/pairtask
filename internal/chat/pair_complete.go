@@ -52,17 +52,46 @@ func decidesRequest(word string) bool {
 // pairCompletions offers the words, then the short keys of requests waiting
 // for a decision; a typed "sha256:" is ignored, as every key has it.
 func (m *Model) pairCompletions(l argLine) []string {
-	switch {
-	case len(l.words) == 0:
+	if len(l.words) == 0 {
 		return withPrefix(m.pairVerbsHere(), l.current)
-	case len(l.words) == 1 && decidesRequest(l.words[0]):
-		return withPrefix(m.pendingRequestKeys(), protocol.KeyDigest(l.current))
-	case len(l.words) == 1 && l.words[0] == protocol.PairingOpCancel:
-		return withPrefix(m.openInvitation(), l.current)
-	case l.words[0] == pairShare:
-		return m.shareCompletions(l)
+	}
+	if words, ok := pairWordChoices[l.words[0]]; ok {
+		return words(m, l)
 	}
 	return nil
+}
+
+// requestKeyChoices are the keys of the requests waiting for a decision,
+// for accept and reject.
+func (m *Model) requestKeyChoices(l argLine) []string {
+	if len(l.words) != 1 {
+		return nil
+	}
+	return withPrefix(m.pendingRequestKeys(), protocol.KeyDigest(l.current))
+}
+
+// invitationChoices are the open invitation, for cancel.
+func (m *Model) invitationChoices(l argLine) []string {
+	if len(l.words) != 1 {
+		return nil
+	}
+	return withPrefix(m.openInvitation(), l.current)
+}
+
+// pairWordChoices offer the next word of each /pair word.
+var pairWordChoices = map[string]func(*Model, argLine) []string{
+	"accept":                 (*Model).requestKeyChoices,
+	"reject":                 (*Model).requestKeyChoices,
+	protocol.PairingOpCancel: (*Model).invitationChoices,
+	pairShare:                (*Model).shareCompletions,
+	pairReviews:              (*Model).reviewsCompletions,
+	pairUnshare:              (*Model).unshareCompletions,
+	pairApprove:              (*Model).awaitingRequests,
+	pairDecline:              (*Model).awaitingRequests,
+	pairReview:               (*Model).reviewerChoices,
+	pairName:                 (*Model).nameChoices,
+	protocol.PairingOpStatus: (*Model).operationChoices,
+	protocol.PairingOpSettle: (*Model).operationChoices,
 }
 
 // pendingRequestKeys are the keys of the listed requests that wait for a

@@ -343,7 +343,7 @@ func (m *Model) enterCommandLine() tea.Cmd {
 	switch {
 	case m.completingArgument():
 		m.completeArgument()
-		return nil
+		return m.runIfComplete()
 	case m.compose.openPicker(PickerCommand) != nil:
 		return m.runPicked()
 	}

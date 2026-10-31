@@ -21,7 +21,7 @@ func replyPickerItems(t *testing.T, h *chatHarness, want ...string) {
 	}
 }
 
-func TestReplyPickerAcceptanceRoomAliasesOnlyFillThenBind(t *testing.T) {
+func TestReplyPickerAcceptanceRoomAliasesTabFillsThenEnterBinds(t *testing.T) {
 	for _, command := range []string{"reply", "r"} {
 		t.Run(command, func(t *testing.T) {
 			h := roomChatHarness(t)
@@ -32,8 +32,8 @@ func TestReplyPickerAcceptanceRoomAliasesOnlyFillThenBind(t *testing.T) {
 			v3Contains(t, ansi.Strip(h.m.View().Content), "alpha-message")
 			chatEqual(t, "opening never binds", h.m.State().InReplyTo, "")
 			chatEqual(t, "opening never sends", h.m.State().InFlight, 0)
-			h.input(chatKey(tea.KeyEnter, 0))
-			chatEqual(t, "selection never binds", h.m.State().InReplyTo, "")
+			h.input(chatKey(tea.KeyTab, 0))
+			chatEqual(t, "Tab never binds", h.m.State().InReplyTo, "")
 			chatEqual(t, "selection never sends", h.m.State().InFlight, 0)
 			h.input(chatKey(tea.KeyEnter, 0))
 			chatEqual(t, "bind exact room parent", h.m.State().InReplyTo, "alpha-message")
@@ -53,7 +53,6 @@ func TestReplyPickerAcceptanceAllNewestFirstAndHistoryCannotRetarget(t *testing.
 	replyPickerItems(t, h, "#3", "#2", "#1")
 	h.input(chatKey(tea.KeyDown, 0))
 	h.input(chatKey(tea.KeyDown, 0))
-	h.input(chatKey(tea.KeyEnter, 0))
 	h.input(chatKey(tea.KeyEnter, 0))
 	chatEqual(t, "picked parent", h.m.State().InReplyTo, "alpha-message")
 	v2Type(h, "stable reply")

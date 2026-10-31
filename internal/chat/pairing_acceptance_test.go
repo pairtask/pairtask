@@ -151,9 +151,6 @@ func TestPairingChatAcceptanceUniquePrefixResolvesToFullIdentity(t *testing.T) {
 			h := pairingChatHarness(t, true)
 			pairingChatList(h, []string{"abcdef-identity-one", "fedcba-identity-two"}, 2)
 			v2Command(h, "/pair "+op+" abc")
-			chatEqual(t, "first Enter only completes", h.m.State().InFlight, 0)
-			chatEqual(t, "completed key visible", h.m.State().CommandLine.Text, "pair "+op+" abcdef-ident ")
-			h.input(chatKey(tea.KeyEnter, 0))
 			req := pairingChatRequest(h, op)
 			chatEqual(t, "prefix resolved on client", pairingChatFields(t, req)["pairing_target"], any("abcdef-identity-one"))
 			chatEqual(t, "decision is not chat message", len(h.m.State().Entries), 0)
@@ -174,7 +171,11 @@ func TestPairingChatAcceptanceAmbiguousMissingAndPartialPrefixesDoNotSend(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			h := pairingChatHarness(t, true)
 			pairingChatList(h, tc.keys, tc.total)
-			v2Command(h, "/pair accept "+tc.prefix)
+			commandCompleteLine(h, "pair accept "+tc.prefix)
+			if h.m.State().Picker != nil {
+				h.input(chatKey(tea.KeyEscape, 0)) // submit the literal prefix, not a suggested full identity
+			}
+			h.input(chatKey(tea.KeyEnter, 0))
 			chatEqual(t, "invalid prefix dispatches no request", h.m.State().InFlight, 0)
 			chatEqual(t, "invalid prefix queues no request", h.m.State().Queued, 0)
 			chatEqual(t, "invalid prefix creates no chat entry", len(h.m.State().Entries), 0)

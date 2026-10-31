@@ -75,21 +75,19 @@ func TestCommandCompleteAcceptancePositionsAndEligibleMembers(t *testing.T) {
 	}
 }
 
-func TestCommandCompleteAcceptanceTabAndEnterOnlyCompleteThenExecute(t *testing.T) {
+func TestCommandCompleteAcceptanceTabCompletesAndEnterRunsSelectedAgent(t *testing.T) {
 	h := commandCompleteHarness(t)
 	v2Type(h, "preserved draft")
 	commandCompleteLine(h, "room add al")
 	h.input(chatKey(tea.KeyTab, 0))
 	chatEqual(t, "room token completed", h.m.State().CommandLine.Text, "room add alpha ")
+	chatEqual(t, "Tab does not send room request", h.m.State().InFlight, 0)
 	v2Type(h, "@")
 	h.input(chatKey(tea.KeyDown, 0))
 	h.input(chatKey(tea.KeyUp, 0))
 	h.input(chatKey(tea.KeyDown, 0))
 	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "selected agent completed", h.m.State().CommandLine.Text, "room add alpha @carol ")
-	chatEqual(t, "completion does not send room request", h.m.State().InFlight, 0)
 	chatEqual(t, "draft preserved", h.m.State().Draft, "preserved draft")
-	h.input(chatKey(tea.KeyEnter, 0))
 	req := h.take(protocol.TypeOperatorRoom)
 	chatEqual(t, "correct operation", req.RoomOp, protocol.RoomOpAdd)
 	chatEqual(t, "correct room", req.Room, "alpha")
@@ -101,9 +99,9 @@ func TestCommandCompleteAcceptanceRepeatedChatMembersOpenExactGroup(t *testing.T
 	commandCompleteLine(h, "chat @al")
 	h.input(chatKey(tea.KeyTab, 0))
 	v2Type(h, "@bo")
-	h.input(chatKey(tea.KeyEnter, 0))
+	h.input(chatKey(tea.KeyTab, 0))
 	chatEqual(t, "group line completed", h.m.State().CommandLine.Text, "chat @alice @bob ")
-	chatEqual(t, "first Enter stays in All", h.m.State().SelectedAll, true)
+	chatEqual(t, "Tab stays in All", h.m.State().SelectedAll, true)
 	h.input(chatKey(tea.KeyEnter, 0))
 	chatEqual(t, "command executed", h.m.State().CommandLine, nil)
 	if !slices.Equal(h.m.State().Audience.IDs, []string{"alice", "bob"}) {
@@ -128,11 +126,10 @@ func TestCommandCompleteAcceptanceExplicitSelectionWinsOverExactPrefix(t *testin
 	commandCompleteItems(t, h, []string{"@bob", "@bobby"})
 	h.input(chatKey(tea.KeyDown, 0))
 	h.input(chatKey(tea.KeyEnter, 0))
-	if h.m.State().CommandLine == nil {
-		t.Fatal("Enter ran typed prefix instead of completing highlighted agent")
+	chatEqual(t, "selected command executed", h.m.State().CommandLine, nil)
+	if !slices.Equal(h.m.State().Audience.IDs, []string{"bobby"}) {
+		t.Fatalf("Enter did not use highlighted agent: %+v", h.m.State().Audience)
 	}
-	chatEqual(t, "highlighted agent completed", h.m.State().CommandLine.Text, "chat @bobby ")
-	chatEqual(t, "selection did not execute", h.m.State().SelectedAll, true)
 }
 
 func TestCommandCompleteAcceptanceNameCompletionOpensArgumentsAndUnknownRoomStillWorks(t *testing.T) {

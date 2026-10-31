@@ -38,7 +38,7 @@ type pairingView struct {
 
 // pairVerbArgs is how many words each /pair verb takes, itself included.
 var pairVerbArgs = map[string][]int{
-	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1}, protocol.PairingOpStatus: {1},
+	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1}, protocol.PairingOpStatus: {1, 2},
 	protocol.PairingOpCancel: {1, 2}, protocol.PairingOpAccept: {2}, protocol.PairingOpReject: {2},
 	protocol.PairingOpRedeem: {3, 4}, protocol.PairingOpSettle: {1, 2},
 }
@@ -147,8 +147,9 @@ func (m *Model) pairingTarget(fields pairWords) (string, string) {
 		return m.invitationTarget(fields[1:])
 	case protocol.PairingOpAccept, protocol.PairingOpReject:
 		return m.requestTarget(fields[1])
-	case protocol.PairingOpSettle:
-		// The exact operation, or every redemption still settling.
+	case protocol.PairingOpSettle, protocol.PairingOpStatus:
+		// The exact operation: one redemption, or every one still settling
+		// (settle) or everything (status) without it.
 		return strings.Join(fields[1:], ""), ""
 	}
 	return "", ""
