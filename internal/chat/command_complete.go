@@ -46,7 +46,9 @@ func (m *Model) argumentCandidates(l argLine) []string {
 	case "room", "rooms":
 		return m.roomCompletions(l)
 	case "chat":
-		return m.mentionCompletions(l, m.agentCandidates)
+		return m.chatCompletions(l)
+	case "ack":
+		return m.ackCompletions(l)
 	case "review":
 		return m.reviewCompletions(l)
 	case "pair":
@@ -131,10 +133,10 @@ func (m *Model) roomCompletions(l argLine) []string {
 // out IDs already on the line and IDs a mention can't carry.
 func (m *Model) mentionCompletions(l argLine, source func(string) []string) []string {
 	frag, ok := strings.CutPrefix(l.current, "@")
-	if !ok {
+	typed := l.typed()
+	if !ok && !firstMention(l, typed) {
 		return nil
 	}
-	typed := l.typed()
 	var out []string
 	for _, id := range source(frag) {
 		if !typed[id] && mentionID.MatchString(id) {
@@ -163,6 +165,31 @@ func (m *Model) sortedMembers(room string) []string {
 func (m *Model) memberOf(room string) func(string) bool {
 	members := m.roomMembers(room)
 	return func(id string) bool { return slices.Contains(members, id) }
+}
+
+// firstMention: nothing is typed yet where the first mention goes, so all
+// mentions are offered; after one, an @ asks for more, and Enter runs.
+func firstMention(l argLine, typed map[string]bool) bool {
+	return l.current == "" && len(typed) == 0
+}
+
+// chatCompletions offers all and the agents for the first word, and
+// mentions after an @.
+func (m *Model) chatCompletions(l argLine) []string {
+	if strings.HasPrefix(l.current, "@") {
+		return m.mentionCompletions(l, m.agentCandidates)
+	}
+	if len(l.words) > 0 {
+		return nil // a conversation is named; only an @ asks for more
+	}
+	var ids []string
+	for _, id := range m.agentCandidates("") {
+		if mentionID.MatchString(id) && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	// A name typed out in full is no completion: Tab leaves it as typed.
+	return slices.DeleteFunc(withPrefix(append([]string{"all"}, ids...), l.current), func(id string) bool { return id == l.current })
 }
 
 // withPrefix keeps the items that start with prefix, in order.

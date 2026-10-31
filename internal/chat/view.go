@@ -297,8 +297,6 @@ func (m *Model) pickerLabel(p *picker, item string) string {
 	switch p.kind {
 	case PickerAgent:
 		return "  @" + safe(item)
-	case PickerAck:
-		return m.ackLabel(item)
 	case PickerArgument:
 		return m.argumentLabel(item)
 	case PickerReview:

@@ -15,10 +15,6 @@ const (
 	kindAckMany     = "ack_many"
 )
 
-// PickerAck lists received messages that still need the operator's
-// acknowledgment; Enter acknowledges the selected one, nothing before that.
-const PickerAck = "ack"
-
 // bulkAck is one /ack all or /ack from run: the inbox status read first, then
 // stable pages under a frozen upper bound.
 type bulkAck struct {
@@ -39,12 +35,12 @@ type BulkAckView struct {
 	Acknowledged, AlreadyAcknowledged, Skipped int
 }
 
-// ackCommand: /ack opens the picker, /ack all and /ack from <id> acknowledge
-// in bulk, /ack #n targets one message as before.
+// ackCommand: /ack all and /ack from <id> acknowledge in bulk, /ack #n one
+// message. Bare /ack offers these in the picker before it runs (offersWord).
 func (m *Model) ackCommand(arg argument) tea.Cmd {
 	switch {
 	case arg.empty():
-		m.openAckPicker()
+		m.status = "pick what to acknowledge: /ack all, /ack #n or /ack from AGENT"
 		return nil
 	case arg == "all":
 		return m.startBulkAck("")
@@ -72,32 +68,6 @@ func ackArg(a argument) error {
 		return nil
 	}
 	return targetArg(a)
-}
-
-// openAckPicker lists rows that need acknowledgment, newest first.
-func (m *Model) openAckPicker() {
-	var ids []string
-	for i := len(m.timeline.order) - 1; i >= 0; i-- {
-		if e := m.timeline.order[i]; m.targetable(e) && m.unacknowledged(e) {
-			ids = append(ids, e.msg.MessageID)
-		}
-	}
-	if len(ids) == 0 {
-		m.status = "nothing to acknowledge"
-		return
-	}
-	m.compose.picker = &picker{kind: PickerAck, items: ids}
-}
-
-// pickAck acknowledges the picked row through the normal /ack path.
-func (m *Model) pickAck(id string) tea.Cmd {
-	m.compose.picker = nil
-	e := m.timeline.entries[id]
-	if e == nil {
-		m.status = "that message is no longer loaded"
-		return nil
-	}
-	return m.acknowledge(e)
 }
 
 // ackLabel renders one picker row: "#seq sender · first line".
@@ -144,6 +114,9 @@ func (m *Model) inboxStatusResponse(req pendingRequest, resp protocol.Message) t
 	m.usage = resp.Inbox
 	if !forBulk {
 		return m.refreshUsage(false) // a change that landed while this read was in flight
+	}
+	if hint := m.fromHint(b.from, *resp.Inbox); hint != "" {
+		return m.bulkFailed(hint)
 	}
 	return m.startBulkPages(*resp.Inbox)
 }

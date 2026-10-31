@@ -331,6 +331,9 @@ func TestChatV2CommandCompletionAndAmbiguityNeverSend(t *testing.T) {
 	}
 	chatEqual(t, "ambiguous command cannot send", h.m.State().Intent, nil)
 	h.input(chatKey(tea.KeyEscape, 0))
+	chatEqual(t, "Escape closes argument choices", h.m.State().Picker, nil)
+	h.input(chatKey(tea.KeyEscape, 0))
+	chatEqual(t, "second Escape closes command", h.m.State().CommandLine, nil)
 	v2Command(h, "/repl #7")
 	chatEqual(t, "unique prefix executes once", h.m.State().InReplyTo, "target")
 	chatEqual(t, "unique prefix preserves body", h.m.State().Draft, "body")

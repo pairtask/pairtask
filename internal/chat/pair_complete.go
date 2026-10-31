@@ -134,6 +134,9 @@ func (m *Model) argumentLabel(item string) string {
 	if label, ok := m.pairLabel(item); ok {
 		return label
 	}
+	if label, ok := m.ackPickLabel(item); ok {
+		return label
+	}
 	return "  " + safe(item)
 }
 
