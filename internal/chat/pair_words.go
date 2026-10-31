@@ -107,3 +107,18 @@ func (m *Model) nameChoices(l argLine) []string {
 	}
 	return withPrefix([]string{clearName}, l.current)
 }
+
+// operationChoices are the listed redemptions' operation IDs, for the
+// optional argument of /pair status and /pair settle: bare, they run as
+// they are; Tab offers one.
+func (m *Model) operationChoices(l argLine) []string {
+	s := m.pairing.snapshot
+	if s == nil || len(l.words) != 1 {
+		return nil
+	}
+	ids := make([]string, 0, len(s.Joins))
+	for _, j := range s.Joins {
+		ids = append(ids, j.OperationID)
+	}
+	return withPrefix(ids, l.current)
+}

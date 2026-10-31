@@ -96,3 +96,25 @@ func TestCommandChoiceCoverageAcceptanceReviewDecisionRunsSelectedRequest(t *tes
 		})
 	}
 }
+
+func TestCommandChoiceCoverageAcceptanceOptionalOperationIDs(t *testing.T) {
+	for _, verb := range []string{"status", "settle"} {
+		t.Run(verb, func(t *testing.T) {
+			h := pairingChatHarness(t, true)
+			v2Command(h, "/pair status")
+			req := pairingChatRequest(h, "status")
+			h.reply(req, protocol.Message{Type: protocol.TypeOperatorPairingResult, PairingResult: &protocol.PairingSnapshot{
+				Joins: []protocol.PairingJoinView{{OperationID: "join-one", State: "awaiting"}}, JoinsTotal: 1,
+			}})
+			h.await(func() bool { return h.m.State().InFlight == 0 })
+			h.input(chatKey(tea.KeyEscape, 0))
+			commandCompleteLine(h, "pair "+verb)
+			h.input(chatKey(tea.KeyTab, 0))
+			commandCompleteItems(t, h, []string{"join-one"})
+			chatEqual(t, "Tab sends nothing", h.m.State().InFlight, 0)
+			commandChoose(t, h, "join-one", tea.KeyEnter)
+			selected := pairingChatRequest(h, verb)
+			chatEqual(t, "selected operation only", selected.PairingTarget, "join-one")
+		})
+	}
+}

@@ -70,12 +70,14 @@ func (m *Model) pairCompletions(l argLine) []string {
 
 // pairWordChoices offer the next word of the ⇄ tab's /pair words.
 var pairWordChoices = map[string]func(*Model, argLine) []string{
-	pairReviews: (*Model).reviewsCompletions,
-	pairUnshare: (*Model).unshareCompletions,
-	pairApprove: (*Model).awaitingRequests,
-	pairDecline: (*Model).awaitingRequests,
-	pairReview:  (*Model).reviewerChoices,
-	pairName:    (*Model).nameChoices,
+	pairReviews:              (*Model).reviewsCompletions,
+	pairUnshare:              (*Model).unshareCompletions,
+	pairApprove:              (*Model).awaitingRequests,
+	pairDecline:              (*Model).awaitingRequests,
+	pairReview:               (*Model).reviewerChoices,
+	pairName:                 (*Model).nameChoices,
+	protocol.PairingOpStatus: (*Model).operationChoices,
+	protocol.PairingOpSettle: (*Model).operationChoices,
 }
 
 // pendingRequestKeys are the keys of the listed requests that wait for a
