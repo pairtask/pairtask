@@ -198,17 +198,28 @@ func (m *Model) pairLabel(item string) (string, bool) {
 	if !ok || l.name != "pair" {
 		return "", false
 	}
-	switch {
-	case len(l.words) == 0:
+	if len(l.words) == 0 {
 		return fmt.Sprintf("  %-8s %s", safe(item), mutedStyle.Render(pairMenu[item])), true
-	case len(l.words) == 1 && decidesRequest(l.words[0]):
-		return m.pendingRequestLabel(item)
-	case len(l.words) == 1 && l.words[0] == protocol.PairingOpCancel:
-		return m.invitationLabel(item)
-	case l.words[0] == pairShare:
-		return m.shareLabel(item)
 	}
-	return "", false
+	label, found := pairWordLabels[l.words[0]]
+	if !found || !labelsHere(l) {
+		return "", false
+	}
+	return label(m, item)
+}
+
+// pairWordLabels label the choices after each /pair word that has them.
+var pairWordLabels = map[string]func(*Model, string) (string, bool){
+	protocol.PairingOpAccept: (*Model).pendingRequestLabel,
+	protocol.PairingOpReject: (*Model).pendingRequestLabel,
+	protocol.PairingOpCancel: (*Model).invitationLabel,
+	pairShare:                (*Model).shareLabel,
+}
+
+// labelsHere: the word being typed is the one the /pair word's choices
+// fill; share's agents fill every word after it.
+func labelsHere(l argLine) bool {
+	return len(l.words) == 1 || l.words[0] == pairShare
 }
 
 // argumentLine is the command line as completion sees it.
