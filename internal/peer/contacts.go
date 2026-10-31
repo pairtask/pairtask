@@ -22,6 +22,8 @@ type Contact struct {
 	IdentityKey string
 	Name        string
 	Destination string // where to reach it, when this side redeemed its code
+	// LocalName is what this side's operator calls it; never from the peer.
+	LocalName string
 	// DestinationAt orders destinations: when the redemption that gave
 	// Destination started. A newer completed redemption moves the contact.
 	DestinationAt time.Time
@@ -45,11 +47,29 @@ func MergeContact(existing Contact, found bool, c Contact) Contact {
 	}
 	existing.Joined = existing.Joined || c.Joined
 	existing.Invited = existing.Invited || c.Invited
-	existing.Name = firstNonEmpty(existing.Name, c.Name)
+	existing.Name = mergedName(existing.Name, c.Name)
 	if NewerDestination(existing, c) {
 		existing.Destination, existing.DestinationAt = c.Destination, c.DestinationAt
 	}
 	return existing
+}
+
+// DefaultPairingName is the name a workspace pairs under unless its
+// operator names it.
+const DefaultPairingName = "workspace"
+
+// mergedName keeps a known name; an offered one replaces none, or the
+// default, which names nobody.
+func mergedName(existing, offered string) string {
+	if offered == "" || !unnamed(existing) {
+		return existing
+	}
+	return offered
+}
+
+// unnamed: no name, or the default, which names nobody.
+func unnamed(name string) bool {
+	return name == "" || name == DefaultPairingName
 }
 
 // NewerDestination: c's destination replaces existing's. One fills an
@@ -60,13 +80,6 @@ func NewerDestination(existing, c Contact) bool {
 		return false
 	}
 	return existing.Destination == "" || c.DestinationAt.After(existing.DestinationAt)
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // AdmitContact refuses a new identity to a full store; a known one always

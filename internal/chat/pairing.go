@@ -48,7 +48,7 @@ type pairWords []string
 
 // pairArity: the words a verb takes; share and unshare take agents.
 func pairArity(fields pairWords) bool {
-	if fields.sharesAgents() {
+	if fields.sharesAgents() || fields[0] == pairName {
 		return len(fields) >= 2
 	}
 	if review, ok := fields.reviewArity(); review {
@@ -102,6 +102,7 @@ var pairingStatus = map[string]string{
 var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
 	protocol.PairingOpRedeem: (*Model).redeemCommand,
 	pairShare:                (*Model).shareCommand,
+	pairName:                 (*Model).nameCommand,
 	pairUnshare:              (*Model).shareCommand,
 	pairReviews:              (*Model).contactReviewCommand,
 	pairReview:               (*Model).contactReviewCommand,
@@ -187,7 +188,7 @@ func (m *Model) redeemCommand(fields pairWords) tea.Cmd {
 		return nil
 	}
 	req := redeemRequest(fields)
-	m.status = "redeeming at " + safe(req.Destination) + "…"
+	m.status = "redeeming at " + safe(req.Destination) + "…" + m.redeemNameHint(req.Name != "")
 	return m.request(kindPairing, protocol.Message{Type: protocol.TypeOperatorPairing, MessageID: uuid.NewString(), PairingOp: protocol.PairingOpRedeem,
 		PairingDestination: req.Destination, PairingCode: string(req.Code), PairingName: req.Name}, protocol.PairingOpRedeem)
 }
@@ -246,24 +247,12 @@ func secretCommandLine(text string) bool {
 func (m *Model) pairingRows() []string {
 	rows := []string{titleStyle.Render("Pairing") + mutedStyle.Render("  (Esc closes)"),
 		mutedStyle.Render("  " + protocol.PairingPreview)}
-	rows = append(rows, m.identityRow())
+	rows = append(rows, m.selfRow())
 	rows = append(rows, m.invitationRows()...)
 	rows = append(rows, m.pairingRequestRows()...)
 	rows = append(rows, m.pairingJoinRows()...)
-	return append(rows, mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY · /pair settle"))
-}
-
-// identityRow is this workspace's fingerprint, for the operators to compare
-// by phone, or why it is unavailable.
-func (m *Model) identityRow() string {
-	s := m.pairing.snapshot
-	switch {
-	case s == nil:
-		return "  this workspace: unknown"
-	case s.IdentityError != "":
-		return "  this workspace's identity is unavailable: " + safe(s.IdentityError) + "; opening a code needs it"
-	}
-	return "  this workspace: " + safe(s.SelfIdentity)
+	rows = append(rows, m.pairedRows()...)
+	return append(rows, mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY · /pair settle · /pair name NAME in a ⇄ tab"))
 }
 
 func (m *Model) invitationRows() []string {
@@ -272,7 +261,7 @@ func (m *Model) invitationRows() []string {
 		return []string{"  no open invitation; /pair open makes one"}
 	}
 	inv := s.Invitation
-	rows := []string{fmt.Sprintf("  invitation %s: %s", safe(inv.ID), inv.Summary())}
+	rows := []string{fmt.Sprintf("  invitation %s: %s · expires %s", safe(inv.ID), inv.Summary(), when(inv.ExpiresAt))}
 	if m.panel.code != "" {
 		return append(rows, "  code "+titleStyle.Render(safe(m.panel.code))+"  one-time; never send it in chat")
 	}
@@ -297,16 +286,16 @@ func (m *Model) pairingRequestRows() []string {
 // requestRow is one request on a line, or its state on a line of its own
 // when the full identity key leaves no room for it.
 func (m *Model) requestRow(r protocol.PairingRequestView) []string {
-	row := fmt.Sprintf("  %s  %s  %s", safe(r.IdentityKey), safe(r.Name), r.Label())
+	row := fmt.Sprintf("  %s  %s  %s%s", safe(r.IdentityKey), safe(r.Name), r.Label(), requestTimes(r))
 	if ansi.StringWidth(row) <= m.width {
 		return []string{row}
 	}
-	return []string{fmt.Sprintf("  %s  %s", safe(r.IdentityKey), safe(r.Name)), "    " + r.Label()}
+	return []string{fmt.Sprintf("  %s  %s", safe(r.IdentityKey), safe(r.Name)), "    " + r.Label() + requestTimes(r)}
 }
 
 // redeemResult reports a recorded redemption; /pair shows its progress.
 func (m *Model) redeemResult(j protocol.PairingJoinView) {
-	m.status = fmt.Sprintf("redemption %s at %s: %s; /pair shows its progress", safe(j.OperationID), safe(j.Destination), safe(j.State))
+	m.status = fmt.Sprintf("redemption %s at %s: %s; /pair status shows its progress", safe(j.OperationID), safe(j.Destination), safe(j.State))
 }
 
 // pairingRefused reports a refusal, unless a redemption was just reported.
@@ -327,7 +316,7 @@ func (m *Model) pairingJoinRows() []string {
 	}
 	rows := []string{fmt.Sprintf("  redemptions (%d)", s.JoinsTotal)}
 	for _, j := range s.Joins {
-		rows = append(rows, fmt.Sprintf("  %s  %s  %s", safe(j.Destination), safe(j.State), safe(j.OperationID)))
+		rows = append(rows, m.joinRow(j))
 	}
 	if s.JoinsTruncated {
 		rows = append(rows, fmt.Sprintf("  (list is partial: %d more not shown)", s.JoinsTotal-len(s.Joins)))

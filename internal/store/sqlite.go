@@ -106,6 +106,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"remote_imports", "approved_at", "TEXT"},
 	{"remote_imports", "reason", "TEXT"},
 	{"remote_imports", "body", "TEXT"}, // the text of an import without a message: an outcome's notice
+	// What this side's operator calls a contact.
+	{"peer_contacts", "local_name", "TEXT NOT NULL DEFAULT ''"},
 	// A contact's destination moves with a newer redemption.
 	{"peer_contacts", "destination_at", "TEXT NOT NULL DEFAULT ''"}, // "" before any
 }

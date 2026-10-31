@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
@@ -32,12 +33,15 @@ func contactLabel(fingerprint string) string {
 
 // defaultPairingName is the name a workspace pairs under unless told
 // otherwise; it tells nobody apart, so it is never shown as a name.
-const defaultPairingName = "workspace"
+const defaultPairingName = peer.DefaultPairingName
 
 // contactDisplay names a paired workspace for people: the name this side
 // has for it, else the address this side dials, else its short key. A name
 // is display only; the ⇄ before it always marks a workspace, never an agent.
 func contactDisplay(c protocol.PairingContactView) string {
+	if c.LocalName != "" {
+		return c.LocalName
+	}
 	if name := shownName(c.Name); name != "" {
 		return name
 	}

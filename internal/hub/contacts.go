@@ -31,6 +31,7 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	protocol.ContactOpReviewGrant:  (*Hub).contactReviewGrant,
 	protocol.ContactOpReviewAsk:    (*Hub).contactReviewAsk,
 	protocol.ContactOpReviewDecide: (*Hub).contactReviewDecide,
+	protocol.ContactOpName:         (*Hub).contactName,
 }
 
 // operatorContact serves operator_contact.
@@ -82,6 +83,9 @@ func (h *Hub) contactChange(ctx context.Context, req operatorRequest) protocol.M
 // details stay in the log.
 func contactRefusal(err error) *routingError {
 	if rerr, ok := reviewRefusal(err); ok {
+		return rerr
+	}
+	if rerr, ok := nameRefusal(err); ok {
 		return rerr
 	}
 	switch {

@@ -13,7 +13,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorPeerUsage = "usage: pairtask operator peer send CONTACT TEXT [--message-id ID] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator peer messages CONTACT [--before CURSOR] [--socket PATH] [--json]\n       pairtask operator peer sync CONTACT [--socket PATH] [--json]\nCONTACT is a paired workspace's identity key, a unique prefix of it, or its unique name."
+const operatorPeerUsage = "usage: pairtask operator peer send CONTACT TEXT [--message-id ID] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator peer messages CONTACT [--before CURSOR] [--socket PATH] [--json]\n       pairtask operator peer sync CONTACT [--socket PATH] [--json]\n       pairtask operator peer name CONTACT (NAME... | --clear) [--socket PATH] [--json]\nCONTACT is a paired workspace's identity key, a unique prefix of it, or its unique name: what this side calls it, or what it calls itself."
 
 // peerVerbs are the contact operations the CLI offers (#210), with how many
 // positional arguments each takes after CONTACT; send joins the rest as
@@ -22,10 +22,12 @@ var peerVerbs = map[string]int{
 	"send":     -1,
 	"messages": 0,
 	"sync":     0,
+	"name":     -1,
 }
 
 // peerOps map a verb to its contact_op.
-var peerOps = map[string]string{"send": protocol.ContactOpSend, "messages": protocol.ContactOpList, "sync": protocol.ContactOpSync}
+var peerOps = map[string]string{"send": protocol.ContactOpSend, "messages": protocol.ContactOpList, "sync": protocol.ContactOpSync,
+	"name": protocol.ContactOpName}
 
 // runOperatorPeer sends to, lists or syncs with a paired workspace. Its
 // messages are text from that workspace's operator, printed quoted: never
@@ -35,8 +37,11 @@ func runOperatorPeer(ctx context.Context, args []string, stdout, stderr io.Write
 	if code != -1 {
 		return code
 	}
-	key, err := resolveContact(ctx, call, contact, stderr)
+	key, snapshot, err := resolveContact(ctx, call, contact, stderr)
 	if err != nil {
+		return 1
+	}
+	if !namesServed(req, snapshot, stderr) {
 		return 1
 	}
 	req.ContactKey = key
@@ -68,6 +73,7 @@ func parseOperatorPeer(args []string, stderr io.Writer) (operatorCall, protocol.
 	call.register(flags)
 	messageID := flags.String("message-id", "", "the message's ID, to retry a send safely")
 	before := flags.Int64("before", 0, "list messages older than this cursor")
+	clearName := flags.Bool("clear", false, "name: forget what this side calls the workspace")
 	var contact string
 	leading, args := splitLeading(args)
 	code := parseFlags(flags, args, operatorPeerUsage, stderr, func(rest []string) error {
@@ -75,6 +81,9 @@ func parseOperatorPeer(args []string, stderr io.Writer) (operatorCall, protocol.
 		var err error
 		contact, err = peerArguments(verb, extra, rest, &req)
 		if err != nil {
+			return err
+		}
+		if err := nameArguments(verb, *clearName, req.ContactText); err != nil {
 			return err
 		}
 		if *messageID != "" {
@@ -94,62 +103,20 @@ func peerArguments(verb string, extra int, rest []string, req *protocol.Message)
 	if extra >= 0 && len(rest) != 1+extra {
 		return "", fmt.Errorf("peer %s: wrong number of arguments", verb)
 	}
-	if verb == "send" {
-		req.ContactText = strings.Join(rest[1:], " ")
-		if strings.TrimSpace(req.ContactText) == "" {
-			return "", errors.New("peer send: TEXT is required")
-		}
+	req.ContactText = peerText(verb, rest[1:])
+	if verb == "send" && strings.TrimSpace(req.ContactText) == "" {
+		return "", errors.New("peer send: TEXT is required")
 	}
 	return rest[0], nil
 }
 
-// resolveContact turns what was typed into one confirmed contact's full
-// key: the exact key, else the one key it prefixes, else the one contact
-// with that name. Nothing is sent otherwise.
-func resolveContact(ctx context.Context, call operatorCall, typed string, stderr io.Writer) (string, error) {
-	resp, err := call.expect(ctx, protocol.Message{Type: protocol.TypeOperatorPairing, MessageID: uuid.NewString(), PairingOp: protocol.PairingOpList},
-		expectation{protocol.TypeOperatorPairingResult, "operator pair list"}, stderr)
-	if err != nil {
-		return "", err
+// peerText is a send's text, or a name's words joined; other verbs take
+// none.
+func peerText(verb string, words []string) string {
+	if verb != "send" && verb != "name" {
+		return ""
 	}
-	if resp.PairingResult == nil {
-		fmt.Fprintln(stderr, "operator peer: the broker sent no contacts")
-		return "", errReported
-	}
-	key, err := matchContact(resp.PairingResult.Contacts, typed)
-	if err != nil {
-		fmt.Fprintf(stderr, "operator peer %q: %v; nothing sent\n", typed, err)
-		return "", errReported
-	}
-	return key, nil
-}
-
-// contactMatchers are tried in order; the first that names exactly one
-// contact wins, and one naming several is ambiguous.
-var contactMatchers = []func(c protocol.PairingContactView, typed string) bool{
-	func(c protocol.PairingContactView, typed string) bool { return c.IdentityKey == typed },
-	func(c protocol.PairingContactView, typed string) bool { return strings.HasPrefix(c.IdentityKey, typed) },
-	func(c protocol.PairingContactView, typed string) bool { return c.Name == typed },
-}
-
-func matchContact(contacts []protocol.PairingContactView, typed string) (string, error) {
-	for _, matches := range contactMatchers {
-		var found []protocol.PairingContactView
-		for _, c := range contacts {
-			if matches(c, typed) {
-				found = append(found, c)
-			}
-		}
-		switch {
-		case len(found) > 1:
-			return "", fmt.Errorf("names %d contacts; type more of the key", len(found))
-		case len(found) == 1 && !found[0].Confirmed:
-			return "", errors.New("that contact isn't confirmed on both sides yet")
-		case len(found) == 1:
-			return found[0].IdentityKey, nil
-		}
-	}
-	return "", errors.New("no such contact")
+	return strings.Join(words, " ")
 }
 
 func writeContactResult(w io.Writer, resp protocol.Message) {
@@ -161,6 +128,9 @@ func writeContactResult(w io.Writer, resp protocol.Message) {
 	}
 	if s := resp.ContactSync; s != nil {
 		writeContactSync(w, *s)
+	}
+	if resp.ContactOp == protocol.ContactOpName && resp.PairingResult != nil {
+		writeContactName(w, resp.ContactKey, resp.PairingResult.Contacts)
 	}
 }
 

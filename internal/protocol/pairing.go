@@ -62,7 +62,11 @@ const (
 type PairingSnapshot struct {
 	// SelfIdentity is this workspace's pairtask SPKI fingerprint, for the
 	// operators to compare by phone; IdentityError says why it is unavailable.
-	SelfIdentity      string               `json:"self_identity,omitempty"`
+	SelfIdentity string `json:"self_identity,omitempty"`
+	SelfName     string `json:"self_name,omitempty"` // the name this workspace pairs under
+	// NamesAvailable: the broker serves contact op name; an older one
+	// leaves it false, so a client refuses before sending one.
+	NamesAvailable    bool                 `json:"names_available,omitempty"`
 	IdentityError     string               `json:"identity_error,omitempty"`
 	Invitation        *InvitationView      `json:"invitation,omitempty"`
 	Requests          []PairingRequestView `json:"requests"`
@@ -90,6 +94,10 @@ type PairingContactView struct {
 	Joined        bool      `json:"joined"`
 	Invited       bool      `json:"invited"`
 	Confirmed     bool      `json:"confirmed"`
+	// LocalName is what this side's operator calls it; Dials, that this
+	// side opens the sessions with it.
+	LocalName string `json:"local_name,omitempty"`
+	Dials     bool   `json:"dials,omitempty"`
 }
 
 // PairingSettleView is what a settle request scheduled locally; nothing in

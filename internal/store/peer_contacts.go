@@ -20,13 +20,14 @@ CREATE TABLE IF NOT EXISTS peer_contacts (
     established_at TEXT NOT NULL,
     joined         INTEGER NOT NULL,
     invited        INTEGER NOT NULL,
+    local_name     TEXT NOT NULL DEFAULT '',
     destination_at TEXT NOT NULL DEFAULT ''
 );
 `
 
 var _ peer.ContactStore = (*Store)(nil)
 
-const contactColumns = `identity_key, name, destination, established_at, joined, invited, destination_at`
+const contactColumns = `identity_key, name, destination, established_at, joined, invited, local_name, destination_at`
 
 // upsertContact merges one direction into an identity's contact, inside the
 // caller's transaction, refusing a new identity to a full table; opID is the
@@ -44,10 +45,11 @@ func upsertContact(ctx context.Context, tx *sql.Tx, c peer.Contact, opID string)
 		return err
 	}
 	merged := peer.MergeContact(existing, found, c)
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_contacts (`+contactColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?)
+	// local_name is the operator's alone: a merge never writes it.
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_contacts (`+contactColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(identity_key) DO UPDATE SET name = excluded.name, destination = excluded.destination,
     joined = excluded.joined, invited = excluded.invited, destination_at = excluded.destination_at`,
-		merged.IdentityKey, merged.Name, merged.Destination, stamp(merged.EstablishedAt), merged.Joined, merged.Invited,
+		merged.IdentityKey, merged.Name, merged.Destination, stamp(merged.EstablishedAt), merged.Joined, merged.Invited, merged.LocalName,
 		destinationStamp(merged.DestinationAt))
 	if err != nil {
 		return fmt.Errorf("store contact: %w", err)
@@ -86,7 +88,7 @@ func getContact(ctx context.Context, q rowQuerier, identityKey string) (peer.Con
 func scanContact(row rowScanner) (peer.Contact, bool, error) {
 	var c peer.Contact
 	var established, destinationAt string
-	err := row.Scan(&c.IdentityKey, &c.Name, &c.Destination, &established, &c.Joined, &c.Invited, &destinationAt)
+	err := row.Scan(&c.IdentityKey, &c.Name, &c.Destination, &established, &c.Joined, &c.Invited, &c.LocalName, &destinationAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.Contact{}, false, nil
 	}
