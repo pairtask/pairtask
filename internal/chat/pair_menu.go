@@ -60,7 +60,7 @@ func readsSnapshot(word string) bool {
 func (m *Model) awaitsWord() (cmd tea.Cmd, handled bool) {
 	line := m.compose.cmd
 	value := line.input.Value()
-	l, ok := m.pairMenuAt(value)
+	l, ok := m.pairMenuAt()
 	if !ok {
 		return nil, false
 	}
@@ -70,7 +70,7 @@ func (m *Model) awaitsWord() (cmd tea.Cmd, handled bool) {
 		line.track(value, false)
 	}
 	line.dismissed = nil
-	if len(l.words) > 0 && readsSnapshot(l.words[0]) && !m.pairing.listed {
+	if m.needsSnapshot(l) {
 		m.status = "reading pairing requests…"
 		return m.loadPairMenu(), true
 	}
@@ -109,15 +109,25 @@ func (m *Model) pairMenuLoaded() {
 func (m *Model) offerPairChoices(l argLine) {
 	if len(m.pairCompletions(l)) == 0 {
 		m.compose.picker = nil
-		m.status = m.nothingToPick(l.words[0])
+		m.status = m.nothingToPick(l)
 		return
 	}
 	m.status = ""
 	m.refreshCommandPicker()
 }
 
-// nothingToPick says why a /pair word has no choices.
-func (m *Model) nothingToPick(word string) string {
+// needsSnapshot: the line's choices come from a pairing snapshot this
+// session hasn't read for the operator yet.
+func (m *Model) needsSnapshot(l argLine) bool {
+	if len(l.words) == 0 || m.pairing.listed {
+		return false
+	}
+	return readsSnapshot(l.words[0])
+}
+
+// nothingToPick says why the line's /pair word has no choices.
+func (m *Model) nothingToPick(l argLine) string {
+	word := l.words[0]
 	if word == pairShare {
 		return "no local agents to share with this workspace; start one first"
 	}
@@ -132,8 +142,8 @@ func (m *Model) nothingToPick(word string) string {
 
 // pairMenuAt is the line as completion sees it, when it is a /pair line
 // lacking its word and the menu can serve it.
-func (m *Model) pairMenuAt(value string) (argLine, bool) {
-	l, ok := splitArgLine(strings.TrimRight(value, " ") + " ")
+func (m *Model) pairMenuAt() (argLine, bool) {
+	l, ok := splitArgLine(strings.TrimRight(m.compose.cmd.input.Value(), " ") + " ")
 	if !ok || !pairWantsWord(l) {
 		return l, false
 	}
@@ -228,15 +238,4 @@ func (m *Model) argumentLine() (argLine, bool) {
 		return argLine{}, false
 	}
 	return splitArgLine(m.compose.cmd.input.Value())
-}
-
-// invitationLabel is the open invitation's row: when it expires and the
-// attempts it has left; its code is never shown here.
-func (m *Model) invitationLabel(id string) (string, bool) {
-	v := m.invitation()
-	if v == nil || v.ID != id {
-		return "", false
-	}
-	detail := fmt.Sprintf("invitation · expires %s · %d attempts left", v.ExpiresAt.Local().Format("15:04"), v.AttemptsLeft)
-	return fmt.Sprintf("  %s  %s", safe(id), mutedStyle.Render(detail)), true
 }
