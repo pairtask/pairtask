@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"slices"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
 	"github.com/pairtask/pairtask/internal/peer"
@@ -62,7 +64,7 @@ func (m *Model) dialsContact(contact string) bool {
 // says where messages go now, as stored, not what was asked for.
 func (m *Model) contactAddressResult(req pendingRequest, resp protocol.Message) tea.Cmd {
 	if resp.Type != protocol.TypeOperatorContactResult || resp.PairingResult == nil {
-		m.status = "address not changed: " + refusalReason(resp)
+		m.status = addressFailure(resp)
 		return nil
 	}
 	snapshot := *resp.PairingResult
@@ -76,4 +78,18 @@ func (m *Model) contactAddressResult(req pendingRequest, resp protocol.Message) 
 	}
 	m.status = "address verified and updated; messages go to " + safe(c.Destination) + " from the next sync"
 	return nil
+}
+
+// addressRefusals are the answers that say nothing was stored: the broker
+// refused the change, or the request itself.
+var addressRefusals = []string{protocol.ErrContactRefused, protocol.ErrMalformedFrame}
+
+// addressFailure says what an answer other than the snapshot means: a
+// refusal changed nothing; anything else may have come after the address
+// was stored, so the outcome is unconfirmed.
+func addressFailure(resp protocol.Message) string {
+	if resp.Type == protocol.TypeError && slices.Contains(addressRefusals, resp.Code) {
+		return "address not changed: " + refusalReason(resp)
+	}
+	return "address change outcome unconfirmed: " + refusalReason(resp) + "; /pair status shows the stored address"
 }

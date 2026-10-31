@@ -72,6 +72,28 @@ func TestContactAddressAcceptanceRefusalKeepsOldDestination(t *testing.T) {
 	v3Contains(t, strings.ToLower(h.m.State().Status), "identity mismatch")
 }
 
+func TestContactAddressAcceptanceInternalFailureDoesNotInventUnchangedOutcome(t *testing.T) {
+	for _, detail := range []string{
+		"snapshot unavailable",
+		"broker is shutting down; the outcome is stored",
+	} {
+		t.Run(detail, func(t *testing.T) {
+			h, _ := addressChatHarness(t, true, true)
+			v2Command(h, "/pair address new.example:7445")
+			req := h.take(protocol.TypeOperatorContact)
+			h.reply(req, protocol.Message{Type: protocol.TypeError, Code: protocol.ErrInternal, Detail: detail})
+			h.await(func() bool { return h.m.State().InFlight == 0 })
+			status := strings.ToLower(h.m.State().Status)
+			if strings.Contains(status, "not changed") {
+				t.Fatalf("post-commit error invented unchanged outcome: %s", status)
+			}
+			v3Contains(t, status, "unconfirmed")
+			v3Contains(t, status, "/pair status")
+			v3Contains(t, status, detail)
+		})
+	}
+}
+
 func TestContactAddressAcceptanceUnsupportedAndWaitingSideDoNotSend(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
