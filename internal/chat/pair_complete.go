@@ -59,6 +59,8 @@ func (m *Model) pairCompletions(l argLine) []string {
 		return withPrefix(m.pendingRequestKeys(), protocol.KeyDigest(l.current))
 	case len(l.words) == 1 && l.words[0] == protocol.PairingOpCancel:
 		return withPrefix(m.openInvitation(), l.current)
+	case l.words[0] == pairShare:
+		return m.shareCompletions(l)
 	}
 	return nil
 }
@@ -172,4 +174,15 @@ func pairWordUsage(rest, all string) string {
 		return pairUsages[matches[0]]
 	}
 	return all
+}
+
+// invitationLabel is the open invitation's row: when it expires and the
+// attempts it has left; its code is never shown here.
+func (m *Model) invitationLabel(id string) (string, bool) {
+	v := m.invitation()
+	if v == nil || v.ID != id {
+		return "", false
+	}
+	detail := fmt.Sprintf("invitation · expires %s · %d attempts left", v.ExpiresAt.Local().Format("15:04"), v.AttemptsLeft)
+	return fmt.Sprintf("  %s  %s", safe(id), mutedStyle.Render(detail)), true
 }

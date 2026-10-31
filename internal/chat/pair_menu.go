@@ -39,9 +39,19 @@ func pairNeedsWord(words []string) bool {
 	case 0:
 		return true
 	case 1:
-		return decidesRequest(words[0]) || words[0] == protocol.PairingOpCancel
+		return readsSnapshot(words[0]) || words[0] == pairShare
 	}
 	return false
+}
+
+// sharesHere: the line is /pair share, waiting for its first agent.
+func sharesHere(l argLine) bool {
+	return len(l.words) == 1 && l.words[0] == pairShare
+}
+
+// readsSnapshot: the word's choices come from the pairing snapshot.
+func readsSnapshot(word string) bool {
+	return decidesRequest(word) || word == protocol.PairingOpCancel
 }
 
 // awaitsWord handles Enter on a /pair line that lacks its word: it offers
@@ -50,7 +60,7 @@ func pairNeedsWord(words []string) bool {
 func (m *Model) awaitsWord() (cmd tea.Cmd, handled bool) {
 	line := m.compose.cmd
 	value := line.input.Value()
-	l, ok := m.pairMenuAt(value)
+	l, ok := m.pairMenuAt()
 	if !ok {
 		return nil, false
 	}
@@ -60,7 +70,7 @@ func (m *Model) awaitsWord() (cmd tea.Cmd, handled bool) {
 		line.track(value, false)
 	}
 	line.dismissed = nil
-	if len(l.words) > 0 && !m.pairing.listed {
+	if m.needsSnapshot(l) {
 		m.status = "reading pairing requests…"
 		return m.loadPairMenu(), true
 	}
@@ -98,15 +108,29 @@ func (m *Model) pairMenuLoaded() {
 // nothing to choose.
 func (m *Model) offerPairChoices(l argLine) {
 	if len(m.pairCompletions(l)) == 0 {
-		m.status = m.nothingToPick(l.words[0])
+		m.compose.picker = nil
+		m.status = m.nothingToPick(l)
 		return
 	}
 	m.status = ""
 	m.refreshCommandPicker()
 }
 
-// nothingToPick says why a /pair word has no choices.
-func (m *Model) nothingToPick(word string) string {
+// needsSnapshot: the line's choices come from a pairing snapshot this
+// session hasn't read for the operator yet.
+func (m *Model) needsSnapshot(l argLine) bool {
+	if len(l.words) == 0 || m.pairing.listed {
+		return false
+	}
+	return readsSnapshot(l.words[0])
+}
+
+// nothingToPick says why the line's /pair word has no choices.
+func (m *Model) nothingToPick(l argLine) string {
+	word := l.words[0]
+	if word == pairShare {
+		return "no local agents to share with this workspace; start one first"
+	}
 	if word == protocol.PairingOpCancel {
 		return "no open invitation to cancel; /pair open makes one"
 	}
@@ -118,10 +142,13 @@ func (m *Model) nothingToPick(word string) string {
 
 // pairMenuAt is the line as completion sees it, when it is a /pair line
 // lacking its word and the menu can serve it.
-func (m *Model) pairMenuAt(value string) (argLine, bool) {
-	l, ok := splitArgLine(strings.TrimRight(value, " ") + " ")
+func (m *Model) pairMenuAt() (argLine, bool) {
+	l, ok := splitArgLine(strings.TrimRight(m.compose.cmd.input.Value(), " ") + " ")
 	if !ok || !pairWantsWord(l) {
 		return l, false
+	}
+	if sharesHere(l) && !m.conv.selected.isContact() {
+		return l, false // outside a ⇄ tab, /pair share says where it works
 	}
 	return l, m.pairMenuUsable()
 }
@@ -181,15 +208,28 @@ func (m *Model) pairLabel(item string) (string, bool) {
 	if !ok || l.name != "pair" {
 		return "", false
 	}
-	switch {
-	case len(l.words) == 0:
+	if len(l.words) == 0 {
 		return fmt.Sprintf("  %-8s %s", safe(item), mutedStyle.Render(pairMenu[item])), true
-	case len(l.words) == 1 && decidesRequest(l.words[0]):
-		return m.pendingRequestLabel(item)
-	case len(l.words) == 1 && l.words[0] == protocol.PairingOpCancel:
-		return m.invitationLabel(item)
 	}
-	return "", false
+	label, found := pairWordLabels[l.words[0]]
+	if !found || !labelsHere(l) {
+		return "", false
+	}
+	return label(m, item)
+}
+
+// pairWordLabels label the choices after each /pair word that has them.
+var pairWordLabels = map[string]func(*Model, string) (string, bool){
+	protocol.PairingOpAccept: (*Model).pendingRequestLabel,
+	protocol.PairingOpReject: (*Model).pendingRequestLabel,
+	protocol.PairingOpCancel: (*Model).invitationLabel,
+	pairShare:                (*Model).shareLabel,
+}
+
+// labelsHere: the word being typed is the one the /pair word's choices
+// fill; share's agents fill every word after it.
+func labelsHere(l argLine) bool {
+	return len(l.words) == 1 || l.words[0] == pairShare
 }
 
 // argumentLine is the command line as completion sees it.
@@ -198,15 +238,4 @@ func (m *Model) argumentLine() (argLine, bool) {
 		return argLine{}, false
 	}
 	return splitArgLine(m.compose.cmd.input.Value())
-}
-
-// invitationLabel is the open invitation's row: when it expires and the
-// attempts it has left; its code is never shown here.
-func (m *Model) invitationLabel(id string) (string, bool) {
-	v := m.invitation()
-	if v == nil || v.ID != id {
-		return "", false
-	}
-	detail := fmt.Sprintf("invitation · expires %s · %d attempts left", v.ExpiresAt.Local().Format("15:04"), v.AttemptsLeft)
-	return fmt.Sprintf("  %s  %s", safe(id), mutedStyle.Render(detail)), true
 }
