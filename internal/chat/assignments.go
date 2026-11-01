@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -76,11 +78,12 @@ func (m *Model) assignmentRows(id string) []string {
 }
 
 // agentAssignmentLines are the assignments an agent holds, assigned or
-// done, on the loaded operator messages.
+// done, on the loaded operator messages, by message.
 func (m *Model) agentAssignmentLines(agent string) []string {
+	ids := slices.Sorted(maps.Keys(m.claims.byMessage))
 	var lines []string
-	for id, page := range m.claims.byMessage {
-		if a, ok := heldAssignment(page, agent); ok {
+	for _, id := range ids {
+		if a, ok := heldAssignment(m.claims.byMessage[id], agent); ok {
 			lines = append(lines, mutedStyle.Render("    ◇ "+protocol.TaskReply+" (assigned, "+a.State+") on "+m.parentLabel(id)))
 		}
 	}

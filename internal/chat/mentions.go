@@ -33,7 +33,13 @@ func (m *Model) attentionMentions(tokens []string) audience {
 // name outside a group or a fully known room; a partial room list leaves
 // the room check to the broker.
 func (m *Model) checkMentions(ids []string) string {
-	if problem := m.mentionLimit(slices.Contains(ids, "all"), len(ids)); problem != "" {
+	switch {
+	case slices.Contains(ids, "all"):
+		return "@all can't be used in a room or group; it already reaches everyone in it"
+	case len(ids) > protocol.MaxMentions:
+		return "at most 16 mentions"
+	}
+	if problem := m.brokerMentionLimit(); problem != "" {
 		return problem
 	}
 	members, complete := m.eligibleMembers()
@@ -45,14 +51,10 @@ func (m *Model) checkMentions(ids []string) string {
 	return ""
 }
 
-// mentionLimit is what the broker or the tags themselves forbid, given
-// whether they name @all and how many there are; "" when nothing does.
-func (m *Model) mentionLimit(all bool, n int) string {
+// brokerMentionLimit is why the broker can't carry these mentions, "" when
+// it can.
+func (m *Model) brokerMentionLimit() string {
 	switch {
-	case all:
-		return "@all can't be used in a room or group; it already reaches everyone in it"
-	case n > protocol.MaxMentions:
-		return "at most 16 mentions"
 	case !m.session.HasCapability(protocol.CapabilityMentions):
 		return "this broker can't carry mentions; upgrade it, or remove them"
 	case m.conv.selected.isRoom() && !m.session.HasCapability(protocol.CapabilityAssignments):
