@@ -39,11 +39,18 @@ class PairingNameSetupAcceptance(unittest.TestCase):
 
         def lstat(path):
             info = original(path)
-            if path == self.ready or path.parent == self.root and path.name.startswith(".pairing-name.ready."):
+            if self.is_marker(path):
                 return SimpleNamespace(st_mode=info.st_mode, st_uid=0)
             return info
 
         return patch.object(Path, "lstat", lstat)
+
+    def is_marker(self, path):
+        if path == self.ready:
+            return True
+        if path.parent != self.root:
+            return False
+        return path.name.startswith(".pairing-name.ready.")
 
     def secured(self):
         namespace = SETUP["secured"].__globals__

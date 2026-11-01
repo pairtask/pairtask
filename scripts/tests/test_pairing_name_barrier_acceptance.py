@@ -21,36 +21,58 @@ class IncusFixture:
         self.fail = None
 
     def run(self, command, **kwargs):
-        args = command[3:]
+        args = self.arguments(command)
         self.calls.append((args, kwargs))
-        key, output = args[0], b""
-        if key == "list":
-            output = json.dumps([] if self.state is None else [{"name": "secured", "status": self.state}]).encode()
-        elif key == "query":
-            key = "query-" + args[2]
-            if args[2] == "GET":
-                path = parse_qs(urlsplit(args[-1]).query)["path"][0]
-                output = json.dumps(["pairtask"] if path == "/etc" else ([barrier.READY] if self.marker else [])).encode()
-            else:
-                self.marker = False
-        elif key == "file":
-            key = "file-" + args[1]
-            if args[1] == "pull":
-                output = self.data
-            else:
-                self.uploads.append((args, kwargs["input"]))
-        elif key == "exec":
-            guest = args[args.index("--") + 1:]
-            if guest[0] == barrier.SETUP:
-                key = "publish"
-            elif guest[:2] == ["systemctl", "restart"]:
-                key = "restart"
-            elif guest[0] == "pairtask":
-                key = "status"
-                output = json.dumps({"pairing_result": {"self_name": self.name or "workspace"}}).encode()
+        handler = getattr(self, "response_" + args[0])
+        key, output = handler(args, kwargs)
         if key == self.fail:
             return SimpleNamespace(returncode=1, stdout=b"", stderr=b"permission or transport fixture failure")
         return SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
+    def arguments(self, command):
+        if command[1] == "query":
+            if "--project" in command:
+                raise AssertionError("incus query accepts project only in its URL")
+            return command[1:]
+        args = command[3:]
+        if args[0] == "query":
+            raise AssertionError("incus --project P query is refused by real Incus")
+        return args
+
+    def response_list(self, _args, _kwargs):
+        instances = [] if self.state is None else [{"name": "secured", "status": self.state}]
+        return "list", json.dumps(instances).encode()
+
+    def response_query(self, args, _kwargs):
+        parameters = parse_qs(urlsplit(args[-1]).query)
+        if parameters.get("project") != ["fixture"]:
+            raise AssertionError("query URL lost its project")
+        if args[2] == "DELETE":
+            self.marker = False
+            return "query-DELETE", b""
+        names = self.directory(parameters["path"][0])
+        return "query-GET", json.dumps(names).encode()
+
+    def directory(self, path):
+        if path == "/etc":
+            return ["pairtask"]
+        return [barrier.READY] if self.marker else []
+
+    def response_file(self, args, kwargs):
+        if args[1] == "pull":
+            return "file-pull", self.data
+        self.uploads.append((args, kwargs["input"]))
+        return "file-push", b""
+
+    def response_exec(self, args, _kwargs):
+        guest = args[args.index("--") + 1:]
+        if guest[0] == barrier.SETUP:
+            return "publish", b""
+        if guest[:2] == ["systemctl", "restart"]:
+            return "restart", b""
+        if guest[0] == "pairtask":
+            return "status", json.dumps({"pairing_result": {"self_name": self.name or "workspace"}}).encode()
+        return "exec", b""
 
 
 class PairingNameBarrierAcceptance(unittest.TestCase):

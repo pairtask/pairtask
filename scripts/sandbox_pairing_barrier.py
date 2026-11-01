@@ -30,9 +30,9 @@ WAIT = 120
 class NameBarrier:
     """One deployment's barrier, for the name it asked for ("" for none)."""
 
-    def __init__(self, project, remote, name, run=subprocess.run, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, project, remote, name, run=subprocess.run):
         self.project, self.remote, self.name = project, remote.rstrip(":") + ":", name
-        self.run, self.clock, self.sleep = run, clock, sleep
+        self.run = run
 
     def incus(self, *args, stdin=None):
         result = self.run(["incus", "--project", self.project, *args], input=stdin, capture_output=True, check=False)
@@ -67,8 +67,13 @@ class NameBarrier:
         return json.loads(self.query("GET", path))
 
     def query(self, method, path):
+        """One file API call; the project goes in the URL, as query takes no
+        --project."""
         url = f"{self.remote}/1.0/instances/{INSTANCE}/files?path={path}&project={self.project}"
-        return self.incus("query", "--request", method, url)
+        result = self.run(["incus", "query", "--request", method, url], capture_output=True, check=False)
+        if result.returncode != 0:
+            raise ValueError(f"incus query failed: {decoded(result.stderr).strip()}")
+        return result.stdout
 
     def release(self):
         """After an apply: mark the name file ready once it holds the name
@@ -106,11 +111,11 @@ class NameBarrier:
 
     def await_name(self):
         """Both units active, and the broker pairing under the name."""
-        deadline = self.clock() + WAIT
+        deadline = time.monotonic() + WAIT
         while not self.serving():
-            if self.clock() >= deadline:
+            if time.monotonic() >= deadline:
                 raise ValueError(f"{INSTANCE} didn't start its broker under the released pairing name")
-            self.sleep(1)
+            time.sleep(1)
 
     def serving(self):
         for unit in UNITS:
