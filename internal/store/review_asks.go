@@ -321,11 +321,22 @@ func applyOutcome(ctx context.Context, tx *sql.Tx, t takenOutcome) error {
 // going back is refused for good; a conflicting one too. One a requesting
 // agent can't be told of yet, its inbox full, is held back.
 func (p *PeerMessages) AcceptOutcome(ctx context.Context, contact string, o messaging.ReviewOutcome, at time.Time) (messaging.OutcomeAnswer, error) {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return messaging.OutcomeAnswer{}, err
+	var answer messaging.OutcomeAnswer
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		answer, err = acceptOutcomeIn(ctx, tx, contact, o, at)
+		if err == nil && !answer.Stored {
+			return errNothingStored // answered without applying it: roll back
+		}
+		return err
+	})
+	if errors.Is(err, errNothingStored) {
+		return answer, nil
 	}
-	defer tx.Rollback()
+	return answer, err
+}
+
+// acceptOutcomeIn is AcceptOutcome inside its transaction.
+func acceptOutcomeIn(ctx context.Context, tx *sql.Tx, contact string, o messaging.ReviewOutcome, at time.Time) (messaging.OutcomeAnswer, error) {
 	a, digest, found, err := loadAsk(ctx, tx, contact, o.AskID)
 	if err != nil || !found {
 		return refusedOutcome(messaging.ReasonInvalid), err
@@ -333,11 +344,7 @@ func (p *PeerMessages) AcceptOutcome(ctx context.Context, contact string, o mess
 	if answer, judged := judgedAnswers[judgeOutcome(a, digest, o)]; judged {
 		return answer, nil
 	}
-	answer, err := takeOutcome(ctx, tx, takenOutcome{a, o, at})
-	if err != nil || !answer.Stored {
-		return answer, err
-	}
-	return answer, tx.Commit()
+	return takeOutcome(ctx, tx, takenOutcome{a, o, at})
 }
 
 // judgedAnswers answer an outcome that doesn't move its request on.

@@ -32,6 +32,9 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	protocol.ContactOpReviewAsk:    (*Hub).contactReviewAsk,
 	protocol.ContactOpReviewDecide: (*Hub).contactReviewDecide,
 	protocol.ContactOpName:         (*Hub).contactName,
+	// Pausing a contact (#276).
+	protocol.ContactOpPause:  (*Hub).contactPause,
+	protocol.ContactOpResume: (*Hub).contactPause,
 }
 
 // operatorContact serves operator_contact.
@@ -89,6 +92,9 @@ func contactRefusal(err error) *routingError {
 		return rerr
 	}
 	if rerr, ok := nameRefusal(err); ok {
+		return rerr
+	}
+	if rerr, ok := pauseRefusal(err); ok {
 		return rerr
 	}
 	switch {

@@ -69,7 +69,9 @@ type PairingSnapshot struct {
 	SelfName     string `json:"self_name,omitempty"` // the name this workspace pairs under
 	// NamesAvailable: the broker serves contact op name; an older one
 	// leaves it false, so a client refuses before sending one.
-	NamesAvailable    bool                 `json:"names_available,omitempty"`
+	NamesAvailable bool `json:"names_available,omitempty"`
+	// PauseAvailable: the broker serves contact ops pause and resume (#276).
+	PauseAvailable    bool                 `json:"pause_available,omitempty"`
 	IdentityError     string               `json:"identity_error,omitempty"`
 	Invitation        *InvitationView      `json:"invitation,omitempty"`
 	Requests          []PairingRequestView `json:"requests"`
@@ -101,6 +103,9 @@ type PairingContactView struct {
 	// side opens the sessions with it.
 	LocalName string `json:"local_name,omitempty"`
 	Dials     bool   `json:"dials,omitempty"`
+	// PausedAt is when this side's operator paused it (#276): no traffic
+	// either way until resumed; nil while active.
+	PausedAt *time.Time `json:"paused_at,omitempty"`
 	// Summary is nil from a broker that reports none: unknown, not idle.
 	Summary *PairingContactSummary `json:"summary,omitempty"`
 }

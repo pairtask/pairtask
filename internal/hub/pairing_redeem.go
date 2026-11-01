@@ -65,10 +65,11 @@ type PairingEndpoint struct {
 	// around an inbound settlement.
 	RequestMark func(fingerprint string) string
 	// MessagePins accepts a message session only from a confirmed contact
-	// (#210); Messages is their store, and BeginMessages claims a contact
-	// for one session, inbound or outbound, or reports it busy.
+	// this side hasn't paused (#210, #276); Admit is the only way to its
+	// store, bound to the contact's generation; BeginMessages claims a
+	// contact for one session, inbound or outbound, or reports it busy.
 	MessagePins   func(fingerprint string) bool
-	Messages      messaging.Store
+	Admit         func(ctx context.Context, contact string) (messaging.Store, error)
 	BeginMessages func(contact string) (end func(moved bool), ok bool)
 	// ClaimLink claims a serving live link for contact after a first round
 	// agreed to stay open, replacing one still open for it (#222).
@@ -139,7 +140,7 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 	if inviter, err := peer.NewInviter(cfg.Exchanger, h.pairing, id); err == nil {
 		h.pair.endpoint.Store(&PairingEndpoint{Identity: id, Inviter: inviter, Joiner: h.pair.joiner, Clock: cfg.Clock,
 			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark,
-			MessagePins: h.messagePins, Messages: h.store.PeerMessages(), BeginMessages: h.beginMessages,
+			MessagePins: h.messagePins, Admit: h.admit, BeginMessages: h.beginMessages,
 			ClaimLink: h.ClaimLink})
 	}
 }

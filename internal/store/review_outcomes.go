@@ -109,8 +109,12 @@ var askTerminal = map[string]bool{"declined": true, "expired": true, "withheld":
 
 // PendingOutcomes is the oldest outcomes waiting to be sent to contact.
 func (p *PeerMessages) PendingOutcomes(ctx context.Context, contact string, max int) ([]messaging.ReviewOutcome, error) {
-	payloads, err := queryStrings(ctx, p.db, `SELECT payload FROM review_outcomes_out WHERE contact = ? ORDER BY queued_at, rowid LIMIT ?`,
-		contact, sessionBudget.clamp(budget{max, 0}).count)
+	var payloads []string
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		payloads, err = queryStrings(ctx, tx, `SELECT payload FROM review_outcomes_out WHERE contact = ? ORDER BY queued_at, rowid LIMIT ?`,
+			contact, sessionBudget.clamp(budget{max, 0}).count)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -129,26 +133,18 @@ func (p *PeerMessages) PendingOutcomes(ctx context.Context, contact string, max 
 // than the answer is no longer sent; Stored moves the answered mark up, and
 // a refusal is kept with why, for the operator.
 func (p *PeerMessages) OutcomeAnswered(ctx context.Context, contact string, r messaging.OutcomeReply) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
+	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		sent, err := queryOptional[uint64](ctx, tx, `SELECT seq FROM review_outcome_seq WHERE contact = ? AND ask_id = ?`, contact, r.AskID)
+		if err != nil || sent == nil || r.Seq > *sent {
+			return err // an answer to no outcome of ours: ignored
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM review_outcomes_out WHERE contact = ? AND ask_id = ? AND seq <= ?`, contact, r.AskID, r.Seq); err != nil {
+			return err
+		}
+		mark, args := answerMark(contact, r)
+		_, err = tx.ExecContext(ctx, mark, args...)
 		return err
-	}
-	defer tx.Rollback()
-	sent, err := queryOptional[uint64](ctx, tx, `SELECT seq FROM review_outcome_seq WHERE contact = ? AND ask_id = ?`, contact, r.AskID)
-	if err != nil {
-		return err
-	}
-	if sent == nil || r.Seq > *sent {
-		return nil // an answer to no outcome of ours: ignored
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM review_outcomes_out WHERE contact = ? AND ask_id = ? AND seq <= ?`, contact, r.AskID, r.Seq); err != nil {
-		return err
-	}
-	mark, args := answerMark(contact, r)
-	if _, err := tx.ExecContext(ctx, mark, args...); err != nil {
-		return err
-	}
-	return tx.Commit()
+	})
 }
 
 // answerMark is how an answer marks its request's numbering: Stored moves

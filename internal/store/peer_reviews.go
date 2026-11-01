@@ -275,6 +275,10 @@ func (s *Store) DecideRemoteReview(ctx context.Context, d RemoteDecision) (strin
 		return "", err
 	}
 	defer tx.Rollback()
+	// A paused contact's requests wait for a decision until it resumes (#276).
+	if err := requireActive(ctx, tx, contact); err != nil {
+		return "", err
+	}
 	var state, staged string
 	err = tx.QueryRowContext(ctx, `SELECT state, staged_at FROM remote_imports WHERE contact = ? AND remote_id = ? AND kind = 'review'`,
 		contact, remoteID).Scan(&state, &staged)

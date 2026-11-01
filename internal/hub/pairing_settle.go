@@ -441,10 +441,19 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 	for _, c := range contacts {
 		snapshot.Contacts = append(snapshot.Contacts, protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
 			Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
-			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own),
+			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own), PausedAt: pausedAt(c),
 			Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: awaiting[c.IdentityKey]}})
 	}
 	return nil
+}
+
+// pausedAt is when this side paused the contact, nil while active (#276).
+func pausedAt(c peer.Contact) *time.Time {
+	if c.PausedAt.IsZero() {
+		return nil
+	}
+	at := c.PausedAt
+	return &at
 }
 
 // confirmedIdentities are those with a delivered acceptance or a confirmed

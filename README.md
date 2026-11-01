@@ -175,6 +175,7 @@ Each paired workspace gets its own `⇄` tab. In it:
 | `/pair review codex-1 OWNER/REPO#12 BASE HEAD` | Asks one of their agents to review those commits. |
 | `/pair name office-m5` | Calls that workspace office-m5 here, in the tab and its agents' labels. |
 | `/pair address HOST:PORT` | Reaches it again after it moved to another address. |
+| `/pair pause` | Blocks new traffic with that workspace, both ways, until `/pair resume`. |
 
 `/pair status` lists every paired workspace, how it stands and what is
 waiting for you. A name you choose stays on your side; the key identifies a

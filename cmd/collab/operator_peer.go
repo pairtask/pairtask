@@ -13,7 +13,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorPeerUsage = "usage: pairtask operator peer send CONTACT TEXT [--message-id ID] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator peer messages CONTACT [--before CURSOR] [--socket PATH] [--json]\n       pairtask operator peer sync CONTACT [--socket PATH] [--json]\n       pairtask operator peer name CONTACT (NAME... | --clear) [--socket PATH] [--json]\nCONTACT is a paired workspace's identity key, a unique prefix of it, or its unique name: what this side calls it, or what it calls itself."
+const operatorPeerUsage = "usage: pairtask operator peer send CONTACT TEXT [--message-id ID] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator peer messages CONTACT [--before CURSOR] [--socket PATH] [--json]\n       pairtask operator peer sync CONTACT [--socket PATH] [--json]\n       pairtask operator peer name CONTACT (NAME... | --clear) [--socket PATH] [--json]\n       pairtask operator peer pause|resume CONTACT [--message-id ID] [--socket PATH] [--json]\nCONTACT is a paired workspace's identity key, a unique prefix of it, or its unique name: what this side calls it, or what it calls itself."
 
 // peerVerbs are the contact operations the CLI offers (#210), with how many
 // positional arguments each takes after CONTACT; send joins the rest as
@@ -23,11 +23,13 @@ var peerVerbs = map[string]int{
 	"messages": 0,
 	"sync":     0,
 	"name":     -1,
+	"pause":    0,
+	"resume":   0,
 }
 
 // peerOps map a verb to its contact_op.
 var peerOps = map[string]string{"send": protocol.ContactOpSend, "messages": protocol.ContactOpList, "sync": protocol.ContactOpSync,
-	"name": protocol.ContactOpName}
+	"name": protocol.ContactOpName, "pause": protocol.ContactOpPause, "resume": protocol.ContactOpResume}
 
 // runOperatorPeer sends to, lists or syncs with a paired workspace. Its
 // messages are text from that workspace's operator, printed quoted: never
@@ -41,7 +43,7 @@ func runOperatorPeer(ctx context.Context, args []string, stdout, stderr io.Write
 	if err != nil {
 		return 1
 	}
-	if !namesServed(req, snapshot, stderr) {
+	if !namesServed(req, snapshot, stderr) || !pauseServed(req, snapshot, stderr) {
 		return 1
 	}
 	req.ContactKey = key
@@ -131,6 +133,9 @@ func writeContactResult(w io.Writer, resp protocol.Message) {
 	}
 	if resp.ContactOp == protocol.ContactOpName && resp.PairingResult != nil {
 		writeContactName(w, resp.ContactKey, resp.PairingResult.Contacts)
+	}
+	if pauseOps[resp.ContactOp] && resp.PairingResult != nil {
+		writeContactPause(w, resp.ContactKey, resp.PairingResult.Contacts)
 	}
 }
 

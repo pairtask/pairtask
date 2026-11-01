@@ -195,10 +195,16 @@ func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *first
 		p.log.Info("message session refused: one already running for this contact")
 		return nil, hub.FirstRound{}
 	}
+	admitted, err := ep.Admit(storeCtx, contact)
+	if err != nil {
+		end(false)
+		p.log.Info("message session refused", "cause", hub.PairingCause(err))
+		return nil, hub.FirstRound{}
+	}
 	sessionCtx, cancel := context.WithTimeout(netCtx, hub.MessageBudget)
 	defer cancel()
 	counted := &messaging.Counted{Frames: conn.MessageFrames(sessionCtx)}
-	s := messaging.Session{Frames: counted, Store: ep.Messages, Contact: contact, Now: ep.Clock}
+	s := messaging.Session{Frames: counted, Store: admitted, Contact: contact, Now: ep.Clock}
 	result, version, err := s.OpenServe(storeCtx)
 	end(result.Moved())
 	if err != nil {
@@ -209,7 +215,7 @@ func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *first
 	if version < messaging.LiveVersion {
 		return nil, hub.FirstRound{}
 	}
-	return p.stayOpen(s, contact, ep), hub.FirstRound{Carried: counted, Version: version}
+	return p.stayOpen(s, contact, ep), hub.FirstRound{Carried: counted, Version: version, Store: admitted}
 }
 
 // stayOpen answers whether the connection stays open as a live link.

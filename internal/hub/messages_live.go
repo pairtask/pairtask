@@ -143,13 +143,16 @@ func (h *Hub) Live(contact string) bool {
 type FirstRound struct {
 	Carried *messaging.Counted
 	Version byte
+	// Store is the store the first round was admitted with (#276): the link
+	// goes on with it, never with another.
+	Store messaging.Store
 }
 
 // link is a contact's live link over a connection's frames.
 func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, first FirstRound) *messaging.Link {
 	contact := l.contact
 	link := &messaging.Link{
-		Session: messaging.Session{Store: h.store.PeerMessages(), Contact: contact, Now: h.pair.cfg.Clock, Version: first.Version},
+		Session: messaging.Session{Store: first.Store, Contact: contact, Now: h.pair.cfg.Clock, Version: first.Version},
 		Open:    open,
 		Wake:    l.wake,
 		Begin: func() (func(messaging.Result, error), bool) {
@@ -164,7 +167,7 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 				}
 			}, true
 		},
-		Confirmed: func() bool { return h.messagePins(contact) },
+		Confirmed: func() bool { return fenceHolds(first.Store) },
 		More:      func() bool { return h.hasOutgoing(l) },
 		Timing:    liveTiming(),
 	}
@@ -172,6 +175,30 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 		link.Carried.Sent, link.Carried.Recv = c.SentBytes, c.RecvBytes
 	}
 	return link
+}
+
+// fenceHolds: the link's admitted store is still at its contact's
+// generation; a link without one ends before its first round.
+func fenceHolds(s messaging.Store) bool {
+	f, ok := s.(interface{ FenceHolds(context.Context) bool })
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
+	defer cancel()
+	return f.FenceHolds(ctx)
+}
+
+// dropLive halts the contact's live link, whichever side dialled it: after
+// a pause, the fence already keeps it from changing anything (#276).
+func (h *Hub) dropLive(contact string) {
+	w := &h.live
+	w.mu.Lock()
+	l := w.links[contact]
+	w.mu.Unlock()
+	if l != nil {
+		l.halt()
+	}
 }
 
 // hasOutgoing: messages or read receipts still to send over the link.

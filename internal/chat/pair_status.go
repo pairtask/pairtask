@@ -146,8 +146,12 @@ func pairedRow(c protocol.PairingContactView) []string {
 	if c.Dials {
 		dials = "this side dials " + safe(c.Destination)
 	}
-	return []string{standing(c).row(name),
+	rows := []string{standing(c).row(name),
 		fmt.Sprintf("      %s · %s · paired %s", protocol.ShortKey(c.IdentityKey), dials, when(c.EstablishedAt))}
+	if pausedHere(c) {
+		rows = append(rows, warnStyle.Render("      "+pausedNote))
+	}
+	return rows
 }
 
 // selfNamed: this workspace pairs under a name of its own, or isn't

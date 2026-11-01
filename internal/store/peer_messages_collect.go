@@ -14,6 +14,9 @@ import (
 // queued one's or one staged for agents), the replay floor rises past old
 // tombstones, and what routing kept for forgotten messages goes.
 func (p *PeerMessages) Collect(ctx context.Context, now time.Time) error {
+	if err := p.localOnly(); err != nil {
+		return err
+	}
 	contacts, err := messageContacts(ctx, p.db)
 	if err != nil {
 		return err

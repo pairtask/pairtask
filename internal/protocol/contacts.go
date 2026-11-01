@@ -70,6 +70,18 @@ const (
 	// CapabilityContactAddress: the broker serves address.
 	CapabilityContactAddress = "contact_address"
 
+	// ContactOpPause blocks new traffic with the contact, both ways, under
+	// message_id, keeping the contact, its grants and its history (#276);
+	// ContactOpResume starts it again. Pausing a paused contact, or
+	// resuming an active one, changes nothing. The answer is the pairing
+	// snapshot.
+	ContactOpPause  = "pause"
+	ContactOpResume = "resume"
+	// CapabilityContactPause: the broker serves pause and resume.
+	CapabilityContactPause = "contact_pause"
+	// ErrContactPaused refuses a send to a paused contact.
+	ErrContactPaused = "contact_paused"
+
 	// CapabilityContactRouting: the broker serves share and unshare, a send
 	// to the contact's agents (contact_to), and routing in the views.
 	CapabilityContactRouting = "contact_routing"
@@ -186,6 +198,8 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpReviewDecide: {key: true, id: true, read: true, approve: true},
 	ContactOpName:         {key: true, id: true, note: true},
 	ContactOpAddress:      {key: true, id: true, text: true},
+	ContactOpPause:        {key: true, id: true},
+	ContactOpResume:       {key: true, id: true},
 }
 
 type contactFieldSet struct{ key, text, note, read, before, id, to, agents, grant, ask, approve bool }
@@ -196,7 +210,7 @@ type contactFieldSet struct{ key, text, note, read, before, id, to, agents, gran
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name or address")
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause or resume")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err

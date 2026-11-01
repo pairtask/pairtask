@@ -248,8 +248,15 @@ WHERE ri.contact = ? AND ri.remote_id = ?`, imp.Contact, imp.RemoteID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ImportResult{}, ErrNoImport
 	}
-	if err != nil || state != ImportPending {
+	if err != nil {
+		return ImportResult{}, err
+	}
+	// A paused contact's imports wait, review dispatch included (#276).
+	if err := requireActive(ctx, tx, imp.Contact); err != nil {
 		return ImportResult{State: state}, err
+	}
+	if state != ImportPending {
+		return ImportResult{State: state}, nil
 	}
 	frozen.Sessions = imp.Sessions
 	result, err := importIn(ctx, tx, frozen, importSlot{seq, ts})

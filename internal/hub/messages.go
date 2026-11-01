@@ -123,12 +123,24 @@ func (h *Hub) announceMessages() {
 	}
 }
 
-// messagePins admits a message session only from a confirmed contact.
+// messagePins admits a message session only from a confirmed contact this
+// side hasn't paused (#276).
 func (h *Hub) messagePins(fingerprint string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
 	defer cancel()
-	ok, err := h.store.PeerMessages().Confirmed(ctx, fingerprint)
-	return err == nil && ok
+	_, err := h.admit(ctx, fingerprint)
+	return err == nil
+}
+
+// admit binds a session's store to the contact's generation (#276): every
+// session, inbound or dialled, and the live link it becomes, uses only the
+// store it was admitted with.
+func (h *Hub) admit(ctx context.Context, contact string) (messaging.Store, error) {
+	s, err := h.store.PeerMessages().Admit(ctx, contact)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // beginMessages claims a contact for one session; end releases it,

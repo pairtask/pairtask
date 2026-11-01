@@ -39,6 +39,10 @@ type Contact struct {
 	EstablishedAt time.Time
 	Joined        bool // this workspace redeemed its code
 	Invited       bool // it redeemed this workspace's code
+	// PausedAt is when this side's operator paused it (#276), zero while
+	// active; Generation moves on with each pause and resume.
+	PausedAt   time.Time
+	Generation int64
 }
 
 // ContactStore reads contacts.
