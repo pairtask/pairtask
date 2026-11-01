@@ -9,7 +9,7 @@ import tarfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_PATHS = ["go.mod", "go.sum", "cmd", "internal"]
+APP_PATHS = ["go.mod", "go.sum", "cmd", "internal", "testdata"]  # testdata: fixtures Go tests share with scripts (#277)
 RECIPE_PATHS = ["infra/image/" + name for name in (
     "install.sh", "install-build-go.py", "install-layout.py", "layout_schema.py", "layout-v2.json", "sshd_config", "pairtask-broker.service",
     "pairtask-secured-setup.service", "pairtask-supervised-codex", "claude-mcp.json",
@@ -58,8 +58,15 @@ def working_tree(root):
     return {name.decode(): repository_file(root, name.decode()) for name in names if name}
 
 
+def committed_paths(root, revision):
+    """The app paths the revision has: an older one may lack a newer path."""
+    names = git("ls-tree", "--name-only", "-z", revision, "--", *APP_PATHS, root=root).split(b"\0")
+    present = {name.decode() for name in names if name}
+    return [path for path in APP_PATHS if path in present]
+
+
 def committed_tree(root, revision):
-    data = git("archive", "--format=tar", revision, *APP_PATHS, root=root)
+    data = git("archive", "--format=tar", revision, *committed_paths(root, revision), root=root)
     files = {}
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
         for member in archive:
