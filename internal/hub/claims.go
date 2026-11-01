@@ -44,13 +44,15 @@ func (h *Hub) claim(ctx context.Context, in Inbound) protocol.Message {
 	req := store.ClaimRequest{MessageID: msg.OperatorMessageID, Task: msg.Task, Topic: msg.Topic, Role: msg.Role, Agent: in.From.ID, At: now}
 	set, err := h.runClaim(ctx, msg.Type, req)
 	if err != nil {
-		return h.claimFailure(msg.RequestID, set, err)
+		failure := h.claimFailure(msg.RequestID, set, err)
+		failure.ClaimPage = forVersion(failure.ClaimPage, in.From.ProtocolVersion)
+		return failure
 	}
 	if msg.Type != protocol.TypeClaimGet {
 		h.emit(protocol.SessionEvent{Kind: protocol.EventClaimsChanged, OperatorMessageID: msg.OperatorMessageID})
 	}
 	return protocol.Message{Type: protocol.TypeClaimResult, RequestID: msg.RequestID, OperatorMessageID: msg.OperatorMessageID,
-		ClaimPage: page(set)}
+		ClaimPage: forVersion(page(set), in.From.ProtocolVersion)}
 }
 
 // claimPreflight refuses a frame before the store sees it: a missing
@@ -132,6 +134,12 @@ func validClaimFrame(msg protocol.Message) error {
 		return protocol.ValidateTopic(msg.Topic)
 	case protocol.TypeClaimRelease:
 		return protocol.ValidateRole(msg.Role)
+	case protocol.TypeClaimDone:
+		// The role may be left out (done is the owner's); one given must
+		// be a client's role, never an assignment's (#278).
+		if msg.Role != "" {
+			return protocol.ValidateRole(msg.Role)
+		}
 	}
 	return nil
 }

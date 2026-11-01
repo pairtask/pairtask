@@ -152,7 +152,8 @@ func (s *Store) ClaimPendingReport(ctx context.Context, recipient protocol.Recip
 		return nil, nil, err
 	}
 	defer tx.Rollback()
-	shows := replayable{origin: version >= protocol.OriginVersion, room: version >= protocol.RoomVersion, remote: version >= protocol.RemoteVersion}
+	shows := replayable{origin: version >= protocol.OriginVersion, room: version >= protocol.RoomVersion, remote: version >= protocol.RemoteVersion,
+		assignment: version >= protocol.AssignVersion}
 	var reclaimed []string
 	if shows.origin {
 		if reclaimed, err = pendingOperatorIDs(ctx, tx, recipient.AgentID, shows.room); err != nil {
@@ -209,6 +210,7 @@ const remoteRow = `EXISTS (SELECT 1 FROM message_metadata x WHERE x.message_id =
 // rooms (v9) and messages from paired workspaces (v12).
 type replayable struct {
 	origin, room, remote bool
+	assignment           bool // the agent reads assignments (#278)
 }
 
 // AgentProtocolVersion returns the version negotiated at the agent's last durable
@@ -249,10 +251,32 @@ func readPending(ctx context.Context, tx *sql.Tx, id string, shows replayable) (
 		msg.Replayed = true
 		messages = append(messages, msg)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if len(messages) > MaxPendingMessages {
 		return nil, ErrInboxFull
 	}
-	return messages, rows.Err()
+	return messages, withReplayedAssignments(ctx, tx, messages, id, shows)
+}
+
+// withReplayedAssignments gives each replayed operator message the agent's
+// assignment as it stands now (#278), for an agent that reads assignments.
+func withReplayedAssignments(ctx context.Context, tx *sql.Tx, messages []protocol.Message, agent string, shows replayable) error {
+	if !shows.assignment {
+		return nil
+	}
+	for i := range messages {
+		if messages[i].Origin != protocol.OriginOperator {
+			continue
+		}
+		view, err := agentAssignment(ctx, tx, messages[i].MessageID, agent)
+		if err != nil {
+			return err
+		}
+		messages[i].Assignment = view
+	}
+	return nil
 }
 
 type scanner interface{ Scan(...any) error }

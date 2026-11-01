@@ -1,6 +1,7 @@
 package chat_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/pairtask/pairtask/internal/chat"
@@ -27,6 +28,16 @@ func audienceAckHarness(t *testing.T, confirmed bool) (*chatHarness, protocol.Me
 		h.await(func() bool { return h.m.State().InFlight == 1 })
 	}
 	return h, receipt
+}
+
+func audienceAckPrivate(h *chatHarness, body string, ids ...string) {
+	h.t.Helper()
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	v2Command(h, "/to "+string(encoded))
+	v2Type(h, body)
 }
 
 func audienceAckAccept(h *chatHarness, sent protocol.Message, ids ...string) {
@@ -70,7 +81,7 @@ func audienceAckState(t *testing.T, h *chatHarness, id, want string) {
 
 func TestChatConversationAudienceAckOnlyAcceptedGroupRecipients(t *testing.T) {
 	h, _ := audienceAckHarness(t, true)
-	v2Type(h, "@alice @bob received")
+	audienceAckPrivate(h, "received", "alice", "bob")
 	sent := v2Send(h)
 	chatEqual(t, "plain group send invents no correlation", sent.InReplyTo, "")
 	for _, id := range []string{"alice-one", "alice-two", "bob-one"} {
@@ -84,14 +95,20 @@ func TestChatConversationAudienceAckOnlyAcceptedGroupRecipients(t *testing.T) {
 }
 
 func TestChatConversationAudienceAckNeverUsesBroadcastRecipients(t *testing.T) {
-	h, _ := audienceAckHarness(t, true)
-	v2Type(h, "broadcast update")
-	audienceAckAccept(h, v2Send(h), "alice", "bob", "carol")
-	h.await(func() bool { return h.m.State().InFlight == 0 })
-	for _, id := range []string{"alice-one", "alice-two", "bob-one", "carol-one"} {
-		audienceAckState(t, h, id, chat.AckNeeded)
+	for _, draft := range []string{"broadcast update", "@alice public assignment"} {
+		t.Run(draft, func(t *testing.T) {
+			h, _ := audienceAckHarness(t, true)
+			v2Type(h, draft)
+			sent := v2Send(h)
+			chatEqual(t, "public post retains broadcast", sent.To, "*")
+			audienceAckAccept(h, sent, "alice", "bob", "carol")
+			h.await(func() bool { return h.m.State().InFlight == 0 })
+			for _, id := range []string{"alice-one", "alice-two", "bob-one", "carol-one"} {
+				audienceAckState(t, h, id, chat.AckNeeded)
+			}
+			chatEqual(t, "broadcast queues nothing even when tagged", len(h.m.State().QueuedAcks), 0)
+		})
 	}
-	chatEqual(t, "broadcast queues nothing", len(h.m.State().QueuedAcks), 0)
 }
 
 func TestChatConversationAudienceAckExplicitReplyKeepsOnlyItsTarget(t *testing.T) {
@@ -109,7 +126,7 @@ func TestChatConversationAudienceAckExplicitReplyKeepsOnlyItsTarget(t *testing.T
 func TestChatConversationAudienceAckWaitsForReceiptAndPreservesExplicitQueue(t *testing.T) {
 	h, receipt := audienceAckHarness(t, false)
 	v2Command(h, "/ack #1")
-	v2Type(h, "@alice received both")
+	audienceAckPrivate(h, "received both", "alice")
 	audienceAckAccept(h, v2Send(h), "alice")
 	h.await(func() bool { return h.m.State().InFlight == 1 }) // Receipt remains outstanding.
 	chatEqual(t, "explicit queue not canceled and second target queued", len(h.m.State().QueuedAcks), 2)
@@ -122,7 +139,7 @@ func TestChatConversationAudienceAckWaitsForReceiptAndPreservesExplicitQueue(t *
 
 func TestChatConversationAudienceAckRejectedSendLeavesEveryTargetPending(t *testing.T) {
 	h, _ := audienceAckHarness(t, true)
-	v2Type(h, "@alice @bob received")
+	audienceAckPrivate(h, "received", "alice", "bob")
 	sent := v2Send(h)
 	h.reply(sent, protocol.Message{Type: protocol.TypeError, Code: protocol.ErrInternal, Detail: "refused"})
 	h.await(func() bool { return h.m.State().Intent.State == chat.IntentRejected })
@@ -135,7 +152,7 @@ func TestChatConversationAudienceAckRejectedSendLeavesEveryTargetPending(t *test
 
 func TestChatConversationAudienceAckExcludesArrivalsAfterDispatch(t *testing.T) {
 	h, _ := audienceAckHarness(t, true)
-	v2Type(h, "@alice received")
+	audienceAckPrivate(h, "received", "alice")
 	sent := v2Send(h)
 	h.wire.in <- protocol.Message{Type: protocol.TypeEvent, Event: &protocol.SessionEvent{
 		Kind: protocol.EventConversationChanged, Direction: "received", Watermark: protocol.Watermark{Epoch: "epoch", Revision: 2},
@@ -159,7 +176,7 @@ func TestChatConversationAudienceAckExcludesHistoryOnlyAtDispatch(t *testing.T) 
 	historical.From = "alice"
 	h.reply(history, chatHistory(historical))
 	h.await(func() bool { return len(h.m.State().Entries) == 1 })
-	v2Type(h, "@alice new message")
+	audienceAckPrivate(h, "new message", "alice")
 	sent := v2Send(h)
 	// Adoption occurs only after dispatch. Seeing it in history must not
 	// retroactively add it to the frozen audience acknowledgment batch.

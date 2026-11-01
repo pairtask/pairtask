@@ -22,7 +22,7 @@ func canonicalMentions(msg *protocol.Message, scope store.OperatorScope) *routin
 		return nil
 	}
 	if !mentionScope(*msg, scope) {
-		return &routingError{protocol.ErrMalformedFrame, "mentions need a room or a group"}
+		return &routingError{protocol.ErrMalformedFrame, "mentions need everyone, a room or a group"}
 	}
 	ids := slices.Clone(msg.Mentions)
 	slices.Sort(ids)
@@ -39,9 +39,11 @@ func canonicalMentions(msg *protocol.Message, scope store.OperatorScope) *routin
 	return nil
 }
 
-func mentionScope(msg protocol.Message, scope store.OperatorScope) bool {
+// mentionScope: tags go on a message to everyone or a room, where they
+// assign (#278), or to a group, where they mark attention.
+func mentionScope(_ protocol.Message, scope store.OperatorScope) bool {
 	if scope.Kind == store.ScopeAll {
-		return msg.Room != ""
+		return true
 	}
 	return scope.Kind == store.ScopeGroup && len(scope.Members) > 1
 }

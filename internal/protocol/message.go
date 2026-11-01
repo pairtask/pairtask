@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = AskedVersion
+	Version                = AssignVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -49,6 +49,7 @@ const (
 	WorkspaceVersion       = 13 // msg workspace and workspaces_get: an agent writes to a paired workspace (#222)
 	ReviewAskVersion       = 14 // msg review_ask: an agent asks a paired workspace's agent for a review (#235)
 	AskedVersion           = 15 // reviews_asked_get: the review requests an agent sent, and where they stand (#235)
+	AssignVersion          = 16 // an operator's tag assigns the tagged agent its message's reply (#278)
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -189,6 +190,7 @@ type Message struct {
 	Excluded           []string            `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"
 	Room               string              `json:"room,omitempty"`                // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
 	Mentions           []string            `json:"mentions,omitempty"`            // operator msg to a room or group: the members it addresses (#164); attention, not routing
+	Assignment         *AssignmentView     `json:"assignment,omitempty"`          // operator msg to an agent its tag assigned (#278); set by the broker only
 	Rooms              []string            `json:"rooms,omitempty"`               // v9 hello: rooms to join; welcome, room_result: the agent's rooms
 	RoomOp             string              `json:"room_op,omitempty"`             // operator_room: what to do
 	RoomList           *RoomList           `json:"room_list,omitempty"`           // operator_room_result

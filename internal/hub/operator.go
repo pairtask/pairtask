@@ -141,6 +141,9 @@ func (h *Hub) routeOperatorSend(ctx context.Context, clients map[string]*Client,
 	msg := req.msg
 	scope, rerr := operatorScope(msg)
 	if rerr == nil {
+		rerr = checkNoAssignment(msg)
+	}
+	if rerr == nil {
 		rerr = h.scopeOperatorSend(ctx, &msg, scope)
 	}
 	if rerr != nil {
@@ -195,20 +198,25 @@ func (h *Hub) commitOperator(ctx context.Context, clients map[string]*Client, se
 	out := operatorFrame(send, h.seq+1)
 	recipients, excluded, rerr := h.operatorRecipients(ctx, clients, out, send.scope)
 	if rerr == nil {
-		rerr = checkFrameSize(out)
+		rerr = checkAssignees(clients, recipients, assignees(send))
+	}
+	if rerr == nil {
+		rerr = checkFrameSize(recipientFrame(out, "", nil))
 	}
 	if rerr != nil {
 		return protocol.Message{}, rerr
 	}
 	h.seq++
-	err := h.store.PersistOperatorMessage(ctx, store.OperatorMessage{Msg: out, Scope: send.scope, Recipients: recipients, Excluded: excluded, AuditID: send.auditID})
+	assigned := assignees(send)
+	err := h.store.PersistOperatorMessage(ctx, store.OperatorMessage{Msg: out, Scope: send.scope, Recipients: recipients, Excluded: excluded,
+		AuditID: send.auditID, Assignees: assigned})
 	if err != nil {
 		return protocol.Message{}, h.persistenceError(out.MessageID, err)
 	}
 	h.emit(protocol.SessionEvent{Kind: protocol.EventConversationChanged, Seq: out.Seq, MessageID: out.MessageID, Direction: "sent"})
 	for _, r := range recipients {
 		if c := sessionOwner(clients, r); c != nil {
-			h.enqueue(clients, c, out) // An undelivered durable frame stays pending for replay.
+			h.enqueue(clients, c, recipientFrame(out, r.AgentID, assigned)) // An undelivered durable frame stays pending for replay.
 		}
 	}
 	return protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq,

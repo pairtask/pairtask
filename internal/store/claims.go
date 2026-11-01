@@ -46,13 +46,15 @@ type ClaimRequest struct {
 // SetClaim records a claim, or reports the holder. It returns the message's
 // claims after the change, or, on a conflict, with the holder.
 func (s *Store) SetClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
-	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error { return setClaim(ctx, tx, req) })
+	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
+		return claimOrAssignment(ctx, tx, req, assignClaim, func() error { return setClaim(ctx, tx, req) })
+	})
 }
 
 // ReleaseClaim frees the agent's active claim; the slot becomes free again.
 func (s *Store) ReleaseClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
 	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
-		return finishClaim(ctx, tx, req, protocol.ClaimReleased)
+		return claimOrAssignment(ctx, tx, req, assignRelease, func() error { return finishClaim(ctx, tx, req, protocol.ClaimReleased) })
 	})
 }
 
@@ -61,7 +63,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, req ClaimRequest) (protocol.Cl
 func (s *Store) FinishClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
 	req.Role = protocol.RoleOwner
 	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
-		return finishClaim(ctx, tx, req, protocol.ClaimDone)
+		return claimOrAssignment(ctx, tx, req, assignFinish, func() error { return finishClaim(ctx, tx, req, protocol.ClaimDone) })
 	})
 }
 
@@ -198,14 +200,17 @@ ORDER BY state = 'released', claimed_at, task, role LIMIT ?`, messageID, protoco
 		set.Claims = append(set.Claims, c)
 	}
 	set.Truncated = set.Total > len(set.Claims)
-	return set, rows.Err()
+	if err := rows.Err(); err != nil {
+		return set, err
+	}
+	return withAssignments(ctx, q, set)
 }
 
 // RecentClaims is the claims of the newest operator messages that have any,
 // at most limit messages, with the number of such messages.
 func (s *Store) RecentClaims(ctx context.Context, limit int) ([]protocol.ClaimSet, int, error) {
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT operator_message_id) FROM claims`).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+claimedMessages+`)`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	ids, err := s.recentClaimedMessages(ctx, limit)
@@ -223,10 +228,17 @@ func (s *Store) RecentClaims(ctx context.Context, limit int) ([]protocol.ClaimSe
 	return sets, total, nil
 }
 
-// recentClaimedMessages lists the operator messages with claims, newest
-// claim first.
+// claimedMessages are the operator messages with claims or assignments
+// (#278), each once, with its newest claim or assignment.
+const claimedMessages = `SELECT operator_message_id, MAX(at) AS latest FROM (
+    SELECT operator_message_id, claimed_at AS at FROM claims
+    UNION ALL SELECT operator_message_id, assigned_at AS at FROM assignments
+) GROUP BY operator_message_id`
+
+// recentClaimedMessages lists the operator messages with claims or
+// assignments, newest first.
 func (s *Store) recentClaimedMessages(ctx context.Context, limit int) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT operator_message_id FROM claims GROUP BY operator_message_id ORDER BY MAX(claimed_at) DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT operator_message_id FROM (`+claimedMessages+`) ORDER BY latest DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}

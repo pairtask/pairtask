@@ -136,7 +136,7 @@ func TestChatReplyAckRejectedSendNeverAcknowledges(t *testing.T) {
 // Chat C extends plain direct sends to acknowledge their dispatch-time audience.
 func TestChatConversationPlainDirectSendAcknowledgesWithoutCorrelation(t *testing.T) {
 	h, _ := replyAckHarness(t, true)
-	v2Type(h, "@author plain message")
+	audienceAckPrivate(h, "plain message", "author")
 	sent := v2Send(h)
 	chatEqual(t, "plain send has no correlation", sent.InReplyTo, "")
 	audienceAckAccept(h, sent, "author")

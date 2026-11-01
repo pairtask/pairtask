@@ -34,7 +34,7 @@ func (m *model) claimsPartial() bool {
 		return true
 	}
 	for _, set := range m.snapshot.Claims {
-		if set.Truncated {
+		if set.Truncated || set.AssignmentPage != nil && set.AssignmentsTruncated {
 			return true
 		}
 	}
@@ -48,22 +48,43 @@ func (m *model) claimDetails(agent string) []string {
 		return []string{"", "Claims: unavailable"}
 	}
 	lines := []string{"", "Claims (a claim coordinates agents; it is never an approval):"}
-	held := 0
+	held := len(lines)
 	for _, set := range m.snapshot.Claims {
 		for _, c := range set.Claims {
 			if c.AgentID != agent || c.State == protocol.ClaimReleased {
 				continue
 			}
-			held++
 			lines = append(lines, fmt.Sprintf("  %s (%s, %s) on %s · %s ago · %s", safe(c.Task), safe(c.Role), safe(c.State),
-				safe(set.OperatorMessageID[:min(len(set.OperatorMessageID), 8)]), m.age(c.ClaimedAt), optional(c.Topic)))
+				parentPrefix(set.OperatorMessageID), m.age(c.ClaimedAt), optional(c.Topic)))
 		}
+		lines = append(lines, m.assignmentDetails(set, agent)...)
 	}
-	if held == 0 {
+	if len(lines) == held {
 		lines = append(lines, "  none held")
 	}
 	if m.claimsPartial() {
 		lines = append(lines, "  partial: the snapshot is truncated, so claims may be omitted")
 	}
 	return lines
+}
+
+// assignmentDetails are the reply a tag assigned the agent on one message
+// (#278), assigned or done.
+func (m *model) assignmentDetails(set protocol.ClaimSet, agent string) []string {
+	if set.AssignmentPage == nil {
+		return nil
+	}
+	var lines []string
+	for _, a := range set.Assignments {
+		if a.AgentID == agent && a.State != protocol.AssignmentReleased {
+			lines = append(lines, fmt.Sprintf("  %s (assigned, %s) on %s · %s ago", safe(a.Task), safe(a.State),
+				parentPrefix(set.OperatorMessageID), m.age(a.AssignedAt)))
+		}
+	}
+	return lines
+}
+
+// parentPrefix is an operator message ID's start, as rows name it.
+func parentPrefix(id string) string {
+	return safe(id[:min(len(id), 8)])
 }

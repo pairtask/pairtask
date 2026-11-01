@@ -114,6 +114,9 @@ type OperatorMessage struct {
 	Recipients []protocol.Recipient
 	Excluded   []string
 	AuditID    int64
+	// Assignees are the tagged agents its reply is assigned to (#278),
+	// stored with it or not at all.
+	Assignees []string
 }
 
 // PersistOperatorMessage commits the message, its frozen scope and the audit
@@ -130,10 +133,22 @@ func (s *Store) PersistOperatorMessage(ctx context.Context, m OperatorMessage) e
 	if err := insertOperatorRequest(ctx, tx, m); err != nil {
 		return err
 	}
+	if err := insertAssignments(ctx, tx, m.Msg.MessageID, m.Assignees, operatorTime(m.Msg)); err != nil {
+		return err
+	}
 	if err := finishAudit(ctx, tx, m.AuditID, AuditOutcome{Result: AuditAccepted}); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// operatorTime is when the message was sent, the time its assignments
+// start.
+func operatorTime(msg protocol.Message) time.Time {
+	if msg.TS != nil {
+		return *msg.TS
+	}
+	return time.Now().UTC()
 }
 
 func insertOperatorRequest(ctx context.Context, tx *sql.Tx, m OperatorMessage) error {
