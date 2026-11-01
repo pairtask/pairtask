@@ -228,7 +228,7 @@ func pauseIn(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseResul
 	if err := register(ctx, tx, op, replay); err != nil {
 		return out, replay, err
 	}
-	return out, replay, finishPauseAudit(ctx, tx, r.AuditID, detail, replay)
+	return out, replay, finishPauseAudit(ctx, tx, pauseAudit{r.AuditID, detail, replay})
 }
 
 // pauseOutcome is a retry's first result, or the change made now, with
@@ -241,15 +241,23 @@ func pauseOutcome(ctx context.Context, tx *sql.Tx, r ContactPause, replay bool) 
 	return out, pauseDetail(r.Paused, true) + " (replayed)", err
 }
 
+// pauseAudit is the audit row an operation finishes, what it records, and
+// whether the operation is a retry.
+type pauseAudit struct {
+	id     int64
+	detail string
+	replay bool
+}
+
 // finishPauseAudit finishes the operation's audit row. A retry finishes
 // its own row if it brought a new one, and leaves the first one, already
 // finished, as it is.
-func finishPauseAudit(ctx context.Context, tx *sql.Tx, auditID int64, detail string, replay bool) error {
-	if !replay {
-		return finishAudit(ctx, tx, auditID, AuditOutcome{Result: AuditAccepted, Detail: detail})
+func finishPauseAudit(ctx context.Context, tx *sql.Tx, a pauseAudit) error {
+	if !a.replay {
+		return finishAudit(ctx, tx, a.id, AuditOutcome{Result: AuditAccepted, Detail: a.detail})
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE operator_audit SET result = ?, detail = ? WHERE id = ? AND result = ?`,
-		AuditAccepted, detail, auditID, AuditPending)
+		AuditAccepted, a.detail, a.id, AuditPending)
 	return err
 }
 
