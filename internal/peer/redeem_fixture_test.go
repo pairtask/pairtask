@@ -240,3 +240,13 @@ func (r *redeemFixture) checkDurableReceipt(frame []byte) ([]byte, error) {
 func redeemReceipt(frame []byte) bool {
 	return len(frame) > sha256.Size && frame[1] == peer.FrameReceipt
 }
+
+// dropRedeemReceipt is a frame filter that loses the inviter's receipt and
+// passes every other frame unchanged, a digest whose second byte looks like
+// a receipt header included.
+func dropRedeemReceipt(frame []byte) ([]byte, error) {
+	if redeemReceipt(frame) {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return frame, nil
+}
