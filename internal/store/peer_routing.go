@@ -242,12 +242,21 @@ func validDirectory(agents []string) bool {
 // dropped; an agent the message wasn't to is ErrNotRecipient.
 func (p *PeerMessages) PeerAgentRead(ctx context.Context, contact string, r messaging.AgentRead, at time.Time) error {
 	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		return peerAgentReadIn(ctx, tx, contact, r, at)
+		return peerAgentReadIn(ctx, tx, agentReadAt{contact, r, at})
 	})
 }
 
+// agentReadAt is one of the contact's agents acknowledging a message, at a
+// time.
+type agentReadAt struct {
+	contact string
+	r       messaging.AgentRead
+	at      time.Time
+}
+
 // peerAgentReadIn is PeerAgentRead inside its transaction.
-func peerAgentReadIn(ctx context.Context, tx *sql.Tx, contact string, r messaging.AgentRead, at time.Time) error {
+func peerAgentReadIn(ctx context.Context, tx *sql.Tx, a agentReadAt) error {
+	contact, r, at := a.contact, a.r, a.at
 	var to sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT to_agents FROM peer_messages WHERE contact = ? AND direction = 'out' AND message_id = ?`,
 		contact, r.ID).Scan(&to)

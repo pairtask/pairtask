@@ -85,17 +85,16 @@ func (h *Hub) contactChange(ctx context.Context, req operatorRequest) protocol.M
 	return out
 }
 
+// opRefusals say why an operation of their kind was refused, if they know.
+var opRefusals = []func(error) (*routingError, bool){reviewRefusal, nameRefusal, pauseRefusal}
+
 // contactRefusal is what the operator hears of a failed change; store
 // details stay in the log.
 func contactRefusal(err error) *routingError {
-	if rerr, ok := reviewRefusal(err); ok {
-		return rerr
-	}
-	if rerr, ok := nameRefusal(err); ok {
-		return rerr
-	}
-	if rerr, ok := pauseRefusal(err); ok {
-		return rerr
+	for _, refusal := range opRefusals {
+		if rerr, ok := refusal(err); ok {
+			return rerr
+		}
 	}
 	switch {
 	case errors.Is(err, messaging.ErrConflict):

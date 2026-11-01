@@ -20,6 +20,26 @@ func pauseServed(req protocol.Message, snapshot *protocol.PairingSnapshot, stder
 	return false
 }
 
+// opServed: an operation goes only to a broker that serves it; an older
+// one is refused here, before anything is sent.
+func opServed(req protocol.Message, snapshot *protocol.PairingSnapshot, stderr io.Writer) bool {
+	return namesServed(req, snapshot, stderr) && pauseServed(req, snapshot, stderr)
+}
+
+// writeSnapshotResult says what an operation answered with a pairing
+// snapshot changed: a name, or a pause.
+func writeSnapshotResult(w io.Writer, resp protocol.Message) {
+	if resp.PairingResult == nil {
+		return
+	}
+	switch {
+	case resp.ContactOp == protocol.ContactOpName:
+		writeContactName(w, resp.ContactKey, resp.PairingResult.Contacts)
+	case pauseOps[resp.ContactOp]:
+		writeContactPause(w, resp.ContactKey, resp.PairingResult.Contacts)
+	}
+}
+
 // writeContactPause says whether traffic with the contact is paused now.
 func writeContactPause(w io.Writer, key string, contacts []protocol.PairingContactView) {
 	for _, c := range contacts {

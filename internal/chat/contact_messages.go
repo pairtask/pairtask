@@ -297,7 +297,7 @@ func (m *Model) contactSubmit() tea.Cmd {
 		m.status = "the previous message to a workspace is still being sent"
 		return nil
 	}
-	if m.guardSend() || m.pausedSendRefused(contact) {
+	if m.contactSendHeld(contact) {
 		return nil
 	}
 	op, ok := m.contactDraft(contact)

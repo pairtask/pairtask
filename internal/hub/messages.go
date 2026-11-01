@@ -132,17 +132,6 @@ func (h *Hub) messagePins(fingerprint string) bool {
 	return err == nil
 }
 
-// admit binds a session's store to the contact's generation (#276): every
-// session, inbound or dialled, and the live link it becomes, uses only the
-// store it was admitted with.
-func (h *Hub) admit(ctx context.Context, contact string) (messaging.Store, error) {
-	s, err := h.store.PeerMessages().Admit(ctx, contact)
-	if err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
 // beginMessages claims a contact for one session; end releases it,
 // recording whether anything moved.
 func (h *Hub) beginMessages(contact string) (end func(moved bool), ok bool) {

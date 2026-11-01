@@ -61,6 +61,12 @@ func (m *Model) contactPauseResult(req pendingRequest, resp protocol.Message) te
 	return nil
 }
 
+// contactSendHeld: a send from the contact's tab waits, its draft kept,
+// for the reason the status line now gives.
+func (m *Model) contactSendHeld(contact string) bool {
+	return m.guardSend() || m.pausedSendRefused(contact)
+}
+
 // pausedSendRefused keeps the draft of a paused contact's tab and says why.
 func (m *Model) pausedSendRefused(contact string) bool {
 	c, ok := m.contact(contact)

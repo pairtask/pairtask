@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -43,6 +44,17 @@ func (h *Hub) afterPause(contact string, paused bool) {
 	}
 	h.PairingChanged()
 	h.MessagesChanged(contact)
+}
+
+// admit binds a session's store to the contact's generation: every
+// session, inbound or dialled, and the live link it becomes, uses only the
+// store it was admitted with.
+func (h *Hub) admit(ctx context.Context, contact string) (messaging.Store, error) {
+	s, err := h.store.PeerMessages().Admit(ctx, contact)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // pauseRefusal is what the operator hears of a change refused because the

@@ -96,10 +96,20 @@ func (p *PeerMessages) checkFence(ctx context.Context, tx *sql.Tx, contact strin
 	if err != nil {
 		return err
 	}
-	if !s.confirmed || s.paused || s.generation != p.fence.generation {
+	if !s.admits(p.fence.generation) {
 		return ErrFenced
 	}
 	return nil
+}
+
+// admits: a session admitted at generation may still act, the contact
+// confirmed, active and not paused or resumed since.
+func (s contactState) admits(generation int64) bool {
+	return s.active() && s.generation == generation
+}
+
+func (s contactState) active() bool {
+	return s.confirmed && !s.paused
 }
 
 // inTx runs fn in one transaction, after the fence check: nothing in fn may
@@ -183,43 +193,52 @@ func (s *Store) SetContactPaused(ctx context.Context, r ContactPause) (ContactPa
 // ApplyContactPause is SetContactPaused that also reports whether this call
 // changed the state now: a retry answers its first result, Changed
 // included, but applied is false, so nothing acts on it twice.
-func (s *Store) ApplyContactPause(ctx context.Context, r ContactPause) (out ContactPauseResult, applied bool, err error) {
-	action := "resume"
-	if r.Paused {
-		action = "pause"
-	}
-	op := operation{r.OperationID, action, r.Contact, operationFingerprint(action, r.Contact), r.AuditID, r.At}
+func (s *Store) ApplyContactPause(ctx context.Context, r ContactPause) (ContactPauseResult, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return out, false, err
+		return ContactPauseResult{}, false, err
 	}
 	defer tx.Rollback()
-	if err := requireContact(ctx, tx, contactKey(r.Contact)); err != nil {
-		return out, false, err
-	}
-	replay, err := registered(ctx, tx, op)
+	out, replay, err := pauseIn(ctx, tx, r)
 	if err != nil {
-		return out, false, err
-	}
-	detail := action + " (replayed)"
-	if replay {
-		out, err = pauseResult(ctx, tx, r.OperationID)
-	} else {
-		out, detail, err = changePause(ctx, tx, r)
-	}
-	if err != nil {
-		return out, false, err
-	}
-	if err := register(ctx, tx, op, replay); err != nil {
-		return out, false, err
-	}
-	if err := finishPauseAudit(ctx, tx, r.AuditID, detail, replay); err != nil {
 		return out, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return out, false, err
 	}
 	return out, out.Changed && !replay, nil
+}
+
+// pauseIn is ApplyContactPause inside its transaction: the first result
+// for a retry, else the change, then the registry and the audit.
+func pauseIn(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseResult, bool, error) {
+	action := pauseDetail(r.Paused, true)
+	op := operation{r.OperationID, action, r.Contact, operationFingerprint(action, r.Contact), r.AuditID, r.At}
+	if err := requireContact(ctx, tx, contactKey(r.Contact)); err != nil {
+		return ContactPauseResult{}, false, err
+	}
+	replay, err := registered(ctx, tx, op)
+	if err != nil {
+		return ContactPauseResult{}, false, err
+	}
+	out, detail, err := pauseOutcome(ctx, tx, r, replay)
+	if err != nil {
+		return out, replay, err
+	}
+	if err := register(ctx, tx, op, replay); err != nil {
+		return out, replay, err
+	}
+	return out, replay, finishPauseAudit(ctx, tx, r.AuditID, detail, replay)
+}
+
+// pauseOutcome is a retry's first result, or the change made now, with
+// what the audit records.
+func pauseOutcome(ctx context.Context, tx *sql.Tx, r ContactPause, replay bool) (ContactPauseResult, string, error) {
+	if !replay {
+		return changePause(ctx, tx, r)
+	}
+	out, err := pauseResult(ctx, tx, r.OperationID)
+	return out, pauseDetail(r.Paused, true) + " (replayed)", err
 }
 
 // finishPauseAudit finishes the operation's audit row. A retry finishes
@@ -238,32 +257,45 @@ func finishPauseAudit(ctx context.Context, tx *sql.Tx, auditID int64, detail str
 // retry; detail is what the audit records.
 func changePause(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseResult, string, error) {
 	var pausedAt string
-	var out ContactPauseResult
+	var generation int64
 	if err := tx.QueryRowContext(ctx, `SELECT paused_at, generation FROM peer_contacts WHERE identity_key = ?`, r.Contact).
-		Scan(&pausedAt, &out.Generation); err != nil {
-		return out, "", err
+		Scan(&pausedAt, &generation); err != nil {
+		return ContactPauseResult{}, "", err
 	}
-	detail := pauseDetail(r.Paused, false)
-	if (pausedAt != "") != r.Paused {
-		out.Changed, out.Generation, detail = true, out.Generation+1, pauseDetail(r.Paused, true)
-		pausedAt = ""
-		if r.Paused {
-			pausedAt = msgStamp(r.At)
-		}
+	changed := (pausedAt != "") != r.Paused
+	if changed {
+		generation++
+		pausedAt = pausedStamp(r)
 		if _, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET paused_at = ?, generation = ? WHERE identity_key = ?`,
-			pausedAt, out.Generation, r.Contact); err != nil {
-			return out, "", err
+			pausedAt, generation, r.Contact); err != nil {
+			return ContactPauseResult{}, "", err
 		}
 	}
-	if pausedAt != "" {
-		var err error
-		if out.PausedAt, err = time.Parse(time.RFC3339Nano, pausedAt); err != nil {
-			return out, "", err
-		}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO contact_pause_results (operation_id, changed, generation, paused_at) VALUES (?, ?, ?, ?)`,
+		r.OperationID, changed, generation, pausedAt); err != nil {
+		return ContactPauseResult{}, "", err
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO contact_pause_results (operation_id, changed, generation, paused_at) VALUES (?, ?, ?, ?)`,
-		r.OperationID, out.Changed, out.Generation, pausedAt)
-	return out, detail, err
+	out, err := pauseResultOf(changed, generation, pausedAt)
+	return out, pauseDetail(r.Paused, changed), err
+}
+
+// pausedStamp is paused_at as a change to r writes it: "" for a resume.
+func pausedStamp(r ContactPause) string {
+	if !r.Paused {
+		return ""
+	}
+	return msgStamp(r.At)
+}
+
+// pauseResultOf is a result from its stored columns.
+func pauseResultOf(changed bool, generation int64, pausedAt string) (ContactPauseResult, error) {
+	out := ContactPauseResult{Changed: changed, Generation: generation}
+	if pausedAt == "" {
+		return out, nil
+	}
+	var err error
+	out.PausedAt, err = time.Parse(time.RFC3339Nano, pausedAt)
+	return out, err
 }
 
 // pauseDetail is the audit's word for a pause or resume that changed the
@@ -282,15 +314,15 @@ func pauseDetail(paused, changed bool) string {
 
 // pauseResult is a retried operation's first result.
 func pauseResult(ctx context.Context, tx *sql.Tx, operationID string) (ContactPauseResult, error) {
-	var out ContactPauseResult
+	var changed bool
+	var generation int64
 	var pausedAt string
 	err := tx.QueryRowContext(ctx, `SELECT changed, generation, paused_at FROM contact_pause_results WHERE operation_id = ?`, operationID).
-		Scan(&out.Changed, &out.Generation, &pausedAt)
-	if err != nil || pausedAt == "" {
-		return out, err
+		Scan(&changed, &generation, &pausedAt)
+	if err != nil {
+		return ContactPauseResult{}, err
 	}
-	out.PausedAt, err = time.Parse(time.RFC3339Nano, pausedAt)
-	return out, err
+	return pauseResultOf(changed, generation, pausedAt)
 }
 
 // FenceHolds: a bound store's contact is still confirmed and active at the

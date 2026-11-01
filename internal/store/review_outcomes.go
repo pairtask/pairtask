@@ -135,7 +135,7 @@ func (p *PeerMessages) PendingOutcomes(ctx context.Context, contact string, max 
 func (p *PeerMessages) OutcomeAnswered(ctx context.Context, contact string, r messaging.OutcomeReply) error {
 	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
 		sent, err := queryOptional[uint64](ctx, tx, `SELECT seq FROM review_outcome_seq WHERE contact = ? AND ask_id = ?`, contact, r.AskID)
-		if err != nil || sent == nil || r.Seq > *sent {
+		if err != nil || !answersSent(sent, r) {
 			return err // an answer to no outcome of ours: ignored
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM review_outcomes_out WHERE contact = ? AND ask_id = ? AND seq <= ?`, contact, r.AskID, r.Seq); err != nil {
@@ -145,6 +145,11 @@ func (p *PeerMessages) OutcomeAnswered(ctx context.Context, contact string, r me
 		_, err = tx.ExecContext(ctx, mark, args...)
 		return err
 	})
+}
+
+// answersSent: the answer is to an outcome this side sent.
+func answersSent(sent *uint64, r messaging.OutcomeReply) bool {
+	return sent != nil && r.Seq <= *sent
 }
 
 // answerMark is how an answer marks its request's numbering: Stored moves

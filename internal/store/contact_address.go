@@ -71,13 +71,8 @@ func (s *Store) BeginContactAddress(ctx context.Context, op AddressOp) (AddressO
 	if err != nil || found {
 		return addressReplay(known, found, op, err)
 	}
-	// A paused contact doesn't move; a move begun at this generation can't
-	// commit at another (#276).
-	if err := requireActive(ctx, tx, op.Contact); err != nil {
-		return AddressOutcome{}, false, err
-	}
-	var generation int64
-	if err := tx.QueryRowContext(ctx, `SELECT generation FROM peer_contacts WHERE identity_key = ?`, op.Contact).Scan(&generation); err != nil {
+	generation, err := activeGeneration(ctx, tx, op.Contact)
+	if err != nil {
 		return AddressOutcome{}, false, err
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO operator_audit (ts, action, principal_uid, message_id, scope, result) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -95,6 +90,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, op.ID, op.Contact, op.Candidate, AddressRunning, 
 		return AddressOutcome{}, false, err
 	}
 	return AddressOutcome{State: AddressRunning}, false, tx.Commit()
+}
+
+// activeGeneration is the generation a move begins at (#276): a paused
+// contact doesn't move, and a move begun at one generation can't commit at
+// another.
+func activeGeneration(ctx context.Context, tx *sql.Tx, contact string) (int64, error) {
+	if err := requireActive(ctx, tx, contact); err != nil {
+		return 0, err
+	}
+	var generation int64
+	err := tx.QueryRowContext(ctx, `SELECT generation FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&generation)
+	return generation, err
 }
 
 // addressReplay answers a known operation: its outcome, when it is the same

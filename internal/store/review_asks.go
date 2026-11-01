@@ -323,7 +323,7 @@ func applyOutcome(ctx context.Context, tx *sql.Tx, t takenOutcome) error {
 func (p *PeerMessages) AcceptOutcome(ctx context.Context, contact string, o messaging.ReviewOutcome, at time.Time) (messaging.OutcomeAnswer, error) {
 	var answer messaging.OutcomeAnswer
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
-		answer, err = acceptOutcomeIn(ctx, tx, contact, o, at)
+		answer, err = acceptOutcomeIn(ctx, tx, inboundOutcome{contact, o, at})
 		if err == nil && !answer.Stored {
 			return errNothingStored // answered without applying it: roll back
 		}
@@ -335,9 +335,18 @@ func (p *PeerMessages) AcceptOutcome(ctx context.Context, contact string, o mess
 	return answer, err
 }
 
+// inboundOutcome is the contact's outcome of a request this side sent, as
+// it arrived.
+type inboundOutcome struct {
+	contact string
+	o       messaging.ReviewOutcome
+	at      time.Time
+}
+
 // acceptOutcomeIn is AcceptOutcome inside its transaction.
-func acceptOutcomeIn(ctx context.Context, tx *sql.Tx, contact string, o messaging.ReviewOutcome, at time.Time) (messaging.OutcomeAnswer, error) {
-	a, digest, found, err := loadAsk(ctx, tx, contact, o.AskID)
+func acceptOutcomeIn(ctx context.Context, tx *sql.Tx, in inboundOutcome) (messaging.OutcomeAnswer, error) {
+	o, at := in.o, in.at
+	a, digest, found, err := loadAsk(ctx, tx, in.contact, o.AskID)
 	if err != nil || !found {
 		return refusedOutcome(messaging.ReasonInvalid), err
 	}

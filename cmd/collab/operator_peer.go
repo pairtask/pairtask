@@ -43,7 +43,7 @@ func runOperatorPeer(ctx context.Context, args []string, stdout, stderr io.Write
 	if err != nil {
 		return 1
 	}
-	if !namesServed(req, snapshot, stderr) || !pauseServed(req, snapshot, stderr) {
+	if !opServed(req, snapshot, stderr) {
 		return 1
 	}
 	req.ContactKey = key
@@ -131,12 +131,7 @@ func writeContactResult(w io.Writer, resp protocol.Message) {
 	if s := resp.ContactSync; s != nil {
 		writeContactSync(w, *s)
 	}
-	if resp.ContactOp == protocol.ContactOpName && resp.PairingResult != nil {
-		writeContactName(w, resp.ContactKey, resp.PairingResult.Contacts)
-	}
-	if pauseOps[resp.ContactOp] && resp.PairingResult != nil {
-		writeContactPause(w, resp.ContactKey, resp.PairingResult.Contacts)
-	}
+	writeSnapshotResult(w, resp)
 }
 
 func writeContactPage(w io.Writer, p *protocol.ContactMessagePage) {
