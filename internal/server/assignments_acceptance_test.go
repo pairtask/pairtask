@@ -58,19 +58,34 @@ func TestAssignmentsAcceptanceInvalidAdmissionHasNoPersistentSideEffects(t *test
 	for _, tc := range []struct {
 		name    string
 		targets []string
+		noPeers bool
+		square  bool
 	}{
-		{"unknown", []string{"missing-one"}}, {"offline-member", []string{"alpha-offline"}},
-		{"wrong-room", []string{"beta-one"}}, {"old-version", []string{"alpha-two"}},
-		{"multiple-invalid", []string{"alpha-offline", "alpha-two", "beta-one"}},
+		{name: "unknown", targets: []string{"missing-one"}},
+		{name: "offline-member", targets: []string{"alpha-offline"}},
+		{name: "wrong-room", targets: []string{"beta-one"}},
+		{name: "old-version", targets: []string{"alpha-two"}},
+		{name: "multiple-invalid", targets: []string{"alpha-offline", "alpha-two", "beta-one"}},
+		{name: "no-peers-room", targets: []string{"alpha-one", "alpha-offline"}, noPeers: true},
+		{name: "no-peers-square", targets: []string{"alpha-offline", "missing-one"}, noPeers: true, square: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := roomFixture(t)
-			roomPeer(f, "alpha-one", 16)
-			roomPeer(f, "alpha-two", 15)
-			roomPeer(f, "beta-one", 16)
+			if !tc.noPeers {
+				roomPeer(f, "alpha-one", 16)
+				roomPeer(f, "alpha-two", 15)
+				roomPeer(f, "beta-one", 16)
+			}
 			before := assignmentCounts(f)
-			tags := append([]string{"alpha-one"}, tc.targets...)
-			response := roomOperator(f, mentionedRoomMessage("refused-"+tc.name, tags...))
+			tags := slices.Clone(tc.targets)
+			if !tc.noPeers {
+				tags = append(tags, "alpha-one")
+			}
+			request := mentionedRoomMessage("refused-"+tc.name, tags...)
+			if tc.square {
+				delete(request, "room")
+			}
+			response := roomOperator(f, request)
 			operatorEqual(t, "entire send refused", response.text("type"), "error")
 			operatorEqual(t, "tag admission refusal", response.text("code"), "invalid_mention")
 			for _, target := range tc.targets {
@@ -86,6 +101,24 @@ func TestAssignmentsAcceptanceInvalidAdmissionHasNoPersistentSideEffects(t *test
 			operatorEqual(t, "one completed rejection audit retained", auditCount, 1)
 			operatorNoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM operator_audit WHERE message_id=? AND result='pending'`, "refused-"+tc.name).Scan(&auditCount))
 			operatorEqual(t, "rejection leaves no pending audit", auditCount, 0)
+		})
+	}
+}
+
+func TestAssignmentsAcceptanceUntaggedEmptyBroadcastRetainsUnavailable(t *testing.T) {
+	for _, room := range []string{"", "alpha"} {
+		t.Run("room="+room, func(t *testing.T) {
+			f := roomFixture(t)
+			before := assignmentCounts(f)
+			request := roomMessage("untagged-empty", "*")
+			request["type"] = "operator_send"
+			if room != "" {
+				request["room"] = room
+			}
+			operatorEqual(t, "untagged empty audience keeps its error", roomOperator(f, request).text("code"), "recipient_unavailable")
+			for table, count := range before {
+				operatorEqual(t, "empty audience leaves "+table+" unchanged", f.count(table), count)
+			}
 		})
 	}
 }
