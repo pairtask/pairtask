@@ -3,6 +3,7 @@ package protocol
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -62,10 +63,10 @@ type Activity struct {
 // ValidateStatus checks a declaration's state, wait reason and text fields.
 func ValidateStatus(s AgentStatus) error {
 	if !oneOf(s.State, StatusStates) {
-		return fmt.Errorf("state must be one of %v", StatusStates)
+		return errors.New("state must be one of: " + strings.Join(StatusStates, ", "))
 	}
 	if !oneOf(s.WaitingOn, StatusWaiting) {
-		return fmt.Errorf("waiting_on must be empty or one of %v", StatusWaiting[1:])
+		return errors.New("waiting_on must be empty or one of: " + strings.Join(StatusWaiting[1:], ", "))
 	}
 	for name, text := range map[string]string{"task": s.Task, "step": s.Step, "ref": s.Ref} {
 		if err := statusText(text); err != nil {

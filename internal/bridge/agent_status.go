@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -23,6 +24,33 @@ type StatusArgs struct {
 	Ref       string `json:"ref,omitempty" jsonschema:"A reference such as a PR, head or issue, at most 120 bytes"`
 }
 
+// statusSchema is StatusArgs' schema with its choices published: state and
+// waiting_on as enums from the protocol, so a client sees what is valid
+// before it asks, and the free text bounded as the broker bounds it. The
+// broker still checks every value, in bytes.
+func statusSchema() *jsonschema.Schema {
+	schema, err := jsonschema.For[StatusArgs](nil)
+	if err != nil {
+		panic(err) // a fixed type; it can't fail at run time
+	}
+	schema.Properties["state"].Enum = choices(protocol.StatusStates)
+	schema.Properties["waiting_on"].Enum = choices(protocol.StatusWaiting)
+	for _, name := range []string{"task", "step", "ref"} {
+		limit := protocol.StatusFieldBytes
+		schema.Properties[name].MaxLength = &limit
+	}
+	schema.Required = []string{"state"}
+	return schema
+}
+
+func choices(values []string) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
+}
+
 // StatusResult is what both status tools return.
 type StatusResult struct {
 	AgentStatus *protocol.AgentStatus `json:"agent_status"`
@@ -34,7 +62,7 @@ type statusClient interface {
 }
 
 func addStatusTools(s *mcp.Server, c statusClient) {
-	mcp.AddTool(s, &mcp.Tool{Name: "status", Description: "Declare what you are doing so the operator sees it without reading your terminal: call at task start, when the step changes, when you block or wait, and when done. Not a heartbeat, not a message, not an acknowledgment or approval. Returns the broker-confirmed record; replaces the previous one."},
+	mcp.AddTool(s, &mcp.Tool{Name: "status", InputSchema: statusSchema(), Description: "Declare what you are doing so the operator sees it without reading your terminal: call at task start, when the step changes, when you block or wait, and when done. Not a heartbeat, not a message, not an acknowledgment or approval. Returns the broker-confirmed record; replaces the previous one."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args StatusArgs) (*mcp.CallToolResult, StatusResult, error) {
 			st, err := c.SetStatus(ctx, protocol.AgentStatus{State: args.State, Task: args.Task, Step: args.Step, WaitingOn: args.WaitingOn, Ref: args.Ref})
 			if err != nil {
