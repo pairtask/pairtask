@@ -9,15 +9,17 @@ const (
 	TypeWorkspacesResult = "workspaces_result" // broker → agent: those workspaces
 )
 
-// WorkspaceView is a paired workspace the calling agent may write to: its
-// name here and identity key, either of which a msg's workspace takes,
+// WorkspaceView is a paired workspace the calling agent may write to: the
+// name it gives itself, what this side's operator calls it (#274) and its
+// identity key, any of which a msg's workspace takes,
 // whether a live link is open, and the agents it says it shares there, a
 // hint for addressing, never a permission.
 type WorkspaceView struct {
-	Name   string   `json:"name"`
-	Key    string   `json:"key"`
-	Live   bool     `json:"live"`
-	Agents []string `json:"agents,omitempty"`
+	Name      string   `json:"name"`
+	LocalName string   `json:"local_name,omitempty"`
+	Key       string   `json:"key"`
+	Live      bool     `json:"live"`
+	Agents    []string `json:"agents,omitempty"`
 }
 
 // Review requests an agent sent paired workspaces (#235).

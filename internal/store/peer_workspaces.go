@@ -12,7 +12,8 @@ import (
 )
 
 // An agent writes to a paired workspace it names (#222): by the contact's
-// identity key, or its name here when exactly one confirmed contact has it.
+// identity key, or a name when exactly one confirmed contact has it: what
+// this side's operator calls it, or what it calls itself (#274).
 // Only an agent shared with that contact may; the message is kept in
 // history and queued in one transaction, as a reply is.
 
@@ -24,8 +25,13 @@ var (
 )
 
 // ResolveWorkspace is the confirmed contact a workspace names: its full
-// identity key, or the one contact with that name. A prefix never matches.
+// identity key, which wins over any name, or the one contact with that name,
+// counted once though both its names match. Empty never matches, and
+// neither does a prefix.
 func (s *Store) ResolveWorkspace(ctx context.Context, ref string) (string, error) {
+	if ref == "" {
+		return "", ErrNoWorkspace
+	}
 	contacts, err := s.confirmedContacts(ctx)
 	if err != nil {
 		return "", err
@@ -35,7 +41,7 @@ func (s *Store) ResolveWorkspace(ctx context.Context, ref string) (string, error
 		if c.IdentityKey == ref {
 			return ref, nil
 		}
-		if c.Name == ref {
+		if c.LocalName == ref || c.Name == ref {
 			named = append(named, c.IdentityKey)
 		}
 	}
