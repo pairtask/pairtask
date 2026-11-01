@@ -31,6 +31,7 @@ const (
 	RetainedTextBytes = 64 << 20
 	IDBytes           = 128
 	ImportBacklog     = 256 // messages for this side's agents not yet in their inboxes, per contact
+	RefusedNotices    = 32  // review requests refused as not shared and not yet read here, per contact
 	AgentIDBytes      = 128
 )
 

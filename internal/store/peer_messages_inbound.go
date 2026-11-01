@@ -30,9 +30,9 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 		return answer, err
 	}
 	if err := tx.Commit(); err != nil {
-		return messaging.Answer{}, err // never Stored unless it committed
+		return messaging.Answer{}, err // never Stored or Recorded unless it committed
 	}
-	return stored, nil
+	return answer, nil
 }
 
 // acceptIn is Accept inside its transaction; inserted reports a new row to
@@ -46,9 +46,20 @@ func acceptIn(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool
 		return answer, false, err
 	}
 	answer, err := decideInbound(ctx, tx, contact, m)
-	if err != nil || !answer.Stored {
-		return answer, false, err
+	switch {
+	case err != nil:
+		return messaging.Answer{}, false, err
+	case recordable(m, answer):
+		return recordRefusal(ctx, tx, r)
+	case !answer.Stored:
+		return answer, false, nil
 	}
+	return insertAccepted(ctx, tx, r)
+}
+
+// insertAccepted stores an accepted message and stages it for this side's
+// agents when it is theirs.
+func insertAccepted(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool, error) {
 	if err := insertMessage(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err // never Stored when the insert failed
 	}
@@ -153,14 +164,18 @@ func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message
 	return refused(messaging.ReasonConflict), true, nil
 }
 
-// sameMessage answers a message whose ID is held: Stored again when it is
-// the very same message, a conflict otherwise.
+// sameMessage answers a message whose ID is held: the very same message is
+// answered as before, Stored again or refused as recorded; anything else
+// is a conflict.
 func sameMessage(row storedRow, m messaging.Message) messaging.Answer {
 	hash := m.Hash()
-	if string(row.hash) == string(hash[:]) {
-		return stored
+	switch {
+	case string(row.hash) != string(hash[:]):
+		return refused(messaging.ReasonConflict)
+	case row.State == messaging.StateRefused:
+		return messaging.Answer{Refusal: row.Refusal}
 	}
-	return refused(messaging.ReasonConflict)
+	return stored
 }
 
 // belowFloor: the sequence is older than anything this side still
@@ -222,18 +237,38 @@ func markReadIn(ctx context.Context, tx *sql.Tx, r readSet) (int, error) {
 	contact, ids, at := r.contact, r.ids, r.at
 	marked := 0
 	for _, id := range ids {
-		res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'read', read_at = ?1, receipt = 'pending', receipt_at = ?1
-WHERE contact = ?2 AND direction = 'in' AND message_id = ?3 AND state = 'received'`, msgStamp(at), contact, id)
+		n, err := markOneRead(ctx, tx, readOne{contact, id, at})
 		if err != nil {
 			return 0, err
 		}
-		n, _ := res.RowsAffected()
-		marked += int(n)
+		marked += n
 	}
 	if err := dropReceiptsOver(ctx, tx, contact); err != nil {
 		return 0, err
 	}
 	return marked, nil
+}
+
+// readOne is one inbound message shown to the operator at a time.
+type readOne struct {
+	contact, id string
+	at          time.Time
+}
+
+// markOneRead marks a received message read with a receipt for the peer,
+// or a refusal recorded here read once, with none: the peer already knows.
+func markOneRead(ctx context.Context, tx *sql.Tx, r readOne) (int, error) {
+	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET
+    state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?1,
+    receipt = CASE WHEN state = 'received' THEN 'pending' ELSE receipt END,
+    receipt_at = CASE WHEN state = 'received' THEN ?1 ELSE receipt_at END
+WHERE contact = ?2 AND direction = 'in' AND message_id = ?3
+    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, msgStamp(r.at), r.contact, r.id)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // dropReceiptsOver drops the oldest pending receipts beyond the bound.

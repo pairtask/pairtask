@@ -138,7 +138,10 @@ the other workspace's `⇄` tab, decide what they may ask of each agent:
 ```
 
 `--formal` with `--publish` also allows a formal approval or change request.
-A request asks for at most what you allow. A request waiting for you shows in
+A request asks for at most what you allow. A request for an agent you haven't
+allowed is refused, and the `⇄` tab shows it, so you know it was asked for.
+Allowing the agent afterwards only lets them ask again: they have to send a
+new request. A request waiting for you shows in
 the `⇄` tab: `/pair approve ID` or `/pair decline ID`. `/pair status` also
 counts them per workspace under **Waiting for you**, so you see them without
 opening each tab. Undecided ones expire after 7 days.

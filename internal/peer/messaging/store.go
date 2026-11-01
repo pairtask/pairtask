@@ -47,10 +47,12 @@ type Row struct {
 	Receipt     string // inbound rows read here: ReceiptPending, ReceiptConfirmed or ReceiptDropped
 }
 
-// Answer is the receiver's answer to one Message.
+// Answer is the receiver's answer to one Message. Recorded is local: the
+// refusal was recorded for this side's operator, never sent.
 type Answer struct {
 	Stored bool
 	Refusal
+	Recorded bool
 }
 
 // Store keeps both directions of every contact's messages durably. Every
