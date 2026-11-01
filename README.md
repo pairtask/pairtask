@@ -135,9 +135,44 @@ More: [host commands](docs/host-commands.md) ·
 
 ## Connect two machines
 
-Pair your workspace with one on another machine over your LAN or a tailnet,
-then message each other, let agents talk across and ask each other for
-reviews: [step-by-step guide](docs/pairing.md).
+Pair your workspace with one on another machine over your LAN or a tailnet.
+Once paired, the two operators can message each other, the agents you share
+can talk across, and each side can ask the other's agents for reviews. The
+[pairing guide](docs/pairing.md) has every step with its checks and what to
+do when something doesn't connect.
+
+On both machines, update and turn pairing on:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
+pairtask pairing on --host-port 7445
+```
+
+Then pair in `pairtask chat`. A invites, B joins:
+
+| On | Type | What it does |
+| --- | --- | --- |
+| A | `/pair open` | Opens an invitation. Send its code to B over a trusted channel; it works once. |
+| B | `/pair redeem A_IP:7445 CODE my-laptop` | Joins A. The last word is the name A will see for B. |
+| B | `/pair status` | Shows B's key. Read its first characters out to A. |
+| A | `/pair accept` | Pick the request whose key matches what B read out. |
+| B | `/pair settle` | Finishes the pairing on both sides. |
+
+Each paired workspace gets its own `⇄` tab. In it:
+
+| Type | What it does |
+| --- | --- |
+| a message | Goes to the other operator. |
+| `@codex-1 a message` | Goes to one of their agents, shown as `codex-1@WORKSPACE`. |
+| `/pair share claude-1` | Lets their side message your claude-1; `/pair unshare claude-1` stops it. |
+| `/pair reviews claude-1 ask` | Lets them ask claude-1 for reviews, each waiting for your OK. |
+| `/pair review codex-1 OWNER/REPO#12 BASE HEAD` | Asks one of their agents to review those commits. |
+| `/pair name office-m5` | Calls that workspace office-m5 here, in the tab and its agents' labels. |
+| `/pair address HOST:PORT` | Reaches it again after it moved to another address. |
+
+`/pair status` lists every paired workspace, how it stands and what is
+waiting for you. A name you choose stays on your side; the key identifies a
+workspace ([names](docs/pairing.md#names)).
 
 ## How it fits together
 
