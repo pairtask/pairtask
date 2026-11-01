@@ -152,15 +152,8 @@ network.
 
 [Diagram source](docs/assets/architecture.py) · [Control runtime](docs/secured-runtime.md)
 
-<details>
-<summary>macOS and Linux layouts</summary>
-
-| macOS: Colima hosts Incus | Linux: Incus runs directly |
-| --- | --- |
-| ![macOS sandbox](docs/assets/sandbox-macos.svg) | ![Linux sandbox](docs/assets/sandbox-linux.svg) |
-| [Diagram source](docs/assets/sandbox-macos.puml) | [Diagram source](docs/assets/sandbox-linux.puml) |
-
-</details>
+On macOS, a Colima VM runs the Linux host for Incus; on Linux, Incus runs
+directly. The containers are the same.
 
 ## Security
 

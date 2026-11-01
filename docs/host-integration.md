@@ -6,7 +6,7 @@ For the Pi coding agent, see the [Pi guide](pi.md).
 
 ![Human terminals, collaboration adapters and the broker Unix socket.](assets/host-integration.svg)
 
-[Diagram source](assets/host-integration.puml)
+[Diagram source](assets/host_integration.py)
 
 Managed Codex and Claude channels submit messages automatically while their
 processes run. Ordinary [MCP](mcp.md) requires inbox checks; it does not wake an
