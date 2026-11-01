@@ -73,10 +73,10 @@ def generate():
     s.text(1227, 622, "LAN or tailnet", "label", "middle")
 
     # Footnotes in place of a legend.
-    s.legend(40, 838, [("you", "you, through a terminal"), ("message", "messages through the broker"),
+    s.legend(40, 832, [("you", "you, through a terminal"), ("message", "messages through the broker"),
                        ("pairing", "pairing between workspaces"), ("storage", "storage"), ("socket", "shared socket")])
-    s.text(40, 872, "Pairing runs TLS end to end between the brokers, pinned to each workspace's identity key;", "small")
-    s.text(40, 896, "the relay forwards sealed connections and sees no content.", "small")
+    s.text(40, 862, "Pairing runs TLS end to end between the brokers, pinned to each workspace's identity key;", "small")
+    s.text(40, 884, "the relay forwards sealed connections and sees no content.", "small")
 
     s.save(OUT)
 
