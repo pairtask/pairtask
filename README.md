@@ -149,7 +149,7 @@ network.
 
 ![You start agents (Codex, Claude Code, Pi) in workspace and open the operator chat in secured. Agents and the read-only dashboard reach the broker through one shared Unix socket; only the broker uses SQLite, and secured has no network. With pairing on, the connector relays a paired workspace on another machine to the broker over TLS pinned to each identity key.](docs/assets/architecture.svg)
 
-[Diagram source](docs/assets/architecture.puml) · [Control runtime](docs/secured-runtime.md)
+[Diagram source](docs/assets/architecture.py) · [Control runtime](docs/secured-runtime.md)
 
 <details>
 <summary>macOS and Linux layouts</summary>
