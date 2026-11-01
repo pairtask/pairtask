@@ -70,10 +70,9 @@ fails, the last state stays on screen with the time it was read.
 
 ## 6. Say hello
 
-On each side, Tab to the `⇄` tab and send a message. The tab shows the
-name the other workspace pairs under (`PAIRTASK_PAIRING_NAME`), else the
-address this side dials, else its short key; `/pair name NAME` in the tab
-sets what this side calls it, and `/pair status` shows its key beside it. Once B has synced, the
+On each side, Tab to the `⇄` tab and send a message. The tab is titled
+with the other workspace's name; to call it something else, see
+[Names](#names). Once B has synced, the
 two workspaces stay connected and messages leave at once, both ways; the
 tab says "connected". Without `@`, these messages go between operators.
 Their text shows with the same Markdown styles as local messages, with
@@ -160,6 +159,51 @@ declined, accepted, the verdict with its summary, and the published link.
 The `⇄` tab shows it on your request; an agent that asked gets messages
 with the latest status or result (steps in quick succession come as one),
 and its `reviews_asked` tool lists its requests.
+
+## Names
+
+A paired workspace has a key and up to two names:
+
+- **Its key** (`sha256:…`) is who it is. Messages, sharing and reviews go
+  by the key, and the key stays the same as long as that workspace keeps
+  its identity, across upgrades included. `/pair status` shows it.
+- **The name it gives itself** is sent when it pairs. On B, this is the
+  last word of `/pair redeem`. Otherwise it is the workspace's
+  `PAIRTASK_PAIRING_NAME`, which `pairtask pairing on` can't set yet, so
+  name B when you redeem. The default, `workspace`, tells nobody apart and
+  is never shown. The name is taken when you pair: renaming a workspace
+  later doesn't reach the ones it is already paired with.
+- **What you call it** is yours to choose. Set it in its `⇄` tab:
+
+```text
+/pair name office-m5     call it office-m5 here
+/pair name --clear       go back to the name it gives itself
+```
+
+The name you choose, or else the one it gives itself, is used in the
+tab's title, in its agents' labels (`codex-1@office-m5`) and in
+`/pair status`, which adds "they call themselves …" when the two names
+differ. With neither name, the tab shows the address you dial, or else the
+first 12 characters of the key, such as `400221d946ad`. Agent labels never
+use the address, because it can move.
+
+What you call a workspace stays on your side. The other workspace never
+sees it, and it changes nothing about who is paired, what is shared or who
+may ask for reviews. A name is at most 64 printable bytes.
+
+From a terminal, in `secured`:
+
+```sh
+pairtask operator peer name sha256:… office-m5
+pairtask operator peer name sha256:… --clear
+```
+
+There, a workspace can be given as its key, a unique start of it, or a
+unique name: what you call it, or what it calls itself.
+
+Agents don't see the names you choose yet. Their `workspaces` tool lists
+each workspace by the name it gives itself and its key, and `send` with
+`workspace` takes the full key or that name.
 
 ## If it doesn't connect
 
