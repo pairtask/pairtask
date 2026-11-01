@@ -177,7 +177,10 @@ func reviewHead(v protocol.ContactMessageView) string {
 		return ""
 	}
 	head := " · review " + safe(a.Repository) + "#" + safe(a.Change) + " pinned " + safe(shortSHA(a.Base)) + ".." + safe(shortSHA(a.Head))
-	if v.ReviewState != "" {
+	switch {
+	case refusedHere(v):
+		head += " · refused: " + refusalWords(v.ReviewReason)
+	case v.ReviewState != "":
 		head += " · " + safe(v.ReviewState)
 	}
 	if v.ReviewState == "awaiting" {
