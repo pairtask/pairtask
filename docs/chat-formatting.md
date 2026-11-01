@@ -1,7 +1,8 @@
 # Formatting messages in operator chat
 
 Operator chat displays a small Markdown subset in messages from both you and
-agents. Type the source shown below; the chat styles it for reading while
+agents, and in messages from a paired workspace's `⇄` tab. There, a diagram
+stays plain code: it gets no label, no `/diagram` and no drawing. Type the source shown below; the chat styles it for reading while
 delivering your original text to the agent. Use a list or table when it makes a
 request easier to follow.
 
