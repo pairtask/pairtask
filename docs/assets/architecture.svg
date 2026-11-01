@@ -1,9 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1600 900" role="img" aria-labelledby="title">
 <title id="title">pairtask</title><defs>
-<marker id="you" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#008080"/></marker>
-<marker id="message" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#58A824"/></marker>
-<marker id="pairing" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#8A2BE2"/></marker>
-<marker id="storage" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#4B0082"/></marker>
+<marker id="you" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#008080"/></marker>
+<marker id="you-start" markerWidth="12" markerHeight="12" refX="2" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M12 0 L0 6 L12 12 Z" fill="#008080"/></marker>
+<marker id="message" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#58A824"/></marker>
+<marker id="message-start" markerWidth="12" markerHeight="12" refX="2" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M12 0 L0 6 L12 12 Z" fill="#58A824"/></marker>
+<marker id="pairing" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#8A2BE2"/></marker>
+<marker id="pairing-start" markerWidth="12" markerHeight="12" refX="2" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M12 0 L0 6 L12 12 Z" fill="#8A2BE2"/></marker>
+<marker id="storage" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0 L12 6 L0 12 Z" fill="#4B0082"/></marker>
+<marker id="storage-start" markerWidth="12" markerHeight="12" refX="2" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M12 0 L0 6 L12 12 Z" fill="#4B0082"/></marker>
 </defs><style>text{font-family:Arial,Helvetica,sans-serif;fill:#20252B}.title{font-size:38px;font-weight:700}.heading{font-size:27px;font-weight:700}.body{font-size:23px}.small{font-size:19px;fill:#4D555E}.label{font-size:21px;paint-order:stroke;stroke:white;stroke-width:7px;stroke-linejoin:round}</style>
 <rect width="1600" height="900" fill="white"/>
 <text x="40" y="58" class="title" text-anchor="start">pairtask</text>
@@ -64,9 +68,9 @@
 <text x="695" y="534" class="label" text-anchor="start">operator socket</text>
 <path d="M675 640 V670" fill="none" stroke="#4B0082" stroke-width="3.5" marker-end="url(#storage)"/>
 <text x="695" y="662" class="label" text-anchor="start">read / write</text>
-<path d="M840 592 H915" fill="none" stroke="#8A2BE2" stroke-width="3.5" marker-end="url(#pairing)" marker-start="url(#pairing)"/>
+<path d="M840 592 H915" fill="none" stroke="#8A2BE2" stroke-width="3.5" marker-end="url(#pairing)" marker-start="url(#pairing-start)"/>
 <rect x="822" y="584" width="16" height="16" fill="#F4B6D2" stroke="#888888" stroke-width="2"/>
-<path d="M1145 592 H1310" fill="none" stroke="#8A2BE2" stroke-width="3.5" marker-end="url(#pairing)" marker-start="url(#pairing)"/>
+<path d="M1145 592 H1310" fill="none" stroke="#8A2BE2" stroke-width="3.5" marker-end="url(#pairing)" marker-start="url(#pairing-start)"/>
 <text x="1227" y="577" class="label" text-anchor="middle">TCP 7445</text>
 <text x="1227" y="622" class="label" text-anchor="middle">LAN or tailnet</text>
 <text x="40" y="832" class="small" text-anchor="start">Green: messages through the broker · teal: you · violet: pairing · indigo: storage.</text>

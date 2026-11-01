@@ -47,12 +47,15 @@ class Svg:
             'viewBox="0 0 1600 900" role="img" aria-labelledby="title">'
         )
         self.parts.append('<title id="title">' + escape(title) + "</title><defs>")
+        # One marker per flow for the end, and a mirrored one for the start
+        # of a two-way arrow: plain orient="auto" renders the same everywhere.
         for kind, color in FLOWS.items():
-            self.parts.append(
-                '<marker id="' + kind + '" markerWidth="12" markerHeight="12" refX="10" refY="6" '
-                'orient="auto-start-reverse" markerUnits="userSpaceOnUse">'
-                '<path d="M0 0 L12 6 L0 12 Z" fill="' + color + '"/></marker>'
-            )
+            for suffix, ref, tip in (("", 10, "M0 0 L12 6 L0 12 Z"), ("-start", 2, "M12 0 L0 6 L12 12 Z")):
+                self.parts.append(
+                    '<marker id="%s%s" markerWidth="12" markerHeight="12" refX="%s" refY="6" '
+                    'orient="auto" markerUnits="userSpaceOnUse"><path d="%s" fill="%s"/></marker>'
+                    % (kind, suffix, ref, tip, color)
+                )
         self.parts.append("</defs><style>" + STYLE + "</style>")
         self.parts.append('<rect width="1600" height="900" fill="white"/>')
         self.text(40, 58, title, "title")
@@ -102,7 +105,7 @@ class Svg:
         )
 
     def arrow(self, path, kind, both=False):
-        start = ' marker-start="url(#%s)"' % kind if both else ""
+        start = ' marker-start="url(#%s-start)"' % kind if both else ""
         self.parts.append(
             '<path d="%s" fill="none" stroke="%s" stroke-width="3.5" marker-end="url(#%s)"%s/>'
             % (path, FLOWS[kind], kind, start)
