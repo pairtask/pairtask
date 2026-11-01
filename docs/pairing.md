@@ -258,11 +258,18 @@ To stop traffic with one paired workspace for a while, open its `⇄` tab:
 
 Pausing keeps the workspace, what you share with it and the history. While
 it is paused, this side neither dials it nor answers it, and they see their
-attempts refused. A message already on its way when you pause may still
-finish arriving; nothing is recorded or sent after that. Their review requests and messages already received wait,
-and so does anything you write, which the tab keeps as a draft. Running
-reviews here still finish; their results leave once you resume. Messages
-already queued keep their usual expiry. From a terminal, in `secured`:
+attempts refused.
+
+- A message already on its way when you pause may still finish arriving.
+  No new incoming traffic is accepted while paused.
+- Received messages and review requests that haven't reached your agents
+  yet wait until you resume. Work already delivered to agents may go on.
+- Anything you write waits too: the tab keeps it as a draft.
+- Reviews already running here still finish, and their results leave once
+  you resume.
+- Messages already queued keep their usual expiry.
+
+From a terminal, in `secured`:
 
 ```sh
 pairtask operator peer pause sha256:…
