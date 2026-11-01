@@ -170,8 +170,8 @@ A paired workspace has a key and up to two names:
 - **The name it gives itself** is sent when it pairs. On B, this is the
   last word of `/pair redeem`. Otherwise it is the workspace's
   `PAIRTASK_PAIRING_NAME`, which `pairtask pairing on` can't set yet, so
-  name B when you redeem. The default, `workspace`, tells nobody apart and
-  is never shown. The name is taken when you pair: renaming a workspace
+  name B when you redeem. The default, `workspace`, tells nobody apart, so
+  chat doesn't show it as a name. The name is taken when you pair: renaming a workspace
   later doesn't reach the ones it is already paired with.
 - **What you call it** is yours to choose. Set it in its `⇄` tab:
 
