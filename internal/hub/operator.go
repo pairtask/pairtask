@@ -174,9 +174,6 @@ func (h *Hub) admitOperator(ctx context.Context, clients map[string]*Client, sen
 	if rerr := h.requireRoom(ctx, send.msg.Room); rerr != nil {
 		return protocol.Message{}, rerr
 	}
-	if rerr := h.requireMentionedMembers(ctx, send.msg); rerr != nil {
-		return protocol.Message{}, rerr
-	}
 	return h.commitOperator(ctx, clients, send)
 }
 
@@ -198,7 +195,7 @@ func (h *Hub) commitOperator(ctx context.Context, clients map[string]*Client, se
 	out := operatorFrame(send, h.seq+1)
 	recipients, excluded, rerr := h.operatorRecipients(ctx, clients, out, send.scope)
 	if rerr == nil {
-		rerr = checkAssignees(clients, recipients, assignees(send))
+		rerr = h.checkAssigned(ctx, clients, recipients, send)
 	}
 	if rerr == nil {
 		rerr = checkFrameSize(recipientFrame(out, "", nil))

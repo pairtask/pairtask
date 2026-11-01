@@ -13,7 +13,7 @@ import (
 // ClaimArgs names one task of an operator message.
 type ClaimArgs struct {
 	OperatorMessageID string `json:"operator_message_id" jsonschema:"ID of the operator message the task belongs to"`
-	Task              string `json:"task" jsonschema:"Stable task key: 1 to 64 of a-z, 0-9 and -; use reply before answering an operator message sent to everyone"`
+	Task              string `json:"task" jsonschema:"Stable task key: 1 to 64 of a-z, 0-9 and -; use reply before answering an operator message sent to everyone that assigned you nothing"`
 	Topic             string `json:"topic,omitempty" jsonschema:"Short human label for the task, at most 120 bytes"`
 	Role              string `json:"role,omitempty" jsonschema:"owner (default) or reviewer; a reviewer claims the role itself"`
 }
@@ -39,11 +39,12 @@ const claimsMeaning = " A claim coordinates who does what among agents addressed
 
 // assignmentsMeaning says what read_claims' assignments are (#278).
 const assignmentsMeaning = " An assignment is the operator's tag giving an agent the message's reply: assigned, released or done. " +
-	"A message whose frame carries assignment is yours to answer, to '*' in its conversation; you hold reply already. " +
-	"release_claim on task reply releases your assignment when you can't take it, and finish_claim marks it done once answered."
+	"A message whose frame carries assignment with state assigned is yours to answer, to '*' in its conversation; you hold reply already. " +
+	"release_claim on task reply releases your assignment when you can't take it, and finish_claim marks it done once answered. " +
+	"A replayed assignment that is released or done asks nothing more: don't answer it again or reclaim it."
 
 func addClaimTools(s *mcp.Server, c claimClient) {
-	mcp.AddTool(s, &mcp.Tool{Name: "claim", Description: "Claim one task of an operator message, as owner (default) or as reviewer, before doing it. Before answering an operator message sent to everyone, claim task reply; if the broker answers claim_conflict, another agent owns it: don't answer, unless to object. The first claim wins; repeating your own claim is harmless." + claimsMeaning},
+	mcp.AddTool(s, &mcp.Tool{Name: "claim", Description: "Claim one task of an operator message, as owner (default) or as reviewer, before doing it. Before answering an operator message sent to everyone that assigned you nothing, claim task reply; if the broker answers claim_conflict, another agent owns it: don't answer, unless to object. A message whose assignment is yours and assigned needs no claim: answer it; one released or done is settled: neither answer nor reclaim it. The first claim wins; repeating your own claim is harmless." + claimsMeaning},
 		claimTool(c, protocol.TypeClaimSet))
 	mcp.AddTool(s, &mcp.Tool{Name: "release_claim", Description: "Free your claim so another agent can take the task. Only the holder can release; disconnecting never releases." + claimsMeaning},
 		claimTool(c, protocol.TypeClaimRelease))

@@ -28,12 +28,39 @@ func assignees(send operatorSend) []string {
 	return send.msg.Mentions
 }
 
+// checkAssigned refuses the send's tags that can't be assigned, naming
+// every one: outside its room, not connected, or too old to read it.
+func (h *Hub) checkAssigned(ctx context.Context, clients map[string]*Client, recipients []protocol.Recipient, send operatorSend) *routingError {
+	tagged := assignees(send)
+	if len(tagged) == 0 {
+		return nil
+	}
+	var members []string
+	if send.msg.Room != "" {
+		var err error
+		if members, err = h.store.RoomMembers(ctx, send.msg.Room); err != nil {
+			return &routingError{protocol.ErrInternal, "rooms unavailable"}
+		}
+	}
+	return checkAssignees(assigneeSeat{clients, recipients, send.msg.Room, members}, tagged)
+}
+
+// assigneeSeat is what decides whether a tagged agent can be assigned: the
+// connected clients, the frozen recipients, and a room's members ("" room
+// for everyone).
+type assigneeSeat struct {
+	clients    map[string]*Client
+	recipients []protocol.Recipient
+	room       string
+	members    []string
+}
+
 // checkAssignees refuses a tag naming an agent the message wouldn't reach,
 // or one that can't read its assignment, naming every such tag.
-func checkAssignees(clients map[string]*Client, recipients []protocol.Recipient, tagged []string) *routingError {
+func checkAssignees(seat assigneeSeat, tagged []string) *routingError {
 	var problems []string
 	for _, id := range tagged {
-		if problem := assigneeProblem(clients, recipients, id); problem != "" {
+		if problem := seat.problem(id); problem != "" {
 			problems = append(problems, "@"+id+" "+problem)
 		}
 	}
@@ -43,13 +70,16 @@ func checkAssignees(clients map[string]*Client, recipients []protocol.Recipient,
 	return &routingError{protocol.ErrInvalidMention, strings.Join(problems, "; ")}
 }
 
-// assigneeProblem is why a tagged agent can't be assigned, "" when it can.
-func assigneeProblem(clients map[string]*Client, recipients []protocol.Recipient, id string) string {
-	i := slices.IndexFunc(recipients, func(r protocol.Recipient) bool { return r.AgentID == id })
+// problem is why a tagged agent can't be assigned, "" when it can.
+func (s assigneeSeat) problem(id string) string {
+	if s.room != "" && !slices.Contains(s.members, id) {
+		return "isn't in #" + s.room
+	}
+	i := slices.IndexFunc(s.recipients, func(r protocol.Recipient) bool { return r.AgentID == id })
 	if i < 0 {
 		return "isn't connected; it would get nothing"
 	}
-	if c := sessionOwner(clients, recipients[i]); c == nil || c.ProtocolVersion < protocol.AssignVersion {
+	if c := sessionOwner(s.clients, s.recipients[i]); c == nil || c.ProtocolVersion < protocol.AssignVersion {
 		return "needs a newer pairtask to be assigned"
 	}
 	return ""

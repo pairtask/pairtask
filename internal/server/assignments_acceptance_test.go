@@ -61,7 +61,7 @@ func TestAssignmentsAcceptanceInvalidAdmissionHasNoPersistentSideEffects(t *test
 	}{
 		{"unknown", []string{"missing-one"}}, {"offline-member", []string{"alpha-offline"}},
 		{"wrong-room", []string{"beta-one"}}, {"old-version", []string{"alpha-two"}},
-		{"multiple-invalid", []string{"alpha-offline", "alpha-two"}},
+		{"multiple-invalid", []string{"alpha-offline", "alpha-two", "beta-one"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := roomFixture(t)

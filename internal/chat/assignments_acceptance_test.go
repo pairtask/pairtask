@@ -38,6 +38,7 @@ func assignmentChatHarness(t *testing.T, supported bool) *chatHarness {
 	h.reply(h.take(protocol.TypeOperatorSnapshot), protocol.Message{Type: protocol.TypeOperatorSnapshot, Snapshot: &protocol.OperatorSnapshot{
 		Watermark: protocol.Watermark{Epoch: "epoch", Revision: 1},
 		Agents:    []protocol.AgentPresence{{AgentID: "alice", ProtocolVersion: 16}, {AgentID: "bob", ProtocolVersion: 16}}, AgentsTotal: 2,
+		Rooms: []protocol.RoomInfo{{ID: "alpha", Members: []string{"alice", "bob"}, MembersTotal: 2}}, RoomsTotal: 1,
 	}})
 	inbox, history := h.take(protocol.TypeOperatorReceive), h.take(protocol.TypeOperatorHistory)
 	h.reply(inbox, chatInbox())
@@ -69,17 +70,35 @@ func TestAssignmentsChatAcceptanceSquareTagIsPublicWithCanonicalMentions(t *test
 }
 
 func TestAssignmentsChatAcceptanceOldBrokerRefusesTagAndPreservesDraft(t *testing.T) {
-	h := assignmentChatHarness(t, false)
-	draft := "@alice answer in public"
-	v2Type(h, draft)
-	h.input(chatKey(tea.KeyEnter, 0))
-	chatEqual(t, "unsupported tag has no outgoing intent", h.m.State().Intent, nil)
-	chatEqual(t, "unsupported tag sends nothing", h.m.State().InFlight, 0)
-	chatEqual(t, "unsupported draft retained", h.m.State().Draft, draft)
-	notice := strings.ToLower(h.m.State().Hint + " " + h.m.State().Status)
-	for _, want := range []string{"upgrade", "public"} {
-		v3Contains(t, notice, want)
+	for _, scope := range []string{"Square", "room"} {
+		t.Run(scope, func(t *testing.T) {
+			h := assignmentChatHarness(t, false)
+			if scope == "room" {
+				roomChatOpen(h, "alpha")
+			}
+			draft := "@alice answer in public"
+			v2Type(h, draft)
+			h.input(chatKey(tea.KeyEnter, 0))
+			chatEqual(t, "unsupported tag has no outgoing intent", h.m.State().Intent, nil)
+			chatEqual(t, "unsupported tag sends nothing", h.m.State().InFlight, 0)
+			chatEqual(t, "unsupported draft retained", h.m.State().Draft, draft)
+			notice := strings.ToLower(h.m.State().Hint + " " + h.m.State().Status)
+			for _, want := range []string{"upgrade", "public"} {
+				v3Contains(t, notice, want)
+			}
+		})
 	}
+}
+
+func TestAssignmentsChatAcceptanceOldBrokerKeepsGroupAttention(t *testing.T) {
+	h := assignmentChatHarness(t, false)
+	v2Command(h, "/chat @alice @bob")
+	v2Type(h, "@alice group attention")
+	sent := v2Send(h)
+	if !slices.Equal(sent.Group, []string{"alice", "bob"}) || !slices.Equal(sent.Mentions, []string{"alice"}) {
+		t.Fatalf("legacy group attention changed: %+v", sent)
+	}
+	chatEqual(t, "legacy group never becomes public", sent.To, "")
 }
 
 func TestAssignmentsChatAcceptanceExplicitAgentTabRemainsPrivate(t *testing.T) {
