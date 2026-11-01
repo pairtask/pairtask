@@ -30,6 +30,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import sqlite3
@@ -395,16 +396,25 @@ def both_ways(deployment, host, connector_ip, first):
     return [code_out, code_in]
 
 
+def contains_pairing_code(text, codes):
+    """Whether any code is in text: grouped anywhere, bare only as a whole
+    run of digits, since a JSON log's nanosecond timestamps hold six-digit
+    windows by chance."""
+    for code in codes:
+        if "-" in code and code in text:
+            return True
+        if re.search(r"(?<!\d)" + re.escape(code.replace("-", "")) + r"(?!\d)", text):
+            return True
+    return False
+
+
 def codes_absent(deployment, host, codes):
     """Neither code, grouped or bare, is in any journal or the host's log."""
-    needles = set()
-    for code in codes:
-        needles.update({code, code.replace("-", "")})
     for role in ("secured", "connector"):
         journal = deployment.output(role, "journalctl", "--no-pager", "-o", "cat")
-        require(not any(n in journal for n in needles), f"a pairing code reached {role}'s journal")
+        require(not contains_pairing_code(journal, codes), f"a pairing code reached {role}'s journal")
     log = (host.workdir / "host-broker.log").read_text()
-    require(not any(n in log for n in needles), "a pairing code reached the host fixture's log")
+    require(not contains_pairing_code(log, codes), "a pairing code reached the host fixture's log")
     print("PASS: no pairing code in either journal or the host's log.", flush=True)
 
 
