@@ -48,9 +48,11 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 	if t == nil || !m.contactShowsMessages(c) {
 		return l
 	}
-	for _, v := range t.ordered() {
+	thread := t.ordered()
+	for _, v := range thread {
+		l.lines = append(l.lines, "") // a separator, which shows no message
 		from := len(l.lines)
-		l.lines = append(l.lines, m.messageLines(c, v)...)
+		l.lines = append(l.lines, m.messageLines(c, v, thread)...)
 		if v.Direction == "in" {
 			l.spans = append(l.spans, contactSpan{id: v.ID, from: from, upto: len(l.lines), unread: unreadHere(v)})
 		}
@@ -140,17 +142,13 @@ func dialedAt(c protocol.PairingContactView) string {
 	return " " + safe(c.Destination)
 }
 
-// messageLines is one message: who and its state, then its text laid out
-// like a local message's, controls escaped. A contact's text only styles:
-// a diagram in it gets no /diagram command and is never drawn.
-func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView) []string {
-	at := v.CreatedAt.Local().Format("15:04")
-	route := routeHead(v, workspaceTag(c))
-	head := agentStyle(c.IdentityKey).Render("  ⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(route+" · "+at)
-	if v.Direction == "out" {
-		head = titleStyle.Render("  you →") + mutedStyle.Render(route+" · "+at+" · "+m.outboundState(v))
-	}
-	lines := []string{head}
+// messageLines is one message in a local message's layout (#275): its head,
+// the message it answers, its text, then its status lines, controls
+// escaped. A contact's text only styles: a diagram in it gets no /diagram
+// command and is never drawn.
+func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView, thread []protocol.ContactMessageView) []string {
+	s := sidesOf(c)
+	lines := append(m.messageHead(s, v), m.replyRows(s, v, thread)...)
 	text := v.Text
 	switch {
 	case refusedHere(v):
@@ -158,7 +156,9 @@ func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMe
 	case text == "":
 		text = "(text no longer kept)"
 	}
-	return append(lines, m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, len(body))...)
+	// formatBody indents the text as a body already, as in local chat.
+	lines = append(lines, m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, 0)...)
+	return append(lines, m.messageStatusRows(s, v)...)
 }
 
 func (m *Model) outboundState(v protocol.ContactMessageView) string {

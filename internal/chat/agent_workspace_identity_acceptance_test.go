@@ -38,7 +38,7 @@ func TestAgentWorkspaceIdentityAcceptanceSidesAreExplicit(t *testing.T) {
 			view := ansi.Strip(h.m.View().Content)
 			v3Contains(t, view, tc.want)
 			if len(tc.acks) > 0 {
-				v3Contains(t, view, "acknowledged by codex-1@Office")
+				v3Contains(t, view, "· codex-1@Office: acknowledged")
 			}
 			chatEqual(t, "display sends nothing", h.m.State().InFlight, 0)
 		})

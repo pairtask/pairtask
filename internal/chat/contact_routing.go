@@ -152,26 +152,3 @@ func theirAgents(agents []string, ws workspaceLabel) string {
 	}
 	return strings.Join(names, ", ")
 }
-
-// routeHead is a message's agents for its first line: who sent it there,
-// whom it is to, and which of them acknowledged it. Received, its sender
-// is theirs and its recipients ours; sent, the reverse, and only their
-// agents acknowledge.
-func routeHead(v protocol.ContactMessageView, ws workspaceLabel) string {
-	from, to := agentNames([]string{v.From}, ""), theirAgents(v.To, ws)
-	if v.Direction == "in" {
-		from, to = theirAgents([]string{v.From}, ws), agentNames(v.To, "")
-	}
-	head := ""
-	if v.From != "" {
-		head += " · " + from
-	}
-	if len(v.To) > 0 {
-		head += " → " + to
-	}
-	if len(v.AgentAcks) > 0 {
-		head += " · acknowledged by " + theirAgents(v.AgentAcks, ws)
-	}
-	head += reviewHead(v)
-	return head
-}
