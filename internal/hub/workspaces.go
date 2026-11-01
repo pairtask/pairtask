@@ -33,7 +33,7 @@ func (h *Hub) workspaces(ctx context.Context, in Inbound) protocol.Message {
 		if err != nil {
 			return statusError(msg.RequestID, protocol.ErrInternal, "paired workspaces unavailable")
 		}
-		views = append(views, protocol.WorkspaceView{Name: c.Name, Key: c.IdentityKey, Live: h.Live(c.IdentityKey), Agents: agents})
+		views = append(views, protocol.WorkspaceView{Name: c.Name, LocalName: c.LocalName, Key: c.IdentityKey, Live: h.Live(c.IdentityKey), Agents: agents})
 	}
 	return protocol.Message{Type: protocol.TypeWorkspacesResult, RequestID: msg.RequestID, Workspaces: views}
 }

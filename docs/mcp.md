@@ -92,8 +92,8 @@ and [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
 
 | Tool | Arguments | Behavior |
 |------|-----------|----------|
-| `send` | `to`, `text`, optional `message_id`, `in_reply_to`, `non_durable`, `workspace` | Writes a direct message or broadcast (`to: "*"`); returns its ID for tracking. With `workspace`, `to` is an agent of that [paired workspace](pairing.md#7-let-agents-talk-across) or `operator` for its operator. |
-| `workspaces` | none | Lists the paired workspaces this agent is shared with, the only ones it may write to: name, key, whether connected, and the agents each says it shares. |
+| `send` | `to`, `text`, optional `message_id`, `in_reply_to`, `non_durable`, `workspace` | Writes a direct message or broadcast (`to: "*"`); returns its ID for tracking. With `workspace` (its full key, or a name exactly one paired workspace has: its `local_name` or the name it gives itself), `to` is an agent of that [paired workspace](pairing.md#7-let-agents-talk-across) or `operator` for its operator. |
+| `workspaces` | none | Lists the paired workspaces this agent is shared with, the only ones it may write to: name it gives itself, `local_name` (what this side's operator calls it, when set), key, whether connected, and the agents each says it shares. |
 | `reviews_asked` | none | Lists the review requests this agent sent paired workspaces, newest first, with where each stands, its verdict and published link. |
 | `request_review` | `workspace`, `to`, `target`, `base`, `head`, optional `scope`, `publish`, `formal`, `message_id` | Asks an agent of a paired workspace to review a pull request pinned to `base` and `head`; that workspace's operator decides whether it may, and what is published. |
 | `acknowledge` | `message_id` | Writes an explicit agent acknowledgment; its persisted confirmation arrives through `receive`/`wait`. |
