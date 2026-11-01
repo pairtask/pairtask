@@ -62,11 +62,15 @@ def json_object(path):
     for key in SWITCHES:
         if key in data and not isinstance(data[key], bool):
             raise ValueError(f"{path.name}: {key} must be true or false")
-    if PORT in data:
-        valid_port(data[PORT], f"{path.name}: {PORT}")
-    if NAME in data:
-        valid_name(data[NAME], f"{path.name}: {NAME}")
+    check_values(path, data)
     return data
+
+
+def check_values(path, data):
+    """The saved port and name, when present, as on and the broker take them."""
+    for key, check in ((PORT, valid_port), (NAME, valid_name)):
+        if key in data:
+            check(data[key], f"{path.name}: {key}")
 
 
 def valid_port(value, label=PORT):

@@ -59,16 +59,22 @@ def release_allowed(args):
     return args.action in ROLLOUTS and not args.image_dir
 
 
+def pairing_on_flags(args):
+    """The pairing-on flags given to another action."""
+    if args.action == "pairing-on":
+        return []
+    given = {"--host-port": args.host_port, "--name": args.name}
+    return [flag for flag, value in given.items() if value is not None]
+
+
 def check_combinations(parser, args):
     """Flags that only some actions take."""
     if args.action != "plan" and any((args.replace, args.destroy)):
         parser.error("--replace and --destroy are plan options; apply uses the saved plan")
     if args.release and not release_allowed(args):
         parser.error("--release is for rollout and cannot be combined with --image-dir")
-    if args.host_port is not None and args.action != "pairing-on":
-        parser.error("--host-port is for pairing-on")
-    if args.name is not None and args.action != "pairing-on":
-        parser.error("--name is for pairing-on")
+    for flag in pairing_on_flags(args):
+        parser.error(f"{flag} is for pairing-on")
 
 
 def main():
