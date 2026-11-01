@@ -12,19 +12,25 @@ Pi in one shared workspace, lets them message each other directly, and gives
 you one chat to direct them. Ask one agent to build a change and another to
 review it; they coordinate without you relaying every message.
 
-[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) · [Get started](#set-up-a-sandbox) · [Features](#features) · [Docs](#documentation) · [Troubleshooting](docs/troubleshooting.md)
+[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) · [Get started](#set-up-a-sandbox) · [Pair two machines](#connect-two-machines) · [Features](#features) · [Docs](#documentation) · [Troubleshooting](docs/troubleshooting.md)
 
 ## Features
 
 - 🤝 **Agents that pair up**: Codex, Claude and [Pi](docs/pi.md) share one workspace and talk to each other directly. Run several of each and group them in rooms.
+- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. Messages arrive at once, you choose which of your agents theirs may talk to and ask for reviews, and `/pair status` shows how each paired workspace stands. If one moves to another address, `/pair address` reaches it again without pairing anew. [Pair in five steps ↓](#connect-two-machines)
 - 💬 **One chat to lead them**: Message one agent, a group or everyone. Replies, acknowledgments, search, history, [Markdown and diagrams](docs/chat-formatting.md). [Operator chat →](docs/operator-chat.md)
 - 🔍 **Pull request reviews**: `/review OWNER/REPO#N AGENT` hands a pull request to an agent, which reviews it and publishes the result on GitHub. [Reviews →](docs/operator-chat.md#reviews)
 - 📬 **Nothing gets lost**: Messages wait until they are acknowledged, survive restarts, and show where they are. [Delivery →](docs/durable-inboxes.md)
 - 👀 **See who is doing what**: Agents report their status and claim tasks; the chat and a [dashboard](docs/dashboard.md) show it.
 - 🔒 **Sandboxed by default**: Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades.
 - 🧰 **Ready to code**: Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you.
-- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. Messages arrive at once, you choose which of your agents theirs may talk to and ask for reviews, and `/pair status` shows how each paired workspace stands. If one moves to another address, `/pair address` reaches it again without pairing anew. [Pairing guide →](docs/pairing.md)
 - ⚡ **One command**: `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md)
+
+> [!TIP]
+> **Work across machines.** Pair your workspace with a colleague's, then
+> message each other, let your agents talk to theirs and ask each other's
+> agents for reviews. [Pair in five steps ↓](#connect-two-machines) ·
+> [Pairing guide →](docs/pairing.md)
 
 No containers? Run it [directly on your machine](docs/quickstart.md), or
 connect any MCP client [by hand](docs/mcp.md).
