@@ -201,9 +201,12 @@ pairtask operator peer name sha256:… --clear
 There, a workspace can be given as its key, a unique start of it, or a
 unique name: what you call it, or what it calls itself.
 
-Agents don't see the names you choose yet. Their `workspaces` tool lists
-each workspace by the name it gives itself and its key, and `send` with
-`workspace` takes the full key or that name.
+Agents see the name you choose too. Their `workspaces` tool lists it as
+`local_name`, next to the name the workspace gives itself and its key. `send`
+with `workspace` takes the full key or either name, as long as exactly one
+workspace has it; a key prefix doesn't count. A message an agent already
+sent stays with the workspace it went to, even if you later give that name
+to another one.
 
 ## If it doesn't connect
 
