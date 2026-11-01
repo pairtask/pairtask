@@ -16,6 +16,20 @@ variable "pairing_host_port" {
   }
 }
 
+variable "pairing_name" {
+  description = "With pairing_route (#277): the name this workspace pairs under, shown to workspaces it pairs with afterwards; \"\" for none. pairtask pairing on --name sets it and checks its limit, 64 bytes of UTF-8; this check is a first one, by characters, and the secured setup checks it again."
+  type        = string
+  default     = ""
+  nullable    = false
+  validation {
+    # Characters, not bytes: Tofu has no byte length. No control, format,
+    # private or unassigned character, no line or paragraph separator, and no
+    # space but the ASCII one, as Go's unicode.IsPrint.
+    condition     = length(var.pairing_name) <= 64 && !can(regex("[\\p{C}\\p{Zl}\\p{Zp}\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{202F}\\x{205F}\\x{3000}]", var.pairing_name))
+    error_message = "pairing_name must be at most 64 printable characters (and 64 bytes); the secured setup refuses anything else."
+  }
+}
+
 # Enabling, changing or removing the route changes secured's mounts, which
 # Incus must not add to or remove from a running instance: refuse unless
 # secured is stopped (or not yet created).

@@ -9,7 +9,11 @@ import tarfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_PATHS = ["go.mod", "go.sum", "cmd", "internal"]
+# Every app revision has these; testdata, fixtures Go tests share with
+# scripts (#277), only newer ones.
+REQUIRED_APP_PATHS = ["go.mod", "go.sum", "cmd", "internal"]
+OPTIONAL_APP_PATHS = ["testdata"]
+APP_PATHS = REQUIRED_APP_PATHS + OPTIONAL_APP_PATHS
 RECIPE_PATHS = ["infra/image/" + name for name in (
     "install.sh", "install-build-go.py", "install-layout.py", "layout_schema.py", "layout-v2.json", "sshd_config", "pairtask-broker.service",
     "pairtask-secured-setup.service", "pairtask-supervised-codex", "claude-mcp.json",
@@ -58,8 +62,19 @@ def working_tree(root):
     return {name.decode(): repository_file(root, name.decode()) for name in names if name}
 
 
+def committed_paths(root, revision):
+    """The app paths to archive: every required one, which the revision must
+    have, and an optional one only where it has it."""
+    names = git("ls-tree", "--name-only", "-z", revision, "--", *APP_PATHS, root=root).split(b"\0")
+    present = {name.decode() for name in names if name}
+    missing = [path for path in REQUIRED_APP_PATHS if path not in present]
+    if missing:
+        raise ValueError(f"{revision} is not an app revision: it lacks {', '.join(missing)}")
+    return REQUIRED_APP_PATHS + [path for path in OPTIONAL_APP_PATHS if path in present]
+
+
 def committed_tree(root, revision):
-    data = git("archive", "--format=tar", revision, *APP_PATHS, root=root)
+    data = git("archive", "--format=tar", revision, *committed_paths(root, revision), root=root)
     files = {}
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
         for member in archive:

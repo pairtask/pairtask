@@ -11,7 +11,8 @@ from sandbox_operator_config import ROOT, image_selection, state_project
 from sandbox_operator_state import deployment_lock
 from sandbox_operator_recipe import refresh_recipe
 from sandbox_operator_workflow import initialize_variables, require_recovered, run_locked_operation
-from sandbox_pairing import pairing_change, pairing_connector, report, write_change
+import sandbox_pairing
+from sandbox_pairing import configured, pairing_change, pairing_connector, report, saved_name, write_change
 from sandbox_releases import download_release
 from sandbox_tools_install import (Container, Release, shipped_tools, RETRY_COMMAND, has_tool_store, install,
                                    load_bundles,
@@ -170,9 +171,7 @@ def rollout(args, directory, server):
         selected.action, selected.replace, selected.destroy = "plan", True, False
         selected.automatic = True
         try:
-            run_locked_operation(selected, directory, server)
-            selected.action, selected.replace = "apply", False
-            run_locked_operation(selected, directory, server)
+            plan_and_apply(selected, directory, server, name_barrier(args, directory))
         except BaseException:
             print("Rollout incomplete. Inspect the error before restarting containers; host state and data are retained.", flush=True)
             raise
@@ -187,16 +186,35 @@ def rollout(args, directory, server):
             report(pairing, directory, args.project)
 
 
+def name_barrier(args, directory):
+    """The pairing name's barrier while the route is on, else None (#277)."""
+    if not configured(directory):
+        return None
+    return sandbox_pairing.NameBarrier(args.project, args.remote, saved_name(directory))
+
+
+def plan_and_apply(selected, directory, server, barrier):
+    """Plans and applies with secured stopped; with the route on, the old
+    name's marker goes first and the new one is released only after it."""
+    if barrier is not None:
+        barrier.invalidate()
+    run_locked_operation(selected, directory, server)
+    selected.action, selected.replace = "apply", False
+    run_locked_operation(selected, directory, server)
+    if barrier is not None:
+        barrier.release()
+
+
 def checked_pairing(args, directory):
     """The requested pairing route (None keeps the setting), refused before
     anything is written or stopped."""
     pairing = getattr(args, "pairing", None)
     if pairing is not None:
-        pairing_change(directory, pairing, getattr(args, "host_port", None))
+        pairing_change(directory, pairing, getattr(args, "host_port", None), getattr(args, "name", None))
     return pairing
 
 
 def record_pairing(args, directory, pairing):
     # Computed again from the files as they are now: initialization may have written them.
     if pairing is not None:
-        write_change(pairing_change(directory, pairing, getattr(args, "host_port", None)))
+        write_change(pairing_change(directory, pairing, getattr(args, "host_port", None), getattr(args, "name", None)))

@@ -44,6 +44,7 @@ def arguments():
     parser.add_argument("--tools", nargs="*", default=["cs-mcp", "playwright", "docker", "pi"], metavar="TOOL",
                         help="Optional tools to enable (default: all); required tools are always installed")
     parser.add_argument("--host-port", type=int, help="pairing-on: publish the relay on this port of every host address (0: none; default: the saved port, else 7445)")
+    parser.add_argument("--name", help="pairing-on: the name this workspace pairs under, at most 64 bytes; \"\" clears it; default: the saved name")
     changes = parser.add_mutually_exclusive_group()
     changes.add_argument("--replace", action="store_true", help="Plan replacement of the dev container")
     changes.add_argument("--destroy", action="store_true", help="Explicitly plan deletion; volume guards must be removed first")
@@ -58,14 +59,22 @@ def release_allowed(args):
     return args.action in ROLLOUTS and not args.image_dir
 
 
+def pairing_on_flags(args):
+    """The pairing-on flags given to another action."""
+    if args.action == "pairing-on":
+        return []
+    given = {"--host-port": args.host_port, "--name": args.name}
+    return [flag for flag, value in given.items() if value is not None]
+
+
 def check_combinations(parser, args):
     """Flags that only some actions take."""
     if args.action != "plan" and any((args.replace, args.destroy)):
         parser.error("--replace and --destroy are plan options; apply uses the saved plan")
     if args.release and not release_allowed(args):
         parser.error("--release is for rollout and cannot be combined with --image-dir")
-    if args.host_port is not None and args.action != "pairing-on":
-        parser.error("--host-port is for pairing-on")
+    for flag in pairing_on_flags(args):
+        parser.error(f"{flag} is for pairing-on")
 
 
 def main():
