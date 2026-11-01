@@ -78,7 +78,8 @@ func (s *Store) AgentWorkspaces(ctx context.Context, agent string) ([]peer.Conta
 	return out, nil
 }
 
-// confirmedContacts are the contacts both sides confirmed.
+// confirmedContacts are the contacts both sides confirmed that this side
+// hasn't paused: those its agents may write to.
 func (s *Store) confirmedContacts(ctx context.Context) ([]peer.Contact, error) {
 	contacts, err := s.Contacts(ctx)
 	if err != nil {
@@ -90,7 +91,7 @@ func (s *Store) confirmedContacts(ctx context.Context) ([]peer.Contact, error) {
 		if err != nil {
 			return nil, err
 		}
-		if ok {
+		if ok && c.PausedAt.IsZero() { // a paused one takes no agent's message (#276)
 			out = append(out, c)
 		}
 	}

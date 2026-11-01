@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS peer_message_floors (
 const messagePageLimit = 64
 
 // PeerMessages is the store's messages between paired workspaces.
-type PeerMessages struct{ db *sql.DB }
+type PeerMessages struct {
+	db    *sql.DB
+	fence *linkFence // nil for the root store; set by Admit (#276)
+}
 
 var _ messaging.Store = (*PeerMessages)(nil)
 
@@ -93,6 +96,9 @@ func textHash(text string) []byte {
 // Queue stores an outbound message with the contact's next sequence. A
 // message from an agent needs the agent shared with the contact.
 func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messaging.Row, error) {
+	if err := p.localOnly(); err != nil {
+		return messaging.Row{}, err
+	}
 	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo, Review: o.Review}
 	if !validOutgoing(m) {
 		return messaging.Row{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
@@ -145,6 +151,10 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	row, found, err := messageRow(ctx, tx, key)
 	if err != nil || found {
 		return replayed(row, o, err)
+	}
+	// A paused contact takes nothing new; a retry above still answers (#276).
+	if err := requireActive(ctx, tx, key.contact); err != nil {
+		return messaging.Row{}, err
 	}
 	if err := senderShared(ctx, tx, key.contact, o.m.From); err != nil {
 		return messaging.Row{}, err
@@ -343,23 +353,19 @@ func carriedAt(version byte) string {
 func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
 	carried := carriedAt(l.Version)
 	limit := sessionBudget.clamp(budget{l.Count, l.Bytes})
-	tx, err := p.db.BeginTx(ctx, nil)
+	var out []messaging.Row
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		if err := expireQueued(ctx, tx, contact, now); err != nil {
+			return err
+		}
+		if err := holdForUpgrade(ctx, tx, contact, carried); err != nil {
+			return err
+		}
+		rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
+		out = within(rows, budget{limit.count + 1, limit.bytes})
+		return err
+	})
 	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if err := expireQueued(ctx, tx, contact, now); err != nil {
-		return nil, err
-	}
-	if err := holdForUpgrade(ctx, tx, contact, carried); err != nil {
-		return nil, err
-	}
-	rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
-	if err != nil {
-		return nil, err
-	}
-	out := within(rows, budget{limit.count + 1, limit.bytes})
-	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -397,14 +403,21 @@ WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ? 
 // Delivered records the peer's Stored: a queued or expired message is
 // delivered; a read one stays read, and the time is kept once set.
 func (p *PeerMessages) Delivered(ctx context.Context, contact, id string, at time.Time) error {
-	_, err := p.db.ExecContext(ctx, `UPDATE peer_messages SET
+	return p.exec(ctx, contact, `UPDATE peer_messages SET
     delivered_at = COALESCE(delivered_at, ?),
     state = CASE WHEN state IN ('queued', 'expired') THEN 'delivered' ELSE state END,
     class = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE class END,
     reason = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE reason END
 WHERE contact = ? AND direction = 'out' AND message_id = ? AND state IN ('queued', 'expired', 'delivered', 'read')`,
 		msgStamp(at), contact, id)
-	return err
+}
+
+// exec runs one statement for contact in a fenced transaction.
+func (p *PeerMessages) exec(ctx context.Context, contact, query string, args ...any) error {
+	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, query, args...)
+		return err
+	})
 }
 
 // Refused records a refusal of a queued message: a terminal one ends it, a
@@ -418,38 +431,35 @@ func (p *PeerMessages) Refused(ctx context.Context, contact string, refused mess
 	if r.Class == messaging.Terminal {
 		state = messaging.StateRefused
 	}
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = ?, class = ?, reason = ?
+	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = ?, class = ?, reason = ?
 WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`, state, r.Class, r.Reason, contact, id); err != nil {
-		return err
-	}
-	if state == messaging.StateRefused {
-		// A review request refused for good ends there; a held one waits.
-		if err := settleAsks(ctx, tx, askEnd{"refused", r.Reason, time.Now()}, oneAsk(contact, id)); err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		if state != messaging.StateRefused {
+			return nil
+		}
+		// A review request refused for good ends there; a held one waits.
+		return settleAsks(ctx, tx, askEnd{"refused", r.Reason, time.Now()}, oneAsk(contact, id))
+	})
 }
 
 // PeerRead records the peer's Read of one of this side's messages to it; a
 // read message was stored, so it is delivered too. Refused messages and
 // anything else are left alone.
 func (p *PeerMessages) PeerRead(ctx context.Context, contact, id string, at time.Time) error {
-	_, err := p.db.ExecContext(ctx, `UPDATE peer_messages SET state = 'read',
+	return p.exec(ctx, contact, `UPDATE peer_messages SET state = 'read',
     read_at = COALESCE(read_at, ?1), delivered_at = COALESCE(delivered_at, ?1), class = '', reason = ''
 WHERE contact = ?2 AND direction = 'out' AND message_id = ?3 AND state IN ('queued', 'expired', 'delivered', 'read')`,
 		msgStamp(at), contact, id)
-	return err
 }
 
 // Page is a contact's messages, both directions, newest first, before a
 // cursor (0 or less for the newest).
 func (p *PeerMessages) Page(ctx context.Context, contact string, before int64, limit int) ([]messaging.Row, bool, error) {
+	if err := p.localOnly(); err != nil {
+		return nil, false, err
+	}
 	limit = max(1, min(limit, messagePageLimit))
 	if before <= 0 {
 		before = math.MaxInt64

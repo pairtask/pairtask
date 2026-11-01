@@ -71,6 +71,10 @@ func (s *Store) BeginContactAddress(ctx context.Context, op AddressOp) (AddressO
 	if err != nil || found {
 		return addressReplay(known, found, op, err)
 	}
+	generation, err := activeGeneration(ctx, tx, op.Contact)
+	if err != nil {
+		return AddressOutcome{}, false, err
+	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO operator_audit (ts, action, principal_uid, message_id, scope, result) VALUES (?, ?, ?, ?, ?, ?)`,
 		time.Now().UTC(), "contact address", op.PrincipalUID, op.ID, op.Contact, AuditPending)
 	if err != nil {
@@ -80,12 +84,24 @@ func (s *Store) BeginContactAddress(ctx context.Context, op AddressOp) (AddressO
 	if err != nil {
 		return AddressOutcome{}, false, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO contact_address_ops (message_id, contact, candidate, state, audit_id, at) VALUES (?, ?, ?, ?, ?, ?)`,
-		op.ID, op.Contact, op.Candidate, AddressRunning, auditID, stamp(op.At))
+	_, err = tx.ExecContext(ctx, `INSERT INTO contact_address_ops (message_id, contact, candidate, state, audit_id, at, generation)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, op.ID, op.Contact, op.Candidate, AddressRunning, auditID, stamp(op.At), generation)
 	if err != nil {
 		return AddressOutcome{}, false, err
 	}
 	return AddressOutcome{State: AddressRunning}, false, tx.Commit()
+}
+
+// activeGeneration is the generation a move begins at (#276): a paused
+// contact doesn't move, and a move begun at one generation can't commit at
+// another.
+func activeGeneration(ctx context.Context, tx *sql.Tx, contact string) (int64, error) {
+	if err := requireActive(ctx, tx, contact); err != nil {
+		return 0, err
+	}
+	var generation int64
+	err := tx.QueryRowContext(ctx, `SELECT generation FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&generation)
+	return generation, err
 }
 
 // addressReplay answers a known operation: its outcome, when it is the same
@@ -105,6 +121,7 @@ type addressOp struct {
 	id, contact, candidate string
 	outcome                AddressOutcome
 	auditID                int64
+	generation             int64 // the contact's when the operation began (#276)
 }
 
 // running: the operation is still waiting for its outcome.
@@ -112,8 +129,8 @@ func (op addressOp) running() bool { return op.outcome.State == AddressRunning }
 
 func getAddressOp(ctx context.Context, q rowQuerier, id string) (addressOp, bool, error) {
 	op := addressOp{id: id}
-	err := q.QueryRowContext(ctx, `SELECT contact, candidate, state, reason, audit_id FROM contact_address_ops WHERE message_id = ?`, id).
-		Scan(&op.contact, &op.candidate, &op.outcome.State, &op.outcome.Reason, &op.auditID)
+	err := q.QueryRowContext(ctx, `SELECT contact, candidate, state, reason, audit_id, generation FROM contact_address_ops WHERE message_id = ?`, id).
+		Scan(&op.contact, &op.candidate, &op.outcome.State, &op.outcome.Reason, &op.auditID, &op.generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return addressOp{}, false, nil
 	}
@@ -150,7 +167,7 @@ func (s *Store) ChangeContactAddress(ctx context.Context, a ContactAddress) (pee
 	if err != nil || !found {
 		return peer.Contact{}, errors.Join(err, notFound(found))
 	}
-	if refusal := addressRefusal(c, a); refusal != nil {
+	if refusal := addressRefusal(c, a, op.generation); refusal != nil {
 		if err := settleRefused(ctx, tx, op, refusal); err != nil {
 			return peer.Contact{}, err
 		}
@@ -180,7 +197,10 @@ func runningOp(ctx context.Context, tx *sql.Tx, a ContactAddress) (addressOp, er
 }
 
 // addressRefusal is why the contact can't move now, if it can't.
-func addressRefusal(c peer.Contact, a ContactAddress) error {
+func addressRefusal(c peer.Contact, a ContactAddress, generation int64) error {
+	if c.Generation != generation || !c.PausedAt.IsZero() {
+		return ErrFenced // paused or resumed since the move began (#276)
+	}
 	if c.Destination != a.From || !c.DestinationAt.Equal(a.FromAt) {
 		return peer.ErrDestinationChanged
 	}

@@ -24,7 +24,7 @@ import (
 const (
 	kindPairing  = "pairing"
 	panelPairing = "pairing"
-	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|*]"
+	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|* | pause | resume]"
 )
 
 // pairingView is the last pairing snapshot, its code removed.
@@ -46,6 +46,7 @@ var pairVerbArgs = map[string][]int{
 	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1}, protocol.PairingOpStatus: {1, 2},
 	protocol.PairingOpCancel: {1, 2}, protocol.PairingOpAccept: {2}, protocol.PairingOpReject: {2},
 	protocol.PairingOpRedeem: {3, 4}, protocol.PairingOpSettle: {1, 2}, pairAddress: {2},
+	pairPause: {1}, pairResume: {1},
 }
 
 // pairWords are a /pair command's words, the verb first.
@@ -114,6 +115,8 @@ var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
 	pairReview:               (*Model).contactReviewCommand,
 	pairApprove:              (*Model).contactReviewCommand,
 	pairDecline:              (*Model).contactReviewCommand,
+	pairPause:                (*Model).pauseCommand,
+	pairResume:               (*Model).pauseCommand,
 }
 
 // pairCommand is /pair: list by default, or one operation. Accept and reject

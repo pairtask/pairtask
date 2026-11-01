@@ -79,6 +79,8 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 		lines = append(lines, "  this broker doesn't carry contact messages; upgrade it")
 	case !c.Confirmed:
 		lines = append(lines, "  "+contactConfirming)
+	case pausedHere(c):
+		lines = append(lines, warnStyle.Render("  "+pausedNote))
 	default:
 		lines = append(lines, mutedStyle.Render("  "+m.syncLine(c.IdentityKey)))
 		if share := sharingLine(m.contacts.threads[c.IdentityKey]); share != "" && m.routingAvailable() {

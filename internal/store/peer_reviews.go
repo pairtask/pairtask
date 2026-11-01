@@ -275,12 +275,7 @@ func (s *Store) DecideRemoteReview(ctx context.Context, d RemoteDecision) (strin
 		return "", err
 	}
 	defer tx.Rollback()
-	var state, staged string
-	err = tx.QueryRowContext(ctx, `SELECT state, staged_at FROM remote_imports WHERE contact = ? AND remote_id = ? AND kind = 'review'`,
-		contact, remoteID).Scan(&state, &staged)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNoImport
-	}
+	state, staged, err := stagedReview(ctx, tx, contact, remoteID)
 	if err != nil {
 		return "", err
 	}
@@ -299,6 +294,21 @@ func (s *Store) DecideRemoteReview(ctx context.Context, d RemoteDecision) (strin
 		}
 	}
 	return next, tx.Commit()
+}
+
+// stagedReview is a contact's staged review request: its state and when it
+// was staged. A paused contact's requests wait for a decision until it
+// resumes (#276).
+func stagedReview(ctx context.Context, tx *sql.Tx, contact, remoteID string) (state, staged string, err error) {
+	if err := requireActive(ctx, tx, contact); err != nil {
+		return "", "", err
+	}
+	err = tx.QueryRowContext(ctx, `SELECT state, staged_at FROM remote_imports WHERE contact = ? AND remote_id = ? AND kind = 'review'`,
+		contact, remoteID).Scan(&state, &staged)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNoImport
+	}
+	return state, staged, err
 }
 
 // decision is a waiting request's next state and why: expired before any

@@ -123,12 +123,13 @@ func (h *Hub) announceMessages() {
 	}
 }
 
-// messagePins admits a message session only from a confirmed contact.
+// messagePins admits a message session only from a confirmed contact this
+// side hasn't paused (#276).
 func (h *Hub) messagePins(fingerprint string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), PairingGrace)
 	defer cancel()
-	ok, err := h.store.PeerMessages().Confirmed(ctx, fingerprint)
-	return err == nil && ok
+	_, err := h.admit(ctx, fingerprint)
+	return err == nil
 }
 
 // beginMessages claims a contact for one session; end releases it,

@@ -128,7 +128,7 @@ func (h *Hub) importHeld(err error) {
 
 // retriedImports hold an import back for a later pass: a full inbox, IDs
 // all taken, or the open reviews at their bound.
-var retriedImports = []error{store.ErrInboxFull, store.ErrLocalIDsTaken, review.ErrFull}
+var retriedImports = []error{store.ErrInboxFull, store.ErrLocalIDsTaken, review.ErrFull, store.ErrPaused}
 
 // deliverImport hands an imported message to its recipients connected now.
 func (h *Hub) deliverImport(clients map[string]*Client, result store.ImportResult) {

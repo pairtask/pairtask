@@ -68,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -110,6 +110,11 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"peer_contacts", "local_name", "TEXT NOT NULL DEFAULT ''"},
 	// A contact's destination moves with a newer redemption.
 	{"peer_contacts", "destination_at", "TEXT NOT NULL DEFAULT ''"}, // "" before any
+	// Pausing a contact (#276): when, "" while active, and the generation
+	// sessions are admitted under, moved on by each pause and resume.
+	{"peer_contacts", "paused_at", "TEXT NOT NULL DEFAULT ''"},
+	{"peer_contacts", "generation", "INTEGER NOT NULL DEFAULT 0"},
+	{"contact_address_ops", "generation", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func migrate(db *sql.DB) error {

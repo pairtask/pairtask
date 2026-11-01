@@ -249,6 +249,35 @@ moves it back.
 
 ## Change or stop
 
+To stop traffic with one paired workspace for a while, open its `⇄` tab:
+
+```text
+/pair pause      block new traffic with it, both ways
+/pair resume     let queued messages flow again
+```
+
+Pausing keeps the workspace, what you share with it and the history. While
+it is paused, this side neither dials it nor answers it, and they see their
+attempts refused.
+
+- A message already on its way when you pause may still finish arriving.
+  No new incoming traffic is accepted while paused.
+- Received messages and review requests that haven't reached your agents
+  yet wait until you resume. Work already delivered to agents may go on.
+- Anything you write waits too: the tab keeps it as a draft.
+- Reviews already running here still finish, and their results leave once
+  you resume.
+- Messages already queued keep their usual expiry.
+
+From a terminal, in `secured`:
+
+```sh
+pairtask operator peer pause sha256:…
+pairtask operator peer resume sha256:…
+```
+
+To stop pairing altogether, or change how this machine listens:
+
 ```sh
 pairtask pairing on --host-port 8445   # another port (redeem with A_IP:8445)
 pairtask pairing on --host-port 0      # stay paired, stop listening

@@ -200,6 +200,10 @@ func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result
 	defer cancelNet()
 	storeCtx, cancelStore := context.WithTimeout(context.WithoutCancel(ctx), MessageBudget+PairingGrace)
 	defer cancelStore()
+	admitted, err := h.admit(storeCtx, c.IdentityKey)
+	if err != nil {
+		return messaging.Result{}, nil, err
+	}
 	raw, err := h.pair.cfg.Dial(netCtx, c.Destination)
 	if err != nil {
 		return messaging.Result{}, nil, errUnreachable{err}
@@ -209,7 +213,7 @@ func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result
 		return messaging.Result{}, nil, err
 	}
 	counted := &messaging.Counted{Frames: conn.MessageFrames(netCtx)}
-	s := messaging.Session{Frames: counted, Store: h.store.PeerMessages(), Contact: c.IdentityKey, Now: h.pair.cfg.Clock}
+	s := messaging.Session{Frames: counted, Store: admitted, Contact: c.IdentityKey, Now: h.pair.cfg.Clock}
 	r, version, err := s.OpenDial(storeCtx)
 	if err != nil || version < messaging.LiveVersion {
 		conn.Close()
@@ -217,7 +221,7 @@ func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result
 	}
 	d, err := h.stayOpen(s, conn, c.IdentityKey)
 	if d != nil {
-		d.first = FirstRound{Carried: counted, Version: version}
+		d.first = FirstRound{Carried: counted, Version: version, Store: admitted}
 	}
 	return r, d, err
 }

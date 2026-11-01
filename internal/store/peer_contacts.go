@@ -81,14 +81,19 @@ func destinationStamp(t time.Time) string {
 	return stamp(t)
 }
 
+// contactRead is what a contact read takes: what an insert writes, and the
+// pause (#276), which only SetContactPaused writes.
+const contactRead = contactColumns + `, paused_at, generation`
+
 func getContact(ctx context.Context, q rowQuerier, identityKey string) (peer.Contact, bool, error) {
-	return scanContact(q.QueryRowContext(ctx, `SELECT `+contactColumns+` FROM peer_contacts WHERE identity_key = ?`, identityKey))
+	return scanContact(q.QueryRowContext(ctx, `SELECT `+contactRead+` FROM peer_contacts WHERE identity_key = ?`, identityKey))
 }
 
 func scanContact(row rowScanner) (peer.Contact, bool, error) {
 	var c peer.Contact
-	var established, destinationAt string
-	err := row.Scan(&c.IdentityKey, &c.Name, &c.Destination, &established, &c.Joined, &c.Invited, &c.LocalName, &destinationAt)
+	var established, destinationAt, pausedAt string
+	err := row.Scan(&c.IdentityKey, &c.Name, &c.Destination, &established, &c.Joined, &c.Invited, &c.LocalName, &destinationAt,
+		&pausedAt, &c.Generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.Contact{}, false, nil
 	}
@@ -99,7 +104,12 @@ func scanContact(row rowScanner) (peer.Contact, bool, error) {
 		return c, false, err
 	}
 	if destinationAt != "" {
-		c.DestinationAt, err = time.Parse(time.RFC3339Nano, destinationAt)
+		if c.DestinationAt, err = time.Parse(time.RFC3339Nano, destinationAt); err != nil {
+			return c, false, err
+		}
+	}
+	if pausedAt != "" {
+		c.PausedAt, err = time.Parse(time.RFC3339Nano, pausedAt)
 	}
 	return c, err == nil, err
 }
@@ -111,7 +121,7 @@ func (s *Store) Contact(ctx context.Context, identityKey string) (peer.Contact, 
 
 // Contacts lists every contact by identity key.
 func (s *Store) Contacts(ctx context.Context) ([]peer.Contact, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+contactColumns+` FROM peer_contacts ORDER BY identity_key`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+contactRead+` FROM peer_contacts ORDER BY identity_key`)
 	if err != nil {
 		return nil, err
 	}

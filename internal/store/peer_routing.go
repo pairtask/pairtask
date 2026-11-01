@@ -183,7 +183,12 @@ WHERE state = 'pending' AND `+ungranted, msgStamp(now), contact)
 
 // SharedAgents is the agents shared with contact, sorted.
 func (p *PeerMessages) SharedAgents(ctx context.Context, contact string) ([]string, error) {
-	return grantedAgents(ctx, p.db, contact)
+	var agents []string
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		agents, err = grantedAgents(ctx, tx, contact)
+		return err
+	})
+	return agents, err
 }
 
 func grantedAgents(ctx context.Context, q rowsQuerier, contact string) ([]string, error) {
@@ -214,21 +219,18 @@ func (p *PeerMessages) SetPeerDirectory(ctx context.Context, contact string, age
 	if !validDirectory(agents) {
 		return fmt.Errorf("%w: directory", messaging.ErrInvalid)
 	}
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?`, contact); err != nil {
-		return err
-	}
-	for _, agent := range agents {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO peer_directory (contact, agent, seen_at) VALUES (?, ?, ?)
-ON CONFLICT DO NOTHING`, contact, agent, msgStamp(at)); err != nil {
+	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?`, contact); err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		for _, agent := range agents {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO peer_directory (contact, agent, seen_at) VALUES (?, ?, ?)
+ON CONFLICT DO NOTHING`, contact, agent, msgStamp(at)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func validDirectory(agents []string) bool {
@@ -239,8 +241,24 @@ func validDirectory(agents []string) bool {
 // message this side sent it. An ID this side doesn't hold is answered and
 // dropped; an agent the message wasn't to is ErrNotRecipient.
 func (p *PeerMessages) PeerAgentRead(ctx context.Context, contact string, r messaging.AgentRead, at time.Time) error {
+	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		return peerAgentReadIn(ctx, tx, agentReadAt{contact, r, at})
+	})
+}
+
+// agentReadAt is one of the contact's agents acknowledging a message, at a
+// time.
+type agentReadAt struct {
+	contact string
+	r       messaging.AgentRead
+	at      time.Time
+}
+
+// peerAgentReadIn is PeerAgentRead inside its transaction.
+func peerAgentReadIn(ctx context.Context, tx *sql.Tx, a agentReadAt) error {
+	contact, r, at := a.contact, a.r, a.at
 	var to sql.NullString
-	err := p.db.QueryRowContext(ctx, `SELECT to_agents FROM peer_messages WHERE contact = ? AND direction = 'out' AND message_id = ?`,
+	err := tx.QueryRowContext(ctx, `SELECT to_agents FROM peer_messages WHERE contact = ? AND direction = 'out' AND message_id = ?`,
 		contact, r.ID).Scan(&to)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -255,7 +273,7 @@ func (p *PeerMessages) PeerAgentRead(ctx context.Context, contact string, r mess
 	if !slices.Contains(agents, r.Agent) {
 		return messaging.ErrNotRecipient
 	}
-	_, err = p.db.ExecContext(ctx, `INSERT INTO peer_agent_acks (contact, message_id, agent, read_at) VALUES (?, ?, ?, ?)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_agent_acks (contact, message_id, agent, read_at) VALUES (?, ?, ?, ?)
 ON CONFLICT DO NOTHING`, contact, r.ID, r.Agent, msgStamp(at))
 	return err
 }
@@ -315,28 +333,30 @@ WHERE rowid IN (SELECT rowid FROM peer_agent_reads WHERE contact = ?1 AND state 
 // PendingAgentReads is the oldest agent acknowledgments not yet confirmed
 // by the contact.
 func (p *PeerMessages) PendingAgentReads(ctx context.Context, contact string, max int) ([]messaging.AgentRead, error) {
-	rows, err := p.db.QueryContext(ctx, `SELECT message_id, agent FROM peer_agent_reads WHERE contact = ? AND state = 'pending'
-ORDER BY read_at, rowid LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	var out []messaging.AgentRead
-	for rows.Next() {
-		var r messaging.AgentRead
-		if err := rows.Scan(&r.ID, &r.Agent); err != nil {
-			return nil, err
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT message_id, agent FROM peer_agent_reads WHERE contact = ? AND state = 'pending'
+ORDER BY read_at, rowid LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
+		if err != nil {
+			return err
 		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			var r messaging.AgentRead
+			if err := rows.Scan(&r.ID, &r.Agent); err != nil {
+				return err
+			}
+			out = append(out, r)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 // AgentReadConfirmed records the contact's AgentReadStored.
 func (p *PeerMessages) AgentReadConfirmed(ctx context.Context, contact string, r messaging.AgentRead) error {
-	_, err := p.db.ExecContext(ctx, `UPDATE peer_agent_reads SET state = 'confirmed'
+	return p.exec(ctx, contact, `UPDATE peer_agent_reads SET state = 'confirmed'
 WHERE contact = ? AND message_id = ? AND agent = ? AND state = 'pending'`, contact, r.ID, r.Agent)
-	return err
 }
 
 // queryStrings is one text column of every row a query returns.

@@ -20,20 +20,26 @@ func refused(reason string) messaging.Answer {
 // answered first, even with the inbox full; then the replay floor; then
 // validity and quota; only then is it stored.
 func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.Message, now time.Time) (messaging.Answer, error) {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return messaging.Answer{}, err
-	}
-	defer tx.Rollback()
-	answer, inserted, err := acceptIn(ctx, tx, newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m, now: now})
-	if err != nil || !inserted {
-		return answer, err
-	}
-	if err := tx.Commit(); err != nil {
+	var answer messaging.Answer
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		a, inserted, err := acceptIn(ctx, tx, newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m, now: now})
+		answer = a
+		if err == nil && !inserted {
+			return errNothingStored // answered without a row: roll back
+		}
+		return err
+	})
+	switch {
+	case errors.Is(err, errNothingStored):
+		return answer, nil
+	case err != nil:
 		return messaging.Answer{}, err // never Stored or Recorded unless it committed
 	}
 	return answer, nil
 }
+
+// errNothingStored ends a transaction that answered without storing.
+var errNothingStored = errors.New("nothing stored")
 
 // acceptIn is Accept inside its transaction; inserted reports a new row to
 // commit. A replay is answered as before and stores nothing.
@@ -210,6 +216,9 @@ FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unrea
 // for each one newly read; the oldest pending receipts past the bound are
 // dropped.
 func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []string, at time.Time) (int, error) {
+	if err := p.localOnly(); err != nil {
+		return 0, err
+	}
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -281,27 +290,18 @@ WHERE cursor IN (SELECT cursor FROM peer_messages WHERE contact = ?1 AND directi
 
 // PendingReads is the oldest receipts not yet confirmed by the peer.
 func (p *PeerMessages) PendingReads(ctx context.Context, contact string, max int) ([]string, error) {
-	rows, err := p.db.QueryContext(ctx, `SELECT message_id FROM peer_messages
-WHERE contact = ? AND direction = 'in' AND receipt = 'pending' ORDER BY receipt_at, cursor LIMIT ?`,
-		contact, sessionBudget.clamp(budget{max, 0}).count)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		ids, err = queryStrings(ctx, tx, `SELECT message_id FROM peer_messages
+WHERE contact = ? AND direction = 'in' AND receipt = 'pending' ORDER BY receipt_at, cursor LIMIT ?`,
+			contact, sessionBudget.clamp(budget{max, 0}).count)
+		return err
+	})
+	return ids, err
 }
 
 // ReadConfirmed records the peer's ReadStored for a pending receipt.
 func (p *PeerMessages) ReadConfirmed(ctx context.Context, contact, id string) error {
-	_, err := p.db.ExecContext(ctx, `UPDATE peer_messages SET receipt = 'confirmed'
+	return p.exec(ctx, contact, `UPDATE peer_messages SET receipt = 'confirmed'
 WHERE contact = ? AND direction = 'in' AND message_id = ? AND receipt = 'pending'`, contact, id)
-	return err
 }
