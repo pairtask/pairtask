@@ -13,6 +13,7 @@ import unicodedata
 
 from sandbox_operator_config import LOCATION, ROOT, read_registry, state_project, worktree_directories
 from sandbox_operator_state import private_write
+from sandbox_pairing_barrier import NameBarrier  # noqa: F401  the barrier rollouts and proofs use (#277)
 
 
 SWITCHES = ("pairing_route", "secured_runtime", "peer_connector_probe")
@@ -148,6 +149,12 @@ def write_change(change):
 def configured(directory):
     files = settings(directory)
     return files.get(control_file(directory, files), {}).get("pairing_route", False)
+
+
+def saved_name(directory):
+    """The name this workspace pairs under, as saved; "" for none."""
+    files = settings(directory)
+    return files.get(control_file(directory, files), {}).get(NAME, "")
 
 
 def connector_resource(resource):

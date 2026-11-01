@@ -177,6 +177,10 @@ A paired workspace has a key and up to two names:
   name. The name is taken when you pair: setting or changing it reaches
   the workspaces you pair with afterwards, not the ones already paired,
   whose operators can still call it what they like with `/pair name`.
+  Change it only with `pairtask pairing on --name` or a pairtask upgrade:
+  they keep the secured broker down until the new name is in place, so it
+  never pairs under the old one. A direct `tofu apply` doesn't, and can
+  start it under the old name until the next pairtask rollout.
 - **What you call it** is yours to choose. Set it in its `⇄` tab:
 
 ```text

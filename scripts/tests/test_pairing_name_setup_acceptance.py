@@ -2,9 +2,11 @@
 
 from contextlib import ExitStack
 import json
+import hashlib
 import os
 from pathlib import Path
 import runpy
+import stat
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -22,9 +24,26 @@ class PairingNameSetupAcceptance(unittest.TestCase):
         self.root = Path(temporary.name)
         self.name = self.root / "pairing-name.json"
         self.env = self.root / "pairing.env"
+        self.ready = self.root / "pairing-name.ready"
 
     def write_name(self, value):
         self.name.write_text(json.dumps({"name": value}))
+        self.release_name()
+
+    def release_name(self):
+        self.ready.write_text(hashlib.sha256(self.name.read_bytes()).hexdigest())
+        self.ready.chmod(0o600)
+
+    def root_marker(self):
+        original = Path.lstat
+
+        def lstat(path):
+            info = original(path)
+            if path == self.ready or path.parent == self.root and path.name.startswith(".pairing-name.ready."):
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0)
+            return info
+
+        return patch.object(Path, "lstat", lstat)
 
     def secured(self):
         namespace = SETUP["secured"].__globals__
@@ -34,8 +53,9 @@ class PairingNameSetupAcceptance(unittest.TestCase):
             stack.enter_context(patch.object(SETUP["pwd"], "getpwnam",
                 return_value=SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())))
             stack.enter_context(patch.object(SETUP["os"], "chown"))
+            stack.enter_context(self.root_marker())
             SETUP["secured"](state=self.root / "state", ingress=self.root / "ingress",
-                             egress=self.root / "egress", env=self.env, name_path=self.name)
+                             egress=self.root / "egress", env=self.env, name_path=self.name, ready=self.ready)
 
     def test_read_name_missing_and_shared_vectors(self):
         self.assertIsNone(SETUP["read_name"](self.name))
@@ -54,6 +74,7 @@ class PairingNameSetupAcceptance(unittest.TestCase):
         for body in bodies:
             with self.subTest(body=body):
                 self.name.write_text(body)
+                self.release_name()
                 self.env.write_text('PAIRTASK_PAIRING_NAME="Old name"\n')
                 with self.assertRaises(ValueError):
                     self.secured()
@@ -80,8 +101,80 @@ class PairingNameSetupAcceptance(unittest.TestCase):
         self.secured()
         self.assertNotIn("PAIRTASK_PAIRING_NAME=", self.env.read_text())
         self.name.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.secured()
+        self.assertFalse(self.env.exists(), "missing provisioned name retained stale settings")
+
+    def test_missing_or_stale_ready_never_retains_old_environment(self):
+        self.write_name("Old name")
         self.secured()
-        self.assertNotIn("PAIRTASK_PAIRING_NAME=", self.env.read_text())
+        self.ready.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.secured()
+        self.assertFalse(self.env.exists())
+        self.release_name()
+        self.name.write_text(json.dumps({"name": "Changed name"}))
+        self.env.write_text('PAIRTASK_PAIRING_NAME="Old name"\n')
+        with self.assertRaisesRegex(ValueError, "not the name the host released"):
+            self.secured()
+        self.assertFalse(self.env.exists())
+
+    def test_marker_refuses_wrong_owner_writable_symlink_or_bad_digest(self):
+        self.write_name("Name")
+        for mode, owner in ((stat.S_IFREG | 0o600, 1001), (stat.S_IFREG | 0o622, 0), (stat.S_IFLNK | 0o777, 0)):
+            with self.subTest(mode=oct(mode), owner=owner):
+                with patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=mode, st_uid=owner)):
+                    with self.assertRaisesRegex(ValueError, "unsafe"):
+                        SETUP["read_marker"](self.ready)
+        self.ready.write_text("not a digest")
+        with self.root_marker(), self.assertRaisesRegex(ValueError, "malformed"):
+            SETUP["read_marker"](self.ready)
+
+    def test_released_name_hashes_and_parses_one_snapshot(self):
+        self.write_name("Expected name")
+        original = Path.read_bytes
+        reads = []
+
+        def read(path):
+            if path == self.name:
+                reads.append(path)
+                if len(reads) > 1:
+                    return b'{"name":"Wrong later bytes"}'
+            return original(path)
+
+        with self.root_marker(), patch.object(Path, "read_bytes", read):
+            self.assertEqual(SETUP["released_name"](self.name, self.ready), "Expected name")
+        self.assertEqual(reads, [self.name])
+
+    def test_publish_ready_flushes_then_atomically_replaces_and_refuses_bad_temp(self):
+        self.write_name("Name")
+        expected = self.ready.read_bytes()
+        temporary = self.root / ".pairing-name.ready.fixture"
+        temporary.write_bytes(expected)
+        temporary.chmod(0o600)
+        events = []
+        fsync, replace = os.fsync, os.replace
+
+        def flush(descriptor):
+            events.append("flush")
+            return fsync(descriptor)
+
+        def publish(before, after):
+            events.append("replace")
+            return replace(before, after)
+
+        with self.root_marker(), patch.object(os, "fsync", flush), patch.object(os, "replace", publish):
+            SETUP["publish_ready"](temporary, self.ready)
+        self.assertEqual(events, ["flush", "replace", "flush"])
+        self.assertEqual(self.ready.read_bytes(), expected)
+        self.assertEqual(self.ready.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(temporary.exists())
+        temporary.write_text("invalid")
+        temporary.chmod(0o600)
+        with self.root_marker(), self.assertRaisesRegex(ValueError, "malformed"):
+            SETUP["publish_ready"](temporary, self.ready)
+        self.assertFalse(temporary.exists())
+        self.assertEqual(self.ready.read_bytes(), expected)
 
 
 if __name__ == "__main__":

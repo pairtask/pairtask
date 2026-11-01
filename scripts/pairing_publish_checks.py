@@ -94,8 +94,15 @@ class Publication:
         variables.update(values)
         path.write_text(json.dumps(variables))
 
-    def apply(self):
-        return subprocess.run(self.tofu + ["apply", "-auto-approve", "-input=false"]).returncode
+    def apply(self, release=True):
+        """Applies the variables; with the route on and release, then
+        releases the pairing name the way pairtask's rollout does (#277), so
+        the secured broker starts. A proof that holds the gate passes False."""
+        code = subprocess.run(self.tofu + ["apply", "-auto-approve", "-input=false"]).returncode
+        variables = json.loads((self.directory / "sandbox.auto.tfvars.json").read_text())
+        if code == 0 and release and variables.get("pairing_route"):
+            sandbox_pairing.NameBarrier(self.project, self.remote, variables.get("pairing_name", "")).release()
+        return code
 
     def volume_users(self, name):
         """Who uses a retained socket volume, per Incus."""

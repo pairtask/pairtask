@@ -4,6 +4,7 @@ stale sockets left by a stopped daemon, and the secured broker's route
 settings. Never touches broker state, the database or the workspace key."""
 
 import grp
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,12 @@ ENV_KEYS = ("PAIRTASK_PAIRING_SOCKET", "PAIRTASK_PAIRING_SOCKET_GROUP", "PAIRTAS
 # The name this workspace pairs under (#277), written by provisioning.
 NAME_FILE = Path("/etc/pairtask/pairing-name.json")
 NAME_BYTES = 64
+# The host's word that NAME_FILE holds the name it asked for: the SHA-256 of
+# the file's exact bytes (#277). The provider uploads NAME_FILE only after it
+# starts secured, so until the host marks the file it saw, the broker waits.
+READY_FILE = Path("/etc/pairtask/pairing-name.ready")
+READY_PREFIX = ".pairing-name.ready."
+DIGEST = re.compile(r"[0-9a-f]{64}\n?")
 
 
 def check_role(role, state=STATE, ingress=INGRESS, egress=EGRESS, mounted=os.path.ismount):
@@ -112,13 +119,66 @@ def read_name(path=NAME_FILE):
     file. Anything malformed is refused, never taken in part."""
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or not isinstance(data.get("name"), str):
+    return parse_name(path.read_bytes(), path)
+
+
+def parse_name(data, path):
+    """The name in a name file's bytes; anything malformed is refused."""
+    parsed = json.loads(data.decode("utf-8"))
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("name"), str):
         raise ValueError(f"{path}: want {{\"name\": \"...\"}}")
-    name = data["name"]
+    name = parsed["name"]
     if name and not valid_name(name):
         raise ValueError(f"{path}: the name must be at most {NAME_BYTES} bytes of printable text")
     return name
+
+
+def released_name(path=NAME_FILE, ready=READY_FILE):
+    """The name the host released: the file's bytes, read once, must be the
+    ones its marker names, and must hold a valid name. A missing file or
+    marker, another marker or a malformed name is refused: the broker waits
+    for the host."""
+    data = path.read_bytes()
+    marker = read_marker(ready)
+    if marker != hashlib.sha256(data).hexdigest():
+        raise ValueError(f"{path} is not the name the host released; it releases it after provisioning")
+    return parse_name(data, path)
+
+
+def read_marker(path):
+    """A marker's digest: a root-owned regular file nobody else may write."""
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError(f"Refusing an unsafe release marker: {path}")
+    text = path.read_text(encoding="ascii")
+    if not DIGEST.fullmatch(text):
+        raise ValueError(f"Refusing a malformed release marker: {path}")
+    return text.strip()
+
+
+def publish_ready(temporary, ready=READY_FILE):
+    """Root, for the host: makes a marker it pushed the release marker, in
+    one rename within the directory, flushed to disk; a refused one is
+    removed."""
+    try:
+        if temporary.parent != ready.parent or not temporary.name.startswith(READY_PREFIX):
+            raise ValueError(f"Refusing a marker outside {ready.parent}: {temporary}")
+        read_marker(temporary)
+        descriptor = os.open(temporary, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, ready)
+    except BaseException:
+        if temporary.parent == ready.parent and temporary.name.startswith(READY_PREFIX):
+            temporary.unlink(missing_ok=True)
+        raise
+    directory = os.open(ready.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def valid_name(name):
@@ -170,17 +230,18 @@ def private_parent(path, uid=0):
         raise ValueError(f"Refusing an unsafe settings directory: {path}")
 
 
-def secured(state=STATE, ingress=INGRESS, egress=EGRESS, env=ENV, name_path=NAME_FILE):
+def secured(state=STATE, ingress=INGRESS, egress=EGRESS, env=ENV, name_path=NAME_FILE, ready=READY_FILE):
     """Root: the ingress directory and the broker's route settings, with the
-    name it pairs under when provisioning gave one. Old settings go first, so
-    a failure never leaves them, or an old name, in force."""
+    name the host released. Old settings go first, so a failure never leaves
+    them, or an old name, in force: the broker stays down until the host
+    releases the name it asked for."""
     check_role("secured", state, ingress, egress)
     require_ids()
     clear_env(env)
-    name = read_name(name_path)
     broker = pwd.getpwnam("broker")
     prepare_shared_dir(ingress, broker.pw_uid, PEER_GID)
     private_parent(env.parent)
+    name = released_name(name_path, ready)
     values = {
         "PAIRTASK_PAIRING_SOCKET": str(ingress / "pairing.sock"),
         "PAIRTASK_PAIRING_SOCKET_GROUP": PEER_GROUP,
@@ -222,12 +283,22 @@ COMMANDS = {"secured": secured, "connector": connector, "clean-ingress": clean_i
             "clean-egress": clean_egress, "disable": disable}
 
 
+def command_of(argv):
+    """The command argv names, with its argument bound; None for usage."""
+    if len(argv) == 2 and argv[1] in COMMANDS:
+        return COMMANDS[argv[1]]
+    if len(argv) == 3 and argv[1] == "publish-ready":
+        return lambda: publish_ready(Path(argv[2]))
+    return None
+
+
 def main(argv):
-    if len(argv) != 2 or argv[1] not in COMMANDS:
-        print("usage: pairtask-pairing-setup secured|connector|clean-ingress|clean-egress|disable", file=sys.stderr)
+    command = command_of(argv)
+    if command is None:
+        print("usage: pairtask-pairing-setup secured|connector|clean-ingress|clean-egress|disable|publish-ready PATH", file=sys.stderr)
         return 2
     try:
-        COMMANDS[argv[1]]()
+        command()
     except (OSError, KeyError, ValueError) as error:
         print(f"pairtask-pairing-setup: {error}", file=sys.stderr)
         return 1
