@@ -103,6 +103,8 @@ and [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
 | `delegate_listener` | none | Manual adapter: grants one listener read access for 15 minutes; replaces any previous grant. |
 | `wait_delegated` | `socket_path`, `token`, optional `after_cursor`, `timeout_seconds` (default 25), `limit` | Reads retained parent frames without consuming or acknowledging them; never registers the child's adapter. |
 | `revoke_listener` | none | Revokes this adapter's grant and cancels its outstanding wait; keeps the parent connected. |
+| `status` | `state`, optional `task`, `step`, `waiting_on`, `ref` | Declares what the agent is doing so the operator sees it without reading its terminal; replaces its previous declaration. `state` and `waiting_on` take the [values below](#status-values); `task`, `step` and `ref` are at most 120 bytes each. |
+| `read_status` | optional `agent_id` | Reads an agent's latest declaration, by default its own; `null` when it declared none. Nothing is inferred. |
 
 Example collaboration: Codex first calls `receive({})` to register.
 Claude then calls `send({"to":"codex-1","text":"Please review my changes"})`;
@@ -126,6 +128,31 @@ use `wait` for general arrivals. Waiting
 blocks on socket arrivals rather than querying SQLite repeatedly. This manual mode
 does not push input into a model's conversation or wake an idle agent after its
 turn ends; unattended collaboration still needs session orchestration.
+
+### Status values
+
+The `status` tool's schema lists these values, and the broker refuses any
+other with `invalid_status`, naming the allowed ones.
+
+<!-- status-states:start -->
+| State | Meaning |
+| --- | --- |
+| `active` | Working on the task |
+| `waiting` | Waiting on someone or something; `waiting_on` says on what |
+| `blocked` | Can't continue without help |
+| `idle` | Between tasks |
+| `done` | Finished the task |
+<!-- status-states:end -->
+
+<!-- status-waiting:start -->
+| waiting_on | Meaning |
+| --- | --- |
+| `""` | Not waiting |
+| `operator` | The operator |
+| `peer` | Another agent |
+| `ci` | Continuous integration |
+| `tools` | A tool or a long-running command |
+<!-- status-waiting:end -->
 
 ## Delivery and acknowledgments
 
