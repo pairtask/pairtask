@@ -66,6 +66,17 @@ type ClaimPage struct {
 	Claims    []Claim `json:"claims"`
 	Total     int     `json:"claims_total"`
 	Truncated bool    `json:"claims_truncated"`
+	// Assignments (#278), with their own bound, only for a caller at
+	// AssignVersion, which always gets all three fields: an older one sees
+	// claims exactly as before.
+	*AssignmentPage
+}
+
+// AssignmentPage is a message's assignments with their total.
+type AssignmentPage struct {
+	Assignments          []Assignment `json:"assignments"`
+	AssignmentsTotal     int          `json:"assignments_total"`
+	AssignmentsTruncated bool         `json:"assignments_truncated"`
 }
 
 // ClaimSet is the claims of one operator message with their bound.

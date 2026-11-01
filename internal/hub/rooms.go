@@ -49,6 +49,9 @@ func (h *Hub) welcomeRooms(ctx context.Context, c *Client, welcome protocol.Mess
 // its parent's, else the Square. Other sends carry no room. Membership is
 // checked later, for new sends only, so an accepted retry still reports.
 func (h *Hub) scopeAgentSend(ctx context.Context, in *Inbound) *routingError {
+	if rerr := h.assignedReplyAudience(ctx, in.Msg); rerr != nil {
+		return rerr
+	}
 	if in.Msg.To != protocol.Broadcast {
 		in.Msg.Room = ""
 		return nil

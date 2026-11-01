@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"slices"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -10,9 +9,10 @@ import (
 
 // Mentions (#164) mark the members of a room or group an operator message
 // addresses. They are attention, not routing: the audience stays the room or
-// the group. The shape is checked before the retry lookup, and room
-// membership after it, so a retry of an accepted message still gets its
-// outcome after members leave or the room goes.
+// the group. The shape is checked before the retry lookup, and a tag's
+// membership, connection and version after it (#278, checkAssigned), so a
+// retry of an accepted message still gets its outcome after members leave or
+// the room goes.
 
 // canonicalMentions sorts and deduplicates the mentions, and refuses them
 // outside a room or group, beyond the cap, or outside a group's members.
@@ -22,7 +22,7 @@ func canonicalMentions(msg *protocol.Message, scope store.OperatorScope) *routin
 		return nil
 	}
 	if !mentionScope(*msg, scope) {
-		return &routingError{protocol.ErrMalformedFrame, "mentions need a room or a group"}
+		return &routingError{protocol.ErrMalformedFrame, "mentions need everyone, a room or a group"}
 	}
 	ids := slices.Clone(msg.Mentions)
 	slices.Sort(ids)
@@ -39,9 +39,11 @@ func canonicalMentions(msg *protocol.Message, scope store.OperatorScope) *routin
 	return nil
 }
 
-func mentionScope(msg protocol.Message, scope store.OperatorScope) bool {
+// mentionScope: tags go on a message to everyone or a room, where they
+// assign (#278), or to a group, where they mark attention.
+func mentionScope(_ protocol.Message, scope store.OperatorScope) bool {
 	if scope.Kind == store.ScopeAll {
-		return msg.Room != ""
+		return true
 	}
 	return scope.Kind == store.ScopeGroup && len(scope.Members) > 1
 }
@@ -52,24 +54,6 @@ func mentionInScope(id string, scope store.OperatorScope) *routingError {
 	}
 	if scope.Kind == store.ScopeGroup && !slices.Contains(scope.Members, id) {
 		return &routingError{protocol.ErrInvalidMention, id + " is not in the group"}
-	}
-	return nil
-}
-
-// requireMentionedMembers refuses a new room message mentioning someone who
-// isn't in the room now.
-func (h *Hub) requireMentionedMembers(ctx context.Context, msg protocol.Message) *routingError {
-	if msg.Room == "" || len(msg.Mentions) == 0 {
-		return nil
-	}
-	members, err := h.store.RoomMembers(ctx, msg.Room)
-	if err != nil {
-		return &routingError{protocol.ErrInternal, "rooms unavailable"}
-	}
-	for _, id := range msg.Mentions {
-		if !slices.Contains(members, id) {
-			return &routingError{protocol.ErrInvalidMention, id + " is not in #" + msg.Room}
-		}
 	}
 	return nil
 }
