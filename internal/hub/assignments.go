@@ -113,10 +113,19 @@ func (h *Hub) assignedReplyAudience(ctx context.Context, msg protocol.Message) *
 	if err != nil {
 		return &routingError{protocol.ErrInternal, "assignments unavailable"}
 	}
-	if !assigned || msg.To == protocol.Broadcast && (msg.Room == "" || protocol.RoomScope(msg.Room) == room) {
+	if !assigned || inParentAudience(msg, room) {
 		return nil
 	}
 	return &routingError{protocol.ErrInvalidReplyAudience, "answer where it was asked: to '*' in the parent's room"}
+}
+
+// inParentAudience: the reply goes to everyone in the parent's room ("" for
+// the Square); one without a room stays in its parent's.
+func inParentAudience(msg protocol.Message, room string) bool {
+	if msg.To != protocol.Broadcast {
+		return false
+	}
+	return msg.Room == "" || protocol.RoomScope(msg.Room) == room
 }
 
 // forVersion is a claim page as a caller at version sees it: one before

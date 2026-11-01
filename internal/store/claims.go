@@ -47,14 +47,14 @@ type ClaimRequest struct {
 // claims after the change, or, on a conflict, with the holder.
 func (s *Store) SetClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
 	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
-		return claimOrAssignment(ctx, tx, req, assignClaim, func() error { return setClaim(ctx, tx, req) })
+		return assignClaim.orClaim(ctx, tx, req, func() error { return setClaim(ctx, tx, req) })
 	})
 }
 
 // ReleaseClaim frees the agent's active claim; the slot becomes free again.
 func (s *Store) ReleaseClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
 	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
-		return claimOrAssignment(ctx, tx, req, assignRelease, func() error { return finishClaim(ctx, tx, req, protocol.ClaimReleased) })
+		return assignRelease.orClaim(ctx, tx, req, func() error { return finishClaim(ctx, tx, req, protocol.ClaimReleased) })
 	})
 }
 
@@ -63,7 +63,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, req ClaimRequest) (protocol.Cl
 func (s *Store) FinishClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
 	req.Role = protocol.RoleOwner
 	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
-		return claimOrAssignment(ctx, tx, req, assignFinish, func() error { return finishClaim(ctx, tx, req, protocol.ClaimDone) })
+		return assignFinish.orClaim(ctx, tx, req, func() error { return finishClaim(ctx, tx, req, protocol.ClaimDone) })
 	})
 }
 

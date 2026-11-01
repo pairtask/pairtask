@@ -69,44 +69,59 @@ func assignedQuestion(t *testing.T, readerVersion int) (*operatorFixture, *sessi
 	return f, a, b, c
 }
 
+type assignmentTransitionCase struct {
+	initial, prepare, action, state, errorCode string
+}
+
 func TestAssignmentsLifecycleAcceptanceEveryOwnTransitionAndTerminalState(t *testing.T) {
-	for _, initial := range []string{"assigned", "released", "done"} {
-		for _, action := range []string{"claim_set", "claim_release", "claim_done"} {
-			t.Run(initial+"/"+action, func(t *testing.T) {
-				f, a, b, _ := assignedQuestion(t, 16)
-				spec := claimSpec{parent: "assigned-question", task: "reply", role: "owner"}
-				if initial != "assigned" {
-					first := "claim_release"
-					if initial == "done" {
-						first = "claim_done"
-					}
-					operatorEqual(t, "initial transition accepted", claimCall(a, first, spec).text("type"), "claim_result")
-				}
-				before := assignmentState(t, claimCall(a, "claim_get", spec), "alpha", initial)
-				response := claimCall(a, action, spec)
-				allowed := initial == "assigned" || initial == "released" && action == "claim_release" || initial == "done" && action == "claim_done"
-				wantState := initial
-				if allowed {
-					operatorEqual(t, "own transition accepted", response.text("type"), "claim_result")
-					if action == "claim_release" {
-						wantState = "released"
-					} else if action == "claim_done" {
-						wantState = "done"
-					}
-				} else {
-					operatorEqual(t, "terminal transition refused", response.text("code"), "claim_conflict")
-				}
-				after := assignmentState(t, response, "alpha", wantState)
-				operatorEqual(t, "assignment age never resets", after.Assigned, before.Assigned)
-				if initial == wantState {
-					operatorEqual(t, "idempotent or refused finish time unchanged", assignmentFinished(after), assignmentFinished(before))
-				}
-				operatorEqual(t, "terminal states carry finish time", after.Finished != nil, wantState != "assigned")
-				assignmentState(t, claimCall(b, "claim_get", spec), "beta", "assigned")
-				operatorEqual(t, "assignment actions never create claim rows", f.count("claims"), 0)
-			})
-		}
+	for _, tc := range []assignmentTransitionCase{
+		{"assigned", "", "claim_set", "assigned", ""},
+		{"assigned", "", "claim_release", "released", ""},
+		{"assigned", "", "claim_done", "done", ""},
+		{"released", "claim_release", "claim_set", "released", "claim_conflict"},
+		{"released", "claim_release", "claim_release", "released", ""},
+		{"released", "claim_release", "claim_done", "released", "claim_conflict"},
+		{"done", "claim_done", "claim_set", "done", "claim_conflict"},
+		{"done", "claim_done", "claim_release", "done", "claim_conflict"},
+		{"done", "claim_done", "claim_done", "done", ""},
+	} {
+		t.Run(tc.initial+"/"+tc.action, func(t *testing.T) { checkAssignmentTransition(t, tc) })
 	}
+}
+
+func prepareAssignmentState(t *testing.T, peer *sessionProbe, spec claimSpec, action string) {
+	t.Helper()
+	if action == "" {
+		return
+	}
+	operatorEqual(t, "initial transition accepted", claimCall(peer, action, spec).text("type"), "claim_result")
+}
+
+func checkAssignmentTransition(t *testing.T, tc assignmentTransitionCase) {
+	t.Helper()
+	f, a, b, _ := assignedQuestion(t, 16)
+	spec := claimSpec{parent: "assigned-question", task: "reply", role: "owner"}
+	prepareAssignmentState(t, a, spec, tc.prepare)
+	before := assignmentState(t, claimCall(a, "claim_get", spec), "alpha", tc.initial)
+	response := claimCall(a, tc.action, spec)
+	checkAssignmentTransitionResult(t, response, tc.errorCode)
+	after := assignmentState(t, response, "alpha", tc.state)
+	operatorEqual(t, "assignment age never resets", after.Assigned, before.Assigned)
+	if tc.initial == tc.state {
+		operatorEqual(t, "idempotent or refused finish time unchanged", assignmentFinished(after), assignmentFinished(before))
+	}
+	operatorEqual(t, "terminal states carry finish time", after.Finished != nil, tc.state != "assigned")
+	assignmentState(t, claimCall(b, "claim_get", spec), "beta", "assigned")
+	operatorEqual(t, "assignment actions never create claim rows", f.count("claims"), 0)
+}
+
+func checkAssignmentTransitionResult(t *testing.T, response sessionWire, errorCode string) {
+	t.Helper()
+	if errorCode != "" {
+		operatorEqual(t, "terminal transition refused", response.text("code"), errorCode)
+		return
+	}
+	operatorEqual(t, "own transition accepted", response.text("type"), "claim_result")
 }
 
 func TestAssignmentsLifecycleAcceptanceOnlyOwnerReplyInterceptedAndRolesCannotBeForged(t *testing.T) {
@@ -132,25 +147,19 @@ func TestAssignmentsLifecycleAcceptanceOnlyOwnerReplyInterceptedAndRolesCannotBe
 }
 
 func TestAssignmentsLifecycleAcceptanceReconnectCarriesCurrentLogicalAssignment(t *testing.T) {
-	for _, state := range []string{"assigned", "released", "done"} {
-		t.Run(state, func(t *testing.T) {
+	for _, tc := range []struct{ state, prepare string }{{"assigned", ""}, {"released", "claim_release"}, {"done", "claim_done"}} {
+		t.Run(tc.state, func(t *testing.T) {
 			f, a, _, _ := assignedQuestion(t, 16)
-			if state != "assigned" {
-				action := "claim_release"
-				if state == "done" {
-					action = "claim_done"
-				}
-				claimCall(a, action, claimSpec{"assigned-question", "reply", "owner"})
-			}
-			before := assignmentState(t, claimCall(a, "claim_get", claimSpec{parent: "assigned-question"}), "alpha", state)
+			prepareAssignmentState(t, a, claimSpec{"assigned-question", "reply", "owner"}, tc.prepare)
+			before := assignmentState(t, claimCall(a, "claim_get", claimSpec{parent: "assigned-question"}), "alpha", tc.state)
 			roomDisconnect(f, a, "alpha")
 			reconnected, _ := roomPeer(f, "alpha", 16)
 			replay := reconnected.frame()
 			operatorEqual(t, "durable replay", sessionDecode[bool](t, replay, "replayed"), true)
 			view := sessionDecode[map[string]string](t, replay, "assignment")
-			operatorEqual(t, "current state on replay", view["state"], state)
+			operatorEqual(t, "current state on replay", view["state"], tc.state)
 			operatorEqual(t, "canonical task on replay", view["task"], "reply")
-			after := assignmentState(t, claimCall(reconnected, "claim_get", claimSpec{parent: "assigned-question"}), "alpha", state)
+			after := assignmentState(t, claimCall(reconnected, "claim_get", claimSpec{parent: "assigned-question"}), "alpha", tc.state)
 			operatorEqual(t, "logical assignment retains timestamp", after.Assigned, before.Assigned)
 			operatorEqual(t, "reconnect never adds assignments", f.count("assignments"), 2)
 		})

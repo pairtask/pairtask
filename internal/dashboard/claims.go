@@ -34,11 +34,16 @@ func (m *model) claimsPartial() bool {
 		return true
 	}
 	for _, set := range m.snapshot.Claims {
-		if set.Truncated || set.AssignmentPage != nil && set.AssignmentsTruncated {
+		if set.Truncated || assignmentsCut(set) {
 			return true
 		}
 	}
 	return false
+}
+
+// assignmentsCut: the message left assignments out.
+func assignmentsCut(set protocol.ClaimSet) bool {
+	return set.AssignmentPage != nil && set.AssignmentsTruncated
 }
 
 // claimDetails are the claims the row's agent holds, active or done; claims

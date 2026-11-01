@@ -80,14 +80,23 @@ func (m *Model) assignmentRows(id string) []string {
 func (m *Model) agentAssignmentLines(agent string) []string {
 	var lines []string
 	for id, page := range m.claims.byMessage {
-		if page.AssignmentPage == nil {
-			continue
-		}
-		for _, a := range page.Assignments {
-			if a.AgentID == agent && a.State != protocol.AssignmentReleased {
-				lines = append(lines, mutedStyle.Render("    ◇ "+protocol.TaskReply+" (assigned, "+a.State+") on "+m.parentLabel(id)))
-			}
+		if a, ok := heldAssignment(page, agent); ok {
+			lines = append(lines, mutedStyle.Render("    ◇ "+protocol.TaskReply+" (assigned, "+a.State+") on "+m.parentLabel(id)))
 		}
 	}
 	return lines
+}
+
+// heldAssignment is the agent's assignment on a message, unless it has none
+// or released it.
+func heldAssignment(page protocol.ClaimPage, agent string) (protocol.Assignment, bool) {
+	if page.AssignmentPage == nil {
+		return protocol.Assignment{}, false
+	}
+	for _, a := range page.Assignments {
+		if a.AgentID == agent && a.State != protocol.AssignmentReleased {
+			return a, true
+		}
+	}
+	return protocol.Assignment{}, false
 }

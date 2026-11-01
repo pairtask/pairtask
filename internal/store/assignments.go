@@ -32,10 +32,11 @@ const assignmentColumns = `operator_message_id, agent_id, task, state, assigned_
 
 // insertAssignments assigns the message's reply to each tagged agent, inside
 // the transaction that stores the message.
-func insertAssignments(ctx context.Context, tx *sql.Tx, messageID string, agents []string, at time.Time) error {
-	for _, agent := range agents {
+func insertAssignments(ctx context.Context, tx *sql.Tx, m OperatorMessage) error {
+	at := stamp(operatorTime(m.Msg))
+	for _, agent := range m.Assignees {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO assignments (`+assignmentColumns+`) VALUES (?, ?, ?, ?, ?, NULL)`,
-			messageID, agent, protocol.TaskReply, protocol.AssignmentAssigned, stamp(at)); err != nil {
+			m.Msg.MessageID, agent, protocol.TaskReply, protocol.AssignmentAssigned, at); err != nil {
 			return err
 		}
 	}
@@ -63,7 +64,7 @@ var assignmentNext = map[assignmentOp]map[string]string{
 // interceptsReply: a frame for the reply as owner on a message with
 // assignments, which the assignments answer instead of the claims.
 func interceptsReply(ctx context.Context, tx *sql.Tx, req ClaimRequest) (bool, error) {
-	if req.Task != protocol.TaskReply || (req.Role != "" && req.Role != protocol.RoleOwner) {
+	if req.Task != protocol.TaskReply || !asOwner(req.Role) {
 		return false, nil
 	}
 	var n int
@@ -71,9 +72,14 @@ func interceptsReply(ctx context.Context, tx *sql.Tx, req ClaimRequest) (bool, e
 	return n > 0, err
 }
 
-// claimOrAssignment runs the claim change, or, for an assigned message's
-// reply as owner, the assignment's.
-func claimOrAssignment(ctx context.Context, tx *sql.Tx, req ClaimRequest, op assignmentOp, claim func() error) error {
+// asOwner: a frame's role is the owner's, left out or named.
+func asOwner(role string) bool {
+	return role == "" || role == protocol.RoleOwner
+}
+
+// orClaim runs the claim change, or, for an assigned message's reply as
+// owner, the assignment's.
+func (op assignmentOp) orClaim(ctx context.Context, tx *sql.Tx, req ClaimRequest, claim func() error) error {
 	assigned, err := interceptsReply(ctx, tx, req)
 	if err != nil {
 		return err

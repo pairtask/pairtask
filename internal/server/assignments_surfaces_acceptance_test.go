@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 )
@@ -55,7 +56,7 @@ func TestAssignmentsSurfacesAcceptanceHistoryStatusSnapshotAndChangeEvents(t *te
 	operatorEqual(t, "only actual parent in history", len(history.Entries), 1)
 	parent := history.Entries[0].Message
 	operatorEqual(t, "history retains public parent", parent.To, "*")
-	if len(parent.Mentions) != 2 || parent.Mentions[0] != "alpha" || parent.Mentions[1] != "beta" {
+	if !slices.Equal(parent.Mentions, []string{"alpha", "beta"}) {
 		t.Fatalf("history lost canonical mentions: %+v", parent)
 	}
 	encoded, err := json.Marshal(parent)

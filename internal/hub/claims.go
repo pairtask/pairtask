@@ -126,6 +126,11 @@ func validClaimFrame(msg protocol.Message) error {
 	if err := protocol.ValidateTask(msg.Task); err != nil {
 		return err
 	}
+	return validClaimChange(msg)
+}
+
+// validClaimChange checks the role and topic a claim change carries.
+func validClaimChange(msg protocol.Message) error {
 	switch msg.Type {
 	case protocol.TypeClaimSet:
 		if err := protocol.ValidateRole(msg.Role); err != nil {

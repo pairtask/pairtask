@@ -133,7 +133,7 @@ func (s *Store) PersistOperatorMessage(ctx context.Context, m OperatorMessage) e
 	if err := insertOperatorRequest(ctx, tx, m); err != nil {
 		return err
 	}
-	if err := insertAssignments(ctx, tx, m.Msg.MessageID, m.Assignees, operatorTime(m.Msg)); err != nil {
+	if err := insertAssignments(ctx, tx, m); err != nil {
 		return err
 	}
 	if err := finishAudit(ctx, tx, m.AuditID, AuditOutcome{Result: AuditAccepted}); err != nil {
