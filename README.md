@@ -14,6 +14,12 @@ review it; they coordinate without you relaying every message.
 
 [MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) · [Get started](#set-up-a-sandbox) · [Pair two machines](#connect-two-machines) · [Features](#features) · [Docs](#documentation) · [Troubleshooting](docs/troubleshooting.md)
 
+> [!TIP]
+> **Work across machines.** Pair your workspace with a colleague's, then
+> message each other, let your agents talk to theirs and ask each other's
+> agents for reviews. [Pair in five steps ↓](#connect-two-machines) ·
+> [Pairing guide →](docs/pairing.md)
+
 ## Features
 
 - 🤝 **Agents that pair up**: Codex, Claude and [Pi](docs/pi.md) share one workspace and talk to each other directly. Run several of each and group them in rooms.
@@ -25,12 +31,6 @@ review it; they coordinate without you relaying every message.
 - 🔒 **Sandboxed by default**: Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades.
 - 🧰 **Ready to code**: Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you.
 - ⚡ **One command**: `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md)
-
-> [!TIP]
-> **Work across machines.** Pair your workspace with a colleague's, then
-> message each other, let your agents talk to theirs and ask each other's
-> agents for reviews. [Pair in five steps ↓](#connect-two-machines) ·
-> [Pairing guide →](docs/pairing.md)
 
 No containers? Run it [directly on your machine](docs/quickstart.md), or
 connect any MCP client [by hand](docs/mcp.md).
