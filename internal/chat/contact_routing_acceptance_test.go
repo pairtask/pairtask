@@ -104,7 +104,7 @@ func TestContactRoutingAcceptanceRemoteNamesAreDisplayData(t *testing.T) {
 			t.Fatalf("remote control reached display: %q", control)
 		}
 	}
-	v3Contains(t, ansi.Strip(view), "acknowledged by")
+	v3Contains(t, ansi.Strip(view), "@remote: acknowledged")
 	chatEqual(t, "render did not issue a command", h.m.State().InFlight, 0)
 }
 
