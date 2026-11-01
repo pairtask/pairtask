@@ -122,7 +122,7 @@ func TestRemoteReviewAcceptanceIndependentGrantAndPendingQuota(t *testing.T) {
 	pairOK(t, err)
 	for i := 0; i < store.ReviewAsksPerAgent; i++ {
 		m := remoteAsk(fmt.Sprintf("ask-%d", i))
-		m.N = uint64(i + 1)
+		m.N = uint64(i + 2) // the refused no-grant request already used sequence 1
 		a, err = db.PeerMessages().Accept(ctx, contact, m, messageAt)
 		pairOK(t, err)
 		pairEqual(t, a.Stored, true)
@@ -133,7 +133,9 @@ func TestRemoteReviewAcceptanceIndependentGrantAndPendingQuota(t *testing.T) {
 	pairOK(t, err)
 	pairEqual(t, a.Refusal.Reason, messaging.ReasonInboxFull)
 	// A retry at the quota must retain the original successful acceptance.
-	a, err = db.PeerMessages().Accept(ctx, contact, remoteAsk("ask-0"), messageAt)
+	replay := remoteAsk("ask-0")
+	replay.N = 2
+	a, err = db.PeerMessages().Accept(ctx, contact, replay, messageAt)
 	pairOK(t, err)
 	pairEqual(t, a.Stored, true)
 }

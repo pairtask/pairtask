@@ -26,6 +26,7 @@ var ErrUnsupported = errors.New("messaging: no common protocol version")
 type Result struct {
 	Sent, Received         int // messages answered Stored, either way
 	Refused                int // this side's messages the peer refused, recorded
+	RefusalsRecorded       int // the peer's messages refused here and recorded for the operator
 	ReadsSent, ReadsStored int // read receipts confirmed and received
 	// Review outcomes settled by the peer's answer, and taken from it.
 	OutcomesSent, OutcomesStored int
@@ -34,7 +35,7 @@ type Result struct {
 // Moved reports durable progress: anything stored, refused or confirmed,
 // even in a session that then failed.
 func (r Result) Moved() bool {
-	return r.Sent+r.Received+r.Refused+r.ReadsSent+r.ReadsStored+r.OutcomesSent+r.OutcomesStored > 0
+	return r.Sent+r.Received+r.Refused+r.RefusalsRecorded+r.ReadsSent+r.ReadsStored+r.OutcomesSent+r.OutcomesStored > 0
 }
 
 // Session is one side of one session with one contact. Version is the one
@@ -347,6 +348,9 @@ func (s Session) answerMessage(ctx context.Context, m Message, r *Result) error 
 		return err
 	}
 	if !answer.Stored {
+		if answer.Recorded {
+			r.RefusalsRecorded++ // counted before the answer: a lost reply still moved
+		}
 		return s.send(EncodeRefused(Refused{ID: m.ID, Refusal: answer.Refusal}))
 	}
 	r.Received++

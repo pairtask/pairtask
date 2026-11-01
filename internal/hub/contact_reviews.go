@@ -109,6 +109,11 @@ func (h *Hub) reviewView(ctx context.Context, view *protocol.ContactMessageView,
 		}
 		return err
 	}
+	if r.State == messaging.StateRefused {
+		// Refused as not shared and recorded here: there is no ask behind it.
+		view.ReviewState, view.ReviewReason = messaging.StateRefused, r.Refusal.Reason
+		return nil
+	}
 	status, _, err := h.store.PeerMessages().AskStatus(ctx, r.Contact, r.ID)
 	view.ReviewState, view.ReviewID, view.ReviewReason = status.State, status.ReviewID, status.Reason
 	return err

@@ -52,7 +52,7 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 		from := len(l.lines)
 		l.lines = append(l.lines, m.messageLines(c, v)...)
 		if v.Direction == "in" {
-			l.spans = append(l.spans, contactSpan{id: v.ID, from: from, upto: len(l.lines), unread: v.State == "received"})
+			l.spans = append(l.spans, contactSpan{id: v.ID, from: from, upto: len(l.lines), unread: unreadHere(v)})
 		}
 	}
 	return l
@@ -152,7 +152,10 @@ func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMe
 	}
 	lines := []string{head}
 	text := v.Text
-	if text == "" {
+	switch {
+	case refusedHere(v):
+		text = refusalGuidance(v)
+	case text == "":
 		text = "(text no longer kept)"
 	}
 	return append(lines, m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, len(body))...)

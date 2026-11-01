@@ -290,17 +290,21 @@ func (r newRow) state() string {
 func insertMessage(ctx context.Context, tx *sql.Tx, r newRow) error {
 	key, m, now := r.key, r.m, r.now
 	hash := m.Hash()
-	var author sql.NullInt64
-	if m.ReplyTo.Author != messaging.ReplyAuthorNone {
-		author = sql.NullInt64{Int64: int64(m.ReplyTo.Author), Valid: true}
-	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
 (contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at,
     from_agent, to_agents, reply_id, reply_author, local_id, review_ask)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
-		r.state(), msgStamp(now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), author, nullString(r.localID), reviewAskJSON(m.Review))
+		r.state(), msgStamp(now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), replyAuthor(m), nullString(r.localID), reviewAskJSON(m.Review))
 	return err
+}
+
+// replyAuthor is the side a reply's message is on, or NULL for none.
+func replyAuthor(m messaging.Message) sql.NullInt64 {
+	if m.ReplyTo.Author == messaging.ReplyAuthorNone {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(m.ReplyTo.Author), Valid: true}
 }
 
 // holdForUpgrade says why queued messages a session's peer can't carry

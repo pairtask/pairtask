@@ -131,7 +131,8 @@ func beyondRetention(texts []heldText) []int64 {
 }
 
 // raiseFloor forgets the oldest inbound tombstones, lowest sequence first,
-// while each is past TombstoneAge, read and without a pending receipt; the
+// while each is past TombstoneAge, read (a recorded refusal too) and without
+// a pending receipt; the
 // floor then sits just above the last one forgotten, so their sequences are
 // refused as too old rather than taken as new. It stops at the first row
 // that must stay, so it never passes a retained message.
@@ -153,7 +154,8 @@ ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact,
 // forgettable is the leading run of inbound rows, by sequence, that may be
 // forgotten, and the last one's sequence.
 func forgettable(ctx context.Context, tx *sql.Tx, contact string, now time.Time) ([]int64, int64, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND (state = 'read' AND receipt != 'pending' OR state = 'routed' AND NOT `+pendingImport+`)
+	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND (state = 'read' AND receipt != 'pending'
+    OR state = 'routed' AND NOT `+pendingImport+` OR state = 'refused' AND read_at IS NOT NULL)
 FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(now.Add(-messaging.TombstoneAge)), contact)
 	if err != nil {
 		return nil, 0, err

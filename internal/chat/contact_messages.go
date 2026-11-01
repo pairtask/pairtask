@@ -176,6 +176,9 @@ func (t *contactThread) merge(views []protocol.ContactMessageView) {
 		if held && v.Text == "" {
 			v.Text = old.Text // a collected text stays shown as it was read
 		}
+		if held && v.ReadAt == nil {
+			v.ReadAt = old.ReadAt // read here stays read, whatever a late page says
+		}
 		t.rows[rowKey(v)] = v
 	}
 }
