@@ -126,9 +126,11 @@ func TestRefusalVisibilityReplayAcceptanceFailedRecordDoesNotSettle(t *testing.T
 	pairOK(t, err)
 	m := remoteAsk("refused-review")
 	a, err := db.PeerMessages().Accept(context.Background(), contact, m, messageAt)
-	if err == nil || a.Stored || a.Recorded {
-		t.Fatalf("failed durable notice returned a successful decision: %+v, %v", a, err)
+	if err == nil {
+		t.Fatal("failed durable notice returned no error")
 	}
+	pairEqual(t, a.Stored, false)
+	pairEqual(t, a.Recorded, false)
 	pairEqual(t, len(messagePage(t, db.PeerMessages(), contact)), 0)
 	_, err = raw.Exec("DROP TRIGGER fail_refusal")
 	pairOK(t, err)

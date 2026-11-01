@@ -46,12 +46,20 @@ func acceptIn(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool
 		return answer, false, err
 	}
 	answer, err := decideInbound(ctx, tx, contact, m)
-	if err == nil && recordable(m, answer) {
+	switch {
+	case err != nil:
+		return messaging.Answer{}, false, err
+	case recordable(m, answer):
 		return recordRefusal(ctx, tx, r)
+	case !answer.Stored:
+		return answer, false, nil
 	}
-	if err != nil || !answer.Stored {
-		return answer, false, err
-	}
+	return insertAccepted(ctx, tx, r)
+}
+
+// insertAccepted stores an accepted message and stages it for this side's
+// agents when it is theirs.
+func insertAccepted(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool, error) {
 	if err := insertMessage(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err // never Stored when the insert failed
 	}

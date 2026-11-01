@@ -14,11 +14,17 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
 
-func refusedNotice(t *testing.T, s messaging.Store, contact, id string, n uint64, at time.Time) messaging.Message {
+type refusalNoticeInput struct {
+	id string
+	n  uint64
+	at time.Time
+}
+
+func refusedNotice(t *testing.T, s messaging.Store, contact string, input refusalNoticeInput) messaging.Message {
 	t.Helper()
-	m := remoteAsk(id)
-	m.N = n
-	a, err := s.Accept(context.Background(), contact, m, at)
+	m := remoteAsk(input.id)
+	m.N = input.n
+	a, err := s.Accept(context.Background(), contact, m, input.at)
 	pairOK(t, err)
 	pairEqual(t, a.Stored, false)
 	pairEqual(t, a.Refusal, messaging.Refuse(messaging.ReasonNotShared))
@@ -31,7 +37,7 @@ func TestRefusalVisibilityBoundsAcceptanceReopenAndLocalRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "refused.db")
 	db := pairSQLite(t, path)
 	contact := messageContact(t, db, 1)
-	m := refusedNotice(t, db.PeerMessages(), contact, "refused", 1, messageAt)
+	m := refusedNotice(t, db.PeerMessages(), contact, refusalNoticeInput{"refused", 1, messageAt})
 	pairOK(t, db.Close())
 	db = pairSQLite(t, path)
 	s := db.PeerMessages()
@@ -44,9 +50,13 @@ func TestRefusalVisibilityBoundsAcceptanceReopenAndLocalRead(t *testing.T) {
 	pairEqual(t, r.N, m.N)
 	pairEqual(t, r.CreatedAt.Equal(m.CreatedAt), true)
 	pairEqual(t, r.From, m.From)
-	if !reflect.DeepEqual(r.To, m.To) || r.Review == nil || *r.Review != *m.Review {
-		t.Fatalf("refusal lost recipients or pinned ask: %+v", r)
+	if !reflect.DeepEqual(r.To, m.To) {
+		t.Fatalf("refusal lost recipients: %v", r.To)
 	}
+	if r.Review == nil {
+		t.Fatal("refusal lost pinned ask")
+	}
+	pairEqual(t, *r.Review, *m.Review)
 	pairEqual(t, r.Text, "")
 	pairEqual(t, r.ReadAt == nil, true)
 	pairEqual(t, r.Refusal, messaging.Refuse(messaging.ReasonNotShared))
@@ -66,9 +76,10 @@ func TestRefusalVisibilityBoundsAcceptanceReopenAndLocalRead(t *testing.T) {
 	s = db.PeerMessages()
 	r = messagePage(t, s, contact)[0]
 	pairEqual(t, r.State, messaging.StateRefused)
-	if r.ReadAt == nil || !r.ReadAt.Equal(readAt) {
-		t.Fatalf("read time not preserved: %+v", r.ReadAt)
+	if r.ReadAt == nil {
+		t.Fatal("read time not preserved")
 	}
+	pairEqual(t, r.ReadAt.Equal(readAt), true)
 	pairEqual(t, r.Receipt, "")
 	pending, err := s.PendingReads(ctx, contact, 10)
 	pairOK(t, err)
@@ -80,7 +91,7 @@ func TestRefusalVisibilityBoundsAcceptanceUnreadCapAndSlotRecovery(t *testing.T)
 	db, contact := messageFixture(t)
 	s, ctx := db.PeerMessages(), context.Background()
 	for i := 1; i <= 32; i++ {
-		refusedNotice(t, s, contact, fmt.Sprintf("refused-%d", i), uint64(i), messageAt)
+		refusedNotice(t, s, contact, refusalNoticeInput{fmt.Sprintf("refused-%d", i), uint64(i), messageAt})
 	}
 	pairEqual(t, len(messagePage(t, s, contact)), 32)
 	m := remoteAsk("overflow")
@@ -92,14 +103,14 @@ func TestRefusalVisibilityBoundsAcceptanceUnreadCapAndSlotRecovery(t *testing.T)
 	pairEqual(t, len(messagePage(t, s, contact)), 32)
 	// Bounds are per contact, and normal operator messages keep their own quota.
 	other := messageContact(t, db, 2)
-	refusedNotice(t, s, other, "other-contact", 1, messageAt)
+	refusedNotice(t, s, other, refusalNoticeInput{"other-contact", 1, messageAt})
 	a, err = s.Accept(ctx, contact, messageWire("operator-message", 34), messageAt)
 	pairOK(t, err)
 	pairEqual(t, a.Stored, true)
 	n, err := s.MarkRead(ctx, contact, []string{"refused-1"}, messageAt)
 	pairOK(t, err)
 	pairEqual(t, n, 1)
-	refusedNotice(t, s, contact, m.ID, m.N, messageAt)
+	refusedNotice(t, s, contact, refusalNoticeInput{m.ID, m.N, messageAt})
 	pairEqual(t, len(messagePage(t, s, contact)), 34)
 }
 
@@ -112,7 +123,7 @@ func TestRefusalVisibilityBoundsAcceptanceTotalTombstoneCap(t *testing.T) {
 	pairOK(t, err)
 	pairOK(t, s.ReadConfirmed(ctx, contact, "original"))
 	messageSeedSettled(t, raw, contact, messaging.Tombstones-1)
-	refusedNotice(t, s, contact, "last-slot", uint64(messaging.Tombstones), messageAt)
+	refusedNotice(t, s, contact, refusalNoticeInput{"last-slot", uint64(messaging.Tombstones), messageAt})
 	m := remoteAsk("over-total-cap")
 	m.N = uint64(messaging.Tombstones + 1)
 	a, err := s.Accept(ctx, contact, m, messageAt)
@@ -126,8 +137,8 @@ func TestRefusalVisibilityBoundsAcceptanceTotalTombstoneCap(t *testing.T) {
 func TestRefusalVisibilityBoundsAcceptanceRetentionAndReplayFloor(t *testing.T) {
 	db, contact := messageFixture(t)
 	s, ctx := db.PeerMessages(), context.Background()
-	read := refusedNotice(t, s, contact, "read-refusal", 1, messageAt)
-	refusedNotice(t, s, contact, "unread-refusal", 2, messageAt)
+	read := refusedNotice(t, s, contact, refusalNoticeInput{"read-refusal", 1, messageAt})
+	refusedNotice(t, s, contact, refusalNoticeInput{"unread-refusal", 2, messageAt})
 	_, err := s.MarkRead(ctx, contact, []string{read.ID}, messageAt)
 	pairOK(t, err)
 	later := messageAt.Add(messaging.TombstoneAge + time.Hour)
@@ -141,48 +152,44 @@ func TestRefusalVisibilityBoundsAcceptanceRetentionAndReplayFloor(t *testing.T) 
 		pairOK(t, err)
 		pairEqual(t, a.Refusal, messaging.Refuse(messaging.ReasonTooOld))
 	}
-	refusedNotice(t, s, contact, "fresh-refusal", 3, later)
+	refusedNotice(t, s, contact, refusalNoticeInput{"fresh-refusal", 3, later})
 }
 
 func TestRefusalVisibilityBoundsAcceptanceUnreadLowerSequenceProtectsFloor(t *testing.T) {
 	db, contact := messageFixture(t)
 	s, ctx := db.PeerMessages(), context.Background()
-	refusedNotice(t, s, contact, "higher-read", 2, messageAt)
+	refusedNotice(t, s, contact, refusalNoticeInput{"higher-read", 2, messageAt})
 	_, err := s.MarkRead(ctx, contact, []string{"higher-read"}, messageAt)
 	pairOK(t, err)
-	refusedNotice(t, s, contact, "lower-unread", 1, messageAt.Add(time.Hour))
+	refusedNotice(t, s, contact, refusalNoticeInput{"lower-unread", 1, messageAt.Add(time.Hour)})
 	pairOK(t, s.Collect(ctx, messageAt.Add(messaging.TombstoneAge+2*time.Hour)))
 	pairEqual(t, len(messagePage(t, s, contact)), 2)
 }
 
 func TestRefusalVisibilityBoundsAcceptanceInvalidAsksLeaveNoNotice(t *testing.T) {
-	for _, scenario := range []string{"zero-sequence", "invalid-id", "invalid-recipient", "missing-pin", "empty-text", "invalid-utf8", "oversize"} {
-		t.Run(scenario, func(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+		change func(*messaging.Message)
+	}{
+		{"zero-sequence", messaging.ReasonInvalid, func(m *messaging.Message) { m.N = 0 }},
+		{"invalid-id", messaging.ReasonInvalid, func(m *messaging.Message) { m.ID = "invalid id" }},
+		{"invalid-recipient", messaging.ReasonInvalid, func(m *messaging.Message) { m.To = []string{"operator"} }},
+		{"missing-pin", messaging.ReasonInvalid, func(m *messaging.Message) { m.Review.Head = "" }},
+		{"empty-text", messaging.ReasonInvalid, func(m *messaging.Message) { m.Text = "" }},
+		{"invalid-utf8", messaging.ReasonInvalid, func(m *messaging.Message) { m.Text = string([]byte{0xff}) }},
+		{"oversize", messaging.ReasonTooLarge, func(m *messaging.Message) { m.Text = strings.Repeat("x", messaging.TextBytes+1) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			db, contact := messageFixture(t)
 			m := remoteAsk("invalid-notice")
-			reason := messaging.ReasonInvalid
-			switch scenario {
-			case "zero-sequence":
-				m.N = 0
-			case "invalid-id":
-				m.ID = "invalid id"
-			case "invalid-recipient":
-				m.To = []string{"operator"}
-			case "missing-pin":
-				m.Review.Head = ""
-			case "empty-text":
-				m.Text = ""
-			case "invalid-utf8":
-				m.Text = string([]byte{0xff})
-			case "oversize":
-				m.Text = strings.Repeat("x", messaging.TextBytes+1)
-				reason = messaging.ReasonTooLarge
-			}
+			tc.change(&m)
 			a, err := db.PeerMessages().Accept(context.Background(), contact, m, messageAt)
 			pairOK(t, err)
 			pairEqual(t, a.Stored, false)
 			pairEqual(t, a.Recorded, false)
-			pairEqual(t, a.Refusal, messaging.Refuse(reason))
+			pairEqual(t, a.Refusal, messaging.Refuse(tc.reason))
 			pairEqual(t, len(messagePage(t, db.PeerMessages(), contact)), 0)
 		})
 	}
@@ -209,13 +216,12 @@ func TestRefusalVisibilityBoundsAcceptanceBelowFloorAskLeavesNoNotice(t *testing
 
 func TestRefusalVisibilityBoundsAcceptanceKeepsOriginalHashesWithoutText(t *testing.T) {
 	db, raw, contact := messageRawFixture(t)
-	m := refusedNotice(t, db.PeerMessages(), contact, "hash-only", 1, messageAt)
+	m := refusedNotice(t, db.PeerMessages(), contact, refusalNoticeInput{"hash-only", 1, messageAt})
 	var hash, textHash []byte
 	var textBytes int
 	pairOK(t, raw.QueryRow("SELECT hash,text_hash,text_bytes FROM peer_messages WHERE contact=? AND message_id=?", contact, m.ID).Scan(&hash, &textHash, &textBytes))
 	wantHash, wantTextHash := m.Hash(), sha256.Sum256([]byte(m.Text))
-	if !bytes.Equal(hash, wantHash[:]) || !bytes.Equal(textHash, wantTextHash[:]) {
-		t.Fatal("notice lost original replay identity")
-	}
+	pairEqual(t, bytes.Equal(hash, wantHash[:]), true)
+	pairEqual(t, bytes.Equal(textHash, wantTextHash[:]), true)
 	pairEqual(t, textBytes, 0)
 }

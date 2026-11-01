@@ -1,10 +1,6 @@
 package chat
 
-import (
-	"strings"
-
-	"github.com/pairtask/pairtask/internal/protocol"
-)
+import "github.com/pairtask/pairtask/internal/protocol"
 
 // A paired workspace's review request for an agent here that it may not ask
 // is refused, and the refusal is kept for this side's operator to see. It
@@ -41,10 +37,11 @@ func refusalGuidance(v protocol.ContactMessageView) string {
 }
 
 // commandOperand is the one recipient as a word safe to paste into a
-// command, or AGENT when it isn't one: never a flag, never several words.
+// command, or AGENT when it isn't one: never several words, and never a
+// flag, since an agent ID starts with a letter or digit.
 func commandOperand(to []string) string {
-	if len(to) != 1 || !mentionID.MatchString(to[0]) || strings.HasPrefix(to[0], "-") {
-		return "AGENT"
+	if len(to) == 1 && mentionID.MatchString(to[0]) {
+		return to[0]
 	}
-	return to[0]
+	return "AGENT"
 }
