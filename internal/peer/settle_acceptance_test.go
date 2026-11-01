@@ -73,12 +73,7 @@ func TestSettleAcceptanceLostFramesConvergeWithoutNewPairing(t *testing.T) {
 
 func TestSettleAcceptanceLostOriginalReceiptRecoversWithoutCode(t *testing.T) {
 	r := newRedeemFixture(t)
-	r.filter = func(frame []byte) ([]byte, error) {
-		if frame[1] == peer.FrameReceipt {
-			return nil, io.ErrUnexpectedEOF
-		}
-		return frame, nil
-	}
+	r.filter = dropRedeemReceipt
 	paired := r.run(t, r.code())
 	invEqual(t, paired.row.State, peer.JoinOutcomeUnknown)
 	settled := settlePair(t, r, paired.row.OperationID, nil, nil)
