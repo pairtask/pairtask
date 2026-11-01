@@ -1,0 +1,125 @@
+[
+  {
+    "id": "empty",
+    "name": "",
+    "valid": true
+  },
+  {
+    "id": "ascii",
+    "name": "My workspace",
+    "valid": true
+  },
+  {
+    "id": "edge-spaces",
+    "name": "  quoted \"name\" \\ $cash % #tag;  ",
+    "valid": true
+  },
+  {
+    "id": "space-only",
+    "name": "   ",
+    "valid": true
+  },
+  {
+    "id": "ascii-64",
+    "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "id": "ascii-65",
+    "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false,
+    "tofu_valid": false
+  },
+  {
+    "id": "utf8-64",
+    "name": "界界界界界界界界界界界界界界界界界界界界界a",
+    "valid": true
+  },
+  {
+    "id": "utf8-65",
+    "name": "界界界界界界界界界界界界界界界界界界界界界aa",
+    "valid": false,
+    "tofu_valid": true
+  },
+  {
+    "id": "emoji-64",
+    "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+    "valid": true
+  },
+  {
+    "id": "emoji-68",
+    "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+    "valid": false,
+    "tofu_valid": true
+  },
+  {
+    "id": "combining-mark",
+    "name": "Café",
+    "valid": true
+  },
+  {
+    "id": "tab",
+    "name": "a\tb",
+    "valid": false
+  },
+  {
+    "id": "line-feed",
+    "name": "a\nb",
+    "valid": false
+  },
+  {
+    "id": "carriage-return",
+    "name": "a\rb",
+    "valid": false
+  },
+  {
+    "id": "nul",
+    "name": "a\u0000b",
+    "valid": false
+  },
+  {
+    "id": "escape",
+    "name": "a\u001bb",
+    "valid": false
+  },
+  {
+    "id": "delete",
+    "name": "ab",
+    "valid": false
+  },
+  {
+    "id": "line-separator",
+    "name": "a b",
+    "valid": false
+  },
+  {
+    "id": "paragraph-separator",
+    "name": "a b",
+    "valid": false
+  },
+  {
+    "id": "nonbreaking-space",
+    "name": "a b",
+    "valid": false
+  },
+  {
+    "id": "ideographic-space",
+    "name": "a　b",
+    "valid": false
+  },
+  {
+    "id": "zero-width-joiner",
+    "name": "a‍b",
+    "valid": false
+  },
+  {
+    "id": "bom",
+    "name": "a﻿b",
+    "valid": false
+  },
+  {
+    "id": "unassigned",
+    "name": "a͸b",
+    "valid": false
+  }
+]

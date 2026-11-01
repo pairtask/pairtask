@@ -192,6 +192,7 @@ class PairingRolloutAcceptance(PairingFixture):
             for name in ("stop_managed", "configure_ssh", "install_tools", "refresh_recipe"):
                 stack.enter_context(patch.object(rollout, name))
             stack.enter_context(patch.object(rollout, "run_locked_operation", side_effect=operation))
+            stack.enter_context(patch.object(rollout.sandbox_pairing, "NameBarrier"))
             rollout.rollout(self.args, self.root, self.server)
 
     def test_on_upgrade_off_accepts_owned_connector_and_preserves_settings(self):
