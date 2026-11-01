@@ -44,6 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import pairing_agent_checks  # noqa: E402
+import pairing_name_checks  # noqa: E402
 import pairing_live_checks  # noqa: E402
 import pairing_review_checks  # noqa: E402
 import pairing_routing_checks  # noqa: E402
@@ -95,7 +96,8 @@ def enable_route(directory):
     path = directory / "sandbox.auto.tfvars.json"
     variables = json.loads(path.read_text())
     # Unpublished until the publishing stages set a port.
-    variables.update({"secured_runtime": True, "pairing_route": True, "pairing_host_port": 0})
+    variables.update({"secured_runtime": True, "pairing_route": True, "pairing_host_port": 0,
+                      "pairing_name": pairing_name_checks.INITIAL_NAME})  # proven first (#277)
     path.write_text(json.dumps(variables))
 
 
@@ -463,6 +465,8 @@ def prove_live(deployment, host):
 def exercise(args, deployment, local, publication):
     """local is (binaries, workdir): the host fixture's build and directory."""
     binaries, workdir = local
+    # The name provisioning gave reaches the broker, first and as changed (#277).
+    pairing_name_checks.prove_name(deployment, publication)
     route_ready(deployment)
     connector_ip = deployment.address("connector")
     bridge_ip = connector_ip.rsplit(".", 1)[0] + ".1"

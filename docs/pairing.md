@@ -9,11 +9,12 @@ its chat.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
-pairtask pairing on --host-port 7445
+pairtask pairing on --host-port 7445 --name my-laptop
 pairtask pairing status
 ```
 
-Status should say `on` and `forwarding … port 7445`. Use the installer, not
+Status should say `on` and `forwarding … port 7445`. `--name` is how
+workspaces you pair with from now on will see this one; see [Names](#names). Use the installer, not
 `pairtask upgrade`: only the installer updates the `pairtask` command too.
 Allow incoming connections if macOS asks.
 
@@ -167,12 +168,15 @@ A paired workspace has a key and up to two names:
 - **Its key** (`sha256:…`) is who it is. Messages, sharing and reviews go
   by the key, and the key stays the same as long as that workspace keeps
   its identity, across upgrades included. `/pair status` shows it.
-- **The name it gives itself** is sent when it pairs. On B, this is the
-  last word of `/pair redeem`. Otherwise it is the workspace's
-  `PAIRTASK_PAIRING_NAME`, which `pairtask pairing on` can't set yet, so
-  name B when you redeem. The default, `workspace`, tells nobody apart, so
-  chat doesn't show it as a name. The name is taken when you pair: renaming a workspace
-  later doesn't reach the ones it is already paired with.
+- **The name it gives itself** is sent when it pairs: on B, the last word
+  of `/pair redeem` when given; otherwise the one set with
+  `pairtask pairing on --name NAME` (at most 64 bytes; `--name ""` clears
+  it, and without `--name` the saved one stays). A broker run by hand takes
+  `PAIRTASK_PAIRING_NAME`. The
+  default, `workspace`, tells nobody apart, so chat doesn't show it as a
+  name. The name is taken when you pair: setting or changing it reaches
+  the workspaces you pair with afterwards, not the ones already paired,
+  whose operators can still call it what they like with `/pair name`.
 - **What you call it** is yours to choose. Set it in its `⇄` tab:
 
 ```text

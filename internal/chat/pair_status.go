@@ -79,7 +79,7 @@ func (m *Model) selfRow() string {
 	}
 	name := shownName(s.SelfName)
 	if name == "" {
-		return "  this workspace: " + safe(s.SelfIdentity) + mutedStyle.Render("  (no name: set PAIRTASK_PAIRING_NAME)")
+		return "  this workspace: " + safe(s.SelfIdentity) + mutedStyle.Render("  (no name: "+nameHint+")")
 	}
 	return "  this workspace: " + safe(name) + " · " + safe(s.SelfIdentity)
 }
@@ -154,6 +154,11 @@ func pairedRow(c protocol.PairingContactView) []string {
 	return rows
 }
 
+// nameHint is how this workspace gets a name of its own (#277): on a
+// managed install with pairtask pairing on --name, else in the broker's
+// environment. The chat can't tell which install it talks to, so it says both.
+const nameHint = "pairtask pairing on --name NAME, or set PAIRTASK_PAIRING_NAME"
+
 // selfNamed: this workspace pairs under a name of its own, or isn't
 // known yet to pair under none.
 func (m *Model) selfNamed() bool {
@@ -180,5 +185,5 @@ func (m *Model) redeemNameHint(named bool) string {
 	if named || m.selfNamed() {
 		return ""
 	}
-	return "; they will see this workspace unnamed: add NAME, or set PAIRTASK_PAIRING_NAME"
+	return "; they will see this workspace unnamed: add NAME, or " + nameHint
 }

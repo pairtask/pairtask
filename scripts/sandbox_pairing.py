@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+import unicodedata
 
 from sandbox_operator_config import LOCATION, ROOT, read_registry, state_project, worktree_directories
 from sandbox_operator_state import private_write
@@ -16,7 +17,9 @@ from sandbox_operator_state import private_write
 
 SWITCHES = ("pairing_route", "secured_runtime", "peer_connector_probe")
 PORT = "pairing_host_port"
-CONTROLS = SWITCHES + (PORT,)
+NAME = "pairing_name"  # the name this workspace pairs under (#277); "" for none
+NAME_BYTES = 64
+CONTROLS = SWITCHES + (PORT, NAME)
 DEFAULT_FILE = "operator.auto.tfvars.json"
 JSON_PATTERNS = ("*.auto.tfvars.json", "terraform.tfvars.json")
 HCL_PATTERNS = ("*.auto.tfvars", "terraform.tfvars")
@@ -61,6 +64,8 @@ def json_object(path):
             raise ValueError(f"{path.name}: {key} must be true or false")
     if PORT in data:
         valid_port(data[PORT], f"{path.name}: {PORT}")
+    if NAME in data:
+        valid_name(data[NAME], f"{path.name}: {NAME}")
     return data
 
 
@@ -69,6 +74,22 @@ def valid_port(value, label=PORT):
     if type(value) is not int or not publishable(value):
         raise ValueError(f"{label} must be 0 or a whole port from 1024 to 65535")
     return value
+
+
+def valid_name(value, label="--name"):
+    """A pairing name as the broker takes it (Go's peer.CheckPairingName): at
+    most 64 bytes of UTF-8, every character printable as Go's unicode.IsPrint
+    has it, a letter, mark, number, punctuation, symbol or the ASCII space.
+    The tables are Python's, so an edge of the newest Unicode may differ."""
+    if not isinstance(value, str) or len(value.encode("utf-8", "surrogatepass")) > NAME_BYTES:
+        raise ValueError(f"{label} must be at most {NAME_BYTES} bytes of printable text")
+    if not all(printable(c) for c in value):
+        raise ValueError(f"{label} must be at most {NAME_BYTES} bytes of printable text")
+    return value
+
+
+def printable(c):
+    return c == " " or unicodedata.category(c)[0] in "LMNPS"
 
 
 def publishable(port):
@@ -93,18 +114,21 @@ def control_file(directory, files):
     return owners[0] if owners else directory / DEFAULT_FILE
 
 
-def pairing_change(directory, enabled, host_port=None):
+def pairing_change(directory, enabled, host_port=None, name=None):
     """The variables with the route turned on or off; nothing is written.
     On publishes on host_port, else on the saved port, else on 7445; off
-    keeps the saved port for the next on."""
+    keeps the saved port for the next on. A name replaces the saved one, ""
+    clears it; None keeps whatever is saved, or nothing."""
     files = settings(directory)
     path = control_file(directory, files)
     variables = dict(files.get(path, {}))
     if not enabled:
-        if host_port is not None:
-            raise ValueError("--host-port is only for pairing on")
+        if host_port is not None or name is not None:
+            raise ValueError("--host-port and --name are only for pairing on")
         variables["pairing_route"] = False
         return PairingChange(path, variables)
+    if name is not None:
+        variables[NAME] = valid_name(name)  # "" is valid: it clears the name
     if variables.get("peer_connector_probe"):
         raise ValueError("pairing_route and peer_connector_probe can't both be on; turn the probe off first")
     port = variables.get(PORT, RELAY_PORT) if host_port is None else valid_port(host_port, "--host-port")

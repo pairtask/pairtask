@@ -151,7 +151,7 @@ On both machines, update and turn pairing on:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
-pairtask pairing on --host-port 7445
+pairtask pairing on --host-port 7445 --name my-laptop
 ```
 
 Then pair in `pairtask chat`. A invites, B joins:

@@ -44,6 +44,7 @@ def arguments():
     parser.add_argument("--tools", nargs="*", default=["cs-mcp", "playwright", "docker", "pi"], metavar="TOOL",
                         help="Optional tools to enable (default: all); required tools are always installed")
     parser.add_argument("--host-port", type=int, help="pairing-on: publish the relay on this port of every host address (0: none; default: the saved port, else 7445)")
+    parser.add_argument("--name", help="pairing-on: the name this workspace pairs under, at most 64 bytes; \"\" clears it; default: the saved name")
     changes = parser.add_mutually_exclusive_group()
     changes.add_argument("--replace", action="store_true", help="Plan replacement of the dev container")
     changes.add_argument("--destroy", action="store_true", help="Explicitly plan deletion; volume guards must be removed first")
@@ -66,6 +67,8 @@ def check_combinations(parser, args):
         parser.error("--release is for rollout and cannot be combined with --image-dir")
     if args.host_port is not None and args.action != "pairing-on":
         parser.error("--host-port is for pairing-on")
+    if args.name is not None and args.action != "pairing-on":
+        parser.error("--name is for pairing-on")
 
 
 def main():

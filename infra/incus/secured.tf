@@ -199,6 +199,19 @@ resource "incus_instance" "secured" {
     "user.pairtask.managed" = "infra/incus"
     "user.pairtask.role"    = "secured"
   }
+  # The name it pairs under (#277), read by pairtask-pairing-setup at each
+  # start, before the broker; the guest API stays off.
+  dynamic "file" {
+    for_each = var.pairing_route ? [jsonencode({ name = var.pairing_name })] : []
+    content {
+      content            = file.value
+      target_path        = "/etc/pairtask/pairing-name.json"
+      uid                = 0
+      gid                = 0
+      mode               = "0644"
+      create_directories = true
+    }
+  }
 }
 
 output "secured" {

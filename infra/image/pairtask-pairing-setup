@@ -4,12 +4,15 @@ stale sockets left by a stopped daemon, and the secured broker's route
 settings. Never touches broker state, the database or the workspace key."""
 
 import grp
+import json
 import os
 from pathlib import Path
 import pwd
+import re
 import socket
 import stat
 import sys
+import unicodedata
 
 
 STATE = Path("/var/lib/collab-ai-secured")
@@ -18,7 +21,10 @@ EGRESS = Path("/mnt/pairtask-egress")
 ENV = Path("/run/pairtask/pairing.env")
 PEER_GROUP, PEER_GID = "collab-peer", 1050
 PEER_USER, PEER_UID = "peer", 1052
-ENV_KEYS = ("PAIRTASK_PAIRING_SOCKET", "PAIRTASK_PAIRING_SOCKET_GROUP", "PAIRTASK_PAIRING_EGRESS")
+ENV_KEYS = ("PAIRTASK_PAIRING_SOCKET", "PAIRTASK_PAIRING_SOCKET_GROUP", "PAIRTASK_PAIRING_EGRESS", "PAIRTASK_PAIRING_NAME")
+# The name this workspace pairs under (#277), written by provisioning.
+NAME_FILE = Path("/etc/pairtask/pairing-name.json")
+NAME_BYTES = 64
 
 
 def check_role(role, state=STATE, ingress=INGRESS, egress=EGRESS, mounted=os.path.ismount):
@@ -83,12 +89,44 @@ def unlink_if_same(path, before, uid):
     path.unlink()
 
 
+# A value systemd reads unchanged without quotes.
+PLAIN_VALUE = re.compile(r"[A-Za-z0-9/_.:@+-]+")
+
+
 def env_line(key, value):
+    """One setting as systemd's EnvironmentFile reads it: a plain value as it
+    is, any other double-quoted, backslash and quote escaped, so spaces, #, $
+    and % stay as they are."""
     if key not in ENV_KEYS:
         raise ValueError(f"unexpected setting: {key}")
     if any(c in value for c in "\n\r\0"):
         raise ValueError(f"unsafe value for {key}")
-    return f"{key}={value}\n"
+    if PLAIN_VALUE.fullmatch(value):
+        return f"{key}={value}\n"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{key}="{escaped}"\n'
+
+
+def read_name(path=NAME_FILE):
+    """The name provisioning gave, "" when it cleared it, or None without a
+    file. Anything malformed is refused, never taken in part."""
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("name"), str):
+        raise ValueError(f"{path}: want {{\"name\": \"...\"}}")
+    name = data["name"]
+    if name and not valid_name(name):
+        raise ValueError(f"{path}: the name must be at most {NAME_BYTES} bytes of printable text")
+    return name
+
+
+def valid_name(name):
+    """As the broker checks it: at most 64 bytes of UTF-8, every character a
+    letter, mark, number, punctuation, symbol or the ASCII space."""
+    if len(name.encode("utf-8", "surrogatepass")) > NAME_BYTES:
+        return False
+    return all(c == " " or unicodedata.category(c)[0] in "LMNPS" for c in name)
 
 
 def write_env(path, gid, values):
@@ -132,18 +170,25 @@ def private_parent(path, uid=0):
         raise ValueError(f"Refusing an unsafe settings directory: {path}")
 
 
-def secured(state=STATE, ingress=INGRESS, egress=EGRESS, env=ENV):
-    """Root: the ingress directory and the broker's route settings."""
+def secured(state=STATE, ingress=INGRESS, egress=EGRESS, env=ENV, name_path=NAME_FILE):
+    """Root: the ingress directory and the broker's route settings, with the
+    name it pairs under when provisioning gave one. Old settings go first, so
+    a failure never leaves them, or an old name, in force."""
     check_role("secured", state, ingress, egress)
     require_ids()
+    clear_env(env)
+    name = read_name(name_path)
     broker = pwd.getpwnam("broker")
     prepare_shared_dir(ingress, broker.pw_uid, PEER_GID)
     private_parent(env.parent)
-    write_env(env, broker.pw_gid, {
+    values = {
         "PAIRTASK_PAIRING_SOCKET": str(ingress / "pairing.sock"),
         "PAIRTASK_PAIRING_SOCKET_GROUP": PEER_GROUP,
         "PAIRTASK_PAIRING_EGRESS": "socket:" + str(egress / "egress.sock"),
-    })
+    }
+    if name:  # none or cleared: the broker's default
+        values["PAIRTASK_PAIRING_NAME"] = name
+    write_env(env, broker.pw_gid, values)
 
 
 def connector(state=STATE, ingress=INGRESS, egress=EGRESS):

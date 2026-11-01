@@ -192,11 +192,11 @@ def checked_pairing(args, directory):
     anything is written or stopped."""
     pairing = getattr(args, "pairing", None)
     if pairing is not None:
-        pairing_change(directory, pairing, getattr(args, "host_port", None))
+        pairing_change(directory, pairing, getattr(args, "host_port", None), getattr(args, "name", None))
     return pairing
 
 
 def record_pairing(args, directory, pairing):
     # Computed again from the files as they are now: initialization may have written them.
     if pairing is not None:
-        write_change(pairing_change(directory, pairing, getattr(args, "host_port", None)))
+        write_change(pairing_change(directory, pairing, getattr(args, "host_port", None), getattr(args, "name", None)))
