@@ -503,3 +503,17 @@ func reviewParties(s contactSides, v protocol.ContactMessageView) string {
 	}
 	return "asked of " + theirAgents(v.To, s.ws)
 }
+
+// invalidate drops the sections' reads in flight: their answers may be
+// lost, and any that arrive belong to an older generation. Refs stay.
+func (p *reviewPending) invalidate() {
+	p.needs.gen, p.needs.firstIn, p.needs.again = p.needs.gen+1, false, false
+	p.asked.gen, p.asked.firstIn, p.asked.again = p.asked.gen+1, false, false
+}
+
+// sectionsBaseline: a new baseline, after a reconnect or a gap, reads an
+// open panel's sections again from their first pages.
+func (m *Model) sectionsBaseline() tea.Cmd {
+	m.sections.invalidate()
+	return m.refreshPendingSections()
+}

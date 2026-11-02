@@ -224,7 +224,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 		}
 	}
 	m.pairing.listed = false // a /pair picker reads again after a reconnection
-	return tea.Batch(m.setReviewCounts(snap), m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
+	return tea.Batch(m.setReviewCounts(snap), m.sectionsBaseline(), m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
 		m.refreshContacts(), m.reviewsReconnected(), m.contactsReconnected())
 }
 

@@ -368,6 +368,7 @@ func (m *Model) contactSendResult(req pendingRequest, resp protocol.Message) tea
 // may be lost, so they are resent unchanged after the reconnect.
 func (m *Model) contactsDisconnected() {
 	m.sections.nav = nil // a search for a review request doesn't resume after a reconnect
+	m.sections.invalidate()
 	if m.contacts.send != nil {
 		m.contacts.send.unknown = true
 	}
