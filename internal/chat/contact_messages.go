@@ -39,6 +39,7 @@ type contactThread struct {
 	read      map[string]bool             // inbound IDs a read was confirmed for
 	refused   map[string]bool             // inbound IDs a read was refused for; not asked again until reloaded
 	acks      *protocol.ContactAckSummary // the operator's acknowledgments, as last heard (#287)
+	recheck   []int64                     // loaded messages an acknowledgment selected, read again oldest last
 }
 
 // contactOp is a send or a read whose ID and content are fixed when made,
@@ -150,6 +151,9 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 		m.directoryChanged(contact)
 	} else {
 		t.olderPage(page)
+		if cmd := m.recheckNext(contact, page); cmd != nil {
+			return cmd
+		}
 	}
 	if t.stale && before == "0" {
 		t.stale = false
@@ -180,6 +184,9 @@ func (t *contactThread) merge(views []protocol.ContactMessageView) {
 		}
 		if held && v.ReadAt == nil {
 			v.ReadAt = old.ReadAt // read here stays read, whatever a late page says
+		}
+		if held && ackSettled(old.AckState) && !ackSettled(v.AckState) {
+			v.AckState, v.AckedAt = old.AckState, old.AckedAt // acknowledged or expired stays so (#287)
 		}
 		t.rows[rowKey(v)] = v
 	}

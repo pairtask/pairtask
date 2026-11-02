@@ -44,8 +44,8 @@ const ackStateColumn = `CASE WHEN direction != 'in' OR state NOT IN ('received',
 
 // seedAckFloors puts every existing contact's received messages below its
 // floor, once, when acknowledgments start being tracked.
-func seedAckFloors(db *sql.DB) error {
-	_, err := db.Exec(`INSERT INTO peer_ack_floors (contact, floor)
+func seedAckFloors(tx *sql.Tx) error {
+	_, err := tx.Exec(`INSERT INTO peer_ack_floors (contact, floor)
 SELECT contact, MAX(cursor) FROM peer_messages WHERE direction = 'in' GROUP BY contact
 ON CONFLICT(contact) DO NOTHING`)
 	return err
@@ -204,9 +204,13 @@ func (p *PeerMessages) AckSummaries(ctx context.Context) (map[string]protocol.Co
 	if err := p.localOnly(); err != nil {
 		return nil, err
 	}
-	rows, err := p.db.QueryContext(ctx, `SELECT contact, COALESCE(SUM(`+needsAck+`), 0), COALESCE(MAX(CASE WHEN `+needsAck+` THEN cursor END), 0),
-    COALESCE((SELECT expired FROM peer_ack_floors f WHERE f.contact = peer_messages.contact), 0)
-FROM peer_messages GROUP BY contact`)
+	// Every contact with messages or a floor: an expired count outlives
+	// the messages it counted.
+	rows, err := p.db.QueryContext(ctx, `SELECT k.contact,
+    COALESCE((SELECT SUM(`+needsAck+`) FROM peer_messages WHERE contact = k.contact), 0),
+    COALESCE((SELECT MAX(cursor) FROM peer_messages WHERE contact = k.contact AND `+needsAck+`), 0),
+    COALESCE((SELECT expired FROM peer_ack_floors f WHERE f.contact = k.contact), 0)
+FROM (SELECT contact FROM peer_messages UNION SELECT contact FROM peer_ack_floors) k`)
 	if err != nil {
 		return nil, err
 	}
@@ -237,4 +241,12 @@ func newestReceived(ctx context.Context, q rowQuerier, contact string) (int64, e
 	err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(cursor), 0) FROM peer_messages WHERE contact = ? AND direction = 'in'`,
 		contact).Scan(&newest)
 	return newest, err
+}
+
+// ContactOperationKnown: an operator operation with this ID was stored
+// already, so a retry is answered from it, whatever holds now.
+func (s *Store) ContactOperationKnown(ctx context.Context, id string) (bool, error) {
+	var known bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM operator_contact_requests WHERE operation_id = ?)`, id).Scan(&known)
+	return known, err
 }

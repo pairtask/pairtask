@@ -52,11 +52,20 @@ func ackView(acks map[string]protocol.ContactAckSummary, contact string) *protoc
 	return &s
 }
 
-// ackBound refuses an acknowledgment's cursor past the newest message
+// ackBound refuses a new acknowledgment's cursor past the newest message
 // received, before anything is audited or changed. Messages only arrive,
-// so a cursor that passes here still holds when it is applied.
+// so a cursor that passes here still holds when it is applied. A retry of
+// one already stored is answered from it, even once the messages it
+// covered are gone.
 func (h *Hub) ackBound(ctx context.Context, msg protocol.Message) *routingError {
 	if msg.ContactOp != protocol.ContactOpAck || msg.ContactAckUpto == 0 {
+		return nil
+	}
+	known, err := h.store.ContactOperationKnown(ctx, msg.MessageID)
+	if err != nil {
+		return &routingError{protocol.ErrInternal, "contact messages unavailable"}
+	}
+	if known {
 		return nil
 	}
 	newest, err := h.store.PeerMessages().NewestReceived(ctx, msg.ContactKey)

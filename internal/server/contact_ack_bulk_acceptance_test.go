@@ -82,3 +82,23 @@ func TestContactAckBulkAcceptanceLegacyReadNeverAcknowledges(t *testing.T) {
 	operatorEqual(t, "row explicitly needs ACK", page.Messages[0].AckState, "needs_ack")
 	operatorEqual(t, "display does not fabricate human timestamp", page.Messages[0].AckedAt == nil, true)
 }
+
+func TestContactAckBulkAcceptanceSuccessfulReplaySurvivesPrunedBound(t *testing.T) {
+	f := newContactAckFixture(t)
+	f.receive("in", 1)
+	s, ctx := f.st.PeerMessages(), context.Background()
+	summary, err := s.AckSummary(ctx, f.key)
+	operatorNoError(t, err)
+	fields := map[string]any{"contact_op": "ack", "message_id": "pruned-bound-replay", "contact_ack_upto": summary.AckUpto}
+	first := f.call(fields)
+	operatorEqual(t, "first bulk succeeds", first.text("type"), "operator_contact_result")
+	_, err = s.MarkRead(ctx, f.key, []string{"in"}, time.Now())
+	operatorNoError(t, err)
+	operatorNoError(t, s.ReadConfirmed(ctx, f.key, "in"))
+	operatorNoError(t, s.Collect(ctx, time.Now().Add(365*24*time.Hour)))
+	operatorEqual(t, "selected row fully pruned", f.count("peer_messages"), 0)
+	replay := f.call(fields)
+	operatorEqual(t, "same committed intent remains successful after prune: "+sessionJSON(replay), replay.text("type"), "operator_contact_result")
+	operatorEqual(t, "replay acknowledges no new rows", sessionDecode[int](t, replay, "contact_acked"), 0)
+	operatorEqual(t, "replay summary remains empty", contactAckSummary(t, replay).Unacked, 0)
+}

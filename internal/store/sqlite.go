@@ -121,9 +121,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"peer_messages", "ack_expired_at", "TEXT"},
 }
 
-// columnAdded runs once, when its column is added: what the new column
-// needs from the rows already there.
-var columnAdded = map[string]func(*sql.DB) error{
+// columnAdded runs once, in the transaction that adds its column: what the
+// new column needs from the rows already there. A failure adds neither, so
+// the next open tries both again.
+var columnAdded = map[string]func(*sql.Tx) error{
 	"peer_messages.acked_at": seedAckFloors,
 }
 
@@ -136,16 +137,30 @@ func migrate(db *sql.DB) error {
 		if count != 0 {
 			continue
 		}
-		if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.decl); err != nil {
+		if err := addColumn(db, c.table, c.column, c.decl); err != nil {
 			return err
-		}
-		if seed := columnAdded[c.table+"."+c.column]; seed != nil {
-			if err := seed(db); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
+}
+
+// addColumn adds one column, with what it needs from the existing rows, in
+// one transaction.
+func addColumn(db *sql.DB, table, column, decl string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + decl); err != nil {
+		return err
+	}
+	if seed := columnAdded[table+"."+column]; seed != nil {
+		if err := seed(tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // nullList stores a list as a JSON array, or NULL when it is empty.

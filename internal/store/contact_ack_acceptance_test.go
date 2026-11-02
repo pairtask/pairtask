@@ -222,3 +222,82 @@ func TestContactAckStoreAcceptanceAcknowledgmentSurvivesRestart(t *testing.T) {
 	pairOK(t, err)
 	pairEqual(t, summary.Unacked, 1)
 }
+
+func TestContactAckStoreAcceptanceFailedMigrationSeedRecoversHistoricalFloor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "migration-failure.db")
+	db := pairSQLite(t, path)
+	key := messageContact(t, db, 1)
+	ackReceive(t, db.PeerMessages(), key, "historical", 1)
+	pairOK(t, db.Close())
+	raw, err := sql.Open("sqlite", path)
+	pairOK(t, err)
+	defer raw.Close()
+	for _, statement := range []string{"DELETE FROM peer_ack_floors", "ALTER TABLE peer_messages DROP COLUMN acked_at", "ALTER TABLE peer_messages DROP COLUMN ack_expired_at", `CREATE TRIGGER fail_ack_seed BEFORE INSERT ON peer_ack_floors BEGIN SELECT RAISE(ABORT,'injected floor seed failure'); END`} {
+		_, err = raw.Exec(statement)
+		pairOK(t, err)
+	}
+	failed, err := store.Open(path)
+	if err == nil {
+		failed.Close()
+		t.Fatal("migration ignored failed history floor seed")
+	}
+	_, err = raw.Exec("DROP TRIGGER fail_ack_seed")
+	pairOK(t, err)
+	db = pairSQLite(t, path)
+	row := messagePage(t, db.PeerMessages(), key)[0]
+	pairEqual(t, row.AckState, "before")
+	pairEqual(t, row.AckedAt == nil, true)
+	ackReceive(t, db.PeerMessages(), key, "new-after-recovery", 2)
+	summary, err := db.PeerMessages().AckSummary(context.Background(), key)
+	pairOK(t, err)
+	pairEqual(t, summary.Unacked, 1)
+}
+
+func TestContactAckStoreAcceptanceExpiredSummaryOutlivesEveryMessage(t *testing.T) {
+	db, raw, key := messageRawFixture(t)
+	s, ctx := db.PeerMessages(), context.Background()
+	ackReceive(t, s, key, "original", 1)
+	_, err := s.MarkRead(ctx, key, []string{"original"}, messageAt)
+	pairOK(t, err)
+	pairOK(t, s.ReadConfirmed(ctx, key, "original"))
+	messageSeedSettled(t, raw, key, protocol.UnackedKept)
+	ackReceive(t, s, key, "overflow", protocol.UnackedKept+1)
+	_, err = s.MarkRead(ctx, key, []string{"overflow"}, messageAt)
+	pairOK(t, err)
+	pairOK(t, s.ReadConfirmed(ctx, key, "overflow"))
+	summary, err := s.AckSummary(ctx, key)
+	pairOK(t, err)
+	pairEqual(t, summary.AckExpired, 1)
+	_, _, err = s.Ack(ctx, key, store.AckSelector{Upto: summary.AckUpto}, messageAt)
+	pairOK(t, err)
+	pairOK(t, s.Collect(ctx, messageAt.Add(365*24*time.Hour)))
+	var count int
+	pairOK(t, raw.QueryRow(`SELECT COUNT(*) FROM peer_messages WHERE contact=?`, key).Scan(&count))
+	pairEqual(t, count, 0)
+	summary, err = s.AckSummary(ctx, key)
+	pairOK(t, err)
+	pairEqual(t, summary.AckExpired, 1)
+	all, err := s.AckSummaries(ctx)
+	pairOK(t, err)
+	pairEqual(t, all[key].AckExpired, 1)
+	pairEqual(t, all[key].Unacked, 0)
+}
+
+func TestContactAckStoreAcceptancePendingHumanTextSurvivesCollectionBudget(t *testing.T) {
+	db, raw, key := messageRawFixture(t)
+	s, ctx := db.PeerMessages(), context.Background()
+	ackReceive(t, s, key, "pending-human", 1)
+	_, err := s.MarkRead(ctx, key, []string{"pending-human"}, messageAt)
+	pairOK(t, err)
+	messageSeedSettled(t, raw, key, messaging.RetainedText+1)
+	_, err = raw.Exec(`UPDATE peer_messages SET acked_at=? WHERE message_id LIKE 'seed-%'`, messageAt.Format(time.RFC3339Nano))
+	pairOK(t, err)
+	pairOK(t, s.Collect(ctx, messageAt.Add(time.Hour)))
+	var text sql.NullString
+	pairOK(t, raw.QueryRow(`SELECT text FROM peer_messages WHERE message_id='pending-human'`).Scan(&text))
+	pairEqual(t, text.Valid, true)
+	pairEqual(t, text.String, "text for pending-human")
+	summary, err := s.AckSummary(ctx, key)
+	pairOK(t, err)
+	pairEqual(t, summary.Unacked, 1)
+}

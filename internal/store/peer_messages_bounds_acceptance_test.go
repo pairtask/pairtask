@@ -32,6 +32,18 @@ FROM peer_messages p CROSS JOIN seq WHERE p.contact=? AND p.n=1`, count, contact
 	pairOK(t, err)
 }
 
+func messageAcknowledgeInbound(t *testing.T, s *store.PeerMessages, contact, direction string) {
+	t.Helper()
+	if direction != messaging.DirIn {
+		return
+	}
+	ctx := context.Background()
+	summary, err := s.AckSummary(ctx, contact)
+	pairOK(t, err)
+	_, _, err = s.Ack(ctx, contact, store.AckSelector{Upto: summary.AckUpto}, messageAt)
+	pairOK(t, err)
+}
+
 func TestPeerMessagesAcceptanceTextCollectionKeepsReplayIdentity(t *testing.T) {
 	for _, direction := range []string{messaging.DirIn, messaging.DirOut} {
 		t.Run(direction, func(t *testing.T) {
@@ -51,6 +63,7 @@ func TestPeerMessagesAcceptanceTextCollectionKeepsReplayIdentity(t *testing.T) {
 				pairOK(t, s.Delivered(ctx, contact, original.ID, messageAt))
 			}
 			messageSeedSettled(t, raw, contact, messaging.RetainedText+1)
+			messageAcknowledgeInbound(t, s, contact, direction)
 			pairOK(t, s.Collect(ctx, messageAt))
 			var text sql.NullString
 			pairOK(t, raw.QueryRow("SELECT text FROM peer_messages WHERE contact=? AND message_id=?", contact, original.ID).Scan(&text))

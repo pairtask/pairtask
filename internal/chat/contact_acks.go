@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -164,13 +165,17 @@ func (m *Model) contactAckResult(req pendingRequest, resp protocol.Message) tea.
 		return nil
 	}
 	summary := *resp.ContactAcks
-	m.contacts.thread(op.msg.ContactKey).acks = &summary
+	t := m.contacts.thread(op.msg.ContactKey)
+	t.acks = &summary
 	acked := 0
 	if resp.ContactAcked != nil {
 		acked = *resp.ContactAcked
 	}
 	m.status = fmt.Sprintf("acknowledged %d in ⇄ (yours only; nothing is sent)", acked)
-	return nil
+	if acked == 0 {
+		return nil
+	}
+	return m.recheckAcked(op.msg)
 }
 
 // resendContactAcks resends acknowledgments whose answers were lost,
@@ -230,4 +235,54 @@ func (m *Model) contactAckLabel(item string) string {
 		}
 	}
 	return "  " + safe(item)
+}
+
+// ackSettled: an acknowledgment state nothing moves back from.
+func ackSettled(state string) bool {
+	return state == protocol.AckDone || state == protocol.AckExpired
+}
+
+// recheckAcked reads again, page by page from the newest it covered, the
+// loaded messages an acknowledgment selected: only the broker says which
+// it acknowledged and which had expired meanwhile, and a refresh after the
+// change reads only the newest page.
+func (m *Model) recheckAcked(msg protocol.Message) tea.Cmd {
+	t := m.contacts.thread(msg.ContactKey)
+	var cursors []int64
+	for _, v := range t.rows {
+		if v.Direction == "in" && v.AckState == protocol.AckNeeded && acks(msg, v) {
+			cursors = append(cursors, v.Cursor)
+		}
+	}
+	if len(cursors) == 0 {
+		return nil
+	}
+	slices.Sort(cursors)
+	t.recheck = cursors
+	return m.refreshContact(msg.ContactKey, cursors[len(cursors)-1]+1)
+}
+
+// recheckNext drops what an older page covered from the messages being read
+// again, and reads the next page while any remain below it.
+func (m *Model) recheckNext(contact string, page *protocol.ContactMessagePage) tea.Cmd {
+	t := m.contacts.thread(contact)
+	if len(t.recheck) == 0 || len(page.Messages) == 0 {
+		t.recheck = nil
+		return nil
+	}
+	oldest := oldestCursor(page.Messages)
+	t.recheck = slices.DeleteFunc(t.recheck, func(c int64) bool { return c >= oldest })
+	if len(t.recheck) == 0 || !page.More {
+		t.recheck = nil
+		return nil
+	}
+	return m.refreshContact(contact, oldest)
+}
+
+// acks: the acknowledgment selects the message.
+func acks(msg protocol.Message, v protocol.ContactMessageView) bool {
+	if msg.ContactAckUpto != 0 {
+		return v.Cursor <= msg.ContactAckUpto
+	}
+	return slices.Contains(msg.ContactAck, v.ID)
 }

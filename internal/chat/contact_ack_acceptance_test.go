@@ -47,9 +47,17 @@ func ackContactsHarness(t *testing.T, available bool, contacts ...protocol.Pairi
 	return h
 }
 
-func ackContactReply(h *chatHarness, req protocol.Message, count int, summary protocol.ContactAckSummary) {
+func ackContactReply(h *chatHarness, req protocol.Message, count int, summary protocol.ContactAckSummary, rows ...protocol.ContactMessageView) {
 	h.t.Helper()
 	h.reply(req, protocol.Message{Type: protocol.TypeOperatorContactResult, ContactKey: req.ContactKey, ContactAcked: &count, ContactAcks: &summary})
+	if len(rows) > 0 {
+		refresh := h.take(protocol.TypeOperatorContact)
+		chatEqual(h.t, "recheck reads authoritative ACK states", refresh.ContactOp, protocol.ContactOpList)
+		chatEqual(h.t, "recheck explicitly targets selected older rows", refresh.ContactBefore > 0, true)
+		page := contactMessagesPage(req.ContactKey, rows...)
+		page.ContactPage.Acks = &summary
+		h.reply(refresh, page)
+	}
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 }
 
@@ -65,7 +73,7 @@ func TestContactAckChatAcceptanceCursorSelectsPrivateInboundID(t *testing.T) {
 	chatEqual(t, "cursor resolves to ID", req.ContactAck[0], "in-37")
 	chatEqual(t, "not a bulk bound", req.ContactAckUpto, int64(0))
 	chatEqual(t, "not a review approval", req.ContactApprove == nil, true)
-	ackContactReply(h, req, 1, protocol.ContactAckSummary{Unacked: 1, AckUpto: 91})
+	ackContactReply(h, req, 1, protocol.ContactAckSummary{Unacked: 1, AckUpto: 91}, ackContactRow(37, "acked"))
 	chatEqual(t, "draft retained", h.m.State().Draft, "kept draft")
 	v3Contains(t, ansi.Strip(h.m.View().Content), "1 need ack")
 }

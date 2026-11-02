@@ -102,6 +102,7 @@ func settledTexts(ctx context.Context, tx *sql.Tx, contact string) ([]heldText, 
 WHERE contact = ? AND text IS NOT NULL AND (
     (direction = 'in' AND state = 'read') OR (direction = 'in' AND state = 'routed' AND NOT `+pendingImport+`)
     OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')))
+    AND NOT (`+needsAck+`)
 ORDER BY cursor DESC`, contact)
 	if err != nil {
 		return nil, err
