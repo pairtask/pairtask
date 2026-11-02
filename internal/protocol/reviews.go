@@ -93,6 +93,7 @@ type ReviewAskedItem struct {
 	URL       string    `json:"url"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Settled   bool      `json:"settled"`
+	ReviewID  string    `json:"review_id,omitempty"` // the reviewer's side's ID for the review, "" while not reported (#259)
 }
 
 // ReviewAwaitingPage and ReviewAskedPage are one page each: the items, how
@@ -319,4 +320,7 @@ type ReviewOutcomeView struct {
 	Summary    string `json:"summary,omitempty"`
 	URL        string `json:"url,omitempty"`
 	Reason     string `json:"reason,omitempty"`
+	// ReviewID is the reviewer's side's own ID for the review, once an
+	// outcome named it (#259); "" while not reported.
+	ReviewID string `json:"review_id,omitempty"`
 }

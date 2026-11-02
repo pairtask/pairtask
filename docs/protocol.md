@@ -566,9 +566,19 @@ Outcomes only move on; one that goes back, comes from another reviewer, or
 answers no request sent is refused. For a request an agent sent, the agent
 gets a message with origin `remote`, `in_reply_to` its request and
 `review_outcome: {ask_id, reviewer, repository, change, state, attempt,
-intent, verdict?, summary?, url?, reason?}`; summary and URL are the other
+intent, verdict?, summary?, url?, reason?, review_id?}`; summary and URL are the other
 workspace's words. `reviews_asked_get` `{request_id}` (v15) answers
 `reviews_asked_result` with `reviews_asked`: the caller's own requests.
+
+From message protocol v6, an outcome also carries the reviewer's side's
+own review ID once the request has become a review there, and nothing
+before that (#259). The requester keeps the first one it hears for good,
+from a new outcome or a replayed one. An outcome naming a different review
+is refused as a conflict and changes nothing, and one without an ID never
+clears the stored one. The ID isn't part of an outcome's identity, so the same
+outcome sent at v5 and again at v6 is not a conflict. `review_id` on
+`review_outcome`, `reviews_asked` and the operator's asked page is absent
+until reported: unknown, which says nothing of why.
 
 ## State
 

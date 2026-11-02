@@ -54,7 +54,7 @@ func (s Session) sendOutcomes(ctx context.Context, r *Result) error {
 // sendOutcome sends one outcome and records the answer; settled reports
 // that the answer was recorded.
 func (s Session) sendOutcome(ctx context.Context, os OutcomeStore, o ReviewOutcome) (bool, error) {
-	if err := s.send(EncodeOutcome(o)); err != nil {
+	if err := s.send(EncodeOutcomeFor(o, s.Version)); err != nil {
 		return false, err
 	}
 	frame, err := s.Frames.Recv()
@@ -101,7 +101,7 @@ func (s Session) receiveOutcomes(ctx context.Context, r *Result) error {
 // answerOutcome takes one outcome and answers it; stored reports that the
 // store took it.
 func (s Session) answerOutcome(ctx context.Context, os OutcomeStore, frame []byte) (bool, error) {
-	o, err := DecodeOutcome(frame)
+	o, err := DecodeOutcomeFor(frame, s.Version)
 	if err != nil {
 		return false, err
 	}

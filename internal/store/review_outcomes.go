@@ -107,26 +107,56 @@ func askOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, e askEnd) err
 // askTerminal are the outcomes that end a request before it is a review.
 var askTerminal = map[string]bool{"declined": true, "expired": true, "withheld": true}
 
-// PendingOutcomes is the oldest outcomes waiting to be sent to contact.
+// PendingOutcomes is the oldest outcomes waiting to be sent to contact,
+// each naming the review its request became here, if it became one (#259):
+// read as it is sent, never stored with the outcome, so the outcome and
+// its digest are the same either way.
 func (p *PeerMessages) PendingOutcomes(ctx context.Context, contact string, max int) ([]messaging.ReviewOutcome, error) {
-	var payloads []string
-	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
-		payloads, err = queryStrings(ctx, tx, `SELECT payload FROM review_outcomes_out WHERE contact = ? ORDER BY queued_at, rowid LIMIT ?`,
-			contact, sessionBudget.clamp(budget{max, 0}).count)
+	var out []messaging.ReviewOutcome
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT o.payload, `+linkedReview+` FROM review_outcomes_out o WHERE o.contact = ?
+ORDER BY o.queued_at, o.rowid LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
+		if err != nil {
+			return err
+		}
+		out, err = scanOutcomes(rows)
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]messaging.ReviewOutcome, 0, len(payloads))
-	for _, data := range payloads {
+	return out, err
+}
+
+// linkedReview is the review an outcome's request became here: the one
+// that names its contact and request, for its reviewer; "" for none, as
+// before it is a review.
+const linkedReview = `COALESCE((SELECT r.review_id FROM reviews r JOIN review_outcome_seq s ON s.contact = o.contact AND s.ask_id = o.ask_id
+    WHERE r.reviewer = s.reviewer AND json_extract(r.doc, '$.remote.contact') = o.contact AND json_extract(r.doc, '$.remote_request') = o.ask_id
+    ORDER BY r.created_at, r.review_id LIMIT 1), '')`
+
+func scanOutcomes(rows *sql.Rows) ([]messaging.ReviewOutcome, error) {
+	defer rows.Close()
+	var out []messaging.ReviewOutcome
+	for rows.Next() {
+		var data, reviewID string
+		if err := rows.Scan(&data, &reviewID); err != nil {
+			return nil, err
+		}
 		var o messaging.ReviewOutcome
 		if err := json.Unmarshal([]byte(data), &o); err != nil {
 			return nil, err
 		}
+		o.ReviewID = sendableID(reviewID)
 		out = append(out, o)
 	}
-	return out, nil
+	return out, rows.Err()
+}
+
+// sendableID is a review ID as an outcome may carry it, "" for one it
+// can't.
+func sendableID(id string) string {
+	if protocol.ValidateReviewID(id) != nil {
+		return ""
+	}
+	return id
 }
 
 // OutcomeAnswered records contact's answer to an outcome: one no newer
