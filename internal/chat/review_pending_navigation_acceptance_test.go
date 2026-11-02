@@ -38,11 +38,27 @@ func reviewPendingOpen(h *chatHarness, page protocol.ReviewAwaitingPage) {
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 }
 
+func reviewNavigationFixture(t *testing.T, digit, id string, cursor int64) (*chatHarness, string, protocol.ReviewAwaitingItem) {
+	t.Helper()
+	key := "sha256:" + strings.Repeat(digit, 64)
+	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "fixture"}, contactChatRow(key, "remote", true))
+	item := reviewPendingItem(key, id, cursor)
+	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{item}, Total: 1, Token: "fixture"})
+	return h, key, item
+}
+
+func reviewNavigationTarget(item protocol.ReviewAwaitingItem) protocol.ContactMessageView {
+	return protocol.ContactMessageView{Contact: item.Contact, ID: item.MessageID, Cursor: item.Cursor, Direction: "in", State: "routed", Text: "review request", ReviewAsk: item.Ask, ReviewState: "awaiting", CreatedAt: item.ReceivedAt}
+}
+
+func reviewNavigationSettle(h *chatHarness, req protocol.Message, rows ...protocol.ContactMessageView) {
+	h.t.Helper()
+	h.reply(req, contactMessagesPage(req.ContactKey, rows...))
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+}
+
 func TestReviewPendingNavigationAcceptanceUnloadedContactOpensExactInboundCursor(t *testing.T) {
-	key := "sha256:" + strings.Repeat("d", 64)
-	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "A"}, contactChatRow(key, "unloaded", true))
-	item := reviewPendingItem(key, "ask-not-loaded", 431)
-	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{item}, Total: 1})
+	h, key, item := reviewNavigationFixture(t, "d", "ask-not-loaded", 431)
 	view := ansi.Strip(h.m.View().Content)
 	for _, label := range []string{"Needs you", "Running here", "Asked by you", "All reviews here", "terminal-rev"} {
 		v3Contains(t, view, label)
@@ -57,23 +73,18 @@ func TestReviewPendingNavigationAcceptanceUnloadedContactOpensExactInboundCursor
 	h.reply(req, newest)
 	older := h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "navigation loads continuous older boundary", older.ContactBefore, int64(800))
-	row := protocol.ContactMessageView{Contact: key, ID: item.MessageID, Cursor: item.Cursor, Direction: "in", State: "routed", Text: "review request", ReviewAsk: item.Ask, ReviewState: "awaiting", CreatedAt: item.ReceivedAt}
-	h.reply(older, contactMessagesPage(key, row))
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewNavigationSettle(h, older, reviewNavigationTarget(item))
 	v3Contains(t, ansi.Strip(h.m.View().Content), "pinned-head")
 	chatEqual(t, "viewing has no local receipt side effects", len(h.m.State().QueuedAcks), 0)
 	chatEqual(t, "viewing has no local transcript dispatch", len(h.m.State().Entries), 0)
 }
 
 func TestReviewPendingNavigationAcceptancePrunedRowDoesNotPretendNewestIsTarget(t *testing.T) {
-	key := "sha256:" + strings.Repeat("e", 64)
-	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "A"}, contactChatRow(key, "pruned", true))
-	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{reviewPendingItem(key, "gone", 0)}, Total: 1})
+	h, _, _ := reviewNavigationFixture(t, "e", "gone", 0)
 	v2Command(h, "/reviews open n1")
 	req := h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "pruned target opens newest", req.ContactBefore, int64(0))
-	h.reply(req, contactMessagesPage(key))
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewNavigationSettle(h, req)
 	v3Contains(t, ansi.Strip(h.m.View().Content), "history pruned")
 }
 
@@ -92,12 +103,7 @@ func TestReviewPendingNavigationAcceptanceMoreUsesOpaqueCursorAndKeepsRefs(t *te
 	v2Command(h, "/reviews open n2")
 	open := h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "unloaded appended target begins newest-first", open.ContactBefore, int64(0))
-	row := reviewNavigationRow(300)
-	row.ID = second.MessageID
-	row.ReviewAsk = second.Ask
-	row.ReviewState = "awaiting"
-	h.reply(open, contactMessagesPage(key, row))
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewNavigationSettle(h, open, reviewNavigationTarget(second))
 	v3Contains(t, h.m.State().Status, "showing n2")
 }
 
@@ -135,12 +141,7 @@ func TestReviewPendingNavigationAcceptanceRefsNeverRetargetAfterRefresh(t *testi
 			}
 			req := h.take(protocol.TypeOperatorContact)
 			chatEqual(t, "unloaded stable target begins newest-first", req.ContactBefore, int64(0))
-			row := reviewNavigationRow(100)
-			row.ID = old.MessageID
-			row.ReviewAsk = old.Ask
-			row.ReviewState = "awaiting"
-			h.reply(req, contactMessagesPage(key, reviewNavigationRow(200), row))
-			h.await(func() bool { return h.m.State().InFlight == 0 })
+			reviewNavigationSettle(h, req, reviewNavigationRow(200), reviewNavigationTarget(old))
 			v3Contains(t, h.m.State().Status, "showing n1")
 		})
 	}
@@ -151,10 +152,7 @@ func reviewNavigationRow(cursor int64) protocol.ContactMessageView {
 }
 
 func TestReviewPendingNavigationAcceptanceDeepTargetContinuesFromRetainedProgress(t *testing.T) {
-	key := "sha256:" + strings.Repeat("b", 64)
-	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "deep"}, contactChatRow(key, "deep", true))
-	item := reviewPendingItem(key, "deep-target", 1)
-	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{item}, Total: 1})
+	h, key, item := reviewNavigationFixture(t, "b", "deep-target", 1)
 	v2Command(h, "/reviews open n1")
 	req := h.take(protocol.TypeOperatorContact)
 	page := contactMessagesPage(key, reviewNavigationRow(1000))
@@ -175,20 +173,13 @@ func TestReviewPendingNavigationAcceptanceDeepTargetContinuesFromRetainedProgres
 	v2Command(h, "/reviews open n1")
 	req = h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "continuation keeps oldest progress", req.ContactBefore, int64(800))
-	row := reviewNavigationRow(1)
-	row.ID = item.MessageID
-	row.ReviewAsk = item.Ask
-	row.ReviewState = "awaiting"
-	h.reply(req, contactMessagesPage(key, row))
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewNavigationSettle(h, req, reviewNavigationTarget(item))
 	v3Contains(t, h.m.State().Status, "showing n1")
 	v3Contains(t, ansi.Strip(h.m.View().Content), "pinned-head")
 }
 
 func TestReviewPendingNavigationAcceptanceSwitchingTabsCancelsFurtherPaging(t *testing.T) {
-	key := "sha256:" + strings.Repeat("c", 64)
-	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "target"}, contactChatRow(key, "remote", true))
-	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{reviewPendingItem(key, "old", 1)}, Total: 1})
+	h, key, _ := reviewNavigationFixture(t, "c", "old", 1)
 	v2Command(h, "/reviews open n1")
 	first := h.take(protocol.TypeOperatorContact)
 	page := contactMessagesPage(key, reviewNavigationRow(1000))
@@ -231,17 +222,13 @@ func TestReviewPendingNavigationAcceptanceAskedRefSelectsOutboundIdentity(t *tes
 		rows = append(rows, reviewNavigationRow(cursor))
 	}
 	rows = append(rows, out)
-	h.reply(req, contactMessagesPage(key, rows...))
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewNavigationSettle(h, req, rows...)
 	v3Contains(t, h.m.State().Status, "showing a1")
 	v3Contains(t, ansi.Strip(h.m.View().Content), "RIGHT OUTBOUND ROW")
 }
 
 func TestReviewPendingNavigationAcceptanceSameIDDoesNotScrollToOppositeDirection(t *testing.T) {
-	key := "sha256:" + strings.Repeat("8", 64)
-	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "inbound"}, contactChatRow(key, "remote", true))
-	item := reviewPendingItem(key, "shared-id", 900)
-	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{item}, Total: 1})
+	h, _, item := reviewNavigationFixture(t, "8", "shared-id", 900)
 	v2Command(h, "/reviews open n1")
 	req := h.take(protocol.TypeOperatorContact)
 	in, middle, out := reviewNavigationRow(900), reviewNavigationRow(600), reviewNavigationRow(500)
@@ -249,8 +236,7 @@ func TestReviewPendingNavigationAcceptanceSameIDDoesNotScrollToOppositeDirection
 	in.ReviewAsk, in.ReviewState = item.Ask, "awaiting"
 	out.Direction, out.State, out.Text = "out", "delivered", "OPPOSITE DIRECTION"
 	middle.Text = strings.Repeat("HISTORY SEPARATING THE TWO IDENTITIES\n", 80)
-	h.reply(req, contactMessagesPage(key, in, middle, out))
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewNavigationSettle(h, req, in, middle, out)
 	v3Contains(t, ansi.Strip(h.m.View().Content), "pinned-head")
 	v3Contains(t, h.m.State().Status, "showing n1")
 }
@@ -332,7 +318,6 @@ func TestReviewPendingNavigationAcceptanceDirtyFirstPageIsDiscardedBeforeQueuedR
 	open := h.take(protocol.TypeOperatorContact)
 	row := reviewNavigationRow(200)
 	row.ID = "replacement"
-	h.reply(open, contactMessagesPage(old.Contact, row))
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewNavigationSettle(h, open, row)
 	v3Contains(t, h.m.State().Status, "showing n2")
 }

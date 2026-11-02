@@ -21,6 +21,15 @@ import (
 
 const kindReviewPending = "review pending"
 
+// sectionOp names a section by its operator_review operation; sectionRef
+// is an item's ref in the panel (n1, a2…); itemKey is an item's identity,
+// its contact and message or ask ID.
+type (
+	sectionOp  string
+	sectionRef string
+	itemKey    string
+)
+
 // pendingSection is one paged list: its items, how many there are, and the
 // cursor of the next page. gen fences its reads: a first page starts a new
 // generation, and an answer from an older one is dropped.
@@ -36,11 +45,11 @@ type pendingSection[T any] struct {
 
 // add replaces the list with a first page, or appends a later one, each
 // item once.
-func (s *pendingSection[T]) add(items []T, first bool, key func(T) string) {
+func (s *pendingSection[T]) add(items []T, first bool, key func(T) itemKey) {
 	if first {
 		s.items = nil
 	}
-	held := map[string]bool{}
+	held := map[itemKey]bool{}
 	for _, it := range s.items {
 		held[key(it)] = true
 	}
@@ -55,25 +64,29 @@ func (s *pendingSection[T]) add(items []T, first bool, key func(T) string) {
 type reviewPending struct {
 	needs pendingSection[protocol.ReviewAwaitingItem]
 	asked pendingSection[protocol.ReviewAskedItem]
-	refs  map[string]string // identity → ref, for the session
-	byRef map[string]string // ref → identity
-	count map[byte]int      // refs given per prefix
-	nav   *navTarget        // a request being looked for in its ⇄ tab
+	refs  map[itemKey]sectionRef // identity → ref, for the session
+	byRef map[sectionRef]itemKey // ref → identity
+	count map[byte]int           // refs given per prefix
+	nav   *navTarget             // a request being looked for in its ⇄ tab
 }
 
-func needKey(it protocol.ReviewAwaitingItem) string { return "n" + it.Contact + "\x00" + it.MessageID }
-func askedKey(it protocol.ReviewAskedItem) string   { return "a" + it.Contact + "\x00" + it.AskID }
+func needKey(it protocol.ReviewAwaitingItem) itemKey {
+	return itemKey("n" + it.Contact + "\x00" + it.MessageID)
+}
+func askedKey(it protocol.ReviewAskedItem) itemKey {
+	return itemKey("a" + it.Contact + "\x00" + it.AskID)
+}
 
 // ref is an identity's ref, given on first sight and kept.
-func (p *reviewPending) ref(identity string) string {
+func (p *reviewPending) ref(identity itemKey) sectionRef {
 	if p.refs == nil {
-		p.refs, p.byRef, p.count = map[string]string{}, map[string]string{}, map[byte]int{}
+		p.refs, p.byRef, p.count = map[itemKey]sectionRef{}, map[sectionRef]itemKey{}, map[byte]int{}
 	}
 	if r, ok := p.refs[identity]; ok {
 		return r
 	}
 	p.count[identity[0]]++
-	r := fmt.Sprintf("%c%d", identity[0], p.count[identity[0]])
+	r := sectionRef(fmt.Sprintf("%c%d", identity[0], p.count[identity[0]]))
 	p.refs[identity], p.byRef[r] = r, identity
 	return r
 }
@@ -86,9 +99,9 @@ func (m *Model) pendingAvailable() bool {
 
 // readSection asks for one section's page: the first, coalesced, or the
 // next one of the current generation.
-func (m *Model) readSection(op string, first bool) tea.Cmd {
+func (m *Model) readSection(op sectionOp, first bool) tea.Cmd {
 	f := m.sectionFence(op)
-	msg := protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: op}
+	msg := protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: string(op)}
 	page := "more"
 	switch {
 	case first && *f.firstIn:
@@ -100,7 +113,7 @@ func (m *Model) readSection(op string, first bool) tea.Cmd {
 	default:
 		msg.ReviewBefore = m.pendingNext(op)
 	}
-	return m.request(kindReviewPending, msg, op, page, strconv.FormatUint(*f.gen, 10))
+	return m.request(kindReviewPending, msg, string(op), page, strconv.FormatUint(*f.gen, 10))
 }
 
 // fence is a section's generation and its first-page flags.
@@ -109,7 +122,7 @@ type fence struct {
 	firstIn, again *bool
 }
 
-func (m *Model) sectionFence(op string) fence {
+func (m *Model) sectionFence(op sectionOp) fence {
 	if op == protocol.ReviewOpAwaiting {
 		s := &m.sections.needs
 		return fence{&s.gen, &s.firstIn, &s.again}
@@ -121,7 +134,7 @@ func (m *Model) sectionFence(op string) fence {
 // currentPage settles a page's fence: false for an older generation's page,
 // which is dropped, and a re-read when a change arrived during a first.
 func (m *Model) currentPage(req pendingRequest) (bool, tea.Cmd) {
-	f := m.sectionFence(req.ids[0])
+	f := m.sectionFence(sectionOp(req.ids[0]))
 	if req.ids[2] != strconv.FormatUint(*f.gen, 10) {
 		return false, nil
 	}
@@ -131,12 +144,12 @@ func (m *Model) currentPage(req pendingRequest) (bool, tea.Cmd) {
 	*f.firstIn = false
 	if *f.again {
 		*f.again = false
-		return false, m.readSection(req.ids[0], true) // this page may predate the change
+		return false, m.readSection(sectionOp(req.ids[0]), true) // this page may predate the change
 	}
 	return true, nil
 }
 
-func (m *Model) pendingNext(op string) string {
+func (m *Model) pendingNext(op sectionOp) string {
 	if op == protocol.ReviewOpAwaiting {
 		return m.sections.needs.next
 	}
@@ -204,7 +217,7 @@ var pendingRef = regexp.MustCompile(`^[na][0-9]+$`)
 // reviewsSubcommand runs /reviews more and /reviews open.
 func (m *Model) reviewsSubcommand(fields []string) tea.Cmd {
 	if fields[0] == "more" {
-		op := map[string]string{"needs": protocol.ReviewOpAwaiting, "asked": protocol.ReviewOpAsked}[fields[1]]
+		op := map[string]sectionOp{"needs": protocol.ReviewOpAwaiting, "asked": protocol.ReviewOpAsked}[fields[1]]
 		if m.pendingNext(op) == "" {
 			m.status = "no more in that section"
 			return nil
@@ -214,7 +227,7 @@ func (m *Model) reviewsSubcommand(fields []string) tea.Cmd {
 	if !pendingRef.MatchString(fields[1]) {
 		return m.reviewStatus(fields[1]) // a review here: its detail, as /review status
 	}
-	return m.openPending(fields[1])
+	return m.openPending(sectionRef(fields[1]))
 }
 
 // navBatch bounds the older pages one /reviews open reads before it
@@ -224,17 +237,18 @@ const navBatch = 20
 // navTarget is a request being looked for in its ⇄ tab: its message and
 // how many older pages this run has read.
 type navTarget struct {
-	ref, contact, direction string
-	cursor                  int64
-	pages                   int
+	ref                sectionRef
+	contact, direction string
+	cursor             int64
+	pages              int
 }
 
 // openPending shows a section item: its ⇄ tab, scrolled to its message,
 // reading from the newest page back, in batches. It decides nothing.
-func (m *Model) openPending(ref string) tea.Cmd {
+func (m *Model) openPending(ref sectionRef) tea.Cmd {
 	target, ok := m.navTargetFor(ref)
 	if !ok {
-		m.status = ref + " is no longer pending"
+		m.status = string(ref) + " is no longer pending"
 		return nil
 	}
 	if !m.selectView(contactKey(target.contact)) {
@@ -254,10 +268,10 @@ func (m *Model) openPending(ref string) tea.Cmd {
 const prunedStatus = "that request's message is no longer kept here (history pruned)"
 
 // navTargetFor is where a ref's item is, when a section still holds it.
-func (m *Model) navTargetFor(ref string) (navTarget, bool) {
+func (m *Model) navTargetFor(ref sectionRef) (navTarget, bool) {
 	contact, cursor, ok := m.pendingTarget(m.sections.byRef[ref])
 	direction := "in"
-	if strings.HasPrefix(ref, "a") {
+	if strings.HasPrefix(string(ref), "a") {
 		direction = "out"
 	}
 	return navTarget{ref: ref, contact: contact, direction: direction, cursor: cursor}, ok
@@ -281,7 +295,7 @@ func (m *Model) navStep() tea.Cmd {
 		m.status, m.sections.nav = prunedStatus, nil
 		return nil
 	case n.pages >= navBatch:
-		m.status, n.pages = n.ref+" is further back: /reviews open "+n.ref+" continues", 0
+		m.status, n.pages = string(n.ref)+" is further back: /reviews open "+string(n.ref)+" continues", 0
 		m.sections.nav = nil
 		return nil
 	}
@@ -294,7 +308,7 @@ func (m *Model) showNavRow(t *contactThread, n *navTarget) bool {
 	for _, v := range t.rows {
 		if v.Cursor == n.cursor && v.Direction == n.direction {
 			m.scrollToRow(t, n)
-			m.status = "showing " + n.ref + " in ⇄ " + safe(m.contactTitle(contactKey(n.contact)))
+			m.status = "showing " + string(n.ref) + " in ⇄ " + safe(m.contactTitle(contactKey(n.contact)))
 			return true
 		}
 	}
@@ -323,7 +337,7 @@ func (m *Model) navAfterPage(contact string, ok bool) tea.Cmd {
 		return nil
 	}
 	if !ok {
-		m.status, m.sections.nav = "stopped looking for "+n.ref+": "+m.status, nil
+		m.status, m.sections.nav = "stopped looking for "+string(n.ref)+": "+m.status, nil
 		return nil
 	}
 	return m.navStep()
@@ -342,7 +356,7 @@ func (m *Model) stopNav() bool {
 	if n == nil {
 		return false
 	}
-	m.status, m.sections.nav = "stopped looking for "+n.ref, nil
+	m.status, m.sections.nav = "stopped looking for "+string(n.ref), nil
 	return true
 }
 
@@ -352,7 +366,7 @@ func (m *Model) reviewsPanelOpen() bool {
 }
 
 // pendingTarget is where an identity's item is, if a section still holds it.
-func (m *Model) pendingTarget(identity string) (string, int64, bool) {
+func (m *Model) pendingTarget(identity itemKey) (string, int64, bool) {
 	if it, ok := findItem(m.sections.needs.items, needKey, identity); ok {
 		return it.Contact, it.Cursor, true
 	}
@@ -363,7 +377,7 @@ func (m *Model) pendingTarget(identity string) (string, int64, bool) {
 }
 
 // findItem is the item with this identity.
-func findItem[T any](items []T, key func(T) string, identity string) (T, bool) {
+func findItem[T any](items []T, key func(T) itemKey, identity itemKey) (T, bool) {
 	for _, it := range items {
 		if key(it) == identity {
 			return it, true
@@ -467,10 +481,10 @@ func (m *Model) reviewsPanelCompletions(l argLine) []string {
 func (m *Model) openableRefs() []string {
 	var refs []string
 	for _, it := range m.sections.needs.items {
-		refs = append(refs, m.sections.ref(needKey(it)))
+		refs = append(refs, string(m.sections.ref(needKey(it))))
 	}
 	for _, it := range m.sections.asked.items {
-		refs = append(refs, m.sections.ref(askedKey(it)))
+		refs = append(refs, string(m.sections.ref(askedKey(it))))
 	}
 	for _, r := range m.reviews.list {
 		refs = append(refs, reviewShort(r.ID))
