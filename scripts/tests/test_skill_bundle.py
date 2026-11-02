@@ -54,6 +54,23 @@ def foreign_legacy_entry(root, skills_name, kind):
     return legacy, target
 
 
+def owned_legacy_links(root):
+    for name in ("codex-skills", "claude-skills"):
+        skills = root / name
+        skills.mkdir()
+        (skills / "collab-ai").symlink_to(root / "installed", target_is_directory=True)
+
+
+def conflicting_skill(root, skills_name, kind):
+    conflict = root / skills_name / "pairtask"
+    target = conflict if kind == "directory" else root / "foreign-skill"
+    target.mkdir()
+    (target / "keep").write_text("user-owned skill")
+    if kind == "symlink":
+        conflict.symlink_to(target, target_is_directory=True)
+    return target
+
+
 class SkillBundleTests(unittest.TestCase):
     def install(self, root):
         return subprocess.run(
@@ -99,26 +116,21 @@ class SkillBundleTests(unittest.TestCase):
         for skills_name, kind in product(("codex-skills", "claude-skills"), ("directory", "symlink")):
             with self.subTest(skills=skills_name, kind=kind), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                installed = root / "installed"
-                for name in ("codex-skills", "claude-skills"):
-                    skills = root / name
-                    skills.mkdir()
-                    (skills / "collab-ai").symlink_to(installed, target_is_directory=True)
-                conflict = root / skills_name / "pairtask"
-                target = conflict if kind == "directory" else root / "foreign-skill"
-                target.mkdir()
-                (target / "keep").write_text("user-owned skill")
-                if kind == "symlink":
-                    conflict.symlink_to(target, target_is_directory=True)
+                owned_legacy_links(root)
+                target = conflicting_skill(root, skills_name, kind)
                 result = self.install(root)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("refusing to replace", result.stderr)
-                for name in ("codex-skills", "claude-skills"):
-                    skills = root / name
-                    self.assertEqual((skills / "collab-ai").readlink(), installed)
-                    if name != skills_name:
-                        self.assertFalse((skills / "pairtask").exists())
+                self.check_legacy_links_survive_conflict(root, skills_name)
                 self.assertEqual((target / "keep").read_text(), "user-owned skill")
+
+    def check_legacy_links_survive_conflict(self, root, skills_name):
+        for name in ("codex-skills", "claude-skills"):
+            skills = root / name
+            self.assertEqual((skills / "collab-ai").readlink(), root / "installed")
+            if name != skills_name:
+                self.assertFalse((skills / "pairtask").exists())
+                self.assertFalse((skills / "pairtask").is_symlink())
 
     def test_image_installer_preserves_bundle_and_resolvable_links(self):
         with tempfile.TemporaryDirectory() as temporary:
