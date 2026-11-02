@@ -32,12 +32,13 @@ type contactThread struct {
 	oldest    int64                                  // the cursor below which older pages lie
 	more      bool                                   // older messages exist below oldest
 	sync      protocol.ContactSyncView
-	shared    []string                   // this workspace's agents the contact may message
-	directory []string                   // what the contact says it shares
-	grants    []protocol.ReviewGrantView // what the contact may ask of agents here (#235)
-	offset    int                        // rows scrolled up from the newest
-	read      map[string]bool            // inbound IDs a read was confirmed for
-	refused   map[string]bool            // inbound IDs a read was refused for; not asked again until reloaded
+	shared    []string                    // this workspace's agents the contact may message
+	directory []string                    // what the contact says it shares
+	grants    []protocol.ReviewGrantView  // what the contact may ask of agents here (#235)
+	offset    int                         // rows scrolled up from the newest
+	read      map[string]bool             // inbound IDs a read was confirmed for
+	refused   map[string]bool             // inbound IDs a read was refused for; not asked again until reloaded
+	acks      *protocol.ContactAckSummary // the operator's acknowledgments, as last heard (#287)
 }
 
 // contactOp is a send or a read whose ID and content are fixed when made,
@@ -53,6 +54,7 @@ type contactState struct {
 	threads map[string]*contactThread
 	send    *contactOp            // one send at a time
 	reads   map[string]*contactOp // by operation ID
+	acking  map[string]*contactOp // acknowledgments in flight, by operation ID (#287)
 }
 
 func (s *contactState) thread(contact string) *contactThread {
@@ -190,6 +192,7 @@ func (t *contactThread) merge(views []protocol.ContactMessageView) {
 func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bool) {
 	if !t.loaded || current {
 		t.sync, t.shared, t.directory, t.grants = page.Sync, page.Shared, page.Directory, page.ReviewGrants
+		t.acks = page.Acks
 		clear(t.refused) // a fresh page gives refused reads one more try
 	}
 	c := oldestCursor(page.Messages)
@@ -355,6 +358,9 @@ func (m *Model) contactsDisconnected() {
 	for _, op := range m.contacts.reads {
 		op.unknown = true
 	}
+	for _, op := range m.contacts.acking {
+		op.unknown = true
+	}
 	for _, t := range m.contacts.threads {
 		t.stale, t.failed = false, false
 	}
@@ -366,7 +372,7 @@ func (m *Model) contactsReconnected() tea.Cmd {
 	if !m.contactsAvailable() {
 		return nil
 	}
-	return tea.Batch(m.resendContactSend(), m.resendContactReads(), m.refreshLoadedContacts())
+	return tea.Batch(m.resendContactSend(), m.resendContactReads(), m.resendContactAcks(), m.refreshLoadedContacts())
 }
 
 // resendContactSend resends a send whose answer was lost, unchanged.

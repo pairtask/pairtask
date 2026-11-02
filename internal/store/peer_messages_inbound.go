@@ -27,7 +27,10 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 		if err == nil && !inserted {
 			return errNothingStored // answered without a row: roll back
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return expireUnacked(ctx, tx, contact, now)
 	})
 	switch {
 	case errors.Is(err, errNothingStored):

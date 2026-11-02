@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/store"
 )
 
 func TestPeerMessagesAcceptanceReplayFloorSurvivesRestart(t *testing.T) {
@@ -21,6 +22,8 @@ func TestPeerMessagesAcceptanceReplayFloorSurvivesRestart(t *testing.T) {
 	_, err = s.MarkRead(ctx, contact, []string{old.ID}, messageAt)
 	pairOK(t, err)
 	pairOK(t, s.ReadConfirmed(ctx, contact, old.ID))
+	_, _, err = s.Ack(ctx, contact, store.AckSelector{IDs: []string{old.ID}}, messageAt)
+	pairOK(t, err)
 	later := messageAt.Add(messaging.TombstoneAge + time.Hour)
 	pairOK(t, s.Collect(ctx, later))
 	pairOK(t, db.Close())

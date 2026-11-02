@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/store"
 )
 
 type refusalNoticeInput struct {
@@ -141,6 +142,8 @@ func TestRefusalVisibilityBoundsAcceptanceRetentionAndReplayFloor(t *testing.T) 
 	refusedNotice(t, s, contact, refusalNoticeInput{"unread-refusal", 2, messageAt})
 	_, err := s.MarkRead(ctx, contact, []string{read.ID}, messageAt)
 	pairOK(t, err)
+	_, _, err = s.Ack(ctx, contact, store.AckSelector{IDs: []string{read.ID}}, messageAt)
+	pairOK(t, err)
 	later := messageAt.Add(messaging.TombstoneAge + time.Hour)
 	pairOK(t, s.Collect(ctx, later))
 	rows := messagePage(t, s, contact)
@@ -203,6 +206,8 @@ func TestRefusalVisibilityBoundsAcceptanceBelowFloorAskLeavesNoNotice(t *testing
 	_, err = s.MarkRead(ctx, contact, []string{"old"}, messageAt)
 	pairOK(t, err)
 	pairOK(t, s.ReadConfirmed(ctx, contact, "old"))
+	_, _, err = s.Ack(ctx, contact, store.AckSelector{IDs: []string{"old"}}, messageAt)
+	pairOK(t, err)
 	later := messageAt.Add(messaging.TombstoneAge + time.Hour)
 	pairOK(t, s.Collect(ctx, later))
 	pairEqual(t, len(messagePage(t, s, contact)), 0)

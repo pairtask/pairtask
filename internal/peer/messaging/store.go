@@ -45,6 +45,10 @@ type Row struct {
 	DeliveredAt *time.Time
 	ReadAt      *time.Time
 	Receipt     string // inbound rows read here: ReceiptPending, ReceiptConfirmed or ReceiptDropped
+	// The local operator's acknowledgment of an inbound row (#287): its
+	// state and when; local only, never sent.
+	AckState string
+	AckedAt  *time.Time
 }
 
 // Answer is the receiver's answer to one Message. Recorded is local: the

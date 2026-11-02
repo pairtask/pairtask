@@ -68,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -115,6 +115,16 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"peer_contacts", "paused_at", "TEXT NOT NULL DEFAULT ''"},
 	{"peer_contacts", "generation", "INTEGER NOT NULL DEFAULT 0"},
 	{"contact_address_ops", "generation", "INTEGER NOT NULL DEFAULT 0"},
+	// The operator's acknowledgment of a contact's messages (#287): when,
+	// and when one expired unacknowledged; NULL for neither.
+	{"peer_messages", "acked_at", "TEXT"},
+	{"peer_messages", "ack_expired_at", "TEXT"},
+}
+
+// columnAdded runs once, when its column is added: what the new column
+// needs from the rows already there.
+var columnAdded = map[string]func(*sql.DB) error{
+	"peer_messages.acked_at": seedAckFloors,
 }
 
 func migrate(db *sql.DB) error {
@@ -128,6 +138,11 @@ func migrate(db *sql.DB) error {
 		}
 		if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.decl); err != nil {
 			return err
+		}
+		if seed := columnAdded[c.table+"."+c.column]; seed != nil {
+			if err := seed(db); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

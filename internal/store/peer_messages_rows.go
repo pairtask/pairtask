@@ -11,7 +11,8 @@ import (
 
 const messageColumns = `cursor, contact, direction, message_id, n, created_at, COALESCE(text, ''), text_hash, hash,
     state, class, reason, COALESCE(delivered_at, ''), COALESCE(read_at, ''), receipt,
-    COALESCE(from_agent, ''), to_agents, COALESCE(reply_id, ''), COALESCE(reply_author, 0), review_ask`
+    COALESCE(from_agent, ''), to_agents, COALESCE(reply_id, ''), COALESCE(reply_author, 0), review_ask,
+    ` + ackStateColumn + `, COALESCE(acked_at, '')`
 
 // storedRow is a row with what only the store compares.
 type storedRow struct {
@@ -56,11 +57,11 @@ func queryRows(ctx context.Context, q rowsQuerier, where string, args ...any) ([
 func scanMessage(row rowScanner) (storedRow, error) {
 	var r storedRow
 	var n int64
-	var created, delivered, read string
+	var created, delivered, read, acked string
 	var to, ask sql.NullString
 	err := row.Scan(&r.Cursor, &r.Contact, &r.Direction, &r.ID, &n, &created, &r.Text, &r.textHash, &r.hash,
 		&r.State, &r.Refusal.Class, &r.Refusal.Reason, &delivered, &read, &r.Receipt,
-		&r.From, &to, &r.ReplyTo.ID, &r.ReplyTo.Author, &ask)
+		&r.From, &to, &r.ReplyTo.ID, &r.ReplyTo.Author, &ask, &r.AckState, &acked)
 	if err != nil {
 		return storedRow{}, err
 	}
@@ -77,7 +78,10 @@ func scanMessage(row rowScanner) (storedRow, error) {
 	if r.DeliveredAt, err = optionalMessageTime(delivered); err != nil {
 		return storedRow{}, err
 	}
-	r.ReadAt, err = optionalMessageTime(read)
+	if r.ReadAt, err = optionalMessageTime(read); err != nil {
+		return storedRow{}, err
+	}
+	r.AckedAt, err = optionalMessageTime(acked)
 	return r, err
 }
 

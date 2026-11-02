@@ -17,6 +17,9 @@ import (
 
 // ackCompletions are /ack's choices for the word being typed.
 func (m *Model) ackCompletions(l argLine) []string {
+	if m.conv.selected.isContact() {
+		return m.contactAckChoices(l)
+	}
 	switch {
 	case len(l.words) == 0:
 		rows := m.ackRows()
@@ -70,6 +73,9 @@ func (m *Model) ackPickLabel(item string) (string, bool) {
 	}
 	if len(l.words) == 1 && l.words[0] == "from" {
 		return m.senderLabel(item), true
+	}
+	if m.conv.selected.isContact() {
+		return m.contactAckLabel(item), true
 	}
 	switch item {
 	case "all":

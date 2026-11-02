@@ -1,0 +1,233 @@
+package chat
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/google/uuid"
+
+	"github.com/pairtask/pairtask/internal/protocol"
+)
+
+// The operator's own acknowledgment of a paired workspace's messages
+// (#287): /ack in a ⇄ tab, never by showing them. Showing a message still
+// marks it read for the transport, as before; acknowledging is private and
+// sends that workspace nothing. Each tab counts what waits, the footer sums
+// it, and an acknowledgment whose answer was lost is resent unchanged.
+
+const kindContactAck = "contact ack"
+
+// noContactAcks is why /ack does nothing in a ⇄ tab on an older broker.
+const noContactAcks = "this broker can't track acknowledgments in ⇄ yet"
+
+// contactAcksAvailable: the broker serves contact op ack.
+func (m *Model) contactAcksAvailable() bool {
+	return m.pairing.snapshot != nil && m.pairing.snapshot.AcksAvailable
+}
+
+// ackSummary is where a contact's acknowledgments stand: the newest the
+// tab heard, else the pairing snapshot's.
+func (m *Model) ackSummary(contact string) protocol.ContactAckSummary {
+	if t := m.contacts.threads[contact]; t != nil && t.acks != nil {
+		return *t.acks
+	}
+	if c, ok := m.contact(contact); ok && c.Acks != nil {
+		return *c.Acks
+	}
+	return protocol.ContactAckSummary{}
+}
+
+// contactAckTotals are the messages waiting in every ⇄ tab, and those that
+// expired unacknowledged.
+func (m *Model) contactAckTotals() (waiting, expired int) {
+	if !m.contactAcksAvailable() {
+		return 0, 0
+	}
+	for _, c := range m.pairing.snapshot.Contacts {
+		s := m.ackSummary(c.IdentityKey)
+		waiting, expired = waiting+s.Unacked, expired+s.AckExpired
+	}
+	return waiting, expired
+}
+
+// contactAckReminder is the footer's part for ⇄ tabs.
+func (m *Model) contactAckReminder() string {
+	waiting, expired := m.contactAckTotals()
+	if waiting == 0 && expired == 0 {
+		return ""
+	}
+	text := fmt.Sprintf("⇄ %d need ack · /ack in ⇄", waiting)
+	if expired > 0 {
+		text += fmt.Sprintf(" · %d expired", expired)
+	}
+	return bandStyle.Render(text)
+}
+
+// contactAckCommand is /ack in a ⇄ tab: all of this tab, up to what the
+// broker last counted, or #n, a message's number here.
+func (m *Model) contactAckCommand(arg argument) tea.Cmd {
+	key := m.conv.selected.contact
+	switch {
+	case !m.contactAcksAvailable():
+		m.status = noContactAcks
+		return nil
+	case !m.ready():
+		m.status = "not connected"
+		return nil
+	case arg.empty():
+		m.status = "pick what to acknowledge in this tab: /ack all or /ack #n"
+		return nil
+	case arg == "all":
+		return m.ackContactAll(key)
+	}
+	id, reason := m.contactAckTarget(key, string(arg))
+	if id == "" {
+		m.status = reason
+		return nil
+	}
+	return m.sendContactAck(protocol.Message{ContactKey: key, ContactAck: []string{id}})
+}
+
+// ackContactAll acknowledges a tab up to the bound its count was read with,
+// so a message arriving since stays waiting.
+func (m *Model) ackContactAll(contact string) tea.Cmd {
+	s := m.ackSummary(contact)
+	if s.Unacked == 0 || s.AckUpto == 0 {
+		m.status = "nothing to acknowledge in this tab"
+		return nil
+	}
+	return m.sendContactAck(protocol.Message{ContactKey: contact, ContactAckUpto: s.AckUpto})
+}
+
+// ackContacts is /ack contacts: every ⇄ tab with messages waiting, each up
+// to its own counted bound.
+func (m *Model) ackContacts() tea.Cmd {
+	if !m.contactAcksAvailable() {
+		m.status = noContactAcks
+		return nil
+	}
+	if !m.ready() {
+		m.status = "not connected"
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, c := range m.pairing.snapshot.Contacts {
+		if s := m.ackSummary(c.IdentityKey); s.Unacked > 0 && s.AckUpto > 0 {
+			cmds = append(cmds, m.sendContactAck(protocol.Message{ContactKey: c.IdentityKey, ContactAckUpto: s.AckUpto}))
+		}
+	}
+	if len(cmds) == 0 {
+		m.status = "nothing to acknowledge in ⇄"
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+// contactAckTarget is the ID of the message numbered #n in this tab that
+// waits for acknowledgment, or why there is none.
+func (m *Model) contactAckTarget(contact, arg string) (string, string) {
+	n, err := strconv.ParseInt(strings.TrimPrefix(arg, "#"), 10, 64)
+	if !strings.HasPrefix(arg, "#") || err != nil {
+		return "", "give #n, a message's number in this tab"
+	}
+	for _, v := range m.contacts.thread(contact).rows {
+		if v.Direction == "in" && v.Cursor == n && v.AckState == protocol.AckNeeded {
+			return v.ID, ""
+		}
+	}
+	return "", fmt.Sprintf("#%d isn't a message waiting for acknowledgment in this tab", n)
+}
+
+// sendContactAck sends one acknowledgment under a fixed ID and selection,
+// kept until its answer, so a resend after a lost answer is the same one.
+func (m *Model) sendContactAck(msg protocol.Message) tea.Cmd {
+	msg.Type, msg.ContactOp, msg.MessageID = protocol.TypeOperatorContact, protocol.ContactOpAck, uuid.NewString()
+	if m.contacts.acking == nil {
+		m.contacts.acking = map[string]*contactOp{}
+	}
+	m.contacts.acking[msg.MessageID] = &contactOp{msg: msg}
+	return m.request(kindContactAck, msg, msg.ContactKey, msg.MessageID)
+}
+
+// contactAckResult keeps the tab's new count; a refusal leaves every
+// message as it was, still waiting.
+func (m *Model) contactAckResult(req pendingRequest, resp protocol.Message) tea.Cmd {
+	op := m.contacts.acking[req.ids[1]]
+	if op == nil {
+		return nil
+	}
+	delete(m.contacts.acking, req.ids[1])
+	if resp.Type != protocol.TypeOperatorContactResult || resp.ContactAcks == nil {
+		m.status = "not acknowledged: " + brokerReason(resp)
+		return nil
+	}
+	summary := *resp.ContactAcks
+	m.contacts.thread(op.msg.ContactKey).acks = &summary
+	acked := 0
+	if resp.ContactAcked != nil {
+		acked = *resp.ContactAcked
+	}
+	m.status = fmt.Sprintf("acknowledged %d in ⇄ (yours only; nothing is sent)", acked)
+	return nil
+}
+
+// resendContactAcks resends acknowledgments whose answers were lost,
+// unchanged.
+func (m *Model) resendContactAcks() tea.Cmd {
+	var cmds []tea.Cmd
+	for id, op := range m.contacts.acking {
+		if op.unknown {
+			op.unknown = false
+			cmds = append(cmds, m.request(kindContactAck, op.msg, op.msg.ContactKey, id))
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// contactAckChoices are /ack's picker rows in a ⇄ tab: all, then each
+// loaded message waiting, newest first.
+func (m *Model) contactAckChoices(l argLine) []string {
+	if len(l.words) != 0 || !m.contactAcksAvailable() {
+		return nil
+	}
+	var rows []string
+	thread := m.contacts.thread(m.conv.selected.contact).ordered()
+	for i := len(thread) - 1; i >= 0; i-- {
+		if v := thread[i]; v.Direction == "in" && v.AckState == protocol.AckNeeded {
+			rows = append(rows, fmt.Sprintf("#%d", v.Cursor))
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return withPrefix(append([]string{"all"}, rows...), l.current)
+}
+
+// ackMark is a received message's acknowledgment in its head.
+func ackMark(v protocol.ContactMessageView) string {
+	switch v.AckState {
+	case protocol.AckNeeded:
+		return mutedStyle.Render(fmt.Sprintf(" #%d", v.Cursor)) + " ○ needs ack"
+	case protocol.AckDone:
+		return mutedStyle.Render(fmt.Sprintf(" #%d ● acknowledged", v.Cursor))
+	case protocol.AckExpired:
+		return mutedStyle.Render(fmt.Sprintf(" #%d expired unacknowledged", v.Cursor))
+	}
+	return ""
+}
+
+// contactAckLabel is a ⇄ tab's /ack picker row.
+func (m *Model) contactAckLabel(item string) string {
+	if item == "all" {
+		return "  all   " + mutedStyle.Render("every message waiting in this tab (yours only; nothing is sent)")
+	}
+	for _, v := range m.contacts.thread(m.conv.selected.contact).rows {
+		if v.Direction == "in" && fmt.Sprintf("#%d", v.Cursor) == item {
+			line, _, _ := strings.Cut(v.Text, "\n")
+			return "  " + item + " " + mutedStyle.Render(safeText(line))
+		}
+	}
+	return "  " + safe(item)
+}
