@@ -83,7 +83,7 @@ func TestContactAckChatRecoveryAcceptanceOlderLoadedAckUpdatesMarkOutsideRefresh
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	v2Command(h, "/ack #37")
 	req := h.take(protocol.TypeOperatorContact)
-	ackContactReply(h, req, 1, protocol.ContactAckSummary{Unacked: 1, AckUpto: 91}, ackContactRow(37, "acked"))
+	ackContactReply(h, req, contactAckReply{count: 1, summary: protocol.ContactAckSummary{Unacked: 1, AckUpto: 91}, rows: []protocol.ContactMessageView{ackContactRow(37, "acked")}})
 	newest := contactMessagesPage(key, ackContactRow(91, "needs_ack"))
 	newest.ContactPage.More = true
 	newest.ContactPage.Acks = &protocol.ContactAckSummary{Unacked: 1, AckUpto: 91}

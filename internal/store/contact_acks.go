@@ -74,7 +74,7 @@ func (p *PeerMessages) Ack(ctx context.Context, contact string, sel AckSelector,
 		return 0, protocol.ContactAckSummary{}, err
 	}
 	defer tx.Rollback()
-	acked, err := ackIn(ctx, tx, contact, sel, at)
+	acked, err := ackIn(ctx, tx, ackRequest{contact, sel, at})
 	if err != nil {
 		return 0, protocol.ContactAckSummary{}, err
 	}
@@ -85,13 +85,20 @@ func (p *PeerMessages) Ack(ctx context.Context, contact string, sel AckSelector,
 	return acked, summary, tx.Commit()
 }
 
-func ackIn(ctx context.Context, tx *sql.Tx, contact string, sel AckSelector, at time.Time) (int, error) {
-	where, args, err := ackSelection(ctx, tx, contact, sel)
+// ackRequest is one acknowledgment to apply: whose messages, which, and when.
+type ackRequest struct {
+	contact string
+	sel     AckSelector
+	at      time.Time
+}
+
+func ackIn(ctx context.Context, tx *sql.Tx, r ackRequest) (int, error) {
+	where, args, err := ackSelection(ctx, tx, r.contact, r.sel)
 	if err != nil {
 		return 0, err
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET acked_at = ? WHERE contact = ? AND `+needsAck+` AND `+where,
-		append([]any{msgStamp(at), contact}, args...)...)
+		append([]any{msgStamp(r.at), r.contact}, args...)...)
 	if err != nil {
 		return 0, err
 	}
@@ -180,7 +187,7 @@ func (s *Store) OperatorContactAck(ctx context.Context, c ContactAck) (int, prot
 	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
 		var err error
 		if !replay {
-			if acked, err = ackIn(ctx, tx, c.Contact, sel, c.Now); err != nil {
+			if acked, err = ackIn(ctx, tx, ackRequest{c.Contact, sel, c.Now}); err != nil {
 				return err
 			}
 		}

@@ -129,16 +129,31 @@ func (m *Model) ackContacts() tea.Cmd {
 // contactAckTarget is the ID of the message numbered #n in this tab that
 // waits for acknowledgment, or why there is none.
 func (m *Model) contactAckTarget(contact, arg string) (string, string) {
-	n, err := strconv.ParseInt(strings.TrimPrefix(arg, "#"), 10, 64)
-	if !strings.HasPrefix(arg, "#") || err != nil {
+	n, ok := messageNumber(arg)
+	if !ok {
 		return "", "give #n, a message's number in this tab"
 	}
 	for _, v := range m.contacts.thread(contact).rows {
-		if v.Direction == "in" && v.Cursor == n && v.AckState == protocol.AckNeeded {
+		if awaitsAck(v) && v.Cursor == n {
 			return v.ID, ""
 		}
 	}
 	return "", fmt.Sprintf("#%d isn't a message waiting for acknowledgment in this tab", n)
+}
+
+// messageNumber is #n's n.
+func messageNumber(arg string) (int64, bool) {
+	digits, ok := strings.CutPrefix(arg, "#")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(digits, 10, 64)
+	return n, err == nil
+}
+
+// awaitsAck: a received message waiting for the operator's acknowledgment.
+func awaitsAck(v protocol.ContactMessageView) bool {
+	return v.Direction == "in" && v.AckState == protocol.AckNeeded
 }
 
 // sendContactAck sends one acknowledgment under a fixed ID and selection,
@@ -199,7 +214,7 @@ func (m *Model) contactAckChoices(l argLine) []string {
 	var rows []string
 	thread := m.contacts.thread(m.conv.selected.contact).ordered()
 	for i := len(thread) - 1; i >= 0; i-- {
-		if v := thread[i]; v.Direction == "in" && v.AckState == protocol.AckNeeded {
+		if v := thread[i]; awaitsAck(v) {
 			rows = append(rows, fmt.Sprintf("#%d", v.Cursor))
 		}
 	}
@@ -249,7 +264,7 @@ func (m *Model) recheckAcked(msg protocol.Message) tea.Cmd {
 	t := m.contacts.thread(msg.ContactKey)
 	var cursors []int64
 	for _, v := range t.rows {
-		if v.Direction == "in" && v.AckState == protocol.AckNeeded && acks(msg, v) {
+		if awaitsAck(v) && acks(msg, v) {
 			cursors = append(cursors, v.Cursor)
 		}
 	}

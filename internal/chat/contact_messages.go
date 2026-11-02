@@ -175,21 +175,29 @@ var stateRank = map[string]int{"queued": 0, "received": 0, "expired": 1, "refuse
 
 func (t *contactThread) merge(views []protocol.ContactMessageView) {
 	for _, v := range views {
-		old, held := t.rows[rowKey(v)]
-		if held && stateRank[old.State] > stateRank[v.State] {
-			v.State, v.DeliveredAt, v.ReadAt = old.State, old.DeliveredAt, old.ReadAt
-		}
-		if held && v.Text == "" {
-			v.Text = old.Text // a collected text stays shown as it was read
-		}
-		if held && v.ReadAt == nil {
-			v.ReadAt = old.ReadAt // read here stays read, whatever a late page says
-		}
-		if held && ackSettled(old.AckState) && !ackSettled(v.AckState) {
-			v.AckState, v.AckedAt = old.AckState, old.AckedAt // acknowledged or expired stays so (#287)
+		if old, held := t.rows[rowKey(v)]; held {
+			v = keepForward(old, v)
 		}
 		t.rows[rowKey(v)] = v
 	}
+}
+
+// keepForward is a newly read message with what a late page can't take
+// back from the one held: its state, text, read and acknowledgment.
+func keepForward(old, v protocol.ContactMessageView) protocol.ContactMessageView {
+	if stateRank[old.State] > stateRank[v.State] {
+		v.State, v.DeliveredAt, v.ReadAt = old.State, old.DeliveredAt, old.ReadAt
+	}
+	if v.Text == "" {
+		v.Text = old.Text // a collected text stays shown as it was read
+	}
+	if v.ReadAt == nil {
+		v.ReadAt = old.ReadAt // read here stays read, whatever a late page says
+	}
+	if ackSettled(old.AckState) && !ackSettled(v.AckState) {
+		v.AckState, v.AckedAt = old.AckState, old.AckedAt // acknowledged or expired stays so (#287)
+	}
+	return v
 }
 
 // newestPage merges the newest page. When it doesn't reach down to what

@@ -16,7 +16,7 @@ func TestContactAckChatBulkAcceptanceUsesSummaryBoundNotLoadedRows(t *testing.T)
 	chatEqual(t, "contact", req.ContactKey, key)
 	chatEqual(t, "frozen summary upper bound", req.ContactAckUpto, int64(900))
 	chatEqual(t, "bulk is not just loaded IDs", len(req.ContactAck), 0)
-	ackContactReply(h, req, 80, protocol.ContactAckSummary{}, ackContactRow(900, "acked"), ackContactRow(899, "acked"))
+	ackContactReply(h, req, contactAckReply{count: 80, rows: []protocol.ContactMessageView{ackContactRow(900, "acked"), ackContactRow(899, "acked")}})
 }
 
 func TestContactAckChatBulkAcceptanceContactsUsesOnlyFrozenNonemptyContacts(t *testing.T) {
