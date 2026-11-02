@@ -132,8 +132,8 @@ func (m *Model) replyRows(s contactSides, v protocol.ContactMessageView, thread 
 	return m.mutedRows([]string{text})
 }
 
-// messageStatusRows are the review, the outbound state and each acknowledgment,
-// one muted line each, in that order.
+// messageStatusRows are the review, the outbound state, each acknowledgment
+// and the review's IDs on either side: one muted line each, in that order.
 func (m *Model) messageStatusRows(s contactSides, v protocol.ContactMessageView) []string {
 	var rows []string
 	if review := strings.TrimPrefix(reviewHead(v), " · "); review != "" {
@@ -145,7 +145,7 @@ func (m *Model) messageStatusRows(s contactSides, v protocol.ContactMessageView)
 	for _, a := range v.AgentAcks {
 		rows = append(rows, "· "+theirAgents([]string{a}, s.ws)+": acknowledged")
 	}
-	return m.mutedRows(rows)
+	return m.mutedRows(append(rows, reviewIDRows(v)...))
 }
 
 // mutedRows indents texts as a body, each wrapped at the tab's width.

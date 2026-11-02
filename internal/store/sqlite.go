@@ -119,6 +119,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	// and when one expired unacknowledged; NULL for neither.
 	{"peer_messages", "acked_at", "TEXT"},
 	{"peer_messages", "ack_expired_at", "TEXT"},
+	// The reviewer's side's own ID for a review this side asked for
+	// (#259), once an outcome names it; NULL until then. Set once, never
+	// changed.
+	{"review_asks_out", "review_id", "TEXT"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the

@@ -184,7 +184,7 @@ func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.Revie
 		args = append(args, sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
-    a.updated_at, a.settled_at IS NOT NULL
+    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, '')
 FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
 `+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
@@ -196,7 +196,7 @@ FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND 
 		var item protocol.ReviewAskedItem
 		var updated string
 		if err := rows.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
-			&updated, &item.Settled); err != nil {
+			&updated, &item.Settled, &item.ReviewID); err != nil {
 			return page, err
 		}
 		if item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {

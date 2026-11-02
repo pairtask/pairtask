@@ -63,8 +63,11 @@ type AskOut struct {
 	Seq                                               uint64
 	Attempt, Intent                                   uint32
 	Verdict, Summary, URL, Reason                     string
-	UpdatedAt                                         time.Time
-	Settled                                           bool
+	// ReviewID is the reviewer's side's own ID for the review, "" until an
+	// outcome names it.
+	ReviewID  string
+	UpdatedAt time.Time
+	Settled   bool
 }
 
 // askRanks order the open states; a request's outcomes never go back.
@@ -140,18 +143,18 @@ func loadAsk(ctx context.Context, q rowQuerier, contact, askID string) (AskOut, 
 	var a AskOut
 	var ask, updated string
 	var digest []byte
-	var settled sql.NullString
+	var settled, reviewID sql.NullString
 	err := q.QueryRowContext(ctx, `SELECT contact, ask_id, reviewer, requester_agent, local_id, ask, state, seq, digest, attempt, intent,
-    verdict, summary, url, reason, updated_at, settled_at FROM review_asks_out WHERE contact = ? AND ask_id = ?`, contact, askID).Scan(
+    verdict, summary, url, reason, review_id, updated_at, settled_at FROM review_asks_out WHERE contact = ? AND ask_id = ?`, contact, askID).Scan(
 		&a.Contact, &a.AskID, &a.Reviewer, &a.RequesterAgent, &a.LocalID, &ask, &a.State, &a.Seq, &digest, &a.Attempt, &a.Intent,
-		&a.Verdict, &a.Summary, &a.URL, &a.Reason, &updated, &settled)
+		&a.Verdict, &a.Summary, &a.URL, &a.Reason, &reviewID, &updated, &settled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, nil, false, nil
 	}
 	if err != nil {
 		return a, nil, false, err
 	}
-	a.Settled = settled.Valid
+	a.Settled, a.ReviewID = settled.Valid, reviewID.String
 	if a.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
 		return a, nil, false, err
 	}
@@ -168,14 +171,18 @@ const (
 	outcomeInvalid
 )
 
-// judgeOutcome decides an outcome against its request's record: older ones
-// are stale, the same one again stale, the same number with other content a
-// conflict, and a newer one valid only from the asked reviewer, moving on.
+// judgeOutcome decides an outcome against its request's record: one naming
+// another review than the request already has is a conflict, whatever its
+// number; else older ones are stale, the same one again stale, the same
+// number with other content a conflict, and a newer one valid only from
+// the asked reviewer, moving on.
 func judgeOutcome(a AskOut, digest []byte, o messaging.ReviewOutcome) outcomeVerdict {
 	sum := o.Digest()
 	switch {
 	case o.Reviewer != a.Reviewer:
 		return outcomeInvalid
+	case otherReview(a, o):
+		return outcomeConflict
 	case o.Seq < a.Seq:
 		return outcomeStale
 	case o.Seq == a.Seq && string(digest) == string(sum[:]):
@@ -187,6 +194,12 @@ func judgeOutcome(a AskOut, digest []byte, o messaging.ReviewOutcome) outcomeVer
 		return outcomeInvalid
 	}
 	return outcomeApplied
+}
+
+// otherReview: the outcome names a review, and the request already has
+// another.
+func otherReview(a AskOut, o messaging.ReviewOutcome) bool {
+	return a.ReviewID != "" && o.ReviewID != "" && o.ReviewID != a.ReviewID
 }
 
 // movesOn: a newer outcome that goes forward from where the request is.
@@ -350,10 +363,27 @@ func acceptOutcomeIn(ctx context.Context, tx *sql.Tx, in inboundOutcome) (messag
 	if err != nil || !found {
 		return refusedOutcome(messaging.ReasonInvalid), err
 	}
-	if answer, judged := judgedAnswers[judgeOutcome(a, digest, o)]; judged {
+	verdict := judgeOutcome(a, digest, o)
+	if verdict == outcomeStale || verdict == outcomeApplied {
+		if err := keepReviewID(ctx, tx, a, o); err != nil {
+			return messaging.OutcomeAnswer{}, err
+		}
+	}
+	if answer, judged := judgedAnswers[verdict]; judged {
 		return answer, nil
 	}
 	return takeOutcome(ctx, tx, takenOutcome{a, o, at})
+}
+
+// keepReviewID records the review the reviewer's side names, the first
+// time it names one, a replay's too: set once, never changed or cleared.
+func keepReviewID(ctx context.Context, tx *sql.Tx, a AskOut, o messaging.ReviewOutcome) error {
+	if a.ReviewID != "" || o.ReviewID == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE review_asks_out SET review_id = ? WHERE contact = ? AND ask_id = ? AND reviewer = ? AND review_id IS NULL`,
+		o.ReviewID, a.Contact, a.AskID, a.Reviewer)
+	return err
 }
 
 // judgedAnswers answer an outcome that doesn't move its request on.
@@ -555,5 +585,6 @@ func loadAsks(ctx context.Context, q rowQuerier, keys [][2]string) ([]AskOut, er
 // View is the request as an agent or the operator sees it.
 func (a AskOut) View() protocol.ReviewOutcomeView {
 	return protocol.ReviewOutcomeView{AskID: a.AskID, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
-		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason}
+		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason,
+		ReviewID: a.ReviewID}
 }

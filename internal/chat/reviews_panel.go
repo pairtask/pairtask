@@ -73,7 +73,10 @@ func reviewShort(id string) string {
 func (m *Model) reviewDetail(r protocol.ReviewView) []string {
 	rows := []string{reviewRow(r), "", sectionTitle("Target")}
 	rows = append(rows, targetRows(r.Spec)...)
-	rows = append(rows, "  review "+safe(r.ID))
+	rows = append(rows, "  local review ID "+safe(r.ID))
+	if r.RemoteRequest != "" {
+		rows = append(rows, "  requester's ask ID "+safe(r.RemoteRequest)) // the paired workspace's ID for this request
+	}
 	if r.Revisions != nil {
 		rows = append(rows, "  pinned base "+safe(r.Revisions.Base), "  pinned head "+safe(r.Revisions.Head))
 	}

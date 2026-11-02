@@ -423,7 +423,7 @@ func (m *Model) askedRows() []string {
 		if it.Verdict != "" {
 			row += " " + safe(it.Verdict)
 		}
-		rows = append(rows, row)
+		rows = append(rows, row+"  "+mutedStyle.Render(theirReviewID(it.ReviewID)))
 	}
 	return append(rows, moreRow(s.more, "asked")...)
 }

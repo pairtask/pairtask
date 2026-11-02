@@ -97,7 +97,8 @@ Reviews show in a panel, not in the transcript.
 sections:
 - **Needs you:** requests from paired workspaces waiting for your decision, as `n1`, `n2`…
 - **Running here.**
-- **Asked by you:** your requests to paired workspaces, as `a1`…
+- **Asked by you:** your requests to paired workspaces, as `a1`…, with their review ID
+  once reported ("reviewer ID not reported" until then).
 - **All reviews here:** the list and detail as before.
 
 A ref stays with its request for the session, and one that has left says so.

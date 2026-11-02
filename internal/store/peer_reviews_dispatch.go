@@ -172,8 +172,8 @@ func remoteNoticeText(v protocol.ReviewView) string {
 	if v.Remote.Sender != "" {
 		asker = v.Remote.Sender
 	}
-	text := fmt.Sprintf("Review requested %s from paired workspace %s by %s: %s#%s, pinned %s..%s", v.ID, v.Remote.Label, asker,
-		v.Spec.Repository, v.Spec.Change, v.Pinned.Base, v.Pinned.Head)
+	text := fmt.Sprintf("Review requested %s (their ask ID %s) from paired workspace %s by %s: %s#%s, pinned %s..%s", v.ID, v.RemoteRequest,
+		v.Remote.Label, asker, v.Spec.Repository, v.Spec.Change, v.Pinned.Base, v.Pinned.Head)
 	if v.Spec.Scope != "" {
 		text += ", scope: " + v.Spec.Scope
 	}

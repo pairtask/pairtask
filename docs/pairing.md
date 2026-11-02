@@ -159,7 +159,12 @@ Where the request stands comes back to you: waiting for their operator,
 declined, accepted, the verdict with its summary, and the published link.
 The `⇄` tab shows it on your request; an agent that asked gets messages
 with the latest status or result (steps in quick succession come as one),
-and its `reviews_asked` tool lists its requests.
+and its `reviews_asked` tool lists its requests. Each request names its ID
+on both sides. On the reviewer's side, the request shows the requester's
+ask ID and, once it is a review there, the local review ID. On your side,
+it shows their review ID once they report it, or "reviewer ID not
+reported" until then. Nothing is reported before the request becomes a
+review there, or by a pairtask that predates review IDs.
 
 ## Names
 

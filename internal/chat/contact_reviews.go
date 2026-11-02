@@ -205,4 +205,31 @@ func outcomeHead(o *protocol.ReviewOutcomeView) string {
 	return head
 }
 
+// reviewIDRows name a review request on both sides, escaped: for one sent
+// from here, the review the other side made of it; for one the contact
+// sent, their ask ID and the review it became here, once it is one.
+func reviewIDRows(v protocol.ContactMessageView) []string {
+	switch {
+	case v.ReviewOutcome != nil:
+		return []string{theirReviewID(v.ReviewOutcome.ReviewID)}
+	case v.ReviewAsk == nil || v.Direction != "in":
+		return nil
+	}
+	rows := []string{"requester's ask ID " + safe(v.ID)}
+	if v.ReviewID != "" {
+		rows = append(rows, "local review ID "+safe(v.ReviewID))
+	}
+	return rows
+}
+
+// theirReviewID names the review the other workspace made of a request,
+// escaped; unknown until one of its outcomes reports it, which says
+// nothing of why.
+func theirReviewID(id string) string {
+	if id == "" {
+		return "reviewer ID not reported"
+	}
+	return "their review ID " + safe(id)
+}
+
 func shortSHA(sha string) string { return sha[:min(len(sha), 12)] }
