@@ -16,14 +16,18 @@ One timeline, several tabs. A message goes to the conversation you are in:
 - **Rooms** — a `#name` tab per room; room posts also appear in All.
 
 The hint line above the input always shows the audience, so you can check it
-before sending. Use **All** to choose recipients with leading `@id` mentions or
-`/to ["id"]` (`@` opens a picker, Tab/Enter completes). A 1:1 keeps its
-recipient, and mentioning that same agent is allowed. In a room or group, a
-leading `@a @b` still goes to everyone in it, and marks the named members as
-**addressed**: they are expected to answer, the others read along. The picker
-offers only that room's or group's members, and the hint line shows who is
-addressed. Later `@` is plain text, pasted text stays literal, and a leading
-`\@` escapes it.
+before sending. In **All** or a room, a leading `@a @b` **tags** agents: the
+message still goes to everyone there, and each tagged agent is **assigned** its
+reply. Everyone sees whom it is assigned to, under the message, in `/claims` and
+in `/agents`; an assigned agent can release it if it can't take it, or mark it
+done, and "nobody holds reply: all released" shows when every one of them let
+it go. A tagged agent must be connected (in a room, a member) and run a recent
+pairtask; otherwise nothing is sent and the chat says which tag is the
+problem. To write to one agent privately, use its 1:1 tab or `/to ["id"]`. On
+a broker too old to assign, a tag in All is refused, the draft kept, rather
+than sent privately. In a group, a leading `@a @b` still only marks the named
+members as **addressed**. `@` opens a picker (Tab/Enter completes); later `@`
+is plain text, pasted text stays literal, and a leading `\@` escapes it.
 
 For pairing across hosts, start with the
 [pairing guide](pairing.md). Once both sides

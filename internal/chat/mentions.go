@@ -38,14 +38,27 @@ func (m *Model) checkMentions(ids []string) string {
 		return "@all can't be used in a room or group; it already reaches everyone in it"
 	case len(ids) > protocol.MaxMentions:
 		return "at most 16 mentions"
-	case !m.session.HasCapability(protocol.CapabilityMentions):
-		return "this broker can't carry mentions; upgrade it, or remove them"
+	}
+	if problem := m.brokerMentionLimit(); problem != "" {
+		return problem
 	}
 	members, complete := m.eligibleMembers()
 	for _, id := range ids {
 		if complete && !slices.Contains(members, id) {
 			return safe(id) + " isn't in " + m.conv.selected.label()
 		}
+	}
+	return ""
+}
+
+// brokerMentionLimit is why the broker can't carry these mentions, "" when
+// it can.
+func (m *Model) brokerMentionLimit() string {
+	switch {
+	case !m.session.HasCapability(protocol.CapabilityMentions):
+		return "this broker can't carry mentions; upgrade it, or remove them"
+	case m.conv.selected.isRoom() && !m.session.HasCapability(protocol.CapabilityAssignments):
+		return noPublicTags // a room's tags assign (#278); an older broker wouldn't
 	}
 	return ""
 }

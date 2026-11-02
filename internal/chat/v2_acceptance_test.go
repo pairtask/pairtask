@@ -3,7 +3,6 @@ package chat_test
 import (
 	"encoding/json"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -61,15 +60,15 @@ func v2History(h *chatHarness, messages ...protocol.Message) {
 func TestChatV2TypedAddressingUsesOnlyLeadingTokens(t *testing.T) {
 	for _, tc := range []struct {
 		name, draft, to, body string
-		group                 []string
+		mentions              []string
 	}{
 		{name: "default broadcast", draft: "hello", to: "*", body: "hello"},
-		{name: "direct unknown", draft: "@unseen hello", to: "unseen", body: "@unseen hello"},
+		{name: "tag unknown", draft: "@unseen hello", to: "*", body: "@unseen hello", mentions: []string{"unseen"}},
 		{name: "explicit broadcast", draft: "@all hello", to: "*", body: "@all hello"},
-		{name: "deduplicated exact group", draft: "@z @A @z hello", group: []string{"A", "z"}, body: "@z @A @z hello"},
+		{name: "deduplicated public tags", draft: "@z @A @z hello", to: "*", mentions: []string{"A", "z"}, body: "@z @A @z hello"},
 		{name: "body mention", draft: "hello @bob", to: "*", body: "hello @bob"},
 		{name: "body email", draft: "mail user@example.com", to: "*", body: "mail user@example.com"},
-		{name: "newline ends prefix", draft: "@alice\n@bob hello", to: "alice", body: "@alice\n@bob hello"},
+		{name: "newline ends prefix", draft: "@alice\n@bob hello", to: "*", mentions: []string{"alice"}, body: "@alice\n@bob hello"},
 		{name: "escaped leading mention", draft: "\\@bob hello", to: "*", body: "@bob hello"},
 		{name: "literal slash", draft: "//ack #1", to: "*", body: "/ack #1"},
 	} {
@@ -79,9 +78,9 @@ func TestChatV2TypedAddressingUsesOnlyLeadingTokens(t *testing.T) {
 			v2Type(h, tc.draft)
 			req := v2Send(h)
 			chatEqual(t, "destination", req.To, tc.to)
-			sort.Strings(req.Group)
-			if !reflect.DeepEqual(req.Group, tc.group) {
-				t.Fatalf("group = %q, want %q", req.Group, tc.group)
+			chatEqual(t, "public tags never create private group", len(req.Group), 0)
+			if !reflect.DeepEqual(req.Mentions, tc.mentions) {
+				t.Fatalf("mentions = %q, want %q", req.Mentions, tc.mentions)
 			}
 			chatEqual(t, "full payload", v2Body(t, req), tc.body)
 		})
@@ -129,7 +128,10 @@ func TestChatV2PasteIntoTypedAddressPreservesExplicitScope(t *testing.T) {
 	v2Type(h, "@alice ")
 	h.input(tea.PasteMsg{Content: "body\n@bob /quit"})
 	req := v2Send(h)
-	chatEqual(t, "typed audience", req.To, "alice")
+	chatEqual(t, "typed tag stays public after paste", req.To, "*")
+	if !reflect.DeepEqual(req.Mentions, []string{"alice"}) {
+		t.Fatalf("paste changed typed tags: %q", req.Mentions)
+	}
 	chatEqual(t, "body untouched", v2Body(t, req), "@alice body\n@bob /quit")
 }
 
@@ -214,7 +216,10 @@ func TestChatV2ReplyRefusesAlreadyAddressedDraft(t *testing.T) {
 	chatEqual(t, "no implicit reply", h.m.State().InReplyTo, "")
 	chatEqual(t, "addressed draft retained", h.m.State().Draft, "@bob body")
 	req := v2Send(h)
-	chatEqual(t, "original audience retained", req.To, "bob")
+	chatEqual(t, "original public audience retained", req.To, "*")
+	if !reflect.DeepEqual(req.Mentions, []string{"bob"}) {
+		t.Fatalf("refused reply changed tags: %q", req.Mentions)
+	}
 }
 
 func TestChatV2BackslashNewlineDoesNotSend(t *testing.T) {
@@ -298,7 +303,14 @@ func TestChatV2AgentPickerCompletesWithoutSending(t *testing.T) {
 			}
 			v2Type(h, " body")
 			req := v2Send(h)
-			chatEqual(t, "picked exact raw destination", req.To, id)
+			if id == "alice" {
+				chatEqual(t, "inline pick addresses publicly", req.To, "*")
+				if !reflect.DeepEqual(req.Mentions, []string{id}) {
+					t.Fatalf("inline pick lost tag: %q", req.Mentions)
+				}
+			} else {
+				chatEqual(t, "non-inline pick keeps exact private destination", req.To, id)
+			}
 			chatEqual(t, "pick is not reply", req.InReplyTo, "")
 		})
 	}
@@ -351,7 +363,10 @@ func TestChatV2ClearingPasteRestoresTypedAddressing(t *testing.T) {
 	chatEqual(t, "draft empty", h.m.State().Draft, "")
 	v2Type(h, "@alice body")
 	req := v2Send(h)
-	chatEqual(t, "paste provenance resets", req.To, "alice")
+	chatEqual(t, "paste provenance resets to public tagging", req.To, "*")
+	if !reflect.DeepEqual(req.Mentions, []string{"alice"}) {
+		t.Fatalf("cleared paste still ignored typed tag: %q", req.Mentions)
+	}
 }
 
 func TestChatV2OfflineReplySubmitPreservesMetadata(t *testing.T) {

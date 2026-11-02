@@ -141,6 +141,9 @@ func (h *Hub) routeOperatorSend(ctx context.Context, clients map[string]*Client,
 	msg := req.msg
 	scope, rerr := operatorScope(msg)
 	if rerr == nil {
+		rerr = checkNoAssignment(msg)
+	}
+	if rerr == nil {
 		rerr = h.scopeOperatorSend(ctx, &msg, scope)
 	}
 	if rerr != nil {
@@ -171,9 +174,6 @@ func (h *Hub) admitOperator(ctx context.Context, clients map[string]*Client, sen
 	if rerr := h.requireRoom(ctx, send.msg.Room); rerr != nil {
 		return protocol.Message{}, rerr
 	}
-	if rerr := h.requireMentionedMembers(ctx, send.msg); rerr != nil {
-		return protocol.Message{}, rerr
-	}
 	return h.commitOperator(ctx, clients, send)
 }
 
@@ -193,26 +193,46 @@ func (h *Hub) commitOperator(ctx context.Context, clients map[string]*Client, se
 		return protocol.Message{}, rerr
 	}
 	out := operatorFrame(send, h.seq+1)
-	recipients, excluded, rerr := h.operatorRecipients(ctx, clients, out, send.scope)
+	recipients, excluded, rerr := h.admittedRecipients(ctx, clients, out, send)
 	if rerr == nil {
-		rerr = checkFrameSize(out)
+		rerr = checkFrameSize(recipientFrame(out, "", nil))
 	}
 	if rerr != nil {
 		return protocol.Message{}, rerr
 	}
 	h.seq++
-	err := h.store.PersistOperatorMessage(ctx, store.OperatorMessage{Msg: out, Scope: send.scope, Recipients: recipients, Excluded: excluded, AuditID: send.auditID})
+	assigned := assignees(send)
+	err := h.store.PersistOperatorMessage(ctx, store.OperatorMessage{Msg: out, Scope: send.scope, Recipients: recipients, Excluded: excluded,
+		AuditID: send.auditID, Assignees: assigned})
 	if err != nil {
 		return protocol.Message{}, h.persistenceError(out.MessageID, err)
 	}
 	h.emit(protocol.SessionEvent{Kind: protocol.EventConversationChanged, Seq: out.Seq, MessageID: out.MessageID, Direction: "sent"})
 	for _, r := range recipients {
 		if c := sessionOwner(clients, r); c != nil {
-			h.enqueue(clients, c, out) // An undelivered durable frame stays pending for replay.
+			h.enqueue(clients, c, recipientFrame(out, r.AgentID, assigned)) // An undelivered durable frame stays pending for replay.
 		}
 	}
 	return protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq,
 		Durable: true, Recipients: recipients, Excluded: excluded}, nil
+}
+
+// admittedRecipients are the send's frozen recipients once its tags can all
+// be assigned. A broadcast's tags are checked before its size, so a tag
+// naming an agent the message can't reach is named even when nobody could
+// get it; an untagged broadcast to nobody is refused as before.
+func (h *Hub) admittedRecipients(ctx context.Context, clients map[string]*Client, out protocol.Message, send operatorSend) ([]protocol.Recipient, []string, *routingError) {
+	recipients, excluded, rerr := h.operatorRecipients(ctx, clients, out, send.scope)
+	if rerr == nil {
+		rerr = h.checkAssigned(ctx, clients, recipients, send)
+	}
+	if rerr == nil && send.scope.Kind == store.ScopeAll {
+		rerr = checkBroadcastSize(recipients)
+	}
+	if rerr != nil {
+		return nil, nil, rerr
+	}
+	return recipients, excluded, nil
 }
 
 func operatorFrame(send operatorSend, seq uint64) protocol.Message {
@@ -339,7 +359,8 @@ func (h *Hub) operatorMember(ctx context.Context, clients map[string]*Client, id
 }
 
 // operatorBroadcast freezes connected eligible agents in ID order. Agents below
-// v4 or with a full inbox are excluded; global limits then apply to all or none.
+// v4 or with a full inbox are excluded; global limits then apply to all or
+// none, after the tags (admittedRecipients).
 func (h *Hub) operatorBroadcast(ctx context.Context, clients map[string]*Client, out protocol.Message) ([]protocol.Recipient, []string, *routingError) {
 	wire, err := store.DurableWireBytes(out)
 	if err != nil {
@@ -349,14 +370,7 @@ func (h *Hub) operatorBroadcast(ctx context.Context, clients map[string]*Client,
 	if rerr != nil {
 		return nil, nil, rerr
 	}
-	recipients, excluded, rerr := h.partitionBroadcast(ctx, candidates, out.Room != "", wire)
-	if rerr == nil {
-		rerr = checkBroadcastSize(recipients)
-	}
-	if rerr != nil {
-		return nil, nil, rerr
-	}
-	return recipients, excluded, nil
+	return h.partitionBroadcast(ctx, candidates, out.Room != "", wire)
 }
 
 func sortedClients(clients map[string]*Client) []*Client {

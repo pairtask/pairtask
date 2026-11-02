@@ -61,7 +61,7 @@ func (m *Model) claimsOf(e *entry) []protocol.Claim {
 // claimLines are the muted lines under a message, one per held claim,
 // wrapped to the width so a narrow view never cuts the role or state.
 func (m *Model) claimLines(e *entry, width int) []string {
-	var lines []string
+	lines := m.assignmentLines(e, width)
 	for _, c := range m.claimsOf(e) {
 		if c.State == protocol.ClaimReleased {
 			continue
@@ -103,10 +103,12 @@ func (m *Model) claimRows() []string {
 		}
 		rows = append(rows, row+mutedStyle.Render(" · "+age(c.ClaimedAt)))
 	}
+	assigned := m.assignmentRows(m.panel.id)
+	rows = append(rows, assigned...)
 	switch {
 	case page.Truncated:
 		rows = append(rows, fmt.Sprintf("  showing %d of %d claims (truncated: held claims first, older released ones left out)", len(claims), page.Total))
-	case loaded:
+	case loaded, len(assigned) > 0:
 	case m.claims.truncated:
 		rows = append(rows, "  claims not loaded: the snapshot is truncated to the newest messages with claims")
 	default:
@@ -124,7 +126,7 @@ func (m *Model) agentClaimLines(agent string) []string {
 	for _, c := range held {
 		lines = append(lines, mutedStyle.Render(m.agentClaimLine(c)))
 	}
-	return lines
+	return append(lines, m.agentAssignmentLines(agent)...)
 }
 
 func (m *Model) agentClaimLine(c protocol.Claim) string {

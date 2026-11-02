@@ -26,7 +26,7 @@ func requireMentions(t *testing.T, frame sessionWire, want ...string) {
 
 func TestMentionsAcceptanceRoomAudienceHistorySnapshotAndReplay(t *testing.T) {
 	f := roomFixture(t)
-	a, _ := roomPeer(f, "alpha-one", 9)
+	a, _ := roomPeer(f, "alpha-one", 16)
 	b, _ := roomPeer(f, "alpha-two", 9)
 	roomPeer(f, "beta-one", 9)
 	message := mentionedRoomMessage("addressed-room", "alpha-one", "alpha-one")
@@ -56,7 +56,7 @@ func TestMentionsAcceptanceRoomAudienceHistorySnapshotAndReplay(t *testing.T) {
 	operatorEqual(t, "snapshot preserves addressed IDs", found, true)
 	observer.Close()
 	roomDisconnect(f, a, "alpha-one")
-	again, _ := roomPeer(f, "alpha-one", 9)
+	again, _ := roomPeer(f, "alpha-one", 16)
 	replay := again.frame()
 	requireMentions(t, replay, "alpha-one")
 	operatorEqual(t, "durable replay remains replay", sessionDecode[bool](t, replay, "replayed"), true)
@@ -76,8 +76,8 @@ func TestMentionsAcceptanceGroupIncludesUnaddressedAndLegacyRecipients(t *testin
 
 func TestMentionsAcceptanceRetryIdentitySurvivesMembershipRemovalAndRoomDeletion(t *testing.T) {
 	f := roomFixture(t)
-	a, _ := roomPeer(f, "alpha-one", 9)
-	b, _ := roomPeer(f, "alpha-two", 9)
+	a, _ := roomPeer(f, "alpha-one", 16)
+	b, _ := roomPeer(f, "alpha-two", 16)
 	m := mentionedRoomMessage("mentioned-retry", "alpha-two", "alpha-one", "alpha-one")
 	roomRecipients(t, roomOperator(f, m), "alpha-one", "alpha-two")
 	a.frame()
@@ -96,14 +96,17 @@ func TestMentionsAcceptanceRetryIdentitySurvivesMembershipRemovalAndRoomDeletion
 
 func TestMentionsAcceptanceRejectsNonmembersWrongScopesAndAgentForgery(t *testing.T) {
 	f := roomFixture(t)
-	a, _ := roomPeer(f, "alpha-one", 9)
+	a, _ := roomPeer(f, "alpha-one", 16)
 	for _, tc := range []struct {
 		name, code string
 		change     func(map[string]any)
 	}{
 		{"nonmember", "invalid_mention", func(m map[string]any) { m["mentions"] = []string{"beta-one"} }},
 		{"invalid-id", "malformed_frame", func(m map[string]any) { m["mentions"] = []string{""} }},
-		{"square", "malformed_frame", func(m map[string]any) { delete(m, "room") }},
+		{"square-offline-tag", "invalid_mention", func(m map[string]any) {
+			delete(m, "room")
+			m["mentions"] = []string{"beta-one"}
+		}},
 		{"direct", "malformed_frame", func(m map[string]any) { delete(m, "room"); m["to"] = "alpha-one" }},
 		{"group-outsider", "invalid_mention", func(m map[string]any) {
 			delete(m, "room")
@@ -124,22 +127,28 @@ func TestMentionsAcceptanceRejectsNonmembersWrongScopesAndAgentForgery(t *testin
 
 func TestMentionsAcceptanceLimitCountsUniqueMembers(t *testing.T) {
 	f := roomFixture(t)
-	a, _ := roomPeer(f, "alpha-one", 9)
+	a, _ := roomPeer(f, "alpha-one", 16)
+	peers := []*sessionProbe{a}
 	var ids []string
 	for i := 0; i < 17; i++ {
 		id := fmt.Sprintf("member-%02d", i)
 		ids = append(ids, id)
 		roomChange(f, "add", id, "alpha")
+		peer, _ := roomPeer(f, id, 16)
+		peers = append(peers, peer)
 	}
-	roomRecipients(t, roomOperator(f, mentionedRoomMessage("sixteen", ids[:16]...)), "alpha-one")
-	requireMentions(t, a.frame(), ids[:16]...)
+	audience := append([]string{"alpha-one"}, ids...)
+	roomRecipients(t, roomOperator(f, mentionedRoomMessage("sixteen", ids[:16]...)), slices.Clone(audience)...)
+	for _, peer := range peers {
+		requireMentions(t, peer.frame(), ids[:16]...)
+	}
 	tooMany := roomOperator(f, mentionedRoomMessage("seventeen", ids...))
 	operatorEqual(t, "seventeen unique IDs refused", tooMany.text("type"), "error")
 	duplicates := make([]string, 40)
 	for i := range duplicates {
 		duplicates[i] = "alpha-one"
 	}
-	roomRecipients(t, roomOperator(f, mentionedRoomMessage("duplicates", duplicates...)), "alpha-one")
+	roomRecipients(t, roomOperator(f, mentionedRoomMessage("duplicates", duplicates...)), slices.Clone(audience)...)
 	requireMentions(t, a.frame(), "alpha-one")
 	operatorEqual(t, "only valid messages stored", f.count("messages"), 2)
 }

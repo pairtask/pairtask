@@ -382,6 +382,37 @@ claims_truncated}`, or an error: `invalid_claim`, `claim_conflict` (with
   `claim_conflict` doesn't answer. Claims don't deduplicate different
   messages, or the same work under different keys.
 
+## Tags that assign (v16)
+
+An operator message to everyone or to a room may carry `mentions`: the agents
+it tags. Each tagged agent is assigned the message's `reply`, stored with the
+message in one transaction and frozen by agent ID. Every tagged agent must be
+one of the message's recipients and at protocol 16; otherwise the send is
+refused with `invalid_mention`, naming the tag, and nothing but its rejected
+audit is stored. A retry with the same `message_id` and the same canonical
+mentions (sorted, deduplicated, at most 16) returns the stored result, checked
+before connectivity, membership or version. A group's mentions still only mark
+who is addressed.
+
+The frame to a tagged agent carries `assignment: {"task": "reply", "state":
+"assigned"}`, on delivery and on replay with the state as it is then. Only
+the broker sets it; a client sending one is refused.
+
+Claims on the message's `reply` as owner act on the assignment instead: a
+tagged agent's `claim_set` leaves it `assigned`, `claim_release` makes it
+`released` and `claim_done` makes it `done`; from `released` or `done` nothing
+goes back. An untagged agent's `claim_set` is `claim_conflict`, naming the
+assignees. Reviewer claims and other tasks are unchanged, and `assignee` is
+never a role a client may send. A `claim_result`, and the snapshot's claim
+pages, carry `assignments`, `assignments_total` and `assignments_truncated`
+for a caller at protocol 16; an older one gets the claims as before. A change
+to an assignment emits `claims_changed`.
+
+A reply to an assigned message must go where it was asked: `to: "*"`, in the
+parent's room (or none, which keeps it). Any other destination is refused
+with `invalid_reply_audience`. Replies to messages that assign nobody keep the
+rules above.
+
 ## Rooms (v9)
 
 Project rooms are opt-in spaces for a group's discussion. They organise

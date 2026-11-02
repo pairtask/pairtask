@@ -74,9 +74,9 @@ func TestChatV3DisplayHeaderAndDividersFrameTranscriptAndDraft(t *testing.T) {
 func TestChatV3DisplayAudienceLabelsPreserveScope(t *testing.T) {
 	for _, tc := range []struct{ name, draft, command, want string }{
 		{name: "everyone", want: "to everyone (2 online)"},
-		{name: "direct", draft: "@codex-1 body", want: "to codex-1"},
-		{name: "group", draft: "@codex-1 @claude-1 body", want: "to claude-1, codex-1"},
-		{name: "unknown", draft: "@unseen body", want: "to unseen (not seen: unseen)"},
+		{name: "direct", draft: "body", command: `/to ["codex-1"]`, want: "to codex-1"},
+		{name: "group", draft: "body", command: `/to ["codex-1","claude-1"]`, want: "to claude-1, codex-1"},
+		{name: "unknown", draft: "body", command: `/to ["unseen"]`, want: "to unseen (not seen: unseen)"},
 		{name: "literal", command: `/to ["agent with spaces"]`, want: "to agent with spaces (not seen: agent with spaces)"},
 		{name: "reply", command: "/reply #7", want: "reply to #7 → codex-1 · Esc cancels"},
 		{name: "invalid", draft: "@all @codex-1 body", want: "✗ @all can't be combined with other mentions"},

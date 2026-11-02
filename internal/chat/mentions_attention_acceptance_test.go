@@ -182,7 +182,7 @@ func TestAttentionMentionsAcceptanceLiteralPasteEscapeAndBodyMentionsStayLiteral
 	}
 }
 
-func TestAttentionMentionsAcceptanceAllAndDirectRetainExistingRouting(t *testing.T) {
+func TestAttentionMentionsAcceptanceAllIsPublicAndDirectRetainsRouting(t *testing.T) {
 	for _, direct := range []bool{false, true} {
 		h := attentionHarness(t, true, false)
 		if direct {
@@ -190,8 +190,15 @@ func TestAttentionMentionsAcceptanceAllAndDirectRetainExistingRouting(t *testing
 		}
 		v2Type(h, "@alice review")
 		sent := v2Send(h)
-		chatEqual(t, "existing direct routing", sent.To, "alice")
-		chatEqual(t, "no room/group attention on direct", len(sent.Mentions), 0)
+		if direct {
+			chatEqual(t, "existing direct routing", sent.To, "alice")
+			chatEqual(t, "no assignment tags on direct", len(sent.Mentions), 0)
+		} else {
+			chatEqual(t, "All tags retain public routing", sent.To, "*")
+			if !slices.Equal(sent.Mentions, []string{"alice"}) {
+				t.Fatalf("public tag lost: %q", sent.Mentions)
+			}
+		}
 	}
 }
 

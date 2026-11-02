@@ -142,19 +142,45 @@ func (m *Model) explicitAudience() audience {
 
 func (m *Model) mentionAudience(tokens []string) audience {
 	if slices.Contains(tokens, "all") {
-		if len(tokens) > 1 {
-			return audience{err: "@all can't be combined with other mentions"}
-		}
-		return audience{everyone: true, source: SourceMentions}
+		return allAudience(tokens)
 	}
 	ids := slices.Clone(tokens)
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	if len(ids) > protocol.MaxRecipients {
-		return audience{err: "at most 256 recipients"}
+	if problem := m.tagProblem(ids); problem != "" {
+		return audience{err: problem}
 	}
-	return audience{ids: ids, source: SourceMentions, notSeen: m.unseen(ids)}
+	return audience{everyone: true, mentions: ids, source: SourceMentions, notSeen: m.unseen(ids)}
 }
+
+// allAudience is @all's: everyone, and alone.
+func allAudience(tokens []string) audience {
+	if len(tokens) > 1 {
+		return audience{err: "@all can't be combined with other mentions"}
+	}
+	return audience{everyone: true, source: SourceMentions}
+}
+
+// tagProblem is why tags in All can't be sent, "" when they can. A tag in
+// All assigns its reply and stays public (#278); a broker that can't would
+// get a private send instead, so nothing is sent.
+func (m *Model) tagProblem(ids []string) string {
+	if !m.session.HasCapability(protocol.CapabilityAssignments) {
+		return noPublicTags
+	}
+	if len(ids) > protocol.MaxMentions {
+		return "at most 16 tags"
+	}
+	for _, id := range ids {
+		if err := protocol.ValidateAgentID(id); err != nil {
+			return "tags: " + err.Error()
+		}
+	}
+	return ""
+}
+
+// noPublicTags is why a tag in All waits on an older broker.
+const noPublicTags = "tagging assigns in public; this broker can't yet: upgrade it, or write in the agent's own tab or with /to"
 
 // unseen lists IDs that are neither online nor in the loaded conversation.
 // Presence is advisory, so these are marked, not refused.

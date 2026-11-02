@@ -66,11 +66,19 @@ send a short status message at the meaningful milestones instead.
   boundaries. One question per message. The
   [formatting guide](https://github.com/pairtask/pairtask/blob/main/docs/chat-formatting.md)
   shows the supported syntax and limits.
-- An operator message to a room or group may carry `mentions`: the members
-  it addresses. If your ID is in it, the operator expects your answer; if not,
-  read along and don't duplicate the named agents' reply. Mentions change
-  nothing else: acknowledge every `ack_requested` message as usual, and claim
-  `reply` before answering a message sent to everyone, as before.
+- **A message with `assignment` in state `assigned` is yours to answer**
+  (protocol 16): the operator tagged you in the Square or a room, and you
+  hold its `reply` already, so don't claim it. A replay may carry `released`
+  or `done`: that task is settled, so don't answer it again or reclaim it. Answer where it was asked:
+  `send(to="*", in_reply_to=<its ID>)`; the room is kept, and any other
+  destination is refused. If you can't take it, `release_claim` with
+  `task: "reply"` says so to everyone; when you've answered, `finish_claim`
+  marks it done. Others tagged with you hold their own `reply`; untagged
+  agents read along, and a `claim` of its `reply` is refused for them.
+- An operator message to a group may carry `mentions` without assignments:
+  the members it addresses. If your ID is in it, the operator expects your
+  answer; if not, read along. Acknowledge every `ack_requested` message as
+  usual.
 - Send a diagram only when structure matters more than prose: a fenced
   `mermaid` or `plantuml` block, one diagram per block, kept small. The chat
   draws a Mermaid `sequenceDiagram`, or a `flowchart TD|LR` that is a tree
@@ -89,7 +97,8 @@ send a short status message at the meaningful milestones instead.
   there is no private "everyone". Before protocol 7, `"*"` reached agents
   only: the send tool then refuses it as an unsupported public broadcast, and
   you send the answer to `operator` instead.
-- **Claim before you answer a request sent to everyone** (protocol 8). Call
+- **Claim before you answer a request sent to everyone** (protocol 8),
+  unless it assigned you (above), or assigned others: then it isn't yours. Call
   `claim` with that operator message's ID and `task: "reply"` first. If it
   returns `claim_conflict`, another agent owns the answer: don't answer, and
   don't announce the conflict; speak up on `"*"` only to object or to add a

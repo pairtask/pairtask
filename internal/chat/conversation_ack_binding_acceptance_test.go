@@ -10,7 +10,7 @@ import (
 
 func TestChatConversationAudienceAckRetryKeepsOriginalBindings(t *testing.T) {
 	h, _ := audienceAckHarness(t, true)
-	v2Type(h, "@alice received")
+	audienceAckPrivate(h, "received", "alice")
 	original := v2Send(h)
 	h.reconnectTo(newChatScript(), "epoch")
 	snapshot := h.take(protocol.TypeOperatorSnapshot)
@@ -42,7 +42,7 @@ func TestChatConversationAudienceAckRetryKeepsOriginalBindings(t *testing.T) {
 
 func TestChatConversationAudienceAckContentConflictSuspends(t *testing.T) {
 	h, _ := replyAckHarness(t, true)
-	v2Type(h, "@author received")
+	audienceAckPrivate(h, "received", "author")
 	sent := v2Send(h)
 	h.event(protocol.EventConversationChanged, "epoch", 2)
 	request := h.take(protocol.TypeOperatorHistory)
@@ -59,7 +59,7 @@ func TestChatConversationAudienceAckContentConflictSuspends(t *testing.T) {
 
 func TestChatConversationAudienceAckEpochChangeSuspends(t *testing.T) {
 	h, _ := replyAckHarness(t, true)
-	v2Type(h, "@author received")
+	audienceAckPrivate(h, "received", "author")
 	sent := v2Send(h)
 	h.event(protocol.EventResyncRequired, "next-epoch", 1)
 	h.take(protocol.TypeOperatorSnapshot)
@@ -80,7 +80,7 @@ func TestChatConversationAudienceAckDoesNotDuplicateInflightOrCompletedAck(t *te
 				h.reply(explicit, protocol.Message{Type: protocol.TypeAck, MessageID: explicit.MessageID, Stage: protocol.StageAgentAcknowledged})
 				h.await(func() bool { return h.m.State().InFlight == 0 })
 			}
-			v2Type(h, "@alice received")
+			audienceAckPrivate(h, "received", "alice")
 			audienceAckAccept(h, v2Send(h), "alice")
 			if !completed {
 				h.reply(explicit, protocol.Message{Type: protocol.TypeAck, MessageID: explicit.MessageID, Stage: protocol.StageAgentAcknowledged})
