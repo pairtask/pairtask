@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
@@ -227,6 +228,9 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 		}}, nil
 	}
 	parent, found, err := h.store.RemoteParent(ctx, in.Msg.InReplyTo)
+	if err == nil && !found && strings.HasPrefix(in.Msg.InReplyTo, reviewNoticePrefix) {
+		return remoteRoute{}, errReviewNotice
+	}
 	if err != nil || !found {
 		return remoteRoute{}, errOtherWorkspace
 	}
@@ -237,6 +241,12 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 }
 
 var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
+
+// errReviewNotice answers a reply to a review notice, which names no
+// message of the workspace that asked: the review is answered through its
+// lifecycle, whose outcomes go back on their own.
+var errReviewNotice = &routingError{protocol.ErrMalformedFrame,
+	"a synthetic review notice is not a chat reply target; use its review_id with accept_review, decline_review or submit_review; review outcomes are queued to the requester"}
 
 // workspaceError is what an agent hears of a workspace it can't name.
 func workspaceError(err error) *routingError {
