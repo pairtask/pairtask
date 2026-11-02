@@ -310,6 +310,7 @@ var remoteReplyErrors = []struct {
 }{
 	{messaging.ErrNotRecipient, protocol.ErrMalformedFrame, "a reply to a paired workspace's message comes from one of its recipients and goes to its sender"},
 	{store.ErrNoImport, protocol.ErrMalformedFrame, "in_reply_to names no message from a paired workspace"},
+	{store.ErrOutcomeNotice, protocol.ErrMalformedFrame, "a review outcome notice is not a chat reply target; send a new message to the reviewer in that workspace"},
 	{messaging.ErrNotShared, protocol.ErrRecipientUnavailable, "this agent is not shared with that workspace"},
 	{messaging.ErrUnknownContact, protocol.ErrRecipientUnavailable, "that workspace is no longer a confirmed contact"},
 	{messaging.ErrOutboxFull, protocol.ErrInboxFull, "too many messages to that workspace are waiting to leave"},

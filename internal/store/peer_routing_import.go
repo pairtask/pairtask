@@ -531,8 +531,16 @@ WHERE ri.local_id = ?`, r.Parent))
 	if !slices.Contains(parent.Recipients, r.Msg.From) || r.Msg.To != parent.RemoteSender() {
 		return RemoteImport{}, messaging.ErrNotRecipient
 	}
+	if parent.Kind == importOutcome {
+		return RemoteImport{}, ErrOutcomeNotice // this side wrote the notice: nothing there to answer
+	}
 	return parent, nil
 }
+
+// ErrOutcomeNotice refuses a reply to a review outcome notice: the notice
+// was written here from the outcome, so it names no message of the
+// workspace that sent the outcome.
+var ErrOutcomeNotice = errors.New("a review outcome notice is not a chat reply target")
 
 // repeatedReply answers a reply whose ID is queued already: the same text
 // and routing, queued from the same agent's message, is the same reply.
