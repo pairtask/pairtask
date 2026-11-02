@@ -17,6 +17,9 @@ import (
 
 // ackCompletions are /ack's choices for the word being typed.
 func (m *Model) ackCompletions(l argLine) []string {
+	if m.conv.selected.isContact() {
+		return m.contactAckChoices(l)
+	}
 	switch {
 	case len(l.words) == 0:
 		rows := m.ackRows()
@@ -68,8 +71,8 @@ func (m *Model) ackPickLabel(item string) (string, bool) {
 	if !ok || l.name != "ack" {
 		return "", false
 	}
-	if len(l.words) == 1 && l.words[0] == "from" {
-		return m.senderLabel(item), true
+	if label := m.ackRowLabeler(); label != nil {
+		return label(item), true
 	}
 	switch item {
 	case "all":
@@ -81,6 +84,19 @@ func (m *Model) ackPickLabel(item string) (string, bool) {
 		return m.ackLabel(e.msg.MessageID), true
 	}
 	return "", false
+}
+
+// ackRowLabeler labels the rows that aren't /ack's own words: an agent
+// after from, or a ⇄ tab's message; nil for /ack's words.
+func (m *Model) ackRowLabeler() func(string) string {
+	l, _ := m.argumentLine()
+	switch {
+	case len(l.words) == 1 && l.words[0] == "from":
+		return m.senderLabel
+	case m.conv.selected.isContact():
+		return m.contactAckLabel
+	}
+	return nil
 }
 
 // senderLabel is an agent row: its name, and its tab when it has one.

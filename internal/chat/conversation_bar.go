@@ -22,6 +22,9 @@ func (m *Model) conversationViews() []ConversationView {
 			Selected: m.conv.selected == key, Draft: m.savedDraft(key), Contact: key.contact}
 		if key.isContact() {
 			v.Label = "⇄ " + safe(m.contactTitle(key))
+			if m.contactAcksAvailable() {
+				v.Unread = m.ackSummary(key.contact).Unacked
+			}
 		}
 		if !v.Hidden {
 			position++

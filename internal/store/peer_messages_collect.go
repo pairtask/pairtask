@@ -102,6 +102,7 @@ func settledTexts(ctx context.Context, tx *sql.Tx, contact string) ([]heldText, 
 WHERE contact = ? AND text IS NOT NULL AND (
     (direction = 'in' AND state = 'read') OR (direction = 'in' AND state = 'routed' AND NOT `+pendingImport+`)
     OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')))
+    AND NOT (`+needsAck+`)
 ORDER BY cursor DESC`, contact)
 	if err != nil {
 		return nil, err
@@ -158,7 +159,7 @@ ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact,
 // forgotten, and the last one's sequence.
 func forgettable(ctx context.Context, tx *sql.Tx, contact string, now time.Time) ([]int64, int64, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND (state = 'read' AND receipt != 'pending'
-    OR state = 'routed' AND NOT `+pendingImport+` OR state = 'refused' AND read_at IS NOT NULL)
+    OR state = 'routed' AND NOT `+pendingImport+` OR state = 'refused' AND read_at IS NOT NULL) AND NOT (`+needsAck+`)
 FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(now.Add(-messaging.TombstoneAge)), contact)
 	if err != nil {
 		return nil, 0, err

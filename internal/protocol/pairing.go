@@ -71,7 +71,9 @@ type PairingSnapshot struct {
 	// leaves it false, so a client refuses before sending one.
 	NamesAvailable bool `json:"names_available,omitempty"`
 	// PauseAvailable: the broker serves contact ops pause and resume (#276).
-	PauseAvailable    bool                 `json:"pause_available,omitempty"`
+	PauseAvailable bool `json:"pause_available,omitempty"`
+	// AcksAvailable: the broker serves contact op ack (#287).
+	AcksAvailable     bool                 `json:"acks_available,omitempty"`
 	IdentityError     string               `json:"identity_error,omitempty"`
 	Invitation        *InvitationView      `json:"invitation,omitempty"`
 	Requests          []PairingRequestView `json:"requests"`
@@ -108,6 +110,9 @@ type PairingContactView struct {
 	PausedAt *time.Time `json:"paused_at,omitempty"`
 	// Summary is nil from a broker that reports none: unknown, not idle.
 	Summary *PairingContactSummary `json:"summary,omitempty"`
+	// Acks are the operator's acknowledgments of its messages (#287), from
+	// a broker serving contact_acks.
+	Acks *ContactAckSummary `json:"acks,omitempty"`
 }
 
 // PairingContactSummary is how a contact stands now: its sync as this broker

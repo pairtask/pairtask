@@ -39,6 +39,10 @@ type BulkAckView struct {
 // message. Bare /ack offers these in the picker before it runs (offersWord).
 func (m *Model) ackCommand(arg argument) tea.Cmd {
 	switch {
+	case arg == "contacts":
+		return m.ackContacts()
+	case m.conv.selected.isContact():
+		return m.contactAckCommand(arg)
 	case arg.empty():
 		m.status = "pick what to acknowledge: /ack all, /ack #n or /ack from AGENT"
 		return nil
@@ -59,7 +63,7 @@ func (m *Model) ackCommand(arg argument) tea.Cmd {
 func ackArg(a argument) error {
 	s := string(a)
 	switch {
-	case a.empty(), s == "all":
+	case a.empty(), s == "all", s == "contacts":
 		return nil
 	case strings.HasPrefix(s, "from "):
 		if err := protocol.ValidateAgentID(strings.TrimSpace(strings.TrimPrefix(s, "from "))); err != nil {

@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = AssignVersion
+	Version                = AckVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -50,6 +50,7 @@ const (
 	ReviewAskVersion       = 14 // msg review_ask: an agent asks a paired workspace's agent for a review (#235)
 	AskedVersion           = 15 // reviews_asked_get: the review requests an agent sent, and where they stand (#235)
 	AssignVersion          = 16 // an operator's tag assigns the tagged agent its message's reply (#278)
+	AckVersion             = 17 // the operator acknowledges a paired workspace's messages, privately (#287)
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -238,6 +239,10 @@ type Message struct {
 	ContactPage        *ContactMessagePage `json:"contact_page,omitempty"`         // operator_contact_result for list and read
 	ContactSync        *ContactSyncView    `json:"contact_sync,omitempty"`         // operator_contact_result for sync
 	ContactMarked      *int                `json:"contact_marked,omitempty"`       // operator_contact_result for read: newly marked
+	ContactAck         []string            `json:"contact_ack,omitempty"`          // operator_contact ack: the message IDs
+	ContactAckUpto     int64               `json:"contact_ack_upto,omitempty"`     // operator_contact ack: every message up to this cursor
+	ContactAcked       *int                `json:"contact_acked,omitempty"`        // operator_contact_result for ack: newly acknowledged
+	ContactAcks        *ContactAckSummary  `json:"contact_acks,omitempty"`         // operator_contact_result for ack: the contact's acknowledgments after it
 	Client             string              `json:"client,omitempty"`               // operator_session_open
 	Session            *SessionInfo        `json:"session,omitempty"`              // operator_session
 	Owner              *SessionInfo        `json:"owner,omitempty"`                // owner_busy

@@ -79,6 +79,16 @@ const (
 	ContactOpResume = "resume"
 	// CapabilityContactPause: the broker serves pause and resume.
 	CapabilityContactPause = "contact_pause"
+
+	// ContactOpAck records the operator's own acknowledgment of the
+	// contact's messages (#287), under message_id: the IDs in contact_ack,
+	// or every message up to the cursor contact_ack_upto, never both. It is
+	// private: the contact is told nothing, and a message's read state and
+	// receipt don't change.
+	ContactOpAck = "ack"
+	// CapabilityContactAcks: the broker serves ack and the views carry
+	// acknowledgments.
+	CapabilityContactAcks = "contact_acks"
 	// ErrContactPaused refuses a send to a paused contact.
 	ErrContactPaused = "contact_paused"
 
@@ -142,6 +152,11 @@ type ContactMessageView struct {
 	ReviewReason string     `json:"review_reason,omitempty"`
 	// ReviewOutcome is where a review request this side sent stands.
 	ReviewOutcome *ReviewOutcomeView `json:"review_outcome,omitempty"`
+	// AckState is the operator's own acknowledgment of a received message
+	// (#287): before tracking, needs_ack, acked or expired; "" for a sent
+	// or agent-routed one. Only a broker serving contact_acks sets it.
+	AckState string     `json:"ack_state,omitempty"`
+	AckedAt  *time.Time `json:"acked_at,omitempty"`
 }
 
 // ContactHeldForUpgrade is the refusal_reason of a queued message to or
@@ -167,6 +182,9 @@ type ContactMessagePage struct {
 	Directory []string `json:"directory,omitempty"`
 	// ReviewGrants are what the contact may ask of agents here (#235).
 	ReviewGrants []ReviewGrantView `json:"review_grants,omitempty"`
+	// Acks are the operator's acknowledgments of this contact's messages
+	// (#287), from a broker serving contact_acks.
+	Acks *ContactAckSummary `json:"acks,omitempty"`
 }
 
 // ContactSyncView is what this side knows of syncing with a contact.
@@ -200,9 +218,10 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpAddress:      {key: true, id: true, text: true},
 	ContactOpPause:        {key: true, id: true},
 	ContactOpResume:       {key: true, id: true},
+	ContactOpAck:          {key: true, id: true, ack: true},
 }
 
-type contactFieldSet struct{ key, text, note, read, before, id, to, agents, grant, ask, approve bool }
+type contactFieldSet struct{ key, text, note, read, before, id, to, agents, grant, ask, approve, ack bool }
 
 // ValidateContactRequest checks an operator_contact frame before anything
 // is looked up, audited or changed: a known operation with exactly its
@@ -210,14 +229,14 @@ type contactFieldSet struct{ key, text, note, read, before, id, to, agents, gran
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause or resume")
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume or ack")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err
 	}
 	return errors.Join(validContactKey(msg.ContactKey), validContactID(msg, allowed), validContactText(msg, allowed),
 		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
-		validContactReview(msg, allowed), validContactAddress(msg))
+		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed))
 }
 
 // validContactAddress requires an address change's HOST:PORT: a host and
@@ -252,6 +271,10 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"contact_page", msg.ContactPage != nil, false},
 		{"contact_sync", msg.ContactSync != nil, false},
 		{"contact_marked", msg.ContactMarked != nil, false},
+		{"contact_ack", msg.ContactAck != nil, allowed.ack},
+		{"contact_ack_upto", msg.ContactAckUpto != 0, allowed.ack},
+		{"contact_acked", msg.ContactAcked != nil, false},
+		{"contact_acks", msg.ContactAcks != nil, false},
 	} {
 		if f.present && !f.allowed {
 			return fmt.Errorf("%s is not taken by contact_op %s", f.name, msg.ContactOp)
@@ -459,6 +482,57 @@ func validReviewAsk(msg Message) error {
 func validReviewDecide(msg Message) error {
 	if len(msg.ContactRead) != 1 || msg.ContactApprove == nil {
 		return errors.New("review_decide takes one request ID in contact_read and contact_approve")
+	}
+	return nil
+}
+
+// Acknowledgment states of a received message (#287).
+const (
+	AckBefore  = "before"    // received before acknowledgments were tracked
+	AckNeeded  = "needs_ack" // waiting for the operator
+	AckDone    = "acked"     // the operator acknowledged it
+	AckExpired = "expired"   // dropped unacknowledged past UnackedKept, never acknowledged
+)
+
+// UnackedKept bounds the messages one contact keeps waiting for the
+// operator's acknowledgment; past it the oldest expire, counted.
+const UnackedKept = 1024
+
+// ContactAckSummary is where a contact's acknowledgments stand: how many
+// wait, the newest cursor an "everything" acknowledgment may cover, read
+// with that count, and how many expired unacknowledged, ever.
+type ContactAckSummary struct {
+	Unacked    int   `json:"unacked"`
+	AckUpto    int64 `json:"ack_upto"`
+	AckExpired int   `json:"ack_expired"`
+}
+
+// validContactAck requires exactly one selector: 1 to ContactReadMax IDs,
+// or a positive cursor.
+func validContactAck(msg Message, allowed contactFieldSet) error {
+	if !allowed.ack {
+		return nil
+	}
+	ids, upto := msg.ContactAck != nil, msg.ContactAckUpto != 0
+	switch {
+	case ids == upto:
+		return errors.New("contact_ack or contact_ack_upto, exactly one")
+	case upto && msg.ContactAckUpto < 0:
+		return errors.New("contact_ack_upto is a positive cursor")
+	case upto:
+		return nil
+	}
+	return validAckIDs(msg.ContactAck)
+}
+
+func validAckIDs(ids []string) error {
+	if len(ids) == 0 || len(ids) > ContactReadMax {
+		return fmt.Errorf("contact_ack takes 1 to %d message IDs", ContactReadMax)
+	}
+	for _, id := range ids {
+		if !validMessageIDText(id) {
+			return fmt.Errorf("contact_ack IDs are 1 to %d printable bytes", ContactIDBytes)
+		}
 	}
 	return nil
 }

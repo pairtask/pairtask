@@ -425,7 +425,7 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 		return err
 	}
 	confirmed := confirmedIdentities(requests, joins)
-	awaiting, err := h.store.PeerMessages().AwaitingReviewCounts(ctx)
+	counts, err := h.contactCounts(ctx)
 	if err != nil {
 		return err
 	}
@@ -442,7 +442,8 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 		snapshot.Contacts = append(snapshot.Contacts, protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
 			Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
 			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own), PausedAt: pausedAt(c),
-			Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: awaiting[c.IdentityKey]}})
+			Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: counts.awaiting[c.IdentityKey]},
+			Acks:    ackView(counts.acks, c.IdentityKey)})
 	}
 	return nil
 }

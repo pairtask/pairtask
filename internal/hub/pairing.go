@@ -239,7 +239,7 @@ func (h *Hub) applyPairing(ctx context.Context, op pairingOp, target string) (*p
 		snapshot.Invitation.Code = code
 	}
 	snapshot.IdentityError, snapshot.SelfName, snapshot.NamesAvailable = problem, h.pair.cfg.Name, true
-	snapshot.PauseAvailable = true
+	snapshot.PauseAvailable, snapshot.AcksAvailable = true, true
 	if h.identity != nil {
 		snapshot.SelfIdentity = h.identity.Fingerprint()
 	}

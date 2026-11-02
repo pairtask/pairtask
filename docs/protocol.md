@@ -413,6 +413,33 @@ parent's room (or none, which keeps it). Any other destination is refused
 with `invalid_reply_audience`. Replies to messages that assign nobody keep the
 rules above.
 
+## Acknowledging a paired workspace's messages (v17)
+
+A broker with capability `contact_acks` keeps the operator's own
+acknowledgment of each message received from a paired workspace (#287). It is
+private: the workspace is told nothing, and a message's read state and receipt,
+set when it is shown, don't change.
+
+- `operator_contact` with `contact_op: "ack"`, a `message_id` naming the
+  operation, `contact_key` (the full identity key), and exactly one of
+  `contact_ack` (1 to 64 message IDs) or `contact_ack_upto` (a positive
+  cursor, at most the contact's newest received message). Anything else is
+  `malformed_frame`, refused before it is audited. IDs that don't wait for
+  acknowledgment are skipped. A retry of the same operation acknowledges
+  nothing more.
+- The result is `operator_contact_result` with `contact_acked` (how many) and
+  `contact_acks`, where the contact stands after it:
+  `{unacked, ack_upto, ack_expired}`. `ack_upto` is the newest cursor waiting,
+  read with the count, so acknowledging "everything" up to it never reaches a
+  message received since.
+- Each received message in a page has `ack_state`: `before` (received before
+  acknowledgments were tracked), `needs_ack`, `acked` (with `acked_at`) or
+  `expired`. Messages routed to agents have none. A page carries `acks`, the
+  same summary, and so does each contact in the pairing snapshot, which sets
+  `acks_available`.
+- Messages waiting for acknowledgment are kept, even when read; past 1024 per
+  contact the oldest expire, counted in `ack_expired` for good.
+
 ## Rooms (v9)
 
 Project rooms are opt-in spaces for a group's discussion. They organise

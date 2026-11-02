@@ -62,7 +62,7 @@ func (m *Model) messageHead(s contactSides, v protocol.ContactMessageView) []str
 	head := mutedStyle.Render(v.CreatedAt.Local().Format("15:04")+"  ") +
 		s.senderStyled(v) + " → " + s.recipients(v)
 	if v.Direction == "in" {
-		head += mutedStyle.Render(" [remote]")
+		head += mutedStyle.Render(" [remote]") + ackMark(v)
 	}
 	if ansi.StringWidth(head) <= m.transcriptWidth() {
 		return []string{head}

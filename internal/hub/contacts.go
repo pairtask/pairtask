@@ -35,6 +35,8 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	// Pausing a contact (#276).
 	protocol.ContactOpPause:  (*Hub).contactPause,
 	protocol.ContactOpResume: (*Hub).contactPause,
+	// The operator's acknowledgment (#287).
+	protocol.ContactOpAck: (*Hub).contactAck,
 }
 
 // operatorContact serves operator_contact.
@@ -44,6 +46,9 @@ func (h *Hub) operatorContact(ctx context.Context, _ map[string]*Client, req ope
 		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
 	}
 	if rerr := h.confirmedContact(ctx, msg.ContactKey); rerr != nil {
+		return rerr.frame(msg.MessageID)
+	}
+	if rerr := h.ackBound(ctx, msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}
 	switch msg.ContactOp {
@@ -86,7 +91,7 @@ func (h *Hub) contactChange(ctx context.Context, req operatorRequest) protocol.M
 }
 
 // opRefusals say why an operation of their kind was refused, if they know.
-var opRefusals = []func(error) (*routingError, bool){reviewRefusal, nameRefusal, pauseRefusal}
+var opRefusals = []func(error) (*routingError, bool){reviewRefusal, nameRefusal, pauseRefusal, ackRefusal}
 
 // contactRefusal is what the operator hears of a failed change; store
 // details stay in the log.
@@ -224,7 +229,7 @@ func contactMessageView(r messaging.Row) protocol.ContactMessageView {
 	return protocol.ContactMessageView{ID: r.ID, Contact: r.Contact, Direction: r.Direction, Seq: r.N, CreatedAt: r.CreatedAt,
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
 		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
-		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author]}
+		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt}
 }
 
 // replySides name a reply's author for the operator.
@@ -288,7 +293,10 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 	if page.ReviewGrants, err = h.grantViews(ctx, page.Contact); err != nil {
 		return err
 	}
-	page.Directory, err = peer.PeerDirectory(ctx, page.Contact)
+	if page.Directory, err = peer.PeerDirectory(ctx, page.Contact); err != nil {
+		return err
+	}
+	page.Acks, err = h.ackSummary(ctx, page.Contact)
 	return err
 }
 
