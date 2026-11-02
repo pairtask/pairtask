@@ -103,6 +103,9 @@ type ReviewAwaitingPage struct {
 	Total int                  `json:"total"`
 	More  bool                 `json:"more"`
 	Next  string               `json:"next"`
+	// Token is the awaiting set's token, read with this page: what the
+	// operator has seen once it is shown.
+	Token string `json:"token"`
 }
 
 type ReviewAskedPage struct {

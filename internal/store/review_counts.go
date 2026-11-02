@@ -28,7 +28,7 @@ var ErrReviewCursor = errors.New("review_before is not a cursor this broker gave
 func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error) {
 	var c protocol.ReviewCounts
 	var err error
-	if c.AwaitingYou, c.AwaitingToken, err = s.awaitingSet(ctx); err != nil {
+	if c.AwaitingYou, c.AwaitingToken, err = awaitingSet(ctx, s.db); err != nil {
 		return c, err
 	}
 	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews WHERE state IN `+openStates).Scan(&c.Running); err != nil {
@@ -40,8 +40,8 @@ func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error)
 
 // awaitingSet counts the requests awaiting the operator and hashes which
 // they are: "" for none.
-func (s *Store) awaitingSet(ctx context.Context) (int, string, error) {
-	keys, err := queryStrings(ctx, s.db, `SELECT contact || char(0) || remote_id FROM remote_imports
+func awaitingSet(ctx context.Context, q rowsQuerier) (int, string, error) {
+	keys, err := queryStrings(ctx, q, `SELECT contact || char(0) || remote_id FROM remote_imports
 WHERE kind = 'review' AND state = 'awaiting' ORDER BY contact, remote_id`)
 	if err != nil || len(keys) == 0 {
 		return 0, "", err
@@ -73,8 +73,11 @@ func decodeCursor(s string) (*pendingCursor, error) {
 		return nil, nil
 	}
 	data, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, ErrReviewCursor
+	}
 	var c pendingCursor
-	if err != nil || json.Unmarshal(data, &c) != nil || c.At == "" {
+	if json.Unmarshal(data, &c) != nil || c.At == "" {
 		return nil, ErrReviewCursor
 	}
 	return &c, nil
@@ -96,7 +99,14 @@ func (s *Store) AwaitingReviews(ctx context.Context, before string) (protocol.Re
 	if err != nil {
 		return page, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM remote_imports ri WHERE `+awaitingWhere).Scan(&page.Total); err != nil {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return page, err
+	}
+	defer tx.Rollback()
+	// The set's token is read with the page, so a client marks seen only
+	// the set this page showed.
+	if page.Total, page.Token, err = awaitingSet(ctx, tx); err != nil {
 		return page, err
 	}
 	where, args := awaitingWhere, []any{}
@@ -104,7 +114,7 @@ func (s *Store) AwaitingReviews(ctx context.Context, before string) (protocol.Re
 		where += afterAwaiting
 		args = append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT ri.contact, ri.remote_id, COALESCE(pm.cursor, 0), ri.sender, pm.review_ask, ri.staged_at
+	rows, err := tx.QueryContext(ctx, `SELECT ri.contact, ri.remote_id, COALESCE(pm.cursor, 0), ri.sender, pm.review_ask, ri.staged_at
 FROM remote_imports ri LEFT JOIN peer_messages pm ON pm.contact = ri.contact AND pm.direction = 'in' AND pm.message_id = ri.remote_id
 WHERE `+where+` `+awaitingOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {

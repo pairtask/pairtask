@@ -70,3 +70,10 @@ func (h *Hub) reviewCounts(ctx context.Context, msg protocol.Message) protocol.M
 	}
 	return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp, ReviewCounts: &counts}
 }
+
+// readOnlyReviewOps are the operator's review reads added for #286.
+var readOnlyReviewOps = map[string]func(*Hub, context.Context, protocol.Message) protocol.Message{
+	protocol.ReviewOpAwaiting: (*Hub).pendingReviews,
+	protocol.ReviewOpAsked:    (*Hub).pendingReviews,
+	protocol.ReviewOpCounts:   (*Hub).reviewCounts,
+}

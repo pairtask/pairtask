@@ -294,6 +294,13 @@ func (m *Model) connectionUpdate(msg tea.Msg) (tea.Cmd, bool) {
 		return m.retry(msg), true
 	case receiptRetryMsg:
 		return m.retryReceipts(msg), true
+	}
+	return m.tickUpdate(msg)
+}
+
+// tickUpdate handles the chat's own timers.
+func (m *Model) tickUpdate(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg.(type) {
 	case statusTick:
 		return m.onStatusTick(), true
 	case ReviewBlinkMsg:

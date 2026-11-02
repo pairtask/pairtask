@@ -104,7 +104,7 @@ func TestReviewCountsChatAcceptanceViewingStopsBlinkAndChangedSetRearmsIt(t *tes
 	h.input(chat.ReviewBlinkMsg{})
 	chatEqual(t, "tick changes only dot", h.m.State().ReviewSignal.DotShown, !before)
 	v3Contains(t, ansi.Strip(h.m.View().Content), "2 need you · /reviews")
-	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{}, Total: 2})
+	reviewPendingOpen(h, reviewBlinkPage("initial", "set-A"))
 	chatEqual(t, "explicit panel view stops blink", h.m.State().ReviewSignal.Blinking, false)
 	chatEqual(t, "viewing does not acknowledge or decide", h.m.State().ReviewSignal.AwaitingYou, 2)
 	h.input(chatKey(tea.KeyEscape, 0))
@@ -112,12 +112,17 @@ func TestReviewCountsChatAcceptanceViewingStopsBlinkAndChangedSetRearmsIt(t *tes
 	reviewCountsLoadedRefresh(h, protocol.ReviewCounts{AwaitingYou: 2, AwaitingToken: "set-B"})
 	chatEqual(t, "same count with new identities rearms blink", h.m.State().ReviewSignal.Blinking, true)
 	chatEqual(t, "same count preserved", h.m.State().ReviewSignal.AwaitingYou, 2)
-	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{}, Total: 2})
+	reviewPendingOpen(h, reviewBlinkPage("replacement", "set-B"))
 	h.input(chatKey(tea.KeyEscape, 0))
 	reviewCountsEvent(h, protocol.EventReviewsChanged, 3)
 	reviewCountsLoadedRefresh(h, protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "set-C"})
 	chatEqual(t, "set removal conservatively rearms blink", h.m.State().ReviewSignal.Blinking, true)
 	chatEqual(t, "removal authoritative count", h.m.State().ReviewSignal.AwaitingYou, 1)
+}
+
+func reviewBlinkPage(prefix, token string) protocol.ReviewAwaitingPage {
+	key := "sha256:" + "7777777777777777777777777777777777777777777777777777777777777777"
+	return protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{reviewPendingItem(key, prefix+"-one", 1), reviewPendingItem(key, prefix+"-two", 2)}, Total: 2, Token: token}
 }
 
 func reviewCountsLoadedRefresh(h *chatHarness, counts protocol.ReviewCounts) {

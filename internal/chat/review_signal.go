@@ -135,18 +135,21 @@ func (m *Model) onReviewBlink() tea.Cmd {
 	return m.reviewBlinkTicker()
 }
 
-// reviewsShown: /reviews showed the current set; the dot stops blinking
-// until the set changes.
-func (m *Model) reviewsShown() {
-	if c := m.reviewSig.counts; c != nil {
-		m.reviewSig.seen, m.reviewSig.dotOff = c.AwaitingToken, false
-	}
+// reviewsShown: /reviews showed the set with this token; the dot stops
+// blinking while the counts name that set.
+func (m *Model) reviewsShown(token string) {
+	m.reviewSig.seen, m.reviewSig.dotOff = token, false
 }
 
 // reviewReminder is the footer's part, "" when nothing is pending.
 func (m *Model) reviewReminder() string {
 	v := m.reviewSignalView()
-	if !v.Known || v.AwaitingYou+v.Running+v.AskedOpen == 0 {
+	switch {
+	case !v.Known:
+		return ""
+	case v.AwaitingYou+v.Running+v.AskedOpen == 0 && v.Stale:
+		return bandStyle.Render("review counts stale · /reviews") // a failed read never looks like nothing pending
+	case v.AwaitingYou+v.Running+v.AskedOpen == 0:
 		return ""
 	}
 	text := ""

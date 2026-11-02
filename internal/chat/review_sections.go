@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,12 +22,16 @@ import (
 const kindReviewPending = "review pending"
 
 // pendingSection is one paged list: its items, how many there are, and the
-// cursor of the next page.
+// cursor of the next page. gen fences its reads: a first page starts a new
+// generation, and an answer from an older one is dropped.
 type pendingSection[T any] struct {
-	items []T
-	total int
-	more  bool
-	next  string
+	items   []T
+	total   int
+	more    bool
+	next    string
+	gen     uint64
+	firstIn bool // a first page is being read
+	again   bool // a change arrived meanwhile: read the first page once more
 }
 
 // add replaces the list with a first page, or appends a later one, each
@@ -79,15 +84,56 @@ func (m *Model) pendingAvailable() bool {
 	return m.reviewSig.counts != nil
 }
 
-// readPending asks for one section's page: the first, or the next.
+// readSection asks for one section's page: the first, coalesced, or the
+// next one of the current generation.
 func (m *Model) readSection(op string, first bool) tea.Cmd {
+	f := m.sectionFence(op)
 	msg := protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: op}
-	page := "first"
-	if !first {
-		page = "more"
+	page := "more"
+	switch {
+	case first && *f.firstIn:
+		*f.again = true
+		return nil
+	case first:
+		*f.gen++
+		*f.firstIn, page = true, "first"
+	default:
 		msg.ReviewBefore = m.pendingNext(op)
 	}
-	return m.request(kindReviewPending, msg, op, page)
+	return m.request(kindReviewPending, msg, op, page, strconv.FormatUint(*f.gen, 10))
+}
+
+// fence is a section's generation and its first-page flags.
+type fence struct {
+	gen            *uint64
+	firstIn, again *bool
+}
+
+func (m *Model) sectionFence(op string) fence {
+	if op == protocol.ReviewOpAwaiting {
+		s := &m.sections.needs
+		return fence{&s.gen, &s.firstIn, &s.again}
+	}
+	s := &m.sections.asked
+	return fence{&s.gen, &s.firstIn, &s.again}
+}
+
+// currentPage settles a page's fence: false for an older generation's page,
+// which is dropped, and a re-read when a change arrived during a first.
+func (m *Model) currentPage(req pendingRequest) (bool, tea.Cmd) {
+	f := m.sectionFence(req.ids[0])
+	if req.ids[2] != strconv.FormatUint(*f.gen, 10) {
+		return false, nil
+	}
+	if req.ids[1] != "first" {
+		return true, nil
+	}
+	*f.firstIn = false
+	if *f.again {
+		*f.again = false
+		return false, m.readSection(req.ids[0], true) // this page may predate the change
+	}
+	return true, nil
 }
 
 func (m *Model) pendingNext(op string) string {
@@ -100,7 +146,7 @@ func (m *Model) pendingNext(op string) string {
 // refreshPendingSections reads both first pages again while /reviews is
 // open: a change never leaves an actionable request behind a stale cursor.
 func (m *Model) refreshPendingSections() tea.Cmd {
-	if m.panel == nil || m.panel.kind != panelReviews || !m.pendingAvailable() {
+	if !m.reviewsPanelOpen() {
 		return nil
 	}
 	return tea.Batch(m.readSection(protocol.ReviewOpAwaiting, true), m.readSection(protocol.ReviewOpAsked, true))
@@ -109,6 +155,10 @@ func (m *Model) refreshPendingSections() tea.Cmd {
 // reviewPendingResult keeps one section's page; a refusal leaves the
 // section as it was.
 func (m *Model) reviewPendingResult(req pendingRequest, resp protocol.Message) tea.Cmd {
+	current, reread := m.currentPage(req)
+	if !current {
+		return reread
+	}
 	first := req.ids[1] == "first"
 	switch {
 	case resp.ReviewAwaiting != nil:
@@ -118,6 +168,9 @@ func (m *Model) reviewPendingResult(req pendingRequest, resp protocol.Message) t
 		}
 		m.sections.needs.add(page.Items, first, needKey)
 		m.sections.needs.total, m.sections.needs.more, m.sections.needs.next = page.Total, page.More, page.Next
+		if first && m.reviewsPanelOpen() {
+			m.reviewsShown(page.Token) // the set this page showed, and only while it is on screen
+		}
 	case resp.ReviewAsked != nil:
 		page := resp.ReviewAsked
 		for _, it := range page.Items {
@@ -240,7 +293,7 @@ func (m *Model) navStep() tea.Cmd {
 func (m *Model) showNavRow(t *contactThread, n *navTarget) bool {
 	for _, v := range t.rows {
 		if v.Cursor == n.cursor && v.Direction == n.direction {
-			m.scrollToRow(t, n.contact, v.ID)
+			m.scrollToRow(t, n)
 			m.status = "showing " + n.ref + " in ⇄ " + safe(m.contactTitle(contactKey(n.contact)))
 			return true
 		}
@@ -248,12 +301,13 @@ func (m *Model) showNavRow(t *contactThread, n *navTarget) bool {
 	return false
 }
 
-// scrollToRow puts a message's lines in the tab's window.
-func (m *Model) scrollToRow(t *contactThread, contact, id string) {
-	l := m.contactLines(contact)
+// scrollToRow puts the target message's lines in the tab's window: the
+// one with its cursor and direction, never another with the same ID.
+func (m *Model) scrollToRow(t *contactThread, n *navTarget) {
+	l := m.contactLines(n.contact)
 	room := max(1, m.layout().transcript-len(l.header))
 	for _, s := range l.spans {
-		if s.id == id {
+		if s.cursor == n.cursor && s.direction == n.direction {
 			end := min(len(l.lines), s.upto+room/2)
 			t.offset = max(0, len(l.lines)-end)
 			return
@@ -275,6 +329,13 @@ func (m *Model) navAfterPage(contact string, ok bool) tea.Cmd {
 	return m.navStep()
 }
 
+// leaveNav stops a search when the operator selects another tab.
+func (m *Model) leaveNav(key viewKey) {
+	if n := m.sections.nav; n != nil && key != contactKey(n.contact) {
+		m.stopNav()
+	}
+}
+
 // stopNav ends a search the operator left: another tab, or Esc.
 func (m *Model) stopNav() bool {
 	n := m.sections.nav
@@ -285,19 +346,31 @@ func (m *Model) stopNav() bool {
 	return true
 }
 
+// reviewsPanelOpen: /reviews shows its sections now.
+func (m *Model) reviewsPanelOpen() bool {
+	return m.panel != nil && m.panel.kind == panelReviews && m.pendingAvailable()
+}
+
 // pendingTarget is where an identity's item is, if a section still holds it.
 func (m *Model) pendingTarget(identity string) (string, int64, bool) {
-	for _, it := range m.sections.needs.items {
-		if needKey(it) == identity {
-			return it.Contact, it.Cursor, true
-		}
+	if it, ok := findItem(m.sections.needs.items, needKey, identity); ok {
+		return it.Contact, it.Cursor, true
 	}
-	for _, it := range m.sections.asked.items {
-		if askedKey(it) == identity {
-			return it.Contact, it.Cursor, true
-		}
+	if it, ok := findItem(m.sections.asked.items, askedKey, identity); ok {
+		return it.Contact, it.Cursor, true
 	}
 	return "", 0, false
+}
+
+// findItem is the item with this identity.
+func findItem[T any](items []T, key func(T) string, identity string) (T, bool) {
+	for _, it := range items {
+		if key(it) == identity {
+			return it, true
+		}
+	}
+	var none T
+	return none, false
 }
 
 // sectionRows are the panel's four sections, the ones needing the operator

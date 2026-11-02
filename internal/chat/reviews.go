@@ -180,7 +180,6 @@ func (m *Model) reviewsCommand(arg argument) tea.Cmd {
 	}
 	m.reviews.loaded, m.reviews.selected, m.reviews.detail = true, "", nil
 	m.panel = &panel{kind: panelReviews}
-	m.reviewsShown()
 	list := m.request(kindReview, protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpList}, protocol.ReviewOpList)
 	return tea.Batch(list, m.refreshPendingSections())
 }

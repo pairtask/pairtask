@@ -431,7 +431,9 @@ operator (#286), over every row and never a page:
 - `operator_review` with `review_op: "awaiting"` or `"asked"`, and an optional
   opaque `review_before`, returns one page of up to 32 in `review_awaiting` or
   `review_asked`: `items`, `total`, `more` and `next` (the `review_before` of
-  the following page). Awaiting items are newest first and name the contact,
+  the following page). An awaiting page also carries `token`, the awaiting
+  set's token read with that page: what the operator has seen once it is shown.
+  Awaiting items are newest first and name the contact,
   the message ID, the local `cursor` of its message there (0 once gone), the
   sender, the request and when it arrived. Asked items are open ones first,
   then by latest change, and name the contact, the ask ID, the cursor of the

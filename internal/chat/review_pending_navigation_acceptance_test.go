@@ -221,12 +221,17 @@ func TestReviewPendingNavigationAcceptanceAskedRefSelectsOutboundIdentity(t *tes
 	req := h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "asked reference opens its contact", req.ContactKey, key)
 	chatEqual(t, "asked unloaded navigation starts newest", req.ContactBefore, int64(0))
-	in, out := reviewNavigationRow(499), reviewNavigationRow(500)
+	in, out := reviewNavigationRow(900), reviewNavigationRow(500)
 	in.ID, out.ID = "same-id", "same-id"
 	out.Direction = "out"
 	out.State = "delivered"
 	in.Text, out.Text = "WRONG INBOUND ROW", "RIGHT OUTBOUND ROW"
-	h.reply(req, contactMessagesPage(key, out, in))
+	rows := []protocol.ContactMessageView{in}
+	for cursor := int64(880); cursor >= 600; cursor -= 10 {
+		rows = append(rows, reviewNavigationRow(cursor))
+	}
+	rows = append(rows, out)
+	h.reply(req, contactMessagesPage(key, rows...))
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	v3Contains(t, h.m.State().Status, "showing a1")
 	v3Contains(t, ansi.Strip(h.m.View().Content), "RIGHT OUTBOUND ROW")
@@ -248,4 +253,86 @@ func TestReviewPendingNavigationAcceptanceSameIDDoesNotScrollToOppositeDirection
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	v3Contains(t, ansi.Strip(h.m.View().Content), "pinned-head")
 	v3Contains(t, h.m.State().Status, "showing n1")
+}
+
+func reviewPendingHeld(h *chatHarness, kind string) protocol.Message {
+	h.t.Helper()
+	if kind == "more" {
+		v2Command(h, "/reviews more needs")
+		return h.take(protocol.TypeOperatorReview)
+	}
+	v2Command(h, "/reviews")
+	var held protocol.Message
+	for i := 0; i < 3; i++ {
+		req := h.take(protocol.TypeOperatorReview)
+		if req.ReviewOp == "awaiting" {
+			held = req
+			continue
+		}
+		reviewPendingResponse(h, req, protocol.ReviewAwaitingPage{})
+	}
+	return held
+}
+
+func reviewPendingRace(t *testing.T) (*chatHarness, protocol.ReviewAwaitingItem) {
+	t.Helper()
+	key := "sha256:" + strings.Repeat("6", 64)
+	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "old"}, contactChatRow(key, "remote", true))
+	old := reviewPendingItem(key, "removed", 100)
+	reviewPendingOpen(h, protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{old}, Total: 2, More: true, Next: "old-cursor"})
+	return h, old
+}
+
+func reviewPendingRaceRefresh(h *chatHarness, page protocol.ReviewAwaitingPage, requests int) {
+	h.t.Helper()
+	reviewCountsEvent(h, protocol.EventReviewsChanged, 2)
+	for i := 0; i < requests; i++ {
+		req := h.take(protocol.TypeOperatorReview)
+		if req.ReviewOp == "counts" {
+			reviewCountsReply(h, req, protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "new"})
+			continue
+		}
+		reviewPendingResponse(h, req, page)
+	}
+	h.await(func() bool { return h.m.State().InFlight == 1 })
+}
+
+func reviewPendingAssertRemoved(h *chatHarness) {
+	h.t.Helper()
+	v2Command(h, "/reviews open n1")
+	chatEqual(h.t, "late page cannot resurrect removed target", h.m.State().InFlight, 0)
+	v3Contains(h.t, h.m.State().Status, "n1 is no longer pending")
+	v2Command(h, "/reviews more needs")
+	chatEqual(h.t, "late page cannot restore old pagination cursor", h.m.State().InFlight, 0)
+}
+
+func TestReviewPendingNavigationAcceptanceLateMoreCannotRestoreRemovedItemsOrCursor(t *testing.T) {
+	h, old := reviewPendingRace(t)
+	held := reviewPendingHeld(h, "more")
+	newer := protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{reviewPendingItem(old.Contact, "replacement", 200)}, Total: 1}
+	reviewPendingRaceRefresh(h, newer, 4)
+	h.reply(held, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewOp: "awaiting", ReviewAwaiting: &protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{old}, Total: 99, More: true, Next: "stale-cursor"}})
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewPendingAssertRemoved(h)
+}
+
+func TestReviewPendingNavigationAcceptanceDirtyFirstPageIsDiscardedBeforeQueuedRefresh(t *testing.T) {
+	h, old := reviewPendingRace(t)
+	held := reviewPendingHeld(h, "first")
+	newer := protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{reviewPendingItem(old.Contact, "replacement", 200)}, Total: 1}
+	reviewPendingRaceRefresh(h, newer, 3)
+	ghost := reviewPendingItem(old.Contact, "never-current", 300)
+	h.reply(held, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewOp: "awaiting", ReviewAwaiting: &protocol.ReviewAwaitingPage{Items: []protocol.ReviewAwaitingItem{ghost}, Total: 99, More: true, Next: "stale-cursor"}})
+	fresh := h.take(protocol.TypeOperatorReview)
+	chatEqual(t, "one queued first-page reread", fresh.ReviewOp, "awaiting")
+	reviewPendingResponse(h, fresh, newer)
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	reviewPendingAssertRemoved(h)
+	v2Command(h, "/reviews open n2")
+	open := h.take(protocol.TypeOperatorContact)
+	row := reviewNavigationRow(200)
+	row.ID = "replacement"
+	h.reply(open, contactMessagesPage(old.Contact, row))
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	v3Contains(t, h.m.State().Status, "showing n2")
 }

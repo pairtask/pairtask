@@ -39,6 +39,7 @@ func TestReviewCountsStoreAcceptanceAwaitingPagesDoNotSkipTiedItems(t *testing.T
 		page, err := db.AwaitingReviews(ctx, before)
 		pairOK(t, err)
 		pairEqual(t, page.Total, 36)
+		pairEqual(t, page.Token, counts.AwaitingToken)
 		for _, item := range page.Items {
 			if seen[item.MessageID] {
 				t.Fatalf("awaiting item repeated: %s", item.MessageID)
