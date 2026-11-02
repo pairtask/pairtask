@@ -7,7 +7,7 @@ from sandbox_source import RECIPE_PATHS
 
 
 def verify(ssh, manifest):
-    prefix = "docs/skills/collab-ai/"
+    prefix = "docs/skills/pairtask/"
     documents = [name for name in RECIPE_PATHS if name.startswith(prefix)]
     for name in documents:
         installed = "/usr/local/share/pairtask/" + name.removeprefix(prefix)
@@ -19,8 +19,8 @@ def verify(ssh, manifest):
 
 
 def verify_discovery_links(ssh):
-    for skill in ("/etc/codex/skills/collab-ai",
-                  "/etc/claude-code/.claude/skills/collab-ai"):
+    for skill in ("/etc/codex/skills/pairtask",
+                  "/etc/claude-code/.claude/skills/pairtask"):
         command = shlex.join(["readlink", skill])
         result = subprocess.run(ssh + [command], check=True, capture_output=True, text=True)
         if result.stdout.strip() != "/usr/local/share/pairtask":

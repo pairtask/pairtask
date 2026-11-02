@@ -1,6 +1,7 @@
 """Check portable links and provenance in the bundle installed by the image recipe."""
 
 import hashlib
+from itertools import product
 import json
 from pathlib import Path
 import re
@@ -12,7 +13,7 @@ import unittest
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "docs/skills/collab-ai"
+SKILL = ROOT / "docs/skills/pairtask"
 sys.path.insert(0, str(ROOT / "scripts"))
 import sandbox_source
 
@@ -42,6 +43,78 @@ def reachable_documents(directory):
 
 
 class SkillBundleTests(unittest.TestCase):
+    def install(self, root):
+        return subprocess.run(
+            ["sh", str(ROOT / "infra/image/install-skill.sh"), str(SKILL),
+             str(root / "installed"), str(root / "codex-skills"), str(root / "claude-skills")],
+            capture_output=True, text=True, check=False)
+
+    def test_upgrade_removes_only_owned_legacy_links_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / "installed"
+            for name in ("codex-skills", "claude-skills"):
+                skills = root / name
+                skills.mkdir()
+                (skills / "collab-ai").symlink_to(installed, target_is_directory=True)
+            for _ in range(2):
+                result = self.install(root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for name in ("codex-skills", "claude-skills"):
+                    skills = root / name
+                    self.assertEqual([entry.name for entry in skills.iterdir()], ["pairtask"])
+                    self.assertEqual((skills / "pairtask").resolve(), installed.resolve())
+
+    def test_upgrade_preserves_foreign_legacy_entries(self):
+        for skills_name, kind in product(("codex-skills", "claude-skills"), ("directory", "symlink", "dangling")):
+            with self.subTest(skills=skills_name, kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                skills = root / skills_name
+                skills.mkdir()
+                legacy = skills / "collab-ai"
+                if kind == "directory":
+                    legacy.mkdir()
+                    (legacy / "keep").write_text("user-owned skill")
+                else:
+                    if kind == "symlink":
+                        (root / "foreign-target").mkdir()
+                        (root / "foreign-target/keep").write_text("user-owned skill")
+                    legacy.symlink_to(root / "foreign-target", target_is_directory=True)
+                result = self.install(root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if kind == "directory":
+                    self.assertEqual((legacy / "keep").read_text(), "user-owned skill")
+                else:
+                    self.assertEqual(legacy.readlink(), root / "foreign-target")
+                    if kind == "symlink":
+                        self.assertEqual((legacy / "keep").read_text(), "user-owned skill")
+                self.assertEqual((skills / "pairtask").resolve(), (root / "installed").resolve())
+
+    def test_upgrade_conflict_preserves_legacy_links_in_both_harnesses(self):
+        for skills_name, kind in product(("codex-skills", "claude-skills"), ("directory", "symlink")):
+            with self.subTest(skills=skills_name, kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                installed = root / "installed"
+                for name in ("codex-skills", "claude-skills"):
+                    skills = root / name
+                    skills.mkdir()
+                    (skills / "collab-ai").symlink_to(installed, target_is_directory=True)
+                conflict = root / skills_name / "pairtask"
+                target = conflict if kind == "directory" else root / "foreign-skill"
+                target.mkdir()
+                (target / "keep").write_text("user-owned skill")
+                if kind == "symlink":
+                    conflict.symlink_to(target, target_is_directory=True)
+                result = self.install(root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("refusing to replace", result.stderr)
+                for name in ("codex-skills", "claude-skills"):
+                    skills = root / name
+                    self.assertEqual((skills / "collab-ai").readlink(), installed)
+                    if name != skills_name:
+                        self.assertFalse((skills / "pairtask").exists())
+                self.assertEqual((target / "keep").read_text(), "user-owned skill")
+
     def test_image_installer_preserves_bundle_and_resolvable_links(self):
         with tempfile.TemporaryDirectory() as temporary:
             installed = Path(temporary) / "installed"
@@ -53,10 +126,10 @@ class SkillBundleTests(unittest.TestCase):
             subprocess.run(["sh", str(ROOT / "infra/image/install-skill.sh"),
                             str(SKILL), str(installed), str(codex_skills),
                             str(claude_skills)], check=True)
-            self.assertFalse((installed / "collab-ai").exists())
+            self.assertFalse((installed / "pairtask").exists())
             self.assertEqual(markdown_files(installed), markdown_files(SKILL))
             for skills in (codex_skills, claude_skills):
-                discovered = skills / "collab-ai"
+                discovered = skills / "pairtask"
                 self.assertTrue(discovered.is_symlink())
                 self.assertEqual(discovered.resolve(), installed.resolve())
                 self.assertEqual(markdown_files(discovered), markdown_files(SKILL))
@@ -73,10 +146,10 @@ class SkillBundleTests(unittest.TestCase):
                 self.assertTrue(resolved.is_file(), f"Missing bundled reference: {target}")
 
     def test_image_installer_does_not_replace_existing_skill(self):
-        for kind in ("directory", "symlink"):
-            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
+        for skills_name, kind in product(("codex-skills", "claude-skills"), ("directory", "symlink")):
+            with self.subTest(skills=skills_name, kind=kind), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                existing = root / "codex-skills/collab-ai"
+                existing = root / skills_name / "pairtask"
                 existing.parent.mkdir()
                 if kind == "directory":
                     existing.mkdir()
@@ -104,7 +177,7 @@ class SkillBundleTests(unittest.TestCase):
             with tarfile.open(output) as archive:
                 manifest = json.load(archive.extractfile("build-source.json"))
                 for relative, contents in markdown_files(SKILL).items():
-                    name = "docs/skills/collab-ai/" + relative.as_posix()
+                    name = "docs/skills/pairtask/" + relative.as_posix()
                     with self.subTest(document=name):
                         self.assertEqual(archive.extractfile(name).read(), contents)
                         self.assertEqual(manifest["files_sha256"][name], hashlib.sha256(contents).hexdigest())

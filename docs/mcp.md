@@ -14,7 +14,7 @@ A failed initial registration can retry. After an established disconnect, restar
 with the same ID for durable recovery; other in-memory frames are lost.
 
 For a child listener, use [delegation](delegated-listeners.md), not duplicate
-registration. For working conventions, install the [skill](skills/collab-ai/SKILL.md)
+registration. For working conventions, install the [skill](skills/pairtask/SKILL.md)
 with its `references/` directory. [Acceptance cases](skill-validation.md).
 
 ## Register an adapter
