@@ -110,8 +110,32 @@ func contactAckNotInvented(t *testing.T, h *chatHarness) {
 func TestContactAckChatRecoveryAcceptanceZeroAckNeverFabricatesAcknowledgment(t *testing.T) {
 	h, _ := ackContactHarness(t, true, protocol.ContactAckSummary{Unacked: 2, AckUpto: 91}, ackContactRow(91, "needs_ack"), ackContactRow(37, "needs_ack"))
 	req := contactAckExpiryRace(h, "/ack #37")
-	ackContactReply(h, req, 0, protocol.ContactAckSummary{AckExpired: 1})
+	contactAckZeroReply(h, req, protocol.ContactAckSummary{Unacked: 1, AckUpto: 91, AckExpired: 1}, ackContactRow(37, "expired"))
 	contactAckNotInvented(t, h)
+	v3Contains(t, ansi.Strip(h.m.View().Content), "#37 expired unacknowledged")
+}
+
+func contactAckZeroReply(h *chatHarness, req protocol.Message, summary protocol.ContactAckSummary, row protocol.ContactMessageView) {
+	h.t.Helper()
+	zero := 0
+	h.reply(req, protocol.Message{Type: protocol.TypeOperatorContactResult, ContactKey: req.ContactKey, ContactAcked: &zero, ContactAcks: &summary})
+	refresh := h.take(protocol.TypeOperatorContact)
+	chatEqual(h.t, "zero result still reads authoritative state", refresh.ContactOp, protocol.ContactOpList)
+	chatEqual(h.t, "zero result rechecks older selected row", refresh.ContactBefore, int64(38))
+	contactAckNotInvented(h.t, h)
+	page := contactMessagesPage(req.ContactKey, row)
+	page.ContactPage.Acks = &summary
+	h.reply(refresh, page)
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+}
+
+func TestContactAckChatRecoveryAcceptanceZeroReplayRefreshesOlderAcknowledgedRow(t *testing.T) {
+	h, _ := ackContactHarness(t, true, protocol.ContactAckSummary{Unacked: 2, AckUpto: 91}, ackContactRow(91, "needs_ack"), ackContactRow(37, "needs_ack"))
+	req := contactAckExpiryRace(h, "/ack #37")
+	contactAckZeroReply(h, req, protocol.ContactAckSummary{Unacked: 1, AckUpto: 91}, ackContactRow(37, "acked"))
+	v3Contains(t, ansi.Strip(h.m.View().Content), "#37 ● acknowledged")
+	v2Command(h, "/ack")
+	ackPickerItems(t, h, "all", "#91")
 }
 
 func TestContactAckChatRecoveryAcceptancePartialBulkUsesAuthoritativeStates(t *testing.T) {

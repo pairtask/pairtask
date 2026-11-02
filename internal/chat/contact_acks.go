@@ -172,9 +172,8 @@ func (m *Model) contactAckResult(req pendingRequest, resp protocol.Message) tea.
 		acked = *resp.ContactAcked
 	}
 	m.status = fmt.Sprintf("acknowledged %d in ⇄ (yours only; nothing is sent)", acked)
-	if acked == 0 {
-		return nil
-	}
+	// Even none newly acknowledged: a retry answers zero for what it did
+	// before, and what expired meanwhile says so only on a page.
 	return m.recheckAcked(op.msg)
 }
 
