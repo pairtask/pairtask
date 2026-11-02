@@ -42,6 +42,18 @@ def reachable_documents(directory):
     return reached
 
 
+def foreign_legacy_entry(root, skills_name, kind):
+    legacy = root / skills_name / "collab-ai"
+    legacy.parent.mkdir()
+    target = legacy if kind == "directory" else root / "foreign-target"
+    if kind != "dangling":
+        target.mkdir()
+        (target / "keep").write_text("user-owned skill")
+    if kind != "directory":
+        legacy.symlink_to(target, target_is_directory=True)
+    return legacy, target
+
+
 class SkillBundleTests(unittest.TestCase):
     def install(self, root):
         return subprocess.run(
@@ -69,26 +81,19 @@ class SkillBundleTests(unittest.TestCase):
         for skills_name, kind in product(("codex-skills", "claude-skills"), ("directory", "symlink", "dangling")):
             with self.subTest(skills=skills_name, kind=kind), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                skills = root / skills_name
-                skills.mkdir()
-                legacy = skills / "collab-ai"
-                if kind == "directory":
-                    legacy.mkdir()
-                    (legacy / "keep").write_text("user-owned skill")
-                else:
-                    if kind == "symlink":
-                        (root / "foreign-target").mkdir()
-                        (root / "foreign-target/keep").write_text("user-owned skill")
-                    legacy.symlink_to(root / "foreign-target", target_is_directory=True)
+                legacy, target = foreign_legacy_entry(root, skills_name, kind)
                 result = self.install(root)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                if kind == "directory":
-                    self.assertEqual((legacy / "keep").read_text(), "user-owned skill")
-                else:
-                    self.assertEqual(legacy.readlink(), root / "foreign-target")
-                    if kind == "symlink":
-                        self.assertEqual((legacy / "keep").read_text(), "user-owned skill")
-                self.assertEqual((skills / "pairtask").resolve(), (root / "installed").resolve())
+                self.check_foreign_legacy_entry(legacy, target, kind)
+                self.assertEqual((legacy.parent / "pairtask").resolve(), (root / "installed").resolve())
+
+    def check_foreign_legacy_entry(self, legacy, target, kind):
+        self.assertEqual(legacy.is_symlink(), kind != "directory")
+        if legacy.is_symlink():
+            self.assertEqual(legacy.readlink(), target)
+        if kind != "dangling":
+            self.assertEqual((legacy / "keep").read_text(), "user-owned skill")
+        self.assertEqual(legacy.exists(), kind != "dangling")
 
     def test_upgrade_conflict_preserves_legacy_links_in_both_harnesses(self):
         for skills_name, kind in product(("codex-skills", "claude-skills"), ("directory", "symlink")):
