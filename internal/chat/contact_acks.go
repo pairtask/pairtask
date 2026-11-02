@@ -81,11 +81,16 @@ func (m *Model) contactAckCommand(arg argument) tea.Cmd {
 		m.status = "pick what to acknowledge in this tab: /ack all or /ack #n"
 		return nil
 	case arg == "all":
-		return m.ackContactAll(key)
+		return m.ackContactAll(m.conv.selected)
 	}
-	id, reason := m.contactAckTarget(key, string(arg))
+	n, ok := messageNumber(string(arg))
+	if !ok {
+		m.status = "give #n, a message's number in this tab"
+		return nil
+	}
+	id := waitingID(m.contacts.thread(key), n)
 	if id == "" {
-		m.status = reason
+		m.status = fmt.Sprintf("#%d isn't a message waiting for acknowledgment in this tab", n)
 		return nil
 	}
 	return m.sendContactAck(protocol.Message{ContactKey: key, ContactAck: []string{id}})
@@ -93,13 +98,13 @@ func (m *Model) contactAckCommand(arg argument) tea.Cmd {
 
 // ackContactAll acknowledges a tab up to the bound its count was read with,
 // so a message arriving since stays waiting.
-func (m *Model) ackContactAll(contact string) tea.Cmd {
-	s := m.ackSummary(contact)
+func (m *Model) ackContactAll(key viewKey) tea.Cmd {
+	s := m.ackSummary(key.contact)
 	if s.Unacked == 0 || s.AckUpto == 0 {
 		m.status = "nothing to acknowledge in this tab"
 		return nil
 	}
-	return m.sendContactAck(protocol.Message{ContactKey: contact, ContactAckUpto: s.AckUpto})
+	return m.sendContactAck(protocol.Message{ContactKey: key.contact, ContactAckUpto: s.AckUpto})
 }
 
 // ackContacts is /ack contacts: every ⇄ tab with messages waiting, each up
@@ -126,19 +131,15 @@ func (m *Model) ackContacts() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// contactAckTarget is the ID of the message numbered #n in this tab that
-// waits for acknowledgment, or why there is none.
-func (m *Model) contactAckTarget(contact, arg string) (string, string) {
-	n, ok := messageNumber(arg)
-	if !ok {
-		return "", "give #n, a message's number in this tab"
-	}
-	for _, v := range m.contacts.thread(contact).rows {
+// waitingID is the ID of the loaded message numbered n that waits for
+// acknowledgment, "" for none.
+func waitingID(t *contactThread, n int64) string {
+	for _, v := range t.rows {
 		if awaitsAck(v) && v.Cursor == n {
-			return v.ID, ""
+			return v.ID
 		}
 	}
-	return "", fmt.Sprintf("#%d isn't a message waiting for acknowledgment in this tab", n)
+	return ""
 }
 
 // messageNumber is #n's n.
@@ -251,9 +252,9 @@ func (m *Model) contactAckLabel(item string) string {
 	return "  " + safe(item)
 }
 
-// ackSettled: an acknowledgment state nothing moves back from.
-func ackSettled(state string) bool {
-	return state == protocol.AckDone || state == protocol.AckExpired
+// ackSettled: an acknowledgment nothing moves back from.
+func ackSettled(v protocol.ContactMessageView) bool {
+	return v.AckState == protocol.AckDone || v.AckState == protocol.AckExpired
 }
 
 // recheckAcked reads again, page by page from the newest it covered, the

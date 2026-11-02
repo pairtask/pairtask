@@ -71,8 +71,8 @@ func (m *Model) ackPickLabel(item string) (string, bool) {
 	if !ok || l.name != "ack" {
 		return "", false
 	}
-	if label, ok := m.ackRowLabel(l, item); ok {
-		return label, true
+	if label := m.ackRowLabeler(); label != nil {
+		return label(item), true
 	}
 	switch item {
 	case "all":
@@ -86,16 +86,17 @@ func (m *Model) ackPickLabel(item string) (string, bool) {
 	return "", false
 }
 
-// ackRowLabel labels the rows that aren't /ack's own words: an agent
-// after from, or a ⇄ tab's message.
-func (m *Model) ackRowLabel(l argLine, item string) (string, bool) {
+// ackRowLabeler labels the rows that aren't /ack's own words: an agent
+// after from, or a ⇄ tab's message; nil for /ack's words.
+func (m *Model) ackRowLabeler() func(string) string {
+	l, _ := m.argumentLine()
 	switch {
 	case len(l.words) == 1 && l.words[0] == "from":
-		return m.senderLabel(item), true
+		return m.senderLabel
 	case m.conv.selected.isContact():
-		return m.contactAckLabel(item), true
+		return m.contactAckLabel
 	}
-	return "", false
+	return nil
 }
 
 // senderLabel is an agent row: its name, and its tab when it has one.

@@ -194,7 +194,7 @@ func keepForward(old, v protocol.ContactMessageView) protocol.ContactMessageView
 	if v.ReadAt == nil {
 		v.ReadAt = old.ReadAt // read here stays read, whatever a late page says
 	}
-	if ackSettled(old.AckState) && !ackSettled(v.AckState) {
+	if ackSettled(old) && !ackSettled(v) {
 		v.AckState, v.AckedAt = old.AckState, old.AckedAt // acknowledged or expired stays so (#287)
 	}
 	return v
