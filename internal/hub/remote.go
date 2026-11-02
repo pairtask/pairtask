@@ -227,17 +227,24 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 				Review: wireAsk(in.Msg.ReviewAsk), Now: at})
 		}}, nil
 	}
-	parent, found, err := h.store.RemoteParent(ctx, in.Msg.InReplyTo)
-	if err == nil && !found && strings.HasPrefix(in.Msg.InReplyTo, reviewNoticePrefix) {
-		return remoteRoute{}, errReviewNotice
-	}
-	if err != nil || !found {
-		return remoteRoute{}, errOtherWorkspace
-	}
-	if parent.Contact != contact {
-		return remoteRoute{}, errOtherWorkspace
+	parent, rerr := h.workspaceParent(ctx, contact, in.Msg.InReplyTo)
+	if rerr != nil {
+		return remoteRoute{}, rerr
 	}
 	return h.replyRoute(in, parent), nil
+}
+
+// workspaceParent is the message from that workspace a reply answers. A
+// review notice's ID names none there: its refusal says how to answer.
+func (h *Hub) workspaceParent(ctx context.Context, contact, inReplyTo string) (store.RemoteImport, *routingError) {
+	parent, found, err := h.store.RemoteParent(ctx, inReplyTo)
+	switch {
+	case err == nil && !found && strings.HasPrefix(inReplyTo, reviewNoticePrefix):
+		return parent, errReviewNotice
+	case err != nil || !found || parent.Contact != contact:
+		return parent, errOtherWorkspace
+	}
+	return parent, nil
 }
 
 var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
