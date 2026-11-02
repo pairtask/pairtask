@@ -1,6 +1,6 @@
 # Collaboration skill: offline acceptance cases
 
-Maintainer checklist for the shared [collaboration skill](skills/collab-ai/SKILL.md)
+Maintainer checklist for the shared [collaboration skill](skills/pairtask/SKILL.md)
 and its `managed`, `manual`, `sandbox`, and `operator` references.
 
 | Scenario | Expected behavior |

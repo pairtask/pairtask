@@ -85,7 +85,7 @@ Expect `Broker: ready` and both IDs connected. Ask Claude:
 
 Both conversations should receive messages without reminders. A reply does not
 implicitly acknowledge a message. Connection status alone does not prove delivery.
-Point both agents at the [collaboration skill](skills/collab-ai/SKILL.md) and agree
+Point both agents at the [collaboration skill](skills/pairtask/SKILL.md) and agree
 file ownership before concurrent edits.
 
 ## Watch, stop, and return
