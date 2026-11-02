@@ -65,11 +65,11 @@ func acceptReviewID(t *testing.T, f workspaceStoreFixture, o messaging.ReviewOut
 	return a
 }
 
-func reviewIDRejectedUnchanged(t *testing.T, f workspaceStoreFixture, o messaging.ReviewOutcome, reason string, before map[string]string) {
+func reviewIDConflictUnchanged(t *testing.T, f workspaceStoreFixture, o messaging.ReviewOutcome, before map[string]string) {
 	t.Helper()
 	a := acceptReviewID(t, f, o)
 	pairEqual(t, a.Stored, false)
-	pairEqual(t, a.Reason, reason)
+	pairEqual(t, a.Reason, messaging.ReasonConflict)
 	reviewIDUnchanged(t, f, before)
 }
 
@@ -81,13 +81,18 @@ func reviewIDPending(t *testing.T, f workspaceStoreFixture) messaging.ReviewOutc
 	return rows[0]
 }
 
-func reviewIDOfferUnchanged(t *testing.T, f workspaceStoreFixture, old messaging.ReviewOutcome, id, payload string) {
+type reviewIDOfferExpectation struct {
+	old         messaging.ReviewOutcome
+	id, payload string
+}
+
+func reviewIDOfferUnchanged(t *testing.T, f workspaceStoreFixture, want reviewIDOfferExpectation) {
 	t.Helper()
 	offer := reviewIDPending(t, f)
-	pairEqual(t, offer.ReviewID, id)
-	pairEqual(t, offer.Seq, old.Seq)
-	pairEqual(t, offer.Digest(), old.Digest())
-	pairEqual(t, reviewIDPayload(t, f), payload)
+	pairEqual(t, offer.ReviewID, want.id)
+	pairEqual(t, offer.Seq, want.old.Seq)
+	pairEqual(t, offer.Digest(), want.old.Digest())
+	pairEqual(t, reviewIDPayload(t, f), want.payload)
 }
 
 func TestRemoteReviewIDsStoreAcceptanceUpgradeReplayFillsAndDowngradeNeverClears(t *testing.T) {
@@ -122,7 +127,7 @@ func TestRemoteReviewIDsStoreAcceptanceConflictPrecedesReplayAndStateMutation(t 
 			if seq == 2 {
 				o.Seq, o.Attempt, o.State = 2, 1, "accepted"
 			}
-			reviewIDRejectedUnchanged(t, f, o, messaging.ReasonConflict, before)
+			reviewIDConflictUnchanged(t, f, o, before)
 		})
 	}
 }
@@ -151,7 +156,7 @@ func TestRemoteReviewIDsStoreAcceptanceOlderSequenceConflictIsNeverAcknowledged(
 	pairEqual(t, acceptReviewID(t, f, o).Stored, true)
 	before := reviewIDSnapshot(t, f)
 	o.Seq, o.Attempt, o.State, o.ReviewID = 1, 0, "requested", "different-id"
-	reviewIDRejectedUnchanged(t, f, o, messaging.ReasonConflict, before)
+	reviewIDConflictUnchanged(t, f, o, before)
 }
 
 func TestRemoteReviewIDsStoreAcceptanceSameAskAcrossContactsBindsIndependently(t *testing.T) {
@@ -246,7 +251,8 @@ func TestRemoteReviewIDsStoreAcceptanceActualOldPayloadEnrichesWithoutRewrite(t 
 	pairOK(t, err)
 	var old messaging.ReviewOutcome
 	pairOK(t, json.Unmarshal(oldPayload, &old))
-	reviewIDOfferUnchanged(t, f, old, imported.ReviewID, string(oldPayload))
+	want := reviewIDOfferExpectation{old: old, id: imported.ReviewID, payload: string(oldPayload)}
+	reviewIDOfferUnchanged(t, f, want)
 	// A same-ask review from another contact cannot supply this ID.
 	rec, found, err := f.db.GetReview(context.Background(), imported.ReviewID)
 	pairOK(t, err)
@@ -257,7 +263,8 @@ func TestRemoteReviewIDsStoreAcceptanceActualOldPayloadEnrichesWithoutRewrite(t 
 	pairOK(t, err)
 	_, err = f.raw.Exec(`DELETE FROM reviews WHERE review_id=?`, imported.ReviewID)
 	pairOK(t, err)
-	reviewIDOfferUnchanged(t, f, old, "", string(oldPayload))
+	want.id = ""
+	reviewIDOfferUnchanged(t, f, want)
 }
 
 func TestRemoteReviewIDsStoreAcceptanceNewQueuedPayloadKeepsIDAtOfferBoundary(t *testing.T) {

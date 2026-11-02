@@ -94,7 +94,7 @@ func EncodeOutcomeFor(o ReviewOutcome, version byte) ([]byte, error) {
 	if version < ReviewIDVersion {
 		return EncodeOutcome(o)
 	}
-	if o.ReviewID != "" && !ValidReviewID(o.ReviewID) {
+	if badReviewID(o.ReviewID) {
 		return nil, fmt.Errorf("%w: outcome review ID", ErrProtocol)
 	}
 	return encode(FrameReviewOutcome, append(outcomeFields(o), []byte(o.ReviewID))...)
@@ -112,6 +112,9 @@ func ValidReviewID(id string) bool {
 	}
 	return utf8.ValidString(id) && !strings.ContainsFunc(id, unicode.IsControl)
 }
+
+// badReviewID: an outcome's review ID that is neither "" nor valid.
+func badReviewID(id string) bool { return id != "" && !ValidReviewID(id) }
 
 func reviewIDSized(id string) bool { return id != "" && len(id) <= ReviewIDBytes }
 
@@ -133,10 +136,13 @@ func DecodeOutcomeFor(frame []byte, version byte) (ReviewOutcome, error) {
 		return DecodeOutcome(frame)
 	}
 	o, err := decodeOutcome(frame, outcomeIDShape)
-	if err == nil && o.ReviewID != "" && !ValidReviewID(o.ReviewID) {
+	if err != nil {
+		return ReviewOutcome{}, err
+	}
+	if badReviewID(o.ReviewID) {
 		return ReviewOutcome{}, fmt.Errorf("%w: outcome review ID", ErrProtocol)
 	}
-	return o, err
+	return o, nil
 }
 
 func decodeOutcome(frame []byte, want shape) (ReviewOutcome, error) {
