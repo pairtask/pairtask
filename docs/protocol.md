@@ -413,6 +413,31 @@ parent's room (or none, which keeps it). Any other destination is refused
 with `invalid_reply_audience`. Replies to messages that assign nobody keep the
 rules above.
 
+## Pending reviews (v18)
+
+A broker with capability `review_counts` counts the reviews pending for the
+operator (#286), over every row and never a page:
+
+- The operator snapshot carries `review_counts`: `awaiting_you` (requests from
+  paired workspaces waiting for this operator's decision), `awaiting_token`
+  (an opaque name for that set, `""` for none: it changes whenever the set
+  does, an arrival or a departure, even at the same count), `running` (reviews
+  here that are requested, ready or in review) and `asked_open` (this side's
+  requests to paired workspaces not yet settled). An older broker leaves the
+  field out.
+- `operator_review` with `review_op: "counts"` and no other field reads the
+  same counts again, without a new snapshot baseline: a client re-reads them
+  on `reviews_changed` and `contact_messages_changed`.
+- `operator_review` with `review_op: "awaiting"` or `"asked"`, and an optional
+  opaque `review_before`, returns one page of up to 32 in `review_awaiting` or
+  `review_asked`: `items`, `total`, `more` and `next` (the `review_before` of
+  the following page). Awaiting items are newest first and name the contact,
+  the message ID, the local `cursor` of its message there (0 once gone), the
+  sender, the request and when it arrived. Asked items are open ones first,
+  then by latest change, and name the contact, the ask ID, the cursor of the
+  message that carried it, the reviewer, the state, the verdict, the URL and
+  whether it is settled. Both are read only.
+
 ## Acknowledging a paired workspace's messages (v17)
 
 A broker with capability `contact_acks` keeps the operator's own

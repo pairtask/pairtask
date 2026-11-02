@@ -198,6 +198,9 @@ func (m *Model) footer() string {
 	if reminder := m.contactAckReminder(); reminder != "" {
 		parts = append(parts, reminder)
 	}
+	if reminder := m.reviewReminder(); reminder != "" {
+		parts = append(parts, reminder)
+	}
 	parts = append(parts, bandStyle.Render(m.facts()))
 	if summary := m.statusSummary(); summary != "" {
 		parts = append(parts, bandStyle.Render(summary)) // lowest priority: dropped first

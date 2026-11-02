@@ -18,9 +18,19 @@ func (m *Model) reviewRows() []string {
 	if p := m.reviews.pending; p != nil && p.id == m.reviews.selected {
 		return append(rows, m.pendingRows(*p)...)
 	}
-	if len(m.reviews.list) == 0 {
-		return append(rows, "  no review requests")
+	if m.pendingAvailable() {
+		rows[0] = titleStyle.Render("Reviews") + mutedStyle.Render("  (/reviews open REF · /reviews more needs|asked · Esc closes)")
+		return append(rows, m.sectionRows()...)
 	}
+	return append(rows, m.listRows()...)
+}
+
+// listRows are every review here, or that there are none.
+func (m *Model) listRows() []string {
+	if len(m.reviews.list) == 0 {
+		return []string{"  no review requests"}
+	}
+	var rows []string
 	for _, r := range m.reviews.list {
 		rows = append(rows, reviewRow(r))
 	}

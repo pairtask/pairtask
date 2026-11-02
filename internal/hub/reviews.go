@@ -287,8 +287,12 @@ func (h *Hub) operatorReview(ctx context.Context, clients map[string]*Client, re
 		return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewPage: page}
 	case protocol.ReviewOpStatus:
 		return h.operatorReviewStatus(ctx, msg)
+	case protocol.ReviewOpAwaiting, protocol.ReviewOpAsked:
+		return h.pendingReviews(ctx, msg)
+	case protocol.ReviewOpCounts:
+		return h.reviewCounts(ctx, msg)
 	}
-	return (&routingError{protocol.ErrMalformedFrame, "review_op must be request, cancel, list or status"}).frame(msg.MessageID)
+	return (&routingError{protocol.ErrMalformedFrame, "review_op must be request, cancel, list, status, awaiting, asked or counts"}).frame(msg.MessageID)
 }
 
 func (h *Hub) operatorReviewStatus(ctx context.Context, msg protocol.Message) protocol.Message {

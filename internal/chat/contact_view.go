@@ -160,6 +160,9 @@ func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMe
 	}
 	// formatBody indents the text as a body already, as in local chat.
 	lines = append(lines, m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, 0)...)
+	if m.pendingAvailable() {
+		lines = append(lines, reviewCard(s, v)...)
+	}
 	return append(lines, m.messageStatusRows(s, v)...)
 }
 
