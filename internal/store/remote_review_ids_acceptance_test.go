@@ -65,6 +65,31 @@ func acceptReviewID(t *testing.T, f workspaceStoreFixture, o messaging.ReviewOut
 	return a
 }
 
+func reviewIDRejectedUnchanged(t *testing.T, f workspaceStoreFixture, o messaging.ReviewOutcome, reason string, before map[string]string) {
+	t.Helper()
+	a := acceptReviewID(t, f, o)
+	pairEqual(t, a.Stored, false)
+	pairEqual(t, a.Reason, reason)
+	reviewIDUnchanged(t, f, before)
+}
+
+func reviewIDPending(t *testing.T, f workspaceStoreFixture) messaging.ReviewOutcome {
+	t.Helper()
+	rows, err := f.db.PeerMessages().PendingOutcomes(context.Background(), f.key, 10)
+	pairOK(t, err)
+	pairEqual(t, len(rows), 1)
+	return rows[0]
+}
+
+func reviewIDOfferUnchanged(t *testing.T, f workspaceStoreFixture, old messaging.ReviewOutcome, id, payload string) {
+	t.Helper()
+	offer := reviewIDPending(t, f)
+	pairEqual(t, offer.ReviewID, id)
+	pairEqual(t, offer.Seq, old.Seq)
+	pairEqual(t, offer.Digest(), old.Digest())
+	pairEqual(t, reviewIDPayload(t, f), payload)
+}
+
 func TestRemoteReviewIDsStoreAcceptanceUpgradeReplayFillsAndDowngradeNeverClears(t *testing.T) {
 	f := workspaceStore(t)
 	o := queuedAgentAsk(t, f)
@@ -97,10 +122,7 @@ func TestRemoteReviewIDsStoreAcceptanceConflictPrecedesReplayAndStateMutation(t 
 			if seq == 2 {
 				o.Seq, o.Attempt, o.State = 2, 1, "accepted"
 			}
-			a := acceptReviewID(t, f, o)
-			pairEqual(t, a.Stored, false)
-			pairEqual(t, a.Reason, messaging.ReasonConflict)
-			reviewIDUnchanged(t, f, before)
+			reviewIDRejectedUnchanged(t, f, o, messaging.ReasonConflict, before)
 		})
 	}
 }
@@ -129,10 +151,7 @@ func TestRemoteReviewIDsStoreAcceptanceOlderSequenceConflictIsNeverAcknowledged(
 	pairEqual(t, acceptReviewID(t, f, o).Stored, true)
 	before := reviewIDSnapshot(t, f)
 	o.Seq, o.Attempt, o.State, o.ReviewID = 1, 0, "requested", "different-id"
-	a := acceptReviewID(t, f, o)
-	pairEqual(t, a.Stored, false)
-	pairEqual(t, a.Reason, messaging.ReasonConflict)
-	reviewIDUnchanged(t, f, before)
+	reviewIDRejectedUnchanged(t, f, o, messaging.ReasonConflict, before)
 }
 
 func TestRemoteReviewIDsStoreAcceptanceSameAskAcrossContactsBindsIndependently(t *testing.T) {
@@ -154,41 +173,36 @@ func TestRemoteReviewIDsStoreAcceptanceSameAskAcrossContactsBindsIndependently(t
 	pairEqual(t, storedReviewID(t, second), "other-contact-id")
 }
 
-func TestRemoteReviewIDsStoreAcceptanceFailedNoticeRollsBackIDAndAcceptance(t *testing.T) {
+func reviewIDFailedTransaction(t *testing.T, replay bool) {
+	t.Helper()
 	f := workspaceStore(t)
 	o := queuedAgentAsk(t, f)
+	trigger := `CREATE TRIGGER fail_id BEFORE INSERT ON remote_imports BEGIN SELECT RAISE(ABORT,'injected notice failure'); END`
+	if replay {
+		pairEqual(t, acceptReviewID(t, f, o).Stored, true)
+		trigger = `CREATE TRIGGER fail_id BEFORE UPDATE OF review_id ON review_asks_out BEGIN SELECT RAISE(ABORT,'injected ID fill failure'); END`
+	}
 	o.ReviewID = "bound-only-on-commit"
 	before := reviewIDSnapshot(t, f)
-	_, err := f.raw.Exec(`CREATE TRIGGER fail_id_notice BEFORE INSERT ON remote_imports BEGIN SELECT RAISE(ABORT,'injected notice failure'); END`)
+	_, err := f.raw.Exec(trigger)
 	pairOK(t, err)
 	a, err := f.db.PeerMessages().AcceptOutcome(context.Background(), f.key, o, messageAt)
 	if err == nil || a.Stored {
-		t.Fatal("outcome reported stored despite failed notice transaction")
+		t.Fatal("outcome reported stored despite failed transaction")
 	}
 	reviewIDUnchanged(t, f, before)
-	_, err = f.raw.Exec(`DROP TRIGGER fail_id_notice`)
+	_, err = f.raw.Exec(`DROP TRIGGER fail_id`)
 	pairOK(t, err)
 	pairEqual(t, acceptReviewID(t, f, o).Stored, true)
 	pairEqual(t, storedReviewID(t, f), o.ReviewID)
 }
 
+func TestRemoteReviewIDsStoreAcceptanceFailedNoticeRollsBackIDAndAcceptance(t *testing.T) {
+	reviewIDFailedTransaction(t, false)
+}
+
 func TestRemoteReviewIDsStoreAcceptanceFailedReplayFillDoesNotClaimStored(t *testing.T) {
-	f := workspaceStore(t)
-	o := queuedAgentAsk(t, f)
-	pairEqual(t, acceptReviewID(t, f, o).Stored, true)
-	before := reviewIDSnapshot(t, f)
-	_, err := f.raw.Exec(`CREATE TRIGGER fail_id_fill BEFORE UPDATE OF review_id ON review_asks_out BEGIN SELECT RAISE(ABORT,'injected ID fill failure'); END`)
-	pairOK(t, err)
-	o.ReviewID = "upgrade-id"
-	a, err := f.db.PeerMessages().AcceptOutcome(context.Background(), f.key, o, messageAt)
-	if err == nil || a.Stored {
-		t.Fatal("replay reported stored without committing ID fill")
-	}
-	reviewIDUnchanged(t, f, before)
-	_, err = f.raw.Exec(`DROP TRIGGER fail_id_fill`)
-	pairOK(t, err)
-	pairEqual(t, acceptReviewID(t, f, o).Stored, true)
-	pairEqual(t, storedReviewID(t, f), o.ReviewID)
+	reviewIDFailedTransaction(t, true)
 }
 
 // This is the persisted v5 JSON shape, not a v6 outcome projected on wire.
@@ -232,13 +246,7 @@ func TestRemoteReviewIDsStoreAcceptanceActualOldPayloadEnrichesWithoutRewrite(t 
 	pairOK(t, err)
 	var old messaging.ReviewOutcome
 	pairOK(t, json.Unmarshal(oldPayload, &old))
-	rows, err := f.db.PeerMessages().PendingOutcomes(context.Background(), f.key, 10)
-	pairOK(t, err)
-	pairEqual(t, len(rows), 1)
-	pairEqual(t, rows[0].ReviewID, imported.ReviewID)
-	pairEqual(t, rows[0].Seq, old.Seq)
-	pairEqual(t, rows[0].Digest(), old.Digest())
-	pairEqual(t, reviewIDPayload(t, f), string(oldPayload))
+	reviewIDOfferUnchanged(t, f, old, imported.ReviewID, string(oldPayload))
 	// A same-ask review from another contact cannot supply this ID.
 	rec, found, err := f.db.GetReview(context.Background(), imported.ReviewID)
 	pairOK(t, err)
@@ -249,13 +257,7 @@ func TestRemoteReviewIDsStoreAcceptanceActualOldPayloadEnrichesWithoutRewrite(t 
 	pairOK(t, err)
 	_, err = f.raw.Exec(`DELETE FROM reviews WHERE review_id=?`, imported.ReviewID)
 	pairOK(t, err)
-	rows, err = f.db.PeerMessages().PendingOutcomes(context.Background(), f.key, 10)
-	pairOK(t, err)
-	pairEqual(t, len(rows), 1)
-	pairEqual(t, rows[0].ReviewID, "")
-	pairEqual(t, rows[0].Seq, old.Seq)
-	pairEqual(t, rows[0].Digest(), old.Digest())
-	pairEqual(t, reviewIDPayload(t, f), string(oldPayload))
+	reviewIDOfferUnchanged(t, f, old, "", string(oldPayload))
 }
 
 func TestRemoteReviewIDsStoreAcceptanceNewQueuedPayloadKeepsIDAtOfferBoundary(t *testing.T) {
@@ -267,10 +269,7 @@ func TestRemoteReviewIDsStoreAcceptanceNewQueuedPayloadKeepsIDAtOfferBoundary(t 
 			t.Fatalf("offer-time review ID field %q was persisted in queued payload", key)
 		}
 	}
-	rows, err := f.db.PeerMessages().PendingOutcomes(context.Background(), f.key, 10)
-	pairOK(t, err)
-	pairEqual(t, len(rows), 1)
-	pairEqual(t, rows[0].ReviewID, imported.ReviewID)
+	pairEqual(t, reviewIDPending(t, f).ReviewID, imported.ReviewID)
 }
 
 func TestRemoteReviewIDsStoreAcceptancePreReviewOutcomesHaveNoInventedID(t *testing.T) {

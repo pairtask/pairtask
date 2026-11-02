@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strconv"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -106,16 +107,13 @@ const ReviewIDBytes = 128
 // (protocol.ValidateReviewID, which this package can't import): 1 to
 // ReviewIDBytes of UTF-8 without control characters.
 func ValidReviewID(id string) bool {
-	if id == "" || len(id) > ReviewIDBytes || !utf8.ValidString(id) {
+	if !reviewIDSized(id) {
 		return false
 	}
-	for _, r := range id {
-		if unicode.IsControl(r) {
-			return false
-		}
-	}
-	return true
+	return utf8.ValidString(id) && !strings.ContainsFunc(id, unicode.IsControl)
 }
+
+func reviewIDSized(id string) bool { return id != "" && len(id) <= ReviewIDBytes }
 
 func outcomeFields(o ReviewOutcome) [][]byte {
 	return [][]byte{[]byte(o.AskID), []byte(o.Reviewer), binary.BigEndian.AppendUint64(nil, o.Seq),
