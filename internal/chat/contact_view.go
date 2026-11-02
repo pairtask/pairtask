@@ -35,6 +35,8 @@ type contactLayout struct {
 
 type contactSpan struct {
 	id         string
+	direction  string
+	cursor     int64
 	from, upto int // message lines [from, upto)
 	unread     bool
 }
@@ -53,9 +55,8 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 		l.lines = append(l.lines, "") // a separator, which shows no message
 		from := len(l.lines)
 		l.lines = append(l.lines, m.messageLines(c, v, thread)...)
-		if v.Direction == "in" {
-			l.spans = append(l.spans, contactSpan{id: v.ID, from: from, upto: len(l.lines), unread: unreadHere(v)})
-		}
+		l.spans = append(l.spans, contactSpan{id: v.ID, direction: v.Direction, cursor: v.Cursor, from: from, upto: len(l.lines),
+			unread: v.Direction == "in" && unreadHere(v)})
 	}
 	return l
 }
@@ -160,6 +161,9 @@ func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMe
 	}
 	// formatBody indents the text as a body already, as in local chat.
 	lines = append(lines, m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, 0)...)
+	if m.pendingAvailable() {
+		lines = append(lines, reviewCard(s, v)...)
+	}
 	return append(lines, m.messageStatusRows(s, v)...)
 }
 

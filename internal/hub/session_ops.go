@@ -161,6 +161,11 @@ func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (pr
 		return snap, err
 	}
 	snap.Rooms, snap.RoomsTotal, snap.RoomsTruncated = rooms.Rooms, rooms.Total, rooms.Truncated
+	counts, err := h.store.ReviewCounts(ctx)
+	if err != nil {
+		return snap, err
+	}
+	snap.ReviewCounts = &counts
 	return fitSnapshot(snap)
 }
 

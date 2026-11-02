@@ -99,11 +99,12 @@ func (m *Model) statusRefreshed(_ pendingRequest, resp protocol.Message) tea.Cmd
 	m.claims.set(resp.Snapshot)
 	m.rooms, m.roomsCut = resp.Snapshot.Rooms, resp.Snapshot.RoomsTruncated
 	m.refreshDirectory()
+	counts := m.setReviewCounts(resp.Snapshot)
 	if m.statuses.dirty {
 		m.statuses.dirty = false
-		return tea.Batch(m.refreshStatuses(), m.statusTicker())
+		return tea.Batch(m.refreshStatuses(), m.statusTicker(), counts)
 	}
-	return m.statusTicker()
+	return tea.Batch(m.statusTicker(), counts)
 }
 
 // selectedStatus is the status of the agent whose conversation is open.

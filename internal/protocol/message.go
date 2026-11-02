@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                = AckVersion
+	Version                = ReviewCountsVersion
 	AcknowledgmentVersion  = 2
 	DurableVersion         = 3
 	OriginVersion          = 4
@@ -51,6 +51,7 @@ const (
 	AskedVersion           = 15 // reviews_asked_get: the review requests an agent sent, and where they stand (#235)
 	AssignVersion          = 16 // an operator's tag assigns the tagged agent its message's reply (#278)
 	AckVersion             = 17 // the operator acknowledges a paired workspace's messages, privately (#287)
+	ReviewCountsVersion    = 18 // the operator snapshot counts pending reviews; operator_review pages them (#286)
 	StageAccepted          = "accepted"
 	StageAdapterReceived   = "adapter_received"
 	StageAgentAcknowledged = "agent_acknowledged"
@@ -226,6 +227,10 @@ type Message struct {
 	ReviewReason       string              `json:"review_reason,omitempty"`        // review_decline, operator_review cancel
 	Review             *ReviewView         `json:"review,omitempty"`               // review_result, operator_review_result: one review
 	ReviewPage         *ReviewPage         `json:"review_page,omitempty"`          // review_result, operator_review_result: a list of reviews
+	ReviewBefore       string              `json:"review_before,omitempty"`        // operator_review awaiting, asked: the page after this cursor
+	ReviewAwaiting     *ReviewAwaitingPage `json:"review_awaiting,omitempty"`      // operator_review_result for awaiting
+	ReviewAsked        *ReviewAskedPage    `json:"review_asked,omitempty"`         // operator_review_result for asked
+	ReviewCounts       *ReviewCounts       `json:"review_counts,omitempty"`        // operator_review_result for counts
 	ContactOp          string              `json:"contact_op,omitempty"`           // operator_contact (#210): what to do
 	ContactKey         string              `json:"contact_key,omitempty"`          // operator_contact: the contact's identity key
 	ContactText        string              `json:"contact_text,omitempty"`         // operator_contact send

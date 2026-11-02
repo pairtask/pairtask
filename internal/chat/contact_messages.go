@@ -142,7 +142,7 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 	if !pageFor(resp, contact) {
 		t.failed = true // no retry on every update; an event, a reconnect or reopening the tab retries
 		m.status = "contact messages not loaded: " + refusalReason(resp)
-		return nil
+		return m.navAfterPage(contact, false)
 	}
 	t.failed = false
 	page := resp.ContactPage
@@ -159,7 +159,7 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 		t.stale = false
 		return m.refreshContact(contact, 0)
 	}
-	return nil
+	return m.navAfterPage(contact, true)
 }
 
 // pageFor: a contact result carrying a page of this contact's messages.
@@ -367,6 +367,8 @@ func (m *Model) contactSendResult(req pendingRequest, resp protocol.Message) tea
 // contactsDisconnected leaves operations in flight unknown: their answers
 // may be lost, so they are resent unchanged after the reconnect.
 func (m *Model) contactsDisconnected() {
+	m.sections.nav = nil // a search for a review request doesn't resume after a reconnect
+	m.sections.invalidate()
 	if m.contacts.send != nil {
 		m.contacts.send.unknown = true
 	}

@@ -170,14 +170,18 @@ func (m *Model) requestReview(arg argument) tea.Cmd {
 }
 
 // reviewsCommand is /reviews: list them in the panel.
-func (m *Model) reviewsCommand(argument) tea.Cmd {
+func (m *Model) reviewsCommand(arg argument) tea.Cmd {
 	if !m.session.HasCapability(protocol.CapabilityReviews) {
 		m.status = "this broker doesn't support review requests; upgrade it to use /reviews"
 		return nil
 	}
+	if fields := strings.Fields(string(arg)); len(fields) > 0 {
+		return m.reviewsSubcommand(fields)
+	}
 	m.reviews.loaded, m.reviews.selected, m.reviews.detail = true, "", nil
 	m.panel = &panel{kind: panelReviews}
-	return m.request(kindReview, protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpList}, protocol.ReviewOpList)
+	list := m.request(kindReview, protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpList}, protocol.ReviewOpList)
+	return tea.Batch(list, m.refreshPendingSections())
 }
 
 func (m *Model) reviewStatus(ref string) tea.Cmd {

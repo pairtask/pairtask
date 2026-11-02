@@ -276,6 +276,9 @@ func (h *Hub) operatorReview(ctx context.Context, clients map[string]*Client, re
 	if err := h.expireReviews(ctx); err != nil {
 		return (&routingError{protocol.ErrInternal, "reviews unavailable"}).frame(msg.MessageID)
 	}
+	if read := readOnlyReviewOps[msg.ReviewOp]; read != nil {
+		return read(h, ctx, msg)
+	}
 	switch msg.ReviewOp {
 	case protocol.ReviewOpRequest, protocol.ReviewOpCancel:
 		return h.operatorReviewChange(ctx, clients, req)
@@ -288,7 +291,7 @@ func (h *Hub) operatorReview(ctx context.Context, clients map[string]*Client, re
 	case protocol.ReviewOpStatus:
 		return h.operatorReviewStatus(ctx, msg)
 	}
-	return (&routingError{protocol.ErrMalformedFrame, "review_op must be request, cancel, list or status"}).frame(msg.MessageID)
+	return (&routingError{protocol.ErrMalformedFrame, "review_op must be request, cancel, list, status, awaiting, asked or counts"}).frame(msg.MessageID)
 }
 
 func (h *Hub) operatorReviewStatus(ctx context.Context, msg protocol.Message) protocol.Message {

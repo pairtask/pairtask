@@ -42,7 +42,78 @@ const (
 	ReviewOpCancel  = "cancel"
 	ReviewOpList    = "list"
 	ReviewOpStatus  = "status"
+	// Pending reviews (#286), read only and paged by review_before:
+	// requests from paired workspaces waiting for this operator's decision,
+	// and this side's requests to them.
+	ReviewOpAwaiting = "awaiting"
+	ReviewOpAsked    = "asked"
+	// ReviewOpCounts reads the snapshot's review_counts again, without a
+	// new baseline.
+	ReviewOpCounts = "counts"
 )
+
+// CapabilityReviewCounts: the snapshot counts pending reviews, and
+// operator_review serves awaiting and asked.
+const CapabilityReviewCounts = "review_counts"
+
+// ReviewPendingPage bounds one page of awaiting or asked reviews.
+const ReviewPendingPage = 32
+
+// ReviewCounts are the reviews pending, counted over all of them. The
+// token names the set of requests awaiting the operator: it changes when
+// one arrives or leaves, even at the same count.
+type ReviewCounts struct {
+	AwaitingYou   int    `json:"awaiting_you"`
+	AwaitingToken string `json:"awaiting_token"`
+	Running       int    `json:"running"`
+	AskedOpen     int    `json:"asked_open"`
+}
+
+// ReviewAwaitingItem is a paired workspace's review request waiting for
+// this operator's decision: its contact, its message there and that
+// message's cursor, 0 once the message is gone.
+type ReviewAwaitingItem struct {
+	Contact    string     `json:"contact"`
+	MessageID  string     `json:"message_id"`
+	Cursor     int64      `json:"cursor"`
+	Sender     string     `json:"sender"`
+	Ask        *ReviewAsk `json:"ask"`
+	ReceivedAt time.Time  `json:"received_at"`
+}
+
+// ReviewAskedItem is this side's review request to a paired workspace, and
+// where it stands.
+type ReviewAskedItem struct {
+	Contact   string    `json:"contact"`
+	AskID     string    `json:"ask_id"`
+	Cursor    int64     `json:"cursor"`
+	Reviewer  string    `json:"reviewer"`
+	State     string    `json:"state"`
+	Verdict   string    `json:"verdict"`
+	URL       string    `json:"url"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Settled   bool      `json:"settled"`
+}
+
+// ReviewAwaitingPage and ReviewAskedPage are one page each: the items, how
+// many there are in all, and the review_before of the next page, "" for
+// none.
+type ReviewAwaitingPage struct {
+	Items []ReviewAwaitingItem `json:"items"`
+	Total int                  `json:"total"`
+	More  bool                 `json:"more"`
+	Next  string               `json:"next"`
+	// Token is the awaiting set's token, read with this page: what the
+	// operator has seen once it is shown.
+	Token string `json:"token"`
+}
+
+type ReviewAskedPage struct {
+	Items []ReviewAskedItem `json:"items"`
+	Total int               `json:"total"`
+	More  bool              `json:"more"`
+	Next  string            `json:"next"`
+}
 
 // Review states. requested and ready wait for the reviewer; in_review runs
 // one attempt; the rest are final.

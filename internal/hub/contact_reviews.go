@@ -98,9 +98,7 @@ func (h *Hub) reviewView(ctx context.Context, view *protocol.ContactMessageView,
 	if r.Review == nil {
 		return nil
 	}
-	a := r.Review
-	view.ReviewAsk = &protocol.ReviewAsk{ReviewTarget: protocol.ReviewTarget{Forge: a.Forge, Repository: a.Repository, Change: a.Change},
-		Scope: a.Scope, Base: a.Base, Head: a.Head, Publish: a.Publish, Formal: a.Formal}
+	view.ReviewAsk = store.AskView(r.Review)
 	if r.Direction != messaging.DirIn {
 		a, found, err := h.store.PeerMessages().AskOutFor(ctx, r.Contact, r.ID)
 		if found {

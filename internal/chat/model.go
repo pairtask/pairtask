@@ -109,17 +109,19 @@ type Model struct {
 	outbox  []protocol.Message
 
 	timeline
-	inbox    inboxState
-	history  historyState
-	send     sendState
-	agents   agentView
-	statuses statusView
-	claims   claimView
-	rooms    []protocol.RoomInfo // rooms and members, from the snapshot (bounded)
-	roomsCut bool                // the snapshot left rooms out
-	pairing  pairingView         // the last /pair snapshot, never its code
-	reviews  reviewState         // review requests (#201): the last list and a request in flight
-	contacts contactState        // messages with paired workspaces (#210)
+	inbox     inboxState
+	history   historyState
+	send      sendState
+	agents    agentView
+	statuses  statusView
+	reviewSig reviewSignal  // pending reviews in the footer (#286)
+	sections  reviewPending // /reviews' paged sections (#286)
+	claims    claimView
+	rooms     []protocol.RoomInfo // rooms and members, from the snapshot (bounded)
+	roomsCut  bool                // the snapshot left rooms out
+	pairing   pairingView         // the last /pair snapshot, never its code
+	reviews   reviewState         // review requests (#201): the last list and a request in flight
+	contacts  contactState        // messages with paired workspaces (#210)
 
 	compose    composer
 	conv       conversations
@@ -292,8 +294,17 @@ func (m *Model) connectionUpdate(msg tea.Msg) (tea.Cmd, bool) {
 		return m.retry(msg), true
 	case receiptRetryMsg:
 		return m.retryReceipts(msg), true
+	}
+	return m.tickUpdate(msg)
+}
+
+// tickUpdate handles the chat's own timers.
+func (m *Model) tickUpdate(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg.(type) {
 	case statusTick:
 		return m.onStatusTick(), true
+	case ReviewBlinkMsg:
+		return m.onReviewBlink(), true
 	}
 	return nil, false
 }

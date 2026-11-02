@@ -136,6 +136,9 @@ func (m *Model) draftKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.endRecall()
 			return nil, true
 		}
+		if m.stopNav() {
+			return nil, true
+		}
 		m.cancelReply()
 		return nil, true
 	case "tab", "shift+tab":

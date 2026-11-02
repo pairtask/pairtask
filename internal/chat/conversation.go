@@ -274,6 +274,7 @@ func (m *Model) selectView(key viewKey) bool {
 	if key == m.conv.selected {
 		return true
 	}
+	m.leaveNav(key)
 	target := m.conv.saved[key]
 	if target == nil && !m.openable(key) {
 		return false

@@ -93,6 +93,27 @@ the optional `SCOPE` (up to 1 KiB of text) says what to focus on.
 
 Reviews show in a panel, not in the transcript.
 
+**Pending reviews.** With a broker that counts them (v18), the panel has four
+sections:
+- **Needs you:** requests from paired workspaces waiting for your decision, as `n1`, `n2`…
+- **Running here.**
+- **Asked by you:** your requests to paired workspaces, as `a1`…
+- **All reviews here:** the list and detail as before.
+
+A ref stays with its request for the session, and one that has left says so.
+- `/reviews more needs` or `/reviews more asked` reads a section's next page.
+- `/reviews open REF` opens that request's `⇄` tab and scrolls to it, reading back
+  from the newest page 20 pages at a time; running it again continues. Esc or
+  another tab stops it, and "history pruned" means the message really is gone.
+- Opening or viewing never approves, declines or acknowledges anything: you decide
+  with `/pair approve` or `decline`.
+
+While requests wait for you, the footer reads `● N need you · /reviews` in
+yellow, followed by how many are running and asked. The dot blinks until `/reviews`
+has shown the current set of requests, and again when that set changes (an
+arrival or a departure). In a `⇄` tab, a review request shows as a card: who
+asked whom, and `◆ … awaiting you` until it is decided.
+
 ## Messages and delivery
 
 Enter sends; Shift+Enter, Alt+Enter, Ctrl+J, or `\` then Enter inserts a new

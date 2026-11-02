@@ -58,6 +58,7 @@ var argumentChoices = map[string]func(*Model, argLine) []string{
 	"copy":    (*Model).copyCompletions,
 	"diagram": (*Model).diagramCompletions,
 	"review":  (*Model).reviewCompletions,
+	"reviews": (*Model).reviewsPanelCompletions,
 	"pair":    (*Model).pairCompletions,
 }
 
