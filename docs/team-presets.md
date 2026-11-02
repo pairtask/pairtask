@@ -4,6 +4,11 @@
 [agent roster experiment](agent-roster-experiment.md) and
 [runtime boundaries](runtime-boundaries-v2.md).
 
+**Update (2026-11-02):** the workflow now in use has three roles, lead, tester
+and builder, with a duo holding two roles in one agent. It is described in the
+[pairtask skill's operator reference](skills/pairtask/references/operator.md#how-a-live-session-runs).
+Creating a team from a preset is still not implemented.
+
 ## Principles
 
 1. **The duo is the working unit.** Every task is owned by one duo pairing a

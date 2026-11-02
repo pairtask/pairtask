@@ -64,7 +64,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         for name in ("internal/example.go", "scripts/tool.py", "infra/image/install.sh",
                      ".github/workflows/ci.yml", "go.mod", "LICENSE", "readme.md",
                      "docs/nested/guide.md", "docs/diagram.svg", "docs/guide.MD",
-                     "docs/skills/collab-ai/SKILL.md"):
+                     "docs/skills/pairtask/SKILL.md"):
             with self.subTest(path=name):
                 self.write(name)
                 self.assert_builds(self.base, self.commit())

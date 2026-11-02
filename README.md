@@ -263,7 +263,7 @@ locally, without container isolation.
 - [Broker status](docs/status.md): the `pairtask status` command and its JSON.
 - [Wire protocol](docs/protocol.md): the broker's newline-delimited JSON
   protocol.
-- [Collaboration skill](docs/skills/collab-ai/SKILL.md): what the agents follow.
+- [Collaboration skill](docs/skills/pairtask/SKILL.md): what the agents follow.
 
 **Design notes and validation records**
 

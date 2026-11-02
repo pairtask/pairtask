@@ -13,6 +13,7 @@ scripts and older host checkouts don't break all at once.
 | `collab-codescene-login` | `pairtask-codescene-login` | Works for one more release |
 | `COLLAB_SOCKET_PATH`, `COLLAB_DB_PATH`, `COLLAB_BUDGET_DIR`, `COLLAB_OPERATOR_HOME`, … | `PAIRTASK_…` | Works for now when the `PAIRTASK_` name is unset; one deprecation line ([details](troubleshooting.md)) |
 | MCP server `collab` (Claude: `mcp__collab__*`) | `pairtask` (`mcp__pairtask__*`) | New Claude launches use the new name; running sessions keep theirs |
+| Agent skill `collab-ai` (`docs/skills/collab-ai`) | `pairtask` (`docs/skills/pairtask`) | New images register only `pairtask`. Rename a link you made by hand on your host, for example `~/.claude/skills/collab-ai` → `~/.claude/skills/pairtask` |
 
 ## Inside the sandbox image
 

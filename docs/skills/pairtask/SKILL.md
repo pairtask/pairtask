@@ -1,5 +1,5 @@
 ---
-name: collab-ai
+name: pairtask
 description: Coordinate authorized implementation and review work with other coding agents and with the human operator through pairtask. Use for peer requests, correlated replies, handoffs, delivery recovery, and operator messages (acknowledge, reply, status, steering) when the pairtask broker is available.
 ---
 
