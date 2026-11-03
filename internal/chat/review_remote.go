@@ -34,42 +34,6 @@ type askFlags struct {
 	pin                                  *protocol.Revisions
 }
 
-// reviewFields splits a /review line into words, a word in double quotes
-// kept whole without them. A quote never closed stays in its word;
-// unclosedQuote refuses such a line first.
-func reviewFields(line string) []string {
-	var words []string
-	rest := strings.TrimSpace(line)
-	for rest != "" {
-		word, tail := nextReviewWord(rest)
-		words, rest = append(words, word), strings.TrimLeft(tail, " \t")
-	}
-	return words
-}
-
-// unclosedQuote: a word opens a quote it never closes.
-func unclosedQuote(line string) bool {
-	rest := strings.TrimSpace(line)
-	for rest != "" {
-		if rest[0] == '"' && !strings.Contains(rest[1:], `"`) {
-			return true
-		}
-		_, tail := nextReviewWord(rest)
-		rest = strings.TrimLeft(tail, " \t")
-	}
-	return false
-}
-
-func nextReviewWord(s string) (string, string) {
-	if quoted, tail, ok := strings.Cut(s[1:], `"`); s[0] == '"' && ok {
-		return quoted, tail
-	}
-	if i := strings.IndexAny(s, " \t"); i >= 0 {
-		return s[:i], s[i:]
-	}
-	return s, ""
-}
-
 // readReviewFlags takes the leading flags off a request's words.
 func readReviewFlags(words []string) (askFlags, []string, error) {
 	var f askFlags
@@ -95,16 +59,19 @@ func (f *askFlags) take(words []string) ([]string, error) {
 	if len(words) < 2 {
 		return nil, errPin
 	}
-	pin, err := parsePin(words[1])
+	pin, err := pinWord(words[1]).revisions()
 	f.pin = pin
 	return words[2:], err
 }
 
 var errPin = errors.New("--pin needs full commit IDs: BASE..HEAD, 40 or 64 lowercase hex each")
 
-// parsePin is BASE..HEAD as full commit IDs.
-func parsePin(word string) (*protocol.Revisions, error) {
-	base, head, ok := strings.Cut(word, "..")
+// pinWord is --pin's value: BASE..HEAD.
+type pinWord string
+
+// revisions are the pin as full commit IDs.
+func (w pinWord) revisions() (*protocol.Revisions, error) {
+	base, head, ok := strings.Cut(string(w), "..")
 	pin := &protocol.Revisions{Base: base, Head: head}
 	if !ok || protocol.ValidateRevisions(pin) != nil {
 		return nil, errPin
@@ -147,10 +114,13 @@ type pairedAgent struct {
 	workspace pairedName
 }
 
-// pairedReviewer splits AGENT@WORKSPACE at its last @, after the one
-// leading @ a mention drops; a word without one is a reviewer here.
-func pairedReviewer(word string) (pairedAgent, bool) {
-	name := strings.TrimPrefix(word, "@")
+// reviewerWord is a request's reviewer as typed.
+type reviewerWord string
+
+// paired splits AGENT@WORKSPACE at its last @, after the one leading @ a
+// mention drops; a word without one is a reviewer here.
+func (w reviewerWord) paired() (pairedAgent, bool) {
+	name := strings.TrimPrefix(string(w), "@")
 	i := strings.LastIndex(name, "@")
 	if i <= 0 || i == len(name)-1 {
 		return pairedAgent{}, false
@@ -188,7 +158,7 @@ func isRemoteReview(words []string) bool {
 	if err != nil || len(rest) < 2 {
 		return false
 	}
-	_, ok := pairedReviewer(rest[1])
+	_, ok := reviewerWord(rest[1]).paired()
 	return ok
 }
 
@@ -232,7 +202,7 @@ func (m *Model) remoteAskFor(words []string) (remoteAsk, *protocol.Revisions, st
 	if err != nil {
 		return remoteAsk{}, nil, err.Error()
 	}
-	who, _ := pairedReviewer(rest[1])
+	who, _ := reviewerWord(rest[1]).paired()
 	key, problem := m.pairedWorkspace(who.workspace)
 	if problem != "" {
 		return remoteAsk{}, nil, problem

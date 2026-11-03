@@ -62,10 +62,10 @@ func reviewArg(a argument) error {
 	case "cancel":
 		return wantFields(fields, 1, -1)
 	}
-	if unclosedQuote(string(a)) {
+	if reviewLine(a).unclosedQuote() {
 		return errors.New(`a quote opened with " is never closed`)
 	}
-	words := reviewFields(string(a))
+	words := reviewLine(a).fields()
 	if isRemoteReview(words) {
 		return checkRemoteReview(words)
 	}
@@ -148,7 +148,7 @@ var reviewFollowOps = map[string]func(*Model, []string) tea.Cmd{
 // requestReview asks for a review and shows the request in the panel at
 // once, before the broker answers.
 func (m *Model) requestReview(arg argument) tea.Cmd {
-	words := reviewFields(string(arg))
+	words := reviewLine(arg).fields()
 	if isRemoteReview(words) {
 		return m.requestRemoteReview(words) // to a paired workspace: queued with its messages
 	}
