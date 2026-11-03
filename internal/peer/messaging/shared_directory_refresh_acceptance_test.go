@@ -25,11 +25,15 @@ func (f *directoryReceiptFrames) Recv() ([]byte, error) {
 }
 
 func (f *directoryReceiptFrames) Send(b []byte) error {
-	kind, _ := messaging.Kind(b)
-	if f.loseReceipt && f.directoryReceived && kind == messaging.FrameEnd {
+	if f.loseReceipt && f.directoryReceipt(b) {
 		return io.ErrUnexpectedEOF
 	}
 	return f.scriptFrames.Send(b)
+}
+
+func (f *directoryReceiptFrames) directoryReceipt(b []byte) bool {
+	kind, _ := messaging.Kind(b)
+	return f.directoryReceived && kind == messaging.FrameEnd
 }
 
 func directoryRoundFrames(t *testing.T, agents []string) *directoryReceiptFrames {

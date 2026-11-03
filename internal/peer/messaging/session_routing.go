@@ -106,7 +106,7 @@ func (s Session) receiveDirectory(ctx context.Context, r *Result) error {
 	if err != nil {
 		return err
 	}
-	changed, err := replaceDirectory(ctx, rs, s.Contact, agents, s.Now())
+	changed, err := replaceDirectory(ctx, rs, directoryUpdate{s.Contact, agents, s.Now()})
 	if err != nil {
 		return err
 	}
@@ -120,13 +120,20 @@ type DirectoryReplacer interface {
 	ReplacePeerDirectory(ctx context.Context, contact string, agents []string, at time.Time) (bool, error)
 }
 
+// directoryUpdate is a contact's directory as received, and when.
+type directoryUpdate struct {
+	contact string
+	agents  []string
+	at      time.Time
+}
+
 // replaceDirectory stores the directory, and whether it changed; a store
 // that can't say reports no change.
-func replaceDirectory(ctx context.Context, rs RoutingStore, contact string, agents []string, at time.Time) (bool, error) {
+func replaceDirectory(ctx context.Context, rs RoutingStore, u directoryUpdate) (bool, error) {
 	if d, ok := rs.(DirectoryReplacer); ok {
-		return d.ReplacePeerDirectory(ctx, contact, agents, at)
+		return d.ReplacePeerDirectory(ctx, u.contact, u.agents, u.at)
 	}
-	return false, rs.SetPeerDirectory(ctx, contact, agents, at)
+	return false, rs.SetPeerDirectory(ctx, u.contact, u.agents, u.at)
 }
 
 // wrapStore marks every store error of a session, keeping the routing half
@@ -168,7 +175,7 @@ func (s routingSessionStore) SharedAgents(ctx context.Context, contact string) (
 
 // ReplacePeerDirectory is SetPeerDirectory, saying whether it changed.
 func (s routingSessionStore) ReplacePeerDirectory(ctx context.Context, contact string, agents []string, at time.Time) (bool, error) {
-	changed, err := replaceDirectory(ctx, s.rs, contact, agents, at)
+	changed, err := replaceDirectory(ctx, s.rs, directoryUpdate{contact, agents, at})
 	return changed, peerErr(err, ErrInvalid)
 }
 

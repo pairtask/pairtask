@@ -232,7 +232,7 @@ func (p *PeerMessages) ReplacePeerDirectory(ctx context.Context, contact string,
 		if err != nil || !changed {
 			return err // the same agents: nothing to write
 		}
-		return writeDirectory(ctx, tx, contact, agents, at)
+		return writeDirectory(ctx, tx, peerDirectory{contact, agents, at})
 	})
 	return changed, err
 }
@@ -248,14 +248,21 @@ func directoryDiffers(ctx context.Context, tx *sql.Tx, contact string, agents []
 	return !slices.Equal(before, slices.Compact(after)), nil
 }
 
-// writeDirectory replaces the stored directory with agents.
-func writeDirectory(ctx context.Context, tx *sql.Tx, contact string, agents []string, at time.Time) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?`, contact); err != nil {
+// peerDirectory is what a contact says it shares, as received at.
+type peerDirectory struct {
+	contact string
+	agents  []string
+	at      time.Time
+}
+
+// writeDirectory replaces the stored directory.
+func writeDirectory(ctx context.Context, tx *sql.Tx, d peerDirectory) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?`, d.contact); err != nil {
 		return err
 	}
-	for _, agent := range agents {
+	for _, agent := range d.agents {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO peer_directory (contact, agent, seen_at) VALUES (?, ?, ?)
-ON CONFLICT DO NOTHING`, contact, agent, msgStamp(at)); err != nil {
+ON CONFLICT DO NOTHING`, d.contact, agent, msgStamp(d.at)); err != nil {
 			return err
 		}
 	}
