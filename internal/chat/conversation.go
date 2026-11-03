@@ -275,6 +275,7 @@ func (m *Model) selectView(key viewKey) bool {
 		return true
 	}
 	m.leaveNav(key)
+	m.cancelLookup() // a review being looked up is for where the operator was
 	target := m.conv.saved[key]
 	if target == nil && !m.openable(key) {
 		return false

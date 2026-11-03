@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/chat"
+	"github.com/pairtask/pairtask/internal/forge"
+	"github.com/pairtask/pairtask/internal/forge/github"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 const operatorChatUsage = "usage: pairtask operator chat [--socket PATH] [--timeout 5s]"
@@ -24,12 +27,27 @@ func runOperatorChat(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintln(stderr, "pairtask operator chat requires an interactive terminal; use pairtask operator send, receive, ack or history instead")
 		return 2
 	}
-	m, err := chat.Run(ctx, chat.Options{Dial: chat.SocketDialer(socket, timeout)}, os.Stdin, output)
+	opts := chat.Options{Dial: chat.SocketDialer(socket, timeout), Bounds: chat.Bounds{ResolveChange: changeLookup(forge.Registry{
+		"github": github.New(github.Production()),
+	})}}
+	m, err := chat.Run(ctx, opts, os.Stdin, output)
 	if err != nil {
 		fmt.Fprintln(stderr, "operator chat:", err)
 		return 1
 	}
 	return reportChatExit(m.State(), stderr)
+}
+
+// changeLookup looks a change up with this operator's own code host
+// access, for a review asked of a paired workspace's agent (#297).
+func changeLookup(forges forge.Registry) chat.ResolveFunc {
+	return func(ctx context.Context, t protocol.ReviewTarget) (protocol.Revisions, error) {
+		f, ok := forges[t.Forge]
+		if !ok {
+			return protocol.Revisions{}, forge.Errorf(forge.ClassUnsupported, "no %s adapter here", t.Forge)
+		}
+		return f.Resolve(ctx, t)
+	}
 }
 
 // reportChatExit explains a failed start, or a send whose outcome is unknown.

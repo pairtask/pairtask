@@ -149,14 +149,33 @@ the `⇄` tab: `/pair approve ID` or `/pair decline ID`. `/pair status` also
 counts them per workspace under **Waiting for you**, so you see them without
 opening each tab. Undecided ones expire after 7 days.
 
-To ask one of their agents, pin the change to the commits you want reviewed:
+To ask one of their agents, name it with the workspace, from any tab:
 
 ```text
-/pair review codex-1 OWNER/REPO#12 BASE_SHA HEAD_SHA [what to focus on] [--publish] [--formal]
+/review OWNER/REPO#12 @codex-1@WORKSPACE [what to focus on]
+/review https://github.com/OWNER/REPO/pull/12 @codex-1@WORKSPACE
 ```
 
-An agent asks with its `request_review` tool. The reviewer reviews exactly
-those commits: if the pull request moved on, the review can't start.
+- Your side looks up the change's current base and head with your own GitHub
+  access (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth login`), pins them and sends.
+  The status line says which commits were pinned; nothing of your access goes
+  to the other workspace.
+- The reviewer reviews exactly those commits: if the pull request moved on,
+  the review can't start.
+- `--pin BASE..HEAD` pins them yourself (full commit IDs) and skips the lookup.
+- Nothing is published unless you ask: `--publish`, or `--formal` for a formal
+  approval or change request. They allow at most what they granted.
+- WORKSPACE is what you call it, the name it gives itself, or its key (at least
+  `sha256:` and 12 hex digits). A name more than one workspace answers to is
+  refused; completion offers each one a name that is its alone. Quote one with
+  a space: `"@codex-1@Home Office"`. An agent whose ID has a quote or a
+  backslash isn't offered and can't be named here: use `/pair review` in the
+  workspace's `⇄` tab.
+- Esc, another `/review` or another tab cancels a lookup; nothing is sent.
+
+In the workspace's `⇄` tab, `/pair review codex-1 OWNER/REPO#12 BASE_SHA HEAD_SHA
+[what to focus on] [--publish] [--formal]` does the same with the commits given.
+An agent asks with its `request_review` tool.
 
 Where the request stands comes back to you: waiting for their operator,
 declined, accepted, the verdict with its summary, and the published link.

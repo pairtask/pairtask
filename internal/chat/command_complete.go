@@ -95,14 +95,22 @@ func (m *Model) reviewerWords(current string) []string {
 			out = append(out, id)
 		}
 	}
-	return out
+	return append(out, m.pairedReviewerWords(current)...)
 }
 
 // reviewAgentWord: the word being typed is a request's AGENT, the one after
 // its flags and TARGET.
 func reviewAgentWord(words []string) bool {
-	positional := slices.DeleteFunc(slices.Clone(words), func(w string) bool { return strings.HasPrefix(w, "--") })
-	return len(positional) == 1
+	positional := 0
+	for i := 0; i < len(words); i++ {
+		switch {
+		case words[i] == "--pin":
+			i++ // its value is no position
+		case !strings.HasPrefix(words[i], "--"):
+			positional++
+		}
+	}
+	return positional == 1
 }
 
 // reviewIDs are the listed reviews' IDs, newest first as listed.

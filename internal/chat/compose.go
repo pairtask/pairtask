@@ -124,6 +124,20 @@ func (m *Model) editorKey(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
+// escape undoes the newest thing Esc can: a recall, a search for a
+// request, a review lookup, else a bound reply, keeping the text.
+func (m *Model) escape() {
+	switch {
+	case m.recalling != nil:
+		m.endRecall()
+	case m.stopNav():
+	case m.cancelLookup():
+		m.status = "review lookup cancelled: nothing sent"
+	default:
+		m.cancelReply()
+	}
+}
+
 // draftKey handles the keys the editor never sees: Enter sends, Esc ends a
 // recall, or else cancels a bound reply, keeping the text; Tab cycles
 // views, and Up/Down walk sent messages while a recall owns the draft.
@@ -132,14 +146,7 @@ func (m *Model) draftKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "enter":
 		return m.enter(), true
 	case "esc":
-		if m.recalling != nil {
-			m.endRecall()
-			return nil, true
-		}
-		if m.stopNav() {
-			return nil, true
-		}
-		m.cancelReply()
+		m.escape()
 		return nil, true
 	case "tab", "shift+tab":
 		m.switchView(msg.String())
