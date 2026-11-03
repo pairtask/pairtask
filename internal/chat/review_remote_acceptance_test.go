@@ -565,3 +565,35 @@ func TestReviewRemoteAcceptanceUnclosedQuoteNeverStartsLookupOrSends(t *testing.
 	chatEqual(t, "unclosed quote never resolves", len(lookup.calls), 0)
 	chatEqual(t, "unclosed quote never sends", h.m.State().InFlight, 0)
 }
+
+func TestReviewRemoteAcceptanceAnyNewReviewCommandFencesEarlierLookup(t *testing.T) {
+	for _, command := range []string{
+		"/review pairtask/pairtask#295 @local-only",
+		"/review status existing-local",
+		"/review cancel existing-local changed-plan",
+	} {
+		t.Run(command, func(t *testing.T) {
+			h, lookup := remoteHarness(t)
+			lookup.ignoreCancel = true
+			v2Command(h, "/review pairtask/pairtask#295 @remote-only@Office")
+			call := remoteCall(t, lookup)
+			v2Command(h, command)
+			req := h.take(protocol.TypeOperatorReview)
+			row := reviewChatRow("existing-local")
+			if req.ReviewOp == protocol.ReviewOpRequest {
+				row.ID, row.Spec = req.MessageID, *req.ReviewSpec
+			}
+			if req.ReviewOp == protocol.ReviewOpCancel {
+				row.State = protocol.ReviewCancelled
+			}
+			reviewChatSettle(h, req, row)
+			before := h.m.State().Status
+			remoteApplyLate(h, lookup)
+			chatEqual(t, "new review command prevents old remote send", h.m.State().InFlight, 0)
+			chatEqual(t, "new review command preserves its status", h.m.State().Status, before)
+			if call.ctx.Err() == nil {
+				t.Fatal("new review command did not cancel previous lookup context")
+			}
+		})
+	}
+}

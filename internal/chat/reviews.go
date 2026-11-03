@@ -110,8 +110,10 @@ func parseReviewRequest(fields []string) (protocol.ReviewSpec, string, error) {
 	return spec, reviewer, protocol.ValidateReviewSpec(spec)
 }
 
-// reviewCommand is /review: request, status or cancel.
+// reviewCommand is /review: request, status or cancel. Any of them leaves
+// a change lookup in flight behind: it is cancelled first (#297).
 func (m *Model) reviewCommand(arg argument) tea.Cmd {
+	m.cancelLookup()
 	if !m.session.HasCapability(protocol.CapabilityReviews) {
 		m.status = "this broker doesn't support review requests; upgrade it to use /review"
 		return nil
