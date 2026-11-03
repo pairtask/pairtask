@@ -28,22 +28,32 @@ func statusFeedbackAsked(t *testing.T, sender instantSide, owner *sessionProbe, 
 	})
 	operatorEqual(t, "paired card carries same foreign ID", card.ReviewOutcome.ReviewID, item.ReviewID)
 	operatorEqual(t, "paired card retains requester ID", card.ReviewOutcome.AskID, item.AskID)
-	counts := sender.f.send(protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpCounts})
-	if counts.ReviewCounts == nil {
-		t.Fatal("requester status has no authoritative counts")
-	}
 	active := 1
 	if want == "cancelled" {
 		active = 0
 	}
+	statusFeedbackCounts(t, sender, active)
+	statusFeedbackChanged(t, owner, sender.key)
+}
+
+func statusFeedbackCounts(t *testing.T, sender instantSide, active int) {
+	t.Helper()
+	counts := sender.f.send(protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpCounts})
+	if counts.ReviewCounts == nil {
+		t.Fatal("requester status has no authoritative counts")
+	}
 	operatorEqual(t, "requester active count tracks transition", counts.ReviewCounts.AskedOpen, active)
+}
+
+func statusFeedbackChanged(t *testing.T, owner *sessionProbe, contact string) {
+	t.Helper()
 	changed := false
 	for _, frame := range owner.barrier() {
 		if frame.text("type") != protocol.TypeEvent {
 			continue
 		}
 		event := sessionDecode[protocol.SessionEvent](t, frame, "event")
-		if event.Kind == protocol.EventContactMessagesChanged && event.ContactKey == sender.key {
+		if event.Kind == protocol.EventContactMessagesChanged && event.ContactKey == contact {
 			changed = true
 		}
 	}

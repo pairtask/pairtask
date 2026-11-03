@@ -44,18 +44,32 @@ func (m *Model) failedPage(page *protocol.ReviewFailedPage, first bool) tea.Cmd 
 // markFailuresShown turns red off when the open panel shows every failure
 // of the set the counts name.
 func (m *Model) markFailuresShown() {
-	f, c := &m.sections.failed, m.reviewSig.counts
-	switch {
-	case !m.reviewsPanelOpen() || c == nil || c.Failed == 0 || m.reviewSig.stale:
-		return
-	case m.sections.failToken == "":
-		return // no page read against current counts yet
-	case f.more || f.firstIn || len(f.items) != f.total:
-		return // not all of it read yet
-	case m.sections.failToken != c.FailedToken:
-		return // the pages show another set than the one counted now
+	if m.failuresCounted() && m.failedPagesComplete() {
+		m.failuresShown(m.reviewSig.counts.FailedToken)
 	}
-	m.failuresShown(c.FailedToken)
+}
+
+// failuresCounted: the panel is open, and counts read now name failures.
+func (m *Model) failuresCounted() bool {
+	c := m.reviewSig.counts
+	if !m.reviewsPanelOpen() || m.reviewSig.stale {
+		return false
+	}
+	return c != nil && c.Failed > 0
+}
+
+// failedPagesComplete: every page of one failure set is read, against
+// current counts, and that set is the one counted now.
+func (m *Model) failedPagesComplete() bool {
+	f := &m.sections.failed
+	if f.more || f.firstIn {
+		return false // not all of it read yet
+	}
+	if len(f.items) != f.total {
+		return false
+	}
+	token := m.sections.failToken
+	return token != "" && token == m.reviewSig.counts.FailedToken
 }
 
 // syncFailedSection keeps an open panel's Failed section with the counts

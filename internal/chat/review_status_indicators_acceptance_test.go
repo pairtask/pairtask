@@ -317,6 +317,40 @@ func TestReviewStatusIndicatorsAcceptanceDetailRowsUseSameProcessAndFailureMappi
 	}
 }
 
+func statusReconnectResponse(h *chatHarness, req protocol.Message) {
+	h.t.Helper()
+	switch req.Type {
+	case protocol.TypeOperatorReceive:
+		h.reply(req, chatInbox())
+	case protocol.TypeOperatorHistory:
+		h.reply(req, chatHistory())
+	case protocol.TypeOperatorPairing:
+		h.reply(req, contactChatReply())
+	case protocol.TypeOperatorReview:
+		reviewPendingResponse(h, req, protocol.ReviewAwaitingPage{})
+	default:
+		h.t.Fatalf("unexpected reconnect request: %+v", req)
+	}
+}
+
+func statusDrainReconnect(h *chatHarness) protocol.Message {
+	h.t.Helper()
+	var current protocol.Message
+	for i := 0; i < 6; {
+		h.await(func() bool { return len(h.requests) > 0 })
+		req := h.take(h.requests[0].Type)
+		if req.Type == protocol.TypeOperatorReview && req.ReviewOp == protocol.ReviewOpFailed {
+			current = req
+		} else {
+			statusReconnectResponse(h, req)
+		}
+		if req.Type != protocol.TypeOperatorPairing {
+			i++
+		}
+	}
+	return current
+}
+
 func TestReviewStatusIndicatorsAcceptanceReconnectCannotReuseFailurePageEvidence(t *testing.T) {
 	h := statusFailureHarness(t, 1)
 	old := statusOpenFailures(h)
@@ -324,29 +358,7 @@ func TestReviewStatusIndicatorsAcceptanceReconnectCannotReuseFailurePageEvidence
 	h.quiet.hold++
 	snapshot := h.take(protocol.TypeOperatorSnapshot)
 	h.reply(snapshot, protocol.Message{Type: protocol.TypeOperatorSnapshot, Snapshot: &protocol.OperatorSnapshot{Watermark: protocol.Watermark{Epoch: "epoch", Revision: 3}, ReviewCounts: &protocol.ReviewCounts{Failed: 1, FailedToken: "set-B", AskedActive: statusActive(0)}}})
-	var current protocol.Message
-	for i := 0; i < 6; {
-		h.await(func() bool { return len(h.requests) > 0 })
-		req := h.take(h.requests[0].Type)
-		switch req.Type {
-		case protocol.TypeOperatorReceive:
-			h.reply(req, chatInbox())
-		case protocol.TypeOperatorHistory:
-			h.reply(req, chatHistory())
-		case protocol.TypeOperatorPairing:
-			h.reply(req, contactChatReply())
-			continue
-		case protocol.TypeOperatorReview:
-			if req.ReviewOp == protocol.ReviewOpFailed {
-				current = req
-			} else {
-				reviewPendingResponse(h, req, protocol.ReviewAwaitingPage{})
-			}
-		default:
-			t.Fatalf("unexpected reconnect request: %+v", req)
-		}
-		i++
-	}
+	current := statusDrainReconnect(h)
 	h.quiet.hold--
 	if current.RequestID == "" {
 		t.Fatal("reconnect omitted fresh failure section read")
