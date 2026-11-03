@@ -139,6 +139,10 @@ func (m *Model) draftKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		if m.stopNav() {
 			return nil, true
 		}
+		if m.cancelLookup() {
+			m.status = "review lookup cancelled: nothing sent"
+			return nil, true
+		}
 		m.cancelReply()
 		return nil, true
 	case "tab", "shift+tab":
