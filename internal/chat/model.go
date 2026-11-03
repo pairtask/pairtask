@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"github.com/charmbracelet/colorprofile"
 	"io"
 	"strconv"
 	"time"
@@ -115,6 +116,7 @@ type Model struct {
 	agents    agentView
 	statuses  statusView
 	reviewSig reviewSignal  // pending reviews in the footer (#286)
+	mono      bool          // the terminal shows no colour, as its profile says (#298)
 	sections  reviewPending // /reviews' paged sections (#286)
 	claims    claimView
 	rooms     []protocol.RoomInfo // rooms and members, from the snapshot (bounded)
@@ -316,6 +318,8 @@ func (m *Model) terminalUpdate(msg tea.Msg) tea.Cmd {
 		m.resize(msg)
 	case tea.KeyboardEnhancementsMsg:
 		m.keyboard = msg.SupportsKeyDisambiguation()
+	case tea.ColorProfileMsg:
+		m.mono = msg.Profile <= colorprofile.ASCII
 	case tea.PasteMsg:
 		return m.paste(msg)
 	case tea.MouseWheelMsg:

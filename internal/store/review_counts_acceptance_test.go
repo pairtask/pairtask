@@ -137,6 +137,11 @@ func TestReviewCountsStoreAcceptanceEmptyAndFailedQueriesAreDistinct(t *testing.
 	db, _ := messageFixture(t)
 	counts, err := db.ReviewCounts(context.Background())
 	pairOK(t, err)
+	if counts.AskedActive == nil {
+		t.Fatal("empty current counts omitted asked_active")
+	}
+	pairEqual(t, *counts.AskedActive, 0)
+	counts.AskedActive = nil
 	pairEqual(t, counts, protocol.ReviewCounts{})
 	pairOK(t, db.Close())
 	_, err = db.ReviewCounts(context.Background())

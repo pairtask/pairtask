@@ -94,7 +94,10 @@ the optional `SCOPE` (up to 1 KiB of text) says what to focus on.
 Reviews show in a panel, not in the transcript.
 
 **Pending reviews.** With a broker that counts them (v18), the panel has four
-sections:
+sections, five with failures:
+- **Failed** (v19, only while something failed): reviews here whose publication
+  failed or is uncertain, and your requests that failed, as `f1`, `f2`…
+  `/reviews open f1` shows the review here, or the request's `⇄` tab.
 - **Needs you:** requests from paired workspaces waiting for your decision, as `n1`, `n2`…
 - **Running here.**
 - **Asked by you:** your requests to paired workspaces, as `a1`…, with their review ID
@@ -102,18 +105,40 @@ sections:
 - **All reviews here:** the list and detail as before.
 
 A ref stays with its request for the session, and one that has left says so.
-- `/reviews more needs` or `/reviews more asked` reads a section's next page.
+- `/reviews more needs`, `/reviews more asked` or `/reviews more failed` reads a section's next page.
 - `/reviews open REF` opens that request's `⇄` tab and scrolls to it, reading back
   from the newest page 20 pages at a time; running it again continues. Esc or
   another tab stops it, and "history pruned" means the message really is gone.
 - Opening or viewing never approves, declines or acknowledges anything: you decide
   with `/pair approve` or `decline`.
 
-While requests wait for you, the footer reads `● N need you · /reviews` in
-yellow, followed by how many are running and asked. The dot blinks until `/reviews`
-has shown the current set of requests, and again when that set changes (an
-arrival or a departure). In a `⇄` tab, a review request shows as a card: who
-asked whom, and `◆ … awaiting you` until it is decided.
+**Review dots** (#298). Every review and request has a dot, the same one in the
+footer, in `/reviews` rows and section headings, in `/review status` and on a
+request's `⇄` card. Green and yellow are a process: they blink for as long as it
+lasts, whether or not you have looked. Red is a state: it stays still.
+
+| Dot | Means | Without colour (`NO_COLOR`) |
+|---|---|---|
+| yellow, blinking | waiting for your decision | `?` |
+| green, blinking | running here, or your request still under way there | `●` |
+| red, still | failed: a publication failed or is uncertain, or your request was refused, unsent, expired or its workspace removed | `!` |
+| none | done without a problem: completed, published, declined, cancelled | |
+
+The footer leads with the process: `● N need you · /reviews · M running · K asked`
+while requests wait for you, else `● M running · K asked · /reviews`. With
+failures, `● N failed` comes first, in red, beside the process dot, never
+instead of it. Red goes off once `/reviews` has shown every failure of the
+current set: all of its pages, while the panel is open. A new failure, a retry
+or a new attempt brings it back. The failed rows stay red until they are dealt
+with. Opening or viewing never retries, approves or acknowledges anything.
+
+Your requests to paired workspaces read as theirs: `requested there`,
+`accepted by AGENT@WORKSPACE`, `submitted there`, `cancelled there`… A finished
+request keeps its row and its label. In a `⇄` tab, a review request shows as a
+card: who asked whom, and `◆ … awaiting you` until it is decided.
+
+An older broker has no red (v18), or no footer signal at all (before v18); without
+review counts the cards' dots don't blink.
 
 ## Messages and delivery
 

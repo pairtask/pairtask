@@ -50,11 +50,17 @@ const (
 	// ReviewOpCounts reads the snapshot's review_counts again, without a
 	// new baseline.
 	ReviewOpCounts = "counts"
+	// ReviewOpFailed pages the reviews and requests that failed (#298).
+	ReviewOpFailed = "failed"
 )
 
 // CapabilityReviewCounts: the snapshot counts pending reviews, and
 // operator_review serves awaiting and asked.
 const CapabilityReviewCounts = "review_counts"
+
+// CapabilityReviewFailures: review_counts also count failures and the
+// asks still active, and operator_review serves failed (#298).
+const CapabilityReviewFailures = "review_failures"
 
 // ReviewPendingPage bounds one page of awaiting or asked reviews.
 const ReviewPendingPage = 32
@@ -67,6 +73,12 @@ type ReviewCounts struct {
 	AwaitingToken string `json:"awaiting_token"`
 	Running       int    `json:"running"`
 	AskedOpen     int    `json:"asked_open"`
+	// From a broker serving review_failures (#298): what failed, with a
+	// token naming each failure as it stands, and the open asks still in
+	// progress, nil from an older broker.
+	Failed      int    `json:"failed,omitempty"`
+	FailedToken string `json:"failed_token,omitempty"`
+	AskedActive *int   `json:"asked_active,omitempty"`
 }
 
 // ReviewAwaitingItem is a paired workspace's review request waiting for
@@ -114,6 +126,38 @@ type ReviewAskedPage struct {
 	Total int               `json:"total"`
 	More  bool              `json:"more"`
 	Next  string            `json:"next"`
+}
+
+// ReviewFailedItem is a review here whose publication failed or is
+// uncertain (kind review), or this side's request to a paired workspace
+// that failed (kind ask): its state, what it reviews, and when.
+type ReviewFailedItem struct {
+	Kind       string    `json:"kind"`
+	Contact    string    `json:"contact"` // "" for a review here
+	ID         string    `json:"id"`      // the review_id, or the ask_id
+	Cursor     int64     `json:"cursor"`  // the ask's ⇄ cursor, 0 otherwise
+	State      string    `json:"state"`   // the ask's state, or the review's publication state
+	Reviewer   string    `json:"reviewer"`
+	Repository string    `json:"repository"`
+	Change     string    `json:"change"`
+	Reason     string    `json:"reason,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// Failed item kinds.
+const (
+	FailedReview = "review"
+	FailedAsk    = "ask"
+)
+
+// ReviewFailedPage is one page of failures; Token names the whole set as
+// it stood when the page was read, as review_counts' failed_token does.
+type ReviewFailedPage struct {
+	Items []ReviewFailedItem `json:"items"`
+	Total int                `json:"total"`
+	More  bool               `json:"more"`
+	Next  string             `json:"next"`
+	Token string             `json:"token"`
 }
 
 // Review states. requested and ready wait for the reviewer; in_review runs

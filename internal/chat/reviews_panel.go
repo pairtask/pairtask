@@ -19,7 +19,7 @@ func (m *Model) reviewRows() []string {
 		return append(rows, m.pendingRows(*p)...)
 	}
 	if m.pendingAvailable() {
-		rows[0] = titleStyle.Render("Reviews") + mutedStyle.Render("  (/reviews open REF · /reviews more needs|asked · Esc closes)")
+		rows[0] = titleStyle.Render("Reviews") + mutedStyle.Render("  (/reviews open REF · /reviews more needs|asked|failed · Esc closes)")
 		return append(rows, m.sectionRows()...)
 	}
 	return append(rows, m.listRows()...)
@@ -32,7 +32,7 @@ func (m *Model) listRows() []string {
 	}
 	var rows []string
 	for _, r := range m.reviews.list {
-		rows = append(rows, reviewRow(r))
+		rows = append(rows, m.reviewLine(r))
 	}
 	if m.reviews.partial {
 		rows = append(rows, fmt.Sprintf("  (list is partial: %d more not shown)", m.reviews.total-len(m.reviews.list)))
@@ -71,7 +71,7 @@ func reviewShort(id string) string {
 // the agent's verdict and findings as Markdown at the panel's width, and,
 // apart from them, what the forge recorded.
 func (m *Model) reviewDetail(r protocol.ReviewView) []string {
-	rows := []string{reviewRow(r), "", sectionTitle("Target")}
+	rows := []string{m.reviewLine(r), "", sectionTitle("Target")}
 	rows = append(rows, targetRows(r.Spec)...)
 	rows = append(rows, "  local review ID "+safe(r.ID))
 	if r.RemoteRequest != "" {

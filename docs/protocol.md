@@ -440,6 +440,34 @@ operator (#286), over every row and never a page:
   message that carried it, the reviewer, the state, the verdict, the URL and
   whether it is settled. Both are read only.
 
+## Review failures (v19)
+
+A broker with capability `review_failures` also counts what failed (#298),
+and pages it:
+
+- `review_counts` gains `failed`, `failed_token` and `asked_active`.
+  - `failed` counts the failures: reviews here whose publication failed or is
+    uncertain, and this side's requests whose state is `publication_failed`,
+    `uncertain`, `refused`, `unsent`, `expired`, `review_expired` or
+    `contact_removed`, whether settled or not.
+  - `failed_token` names that set as each failure stands: its attempt, write
+    intent or outcome number, state and last change. A retry, a new attempt or
+    a new outcome changes it, even at the same count. It is `""` for none.
+  - `asked_active` counts the open requests still in progress, the open ones
+    not failed. An older broker leaves all three out.
+  - All the counts are read in one transaction.
+- `operator_review` with `review_op: "failed"` and an optional `review_before`
+  returns one page in `review_failed`, with the same shape as the others plus
+  `token`. The page's items, `total` and `token` come from one read.
+  - Items are newest change first, then by kind, contact and ID.
+  - Each names its `kind` (`review` or `ask`), the contact (`""` for a review
+    here), the ID, the cursor of the ask's message, the state (the review's
+    publication state, or the ask's state), the reviewer, the repository and
+    change, any reason, and when it last changed.
+  - It is read only: nothing is retried or resolved.
+- Nothing ages a failure out beyond the retention its review or request
+  already has.
+
 ## Acknowledging a paired workspace's messages (v17)
 
 A broker with capability `contact_acks` keeps the operator's own

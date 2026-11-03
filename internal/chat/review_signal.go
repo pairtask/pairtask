@@ -1,8 +1,8 @@
 package chat
 
 import (
-	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,12 +10,13 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-// Pending reviews stand out (#286): the footer says how many review
-// requests wait for the operator's decision, in yellow until each is
-// decided, with a dot that blinks until /reviews has shown the current set;
-// it also counts reviews running here and requests asked of paired
-// workspaces. The counts are the broker's: the snapshot's at a baseline,
-// read again on each change, never guessed and never zero for unknown.
+// Pending reviews stand out (#286, #298): the footer says how many review
+// requests wait for the operator's decision, how many reviews run here and
+// how many requests to paired workspaces are open, led by a dot that blinks
+// while any of that is under way, and how many failed, in red until
+// /reviews has shown every one. The counts are the broker's: the
+// snapshot's at a baseline, read again on each change, never guessed and
+// never zero for unknown.
 
 const kindReviewCounts = "review counts"
 
@@ -33,26 +34,77 @@ type reviewSignal struct {
 	inFlight bool
 	again    bool   // a change arrived while a read was in flight
 	gen      uint64 // the baseline's generation: an older read's answer is dropped
-	seen     string // the awaiting set /reviews last showed
+	failSeen string // the failure set /reviews last showed in full
 	dotOff   bool
 	ticking  bool
 }
 
-// ReviewSignalView is the footer signal, for tests and the CLI.
+// ReviewSignalView is the footer signal, for tests and the CLI. Process is
+// "yellow" while requests wait for the operator, "green" while reviews or
+// requests are under way, "" for neither; RedShown while failures /reviews
+// hasn't shown in full exist.
 type ReviewSignalView struct {
 	Known, Stale                    bool
 	AwaitingYou, Running, AskedOpen int
 	Blinking, DotShown              bool
+	Process                         string
+	Failed                          int
+	RedShown                        bool
 }
 
 func (m *Model) reviewSignalView() ReviewSignalView {
 	s := &m.reviewSig
-	v := ReviewSignalView{Known: s.counts != nil, Stale: s.stale, Blinking: m.reviewBlinking()}
+	v := ReviewSignalView{Known: s.counts != nil, Stale: s.stale}
 	if s.counts != nil {
 		v.AwaitingYou, v.Running, v.AskedOpen = s.counts.AwaitingYou, s.counts.Running, s.counts.AskedOpen
+		v.Failed, v.RedShown = m.reviewFailures()
 	}
-	v.DotShown = v.AwaitingYou > 0 && !(v.Blinking && s.dotOff)
+	if s.counts != nil && !s.stale {
+		v.Process = m.reviewProcess() // stale counts claim nothing by colour
+	} else {
+		v.RedShown = false
+	}
+	v.Blinking = v.Process != ""
+	v.DotShown = v.Blinking && !s.dotOff
 	return v
+}
+
+// failuresServed: the broker counts and pages failures (#298).
+func (m *Model) failuresServed() bool {
+	return m.session.HasCapability(protocol.CapabilityReviewFailures)
+}
+
+// activeAsks are this side's requests under way: the broker's count of
+// open ones not failed, or, from an older broker, every open one.
+func (m *Model) activeAsks() int {
+	c := m.reviewSig.counts
+	if m.failuresServed() && c.AskedActive != nil {
+		return *c.AskedActive
+	}
+	return c.AskedOpen
+}
+
+// reviewProcess is what is under way: requests waiting for the operator
+// first, then reviews or requests in progress.
+func (m *Model) reviewProcess() string {
+	c := m.reviewSig.counts
+	switch {
+	case c.AwaitingYou > 0:
+		return "yellow"
+	case c.Running+m.activeAsks() > 0:
+		return "green"
+	}
+	return ""
+}
+
+// reviewFailures are how many failed, and whether red shows: some failed
+// that /reviews hasn't shown in full.
+func (m *Model) reviewFailures() (int, bool) {
+	c := m.reviewSig.counts
+	if !m.failuresServed() {
+		return 0, false
+	}
+	return c.Failed, c.Failed > 0 && c.FailedToken != m.reviewSig.failSeen
 }
 
 // setReviewCounts installs a baseline's counts: none from an older broker.
@@ -96,21 +148,22 @@ func (m *Model) reviewCountsResult(req pendingRequest, resp protocol.Message) te
 	if resp.Type == protocol.TypeOperatorReviewResult && resp.ReviewCounts != nil {
 		c := *resp.ReviewCounts
 		s.counts, s.stale = &c, false
+		m.markFailuresShown() // the shown set may be the one now counted
 	} else {
 		s.stale = s.counts != nil
 	}
 	again := s.again
 	s.again = false
 	if again {
-		return tea.Batch(m.refreshReviewCounts(), m.reviewBlinkTicker())
+		return tea.Batch(m.refreshReviewCounts(), m.reviewBlinkTicker(), m.syncFailedSection())
 	}
-	return m.reviewBlinkTicker()
+	return tea.Batch(m.reviewBlinkTicker(), m.syncFailedSection())
 }
 
-// reviewBlinking: requests await the operator that /reviews hasn't shown.
+// reviewBlinking: something is under way, as counts read now say; it
+// blinks for as long as it lasts, whether or not /reviews showed it.
 func (m *Model) reviewBlinking() bool {
-	c := m.reviewSig.counts
-	return c != nil && c.AwaitingYou > 0 && c.AwaitingToken != m.reviewSig.seen
+	return m.reviewSig.counts != nil && !m.reviewSig.stale && m.reviewProcess() != ""
 }
 
 // reviewBlinkTicker schedules the next blink while the dot blinks.
@@ -123,7 +176,8 @@ func (m *Model) reviewBlinkTicker() tea.Cmd {
 	return tea.Tick(reviewBlinkEvery, func(time.Time) tea.Msg { return ReviewBlinkMsg{} })
 }
 
-// onReviewBlink turns the dot over while it blinks; once shown, it stays.
+// onReviewBlink turns the dot over while something is under way; once
+// nothing is, it resets, lit for whatever comes next.
 func (m *Model) onReviewBlink() tea.Cmd {
 	s := &m.reviewSig
 	s.ticking = false
@@ -135,47 +189,29 @@ func (m *Model) onReviewBlink() tea.Cmd {
 	return m.reviewBlinkTicker()
 }
 
-// reviewsShown: /reviews showed the set with this token; the dot stops
-// blinking while the counts name that set.
-func (m *Model) reviewsShown(token string) {
-	m.reviewSig.seen, m.reviewSig.dotOff = token, false
+// failuresShown: /reviews showed every failure of the set with this
+// token; red stays off while the counts name that set.
+func (m *Model) failuresShown(token string) {
+	m.reviewSig.failSeen = token
 }
 
 // reviewReminder is the footer's part, "" when nothing is pending.
 func (m *Model) reviewReminder() string {
 	v := m.reviewSignalView()
+	quiet := v.Process == "" && !v.RedShown && v.AwaitingYou+v.Running+v.AskedOpen == 0
 	switch {
 	case !v.Known:
 		return ""
-	case v.AwaitingYou+v.Running+v.AskedOpen == 0 && v.Stale:
+	case quiet && v.Stale:
 		return bandStyle.Render("review counts stale · /reviews") // a failed read never looks like nothing pending
-	case v.AwaitingYou+v.Running+v.AskedOpen == 0:
+	case quiet:
 		return ""
 	}
-	text := ""
-	if v.AwaitingYou > 0 {
-		dot := "  "
-		if v.DotShown {
-			dot = "● "
-		}
-		text = bandWarn.Render(fmt.Sprintf("%s%d need you · /reviews", dot, v.AwaitingYou))
-	}
-	return text + bandStyle.Render(reviewTail(v))
-}
-
-// reviewTail is the muted counts after the reviews needing the operator.
-func reviewTail(v ReviewSignalView) string {
-	tail := ""
-	if v.Running > 0 {
-		tail += fmt.Sprintf(" · %d running", v.Running)
-	}
-	if v.AskedOpen > 0 {
-		tail += fmt.Sprintf(" · %d asked", v.AskedOpen)
-	}
+	parts := m.footerParts(v)
 	if v.Stale {
-		tail += " · counts stale"
+		parts = append(parts, bandStyle.Render("counts stale"))
 	}
-	return tail
+	return strings.Join(parts, bandStyle.Render(" · "))
 }
 
 // reviewsMoved: a review or a contact's messages changed. The counts are
