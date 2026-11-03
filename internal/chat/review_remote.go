@@ -141,24 +141,31 @@ func (f askFlags) remotePolicy() (publish, formal bool) {
 	return f.publish || f.formal, f.formal
 }
 
+// pairedAgent is an agent of a paired workspace as a request names it.
+type pairedAgent struct {
+	agent     string
+	workspace pairedName
+}
+
 // pairedReviewer splits AGENT@WORKSPACE at its last @, after the one
 // leading @ a mention drops; a word without one is a reviewer here.
-func pairedReviewer(word string) (agent, workspace string, ok bool) {
+func pairedReviewer(word string) (pairedAgent, bool) {
 	name := strings.TrimPrefix(word, "@")
 	i := strings.LastIndex(name, "@")
 	if i <= 0 || i == len(name)-1 {
-		return "", "", false
+		return pairedAgent{}, false
 	}
-	return name[:i], name[i+1:], true
+	return pairedAgent{agent: name[:i], workspace: pairedName(name[i+1:])}, true
 }
 
 // remoteAsk is a review request for a paired workspace's agent, its
 // workspace fixed by key.
 type remoteAsk struct {
-	key, agent, workspace string
-	target                protocol.ReviewTarget
-	scope                 string
-	publish, formal       bool
+	key             identityKey
+	who             pairedAgent
+	target          protocol.ReviewTarget
+	scope           string
+	publish, formal bool
 }
 
 // remoteLookup is the change lookup in flight, if any.
@@ -181,7 +188,7 @@ func isRemoteReview(words []string) bool {
 	if err != nil || len(rest) < 2 {
 		return false
 	}
-	_, _, ok := pairedReviewer(rest[1])
+	_, ok := pairedReviewer(rest[1])
 	return ok
 }
 
@@ -225,13 +232,13 @@ func (m *Model) remoteAskFor(words []string) (remoteAsk, *protocol.Revisions, st
 	if err != nil {
 		return remoteAsk{}, nil, err.Error()
 	}
-	agent, workspace, _ := pairedReviewer(rest[1])
-	key, problem := m.pairedWorkspace(workspace)
+	who, _ := pairedReviewer(rest[1])
+	key, problem := m.pairedWorkspace(who.workspace)
 	if problem != "" {
 		return remoteAsk{}, nil, problem
 	}
 	publish, formal := f.remotePolicy()
-	return remoteAsk{key: key, agent: agent, workspace: workspace, target: target, scope: strings.Join(rest[2:], " "),
+	return remoteAsk{key: key, who: who, target: target, scope: strings.Join(rest[2:], " "),
 		publish: publish, formal: formal}, f.pin, ""
 }
 
@@ -305,55 +312,59 @@ func lookupFailure(err error) string {
 // command ran, if it can still take one.
 func (m *Model) sendRemoteReview(ask remoteAsk, pins protocol.Revisions) tea.Cmd {
 	if !m.contactTakesRequests(ask.key) {
-		m.status = safe(ask.workspace) + " can't take requests now (not confirmed, paused or removed): not sent"
+		m.status = safe(string(ask.who.workspace)) + " can't take requests now (not confirmed, paused or removed): not sent"
 		return nil
 	}
-	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpReviewAsk, ContactKey: ask.key,
-		ContactTo: []string{ask.agent}, MessageID: uuid.NewString(),
+	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpReviewAsk, ContactKey: string(ask.key),
+		ContactTo: []string{ask.who.agent}, MessageID: uuid.NewString(),
 		ReviewAsk: &protocol.ReviewAsk{ReviewTarget: ask.target, Base: pins.Base, Head: pins.Head, Scope: ask.scope,
 			Publish: ask.publish, Formal: ask.formal}}
 	if problem := validReviewWords(msg); problem != "" {
 		m.status = problem
 		return nil
 	}
-	return m.request(kindRemoteReview, msg, ask.key, msg.MessageID, m.sentRemoteStatus(ask, pins))
+	return m.request(kindRemoteReview, msg, string(ask.key), msg.MessageID, m.sentRemoteStatus(ask, pins))
 }
 
 // contactTakesRequests: the contact is known, confirmed and not paused.
-func (m *Model) contactTakesRequests(key string) bool {
-	c, ok := m.contact(key)
+func (m *Model) contactTakesRequests(key identityKey) bool {
+	c, ok := m.contact(string(key))
 	return ok && c.Confirmed && c.PausedAt == nil
 }
 
 // sentRemoteStatus says what was asked: of whom, which change at which
 // commits, what to publish, and when the agent isn't listed as shared.
 func (m *Model) sentRemoteStatus(ask remoteAsk, pins protocol.Revisions) string {
-	status := fmt.Sprintf("asked %s@%s to review %s at %s (base %s) · %s", safe(ask.agent), safe(ask.workspace), targetName(ask.target),
-		shortSHA7(pins.Head), shortSHA7(pins.Base), policyWords(ask.publish, ask.formal))
-	if !slices.Contains(m.theirDirectory(ask.key), ask.agent) {
-		status += " · " + safe(ask.agent) + " isn't listed as shared by " + safe(ask.workspace) +
-			" as last synced (that list can be out of date); they decide"
+	agent, workspace := safe(ask.who.agent), safe(string(ask.who.workspace))
+	status := fmt.Sprintf("asked %s@%s to review %s %s · %s", agent, workspace, targetName(ask.target), pinsWords(pins), ask.policyWords())
+	if !slices.Contains(m.theirDirectory(ask.key), ask.who.agent) {
+		status += " · " + agent + " isn't listed as shared by " + workspace + " as last synced (that list can be out of date); they decide"
 	}
 	return status
 }
 
-func policyWords(publish, formal bool) string {
+// policyWords say what the request asks to publish.
+func (a remoteAsk) policyWords() string {
 	switch {
-	case formal:
+	case a.formal:
 		return "formal"
-	case publish:
+	case a.publish:
 		return "publish"
 	}
 	return "no publish"
 }
 
-func shortSHA7(sha string) string { return sha[:min(len(sha), 7)] }
+// pinsWords are the pinned head and base, short.
+func pinsWords(pins protocol.Revisions) string {
+	short := func(sha string) string { return sha[:min(len(sha), 7)] }
+	return "at " + short(pins.Head) + " (base " + short(pins.Base) + ")"
+}
 
 func targetName(t protocol.ReviewTarget) string { return safe(t.Repository) + "#" + safe(t.Change) }
 
 // theirDirectory is what the contact last said it shares.
-func (m *Model) theirDirectory(key string) []string {
-	if t := m.contacts.threads[key]; t != nil {
+func (m *Model) theirDirectory(key identityKey) []string {
+	if t := m.contacts.threads[string(key)]; t != nil {
 		return t.directory
 	}
 	return nil

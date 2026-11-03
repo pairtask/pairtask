@@ -17,6 +17,13 @@ import (
 // keyPrefixDigits is the shortest key prefix that names a workspace.
 const keyPrefixDigits = 12
 
+// pairedName is a word naming a paired workspace: one of its names, its
+// key or a key prefix; identityKey is a contact's full key.
+type (
+	pairedName  string
+	identityKey string
+)
+
 // pairedContacts are the contacts as the pairing snapshot last listed them.
 func (m *Model) pairedContacts() []protocol.PairingContactView {
 	if s := m.pairing.snapshot; s != nil {
@@ -27,42 +34,42 @@ func (m *Model) pairedContacts() []protocol.PairingContactView {
 
 // pairedWorkspace is the one contact a name picks out, by key, or why
 // none does.
-func (m *Model) pairedWorkspace(name string) (string, string) {
+func (m *Model) pairedWorkspace(name pairedName) (identityKey, string) {
 	contacts := m.pairedContacts()
-	var keys []string
+	var keys []identityKey
 	for _, c := range contacts {
 		if namesContact(c, name) {
-			keys = append(keys, c.IdentityKey)
+			keys = append(keys, identityKey(c.IdentityKey))
 		}
 	}
 	switch len(keys) {
 	case 0:
-		return "", "no paired workspace " + safe(name)
+		return "", "no paired workspace " + safe(string(name))
 	case 1:
 		return keys[0], ""
 	}
 	tokens := make([]string, len(keys))
 	for i, key := range keys {
-		tokens[i] = safe(routeToken(contacts, key))
+		tokens[i] = safe(string(routeToken(contacts, key)))
 	}
-	return "", safe(name) + " names several paired workspaces: " + strings.Join(tokens, ", ")
+	return "", safe(string(name)) + " names several paired workspaces: " + strings.Join(tokens, ", ")
 }
 
 // namesContact: name is one of the contact's names, its key, or a long
 // enough prefix of its key.
-func namesContact(c protocol.PairingContactView, name string) bool {
+func namesContact(c protocol.PairingContactView, name pairedName) bool {
 	if name == "" {
 		return false
 	}
-	if slices.Contains([]string{c.LocalName, c.Name, c.IdentityKey}, name) {
+	if slices.Contains([]string{c.LocalName, c.Name, c.IdentityKey}, string(name)) {
 		return true
 	}
-	return keyPrefix(name) && strings.HasPrefix(c.IdentityKey, name)
+	return keyPrefix(name) && strings.HasPrefix(c.IdentityKey, string(name))
 }
 
 // keyPrefix: "sha256:" and at least keyPrefixDigits hex digits.
-func keyPrefix(name string) bool {
-	digits, ok := strings.CutPrefix(name, "sha256:")
+func keyPrefix(name pairedName) bool {
+	digits, ok := strings.CutPrefix(string(name), "sha256:")
 	return ok && len(digits) >= keyPrefixDigits && strings.Trim(digits, "0123456789abcdef") == ""
 }
 
@@ -70,12 +77,12 @@ func keyPrefix(name string) bool {
 // the operator calls it, else its own name, else the shortest key prefix
 // nothing else answers to, up to the whole key. A name a command word
 // can't carry (an @, a quote or a backslash) never routes.
-func routeToken(contacts []protocol.PairingContactView, key string) string {
+func routeToken(contacts []protocol.PairingContactView, key identityKey) pairedName {
 	for _, c := range contacts {
-		if c.IdentityKey != key {
+		if identityKey(c.IdentityKey) != key {
 			continue
 		}
-		for _, name := range []string{c.LocalName, c.Name} {
+		for _, name := range []pairedName{pairedName(c.LocalName), pairedName(c.Name)} {
 			if routable(name) && namedOnce(contacts, name) {
 				return name
 			}
@@ -85,12 +92,12 @@ func routeToken(contacts []protocol.PairingContactView, key string) string {
 }
 
 // routable: a name a /review word can carry, quoted if it has a space.
-func routable(name string) bool {
-	return name != "" && !strings.ContainsAny(name, `@"\`)
+func routable(name pairedName) bool {
+	return name != "" && !strings.ContainsAny(string(name), `@"\`)
 }
 
 // namedOnce: exactly one contact answers to name, by any of its names.
-func namedOnce(contacts []protocol.PairingContactView, name string) bool {
+func namedOnce(contacts []protocol.PairingContactView, name pairedName) bool {
 	n := 0
 	for _, c := range contacts {
 		if namesContact(c, name) {
@@ -102,13 +109,13 @@ func namedOnce(contacts []protocol.PairingContactView, name string) bool {
 
 // uniqueKeyPrefix is the shortest key prefix only this contact answers
 // to, by any of everyone's names: one that is another's name is no use.
-func uniqueKeyPrefix(contacts []protocol.PairingContactView, key string) string {
+func uniqueKeyPrefix(contacts []protocol.PairingContactView, key identityKey) pairedName {
 	for size := len("sha256:") + keyPrefixDigits; size < len(key); size++ {
-		if namedOnce(contacts, key[:size]) {
-			return key[:size]
+		if prefix := pairedName(key[:size]); namedOnce(contacts, prefix) {
+			return prefix
 		}
 	}
-	return key
+	return pairedName(key)
 }
 
 // pairedReviewerWords are the paired workspaces' agents a request can
@@ -118,9 +125,10 @@ func (m *Model) pairedReviewerWords(current string) []string {
 	contacts := m.pairedContacts()
 	var out []string
 	for _, c := range contacts {
-		token := routeToken(contacts, c.IdentityKey)
-		for _, agent := range m.theirDirectory(c.IdentityKey) {
-			mention := "@" + agent + "@" + token
+		key := identityKey(c.IdentityKey)
+		token := routeToken(contacts, key)
+		for _, agent := range m.theirDirectory(key) {
+			mention := "@" + agent + "@" + string(token)
 			if strings.HasPrefix(mention, strings.TrimPrefix(current, `"`)) && !strings.ContainsAny(agent, `"\`) {
 				out = append(out, pairedWord(mention)) // matched as typed, inserted as one word
 			}
