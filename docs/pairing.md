@@ -96,8 +96,10 @@ Nothing is shared until you share it. In the other workspace's `⇄` tab:
 /pair unshare claude-1   stop; what it has not acknowledged yet is dropped
 ```
 
-The tab's card shows what you share and what they share. To write to one of
-their agents, start with `@` and its name:
+The tab's card shows what you share and what they share. A change reaches
+their tab as soon as the two sides are connected, with no message needed; while
+they aren't, it goes at the next connection. To write to one of their agents,
+start with `@` and its name:
 
 ```text
 @codex-1 can you review the parser change?
@@ -139,7 +141,8 @@ the other workspace's `⇄` tab, decide what they may ask of each agent:
 
 `--formal` with `--publish` also allows a formal approval or change request.
 A request asks for at most what you allow. A request for an agent you haven't
-allowed is refused, and the `⇄` tab shows it, so you know it was asked for.
+allowed is refused, and the `⇄` tab shows it ("not open to review requests
+from this workspace"), so you know it was asked for.
 Allowing the agent afterwards only lets them ask again: they have to send a
 new request. A request waiting for you shows in
 the `⇄` tab: `/pair approve ID` or `/pair decline ID`. `/pair status` also
