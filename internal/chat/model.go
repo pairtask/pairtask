@@ -22,6 +22,18 @@ type Bounds struct {
 	CatchupEntries int
 	Entries        int
 	Bytes          int
+	// ResolveChange looks up a change's current base and head on this
+	// operator's machine, for a review asked of a paired workspace's agent
+	// (#297); nil when this chat can't, and --pin is needed.
+	ResolveChange ResolveFunc
+}
+
+// ResolveFunc is a change's current base and head, as full commit IDs.
+type ResolveFunc func(ctx context.Context, target protocol.ReviewTarget) (protocol.Revisions, error)
+
+// sized: any bound is set; none set means the defaults.
+func (b Bounds) sized() bool {
+	return b.Intents|b.InFlight|b.ReceiptBatch|b.CatchupPages|b.CatchupEntries|b.Entries|b.Bytes != 0
 }
 
 // DefaultBounds are the contract defaults.
@@ -117,6 +129,7 @@ type Model struct {
 	statuses  statusView
 	reviewSig reviewSignal  // pending reviews in the footer (#286)
 	mono      bool          // the terminal shows no colour, as its profile says (#298)
+	lookup    remoteLookup  // a change looked up for a paired workspace's review (#297)
 	sections  reviewPending // /reviews' paged sections (#286)
 	claims    claimView
 	rooms     []protocol.RoomInfo // rooms and members, from the snapshot (bounded)
@@ -152,8 +165,10 @@ type pendingRequest struct {
 
 // New builds a chat model; it connects when the program starts.
 func New(opts Options) *Model {
-	if opts.Bounds == (Bounds{}) {
+	if !opts.Bounds.sized() {
+		resolve := opts.Bounds.ResolveChange
 		opts.Bounds = DefaultBounds()
+		opts.Bounds.ResolveChange = resolve
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -302,11 +317,13 @@ func (m *Model) connectionUpdate(msg tea.Msg) (tea.Cmd, bool) {
 
 // tickUpdate handles the chat's own timers.
 func (m *Model) tickUpdate(msg tea.Msg) (tea.Cmd, bool) {
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case statusTick:
 		return m.onStatusTick(), true
 	case ReviewBlinkMsg:
 		return m.onReviewBlink(), true
+	case remoteLookupMsg:
+		return m.lookupDone(msg), true
 	}
 	return nil, false
 }
@@ -383,6 +400,7 @@ func (m *Model) closed(gen uint64, err error) tea.Cmd {
 		return nil
 	}
 	closeTransport(m.transport)
+	m.cancelLookup() // what it was for may be gone when the link is back
 	m.transport, m.baseline = nil, false
 	m.pending, m.outbox = map[string]pendingRequest{}, nil
 	m.inbox.disconnected()

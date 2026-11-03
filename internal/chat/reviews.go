@@ -20,7 +20,7 @@ const (
 	kindReview      = "review"
 	kindReviewQuiet = "review quiet"
 	panelReviews    = "reviews"
-	reviewUsage     = "usage: /review [--no-publish] [--no-formal] TARGET AGENT|@AGENT [SCOPE] | /review status [ID] | /review cancel [ID [REASON]]"
+	reviewUsage     = "usage: /review [--publish|--no-publish] [--formal|--no-formal] [--pin BASE..HEAD] TARGET AGENT|@AGENT|AGENT@WORKSPACE [SCOPE] | /review status [ID] | /review cancel [ID [REASON]]"
 )
 
 // reviewState is what chat knows of reviews: the last list, the selected
@@ -62,7 +62,14 @@ func reviewArg(a argument) error {
 	case "cancel":
 		return wantFields(fields, 1, -1)
 	}
-	_, _, err := parseReviewRequest(fields)
+	if reviewLine(a).unclosedQuote() {
+		return errors.New(`a quote opened with " is never closed`)
+	}
+	words := reviewLine(a).fields()
+	if isRemoteReview(words) {
+		return checkRemoteReview(words)
+	}
+	_, _, err := parseReviewRequest(words)
 	return err
 }
 
@@ -78,16 +85,17 @@ func tooMany(fields []string, most int) bool {
 	return most >= 0 && len(fields) > most
 }
 
-// parseReviewRequest reads [--no-publish] [--no-formal] TARGET AGENT [SCOPE].
+// parseReviewRequest reads [flags] TARGET AGENT [SCOPE] for a reviewer
+// here.
 func parseReviewRequest(fields []string) (protocol.ReviewSpec, string, error) {
-	var policy *protocol.ReviewPolicy
-	for len(fields) > 0 && strings.HasPrefix(fields[0], "--") {
-		policy = reviewFlag(policy, fields[0])
-		if policy == nil {
-			return protocol.ReviewSpec{}, "", fmt.Errorf("unknown flag %s; %s", safe(fields[0]), reviewUsage)
-		}
-		fields = fields[1:]
+	flags, fields, err := readReviewFlags(fields)
+	switch {
+	case err != nil:
+		return protocol.ReviewSpec{}, "", err
+	case flags.pin != nil:
+		return protocol.ReviewSpec{}, "", errors.New("--pin is for a paired workspace's agent: AGENT@WORKSPACE")
 	}
+	policy := flags.localPolicy()
 	if len(fields) < 2 {
 		return protocol.ReviewSpec{}, "", errors.New(reviewUsage)
 	}
@@ -102,24 +110,10 @@ func parseReviewRequest(fields []string) (protocol.ReviewSpec, string, error) {
 	return spec, reviewer, protocol.ValidateReviewSpec(spec)
 }
 
-// reviewFlag applies one policy flag; an unknown flag is nil.
-func reviewFlag(policy *protocol.ReviewPolicy, flag string) *protocol.ReviewPolicy {
-	if policy == nil {
-		policy = &protocol.ReviewPolicy{Publish: true, Formal: true}
-	}
-	switch flag {
-	case "--no-publish":
-		policy.Publish, policy.Formal = false, false
-	case "--no-formal":
-		policy.Formal = false
-	default:
-		return nil
-	}
-	return policy
-}
-
-// reviewCommand is /review: request, status or cancel.
+// reviewCommand is /review: request, status or cancel. Any of them leaves
+// a change lookup in flight behind: it is cancelled first (#297).
 func (m *Model) reviewCommand(arg argument) tea.Cmd {
+	m.cancelLookup()
 	if !m.session.HasCapability(protocol.CapabilityReviews) {
 		m.status = "this broker doesn't support review requests; upgrade it to use /review"
 		return nil
@@ -154,12 +148,16 @@ var reviewFollowOps = map[string]func(*Model, []string) tea.Cmd{
 // requestReview asks for a review and shows the request in the panel at
 // once, before the broker answers.
 func (m *Model) requestReview(arg argument) tea.Cmd {
+	words := reviewLine(arg).fields()
+	if isRemoteReview(words) {
+		return m.requestRemoteReview(words) // to a paired workspace: queued with its messages
+	}
 	if in := m.reviews.intent; in != nil {
 		// One request at a time, so a lost answer is never lost with it.
 		m.status = "review request " + safe(in.MessageID) + " is not settled yet; /review again once it is answered"
 		return nil
 	}
-	spec, reviewer, _ := parseReviewRequest(strings.Fields(string(arg)))
+	spec, reviewer, _ := parseReviewRequest(words)
 	msg := protocol.Message{Type: protocol.TypeOperatorReview, MessageID: uuid.NewString(), ReviewOp: protocol.ReviewOpRequest, ReviewSpec: &spec}
 	m.reviews.intent, m.reviews.unknown, m.reviews.loaded = &msg, false, true
 	m.reviews.pending = &pendingReview{id: msg.MessageID, spec: spec, line: "review " + string(arg)}

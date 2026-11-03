@@ -161,6 +161,7 @@ var responseHandlers = map[string]responseHandler{
 	kindContactPause:   (*Model).contactPauseResult,
 	kindContactAddress: (*Model).contactAddressResult,
 	kindContactAsk:     (*Model).contactAskResult,
+	kindRemoteReview:   (*Model).remoteReviewResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
@@ -224,6 +225,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 		}
 	}
 	m.pairing.listed = false // a /pair picker reads again after a reconnection
+	m.cancelLookup()         // a new baseline: the contacts it was for may have changed
 	return tea.Batch(m.setReviewCounts(snap), m.sectionsBaseline(), m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
 		m.refreshContacts(), m.reviewsReconnected(), m.contactsReconnected())
 }
