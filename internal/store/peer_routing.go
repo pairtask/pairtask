@@ -216,21 +216,50 @@ func (p *PeerMessages) PeerDirectory(ctx context.Context, contact string) ([]str
 // SetPeerDirectory replaces what contact says it shares: at most MaxAgents
 // valid agent IDs, or nothing changes.
 func (p *PeerMessages) SetPeerDirectory(ctx context.Context, contact string, agents []string, at time.Time) error {
+	_, err := p.ReplacePeerDirectory(ctx, contact, agents, at)
+	return err
+}
+
+// ReplacePeerDirectory is SetPeerDirectory, saying whether the agents
+// listed differ from those before (#296).
+func (p *PeerMessages) ReplacePeerDirectory(ctx context.Context, contact string, agents []string, at time.Time) (bool, error) {
 	if !validDirectory(agents) {
-		return fmt.Errorf("%w: directory", messaging.ErrInvalid)
+		return false, fmt.Errorf("%w: directory", messaging.ErrInvalid)
 	}
-	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?`, contact); err != nil {
+	var changed bool
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		changed, err = directoryDiffers(ctx, tx, contact, agents)
+		if err != nil || !changed {
+			return err // the same agents: nothing to write
+		}
+		return writeDirectory(ctx, tx, contact, agents, at)
+	})
+	return changed, err
+}
+
+// directoryDiffers: the agents listed aren't the ones stored.
+func directoryDiffers(ctx context.Context, tx *sql.Tx, contact string, agents []string) (bool, error) {
+	before, err := queryStrings(ctx, tx, `SELECT agent FROM peer_directory WHERE contact = ? ORDER BY agent`, contact)
+	if err != nil {
+		return false, err
+	}
+	after := slices.Clone(agents)
+	slices.Sort(after)
+	return !slices.Equal(before, slices.Compact(after)), nil
+}
+
+// writeDirectory replaces the stored directory with agents.
+func writeDirectory(ctx context.Context, tx *sql.Tx, contact string, agents []string, at time.Time) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?`, contact); err != nil {
+		return err
+	}
+	for _, agent := range agents {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO peer_directory (contact, agent, seen_at) VALUES (?, ?, ?)
+ON CONFLICT DO NOTHING`, contact, agent, msgStamp(at)); err != nil {
 			return err
 		}
-		for _, agent := range agents {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO peer_directory (contact, agent, seen_at) VALUES (?, ?, ?)
-ON CONFLICT DO NOTHING`, contact, agent, msgStamp(at)); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func validDirectory(agents []string) bool {

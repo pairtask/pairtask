@@ -126,7 +126,7 @@ func TestContactLayoutAcceptanceRefusalGuidanceAndCollectedText(t *testing.T) {
 	collected.Text = ""
 	h := contactLayoutHarness(t, refused, collected)
 	view := ansi.Strip(h.m.View().Content)
-	for _, want := range []string{"/pair reviews reviewer ask", "new request", "refused: not shared here", "(text no longer kept)"} {
+	for _, want := range []string{"/pair reviews reviewer ask", "new request", "refused: not open to review requests from this workspace", "(text no longer kept)"} {
 		v3Contains(t, view, want)
 	}
 	if strings.Contains(view, "/pair approve") {

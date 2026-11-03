@@ -23,6 +23,18 @@ func refusalChatRows(n int) []protocol.ContactMessageView {
 	return rows
 }
 
+func TestRefusalVisibilityChatAcceptanceOrdinaryNotSharedKeepsMessageWording(t *testing.T) {
+	row := contactLayoutRow("ordinary-refused", 1)
+	row.Direction, row.State, row.RefusalReason = "out", "refused", "not_shared"
+	row.To = []string{"recipient"}
+	h := contactLayoutHarness(t, row)
+	view := ansi.Strip(h.m.View().Content)
+	v3Contains(t, view, "refused (not_shared)")
+	if strings.Contains(view, "not open to review requests") {
+		t.Fatal("ordinary message refusal was presented as a review permission problem")
+	}
+}
+
 func TestRefusalVisibilityChatAcceptanceExplainsFutureGrantWithoutDecision(t *testing.T) {
 	rows := refusalChatRows(1)
 	at := time.Now()
@@ -30,7 +42,7 @@ func TestRefusalVisibilityChatAcceptanceExplainsFutureGrantWithoutDecision(t *te
 	h, _ := contactMessagesHarness(t, rows...)
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	view := ansi.Strip(h.m.View().Content)
-	for _, want := range []string{"refused: not shared here", "/pair reviews reviewer ask", "future", "new"} {
+	for _, want := range []string{"refused: not open to review requests from this workspace", "/pair reviews reviewer ask", "future", "new"} {
 		v3Contains(t, view, want)
 	}
 	for _, forbidden := range []string{"/pair approve", "decline", "text no longer kept"} {
@@ -132,5 +144,5 @@ func TestRefusalVisibilityChatAcceptanceLatePageCannotClearRead(t *testing.T) {
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	h.input(chatKey(tea.KeyTab, 0))
 	chatEqual(t, "late page preserves read without another request", h.m.State().InFlight, 0)
-	v3Contains(t, ansi.Strip(h.m.View().Content), "refused: not shared here")
+	v3Contains(t, ansi.Strip(h.m.View().Content), "refused: not open to review requests from this workspace")
 }

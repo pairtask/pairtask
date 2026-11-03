@@ -30,12 +30,14 @@ type Result struct {
 	ReadsSent, ReadsStored int // read receipts confirmed and received
 	// Review outcomes settled by the peer's answer, and taken from it.
 	OutcomesSent, OutcomesStored int
+	// DirectoryChanged: what the peer shares changed (#296).
+	DirectoryChanged bool
 }
 
 // Moved reports durable progress: anything stored, refused or confirmed,
 // even in a session that then failed.
 func (r Result) Moved() bool {
-	return r.Sent+r.Received+r.Refused+r.RefusalsRecorded+r.ReadsSent+r.ReadsStored+r.OutcomesSent+r.OutcomesStored > 0
+	return r.DirectoryChanged || r.Sent+r.Received+r.Refused+r.RefusalsRecorded+r.ReadsSent+r.ReadsStored+r.OutcomesSent+r.OutcomesStored > 0
 }
 
 // Session is one side of one session with one contact. Version is the one
