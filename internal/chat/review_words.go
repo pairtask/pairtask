@@ -33,14 +33,15 @@ func (l reviewLine) unclosedQuote() bool {
 
 func (l reviewLine) trimmed() reviewLine { return reviewLine(strings.TrimSpace(string(l))) }
 
-// next is the first word and the rest after it, trimmed.
+// next is the first word and the rest after it, without the spaces and
+// tabs before the next word.
 func (l reviewLine) next() (string, reviewLine) {
 	s := string(l)
 	if quoted, tail, ok := strings.Cut(s[1:], `"`); s[0] == '"' && ok {
-		return quoted, reviewLine(tail).trimmed()
+		return quoted, reviewLine(strings.TrimLeft(tail, " \t"))
 	}
 	if i := strings.IndexAny(s, " \t"); i >= 0 {
-		return s[:i], reviewLine(s[i:]).trimmed()
+		return s[:i], reviewLine(strings.TrimLeft(s[i:], " \t"))
 	}
 	return s, ""
 }
