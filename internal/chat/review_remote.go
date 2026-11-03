@@ -128,7 +128,7 @@ func (f askFlags) conflict() error {
 // localPolicy is a review here's policy, as before: both unless a flag
 // says otherwise, nil without flags.
 func (f askFlags) localPolicy() *protocol.ReviewPolicy {
-	if !(f.publish || f.noPublish || f.formal || f.noFormal) {
+	if !slices.Contains([]bool{f.publish, f.noPublish, f.formal, f.noFormal}, true) {
 		return nil
 	}
 	publish := !f.noPublish

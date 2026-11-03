@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 
@@ -53,7 +54,7 @@ func namesContact(c protocol.PairingContactView, name string) bool {
 	if name == "" {
 		return false
 	}
-	if name == c.LocalName || name == c.Name || name == c.IdentityKey {
+	if slices.Contains([]string{c.LocalName, c.Name, c.IdentityKey}, name) {
 		return true
 	}
 	return keyPrefix(name) && strings.HasPrefix(c.IdentityKey, name)
