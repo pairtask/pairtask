@@ -17,11 +17,14 @@ func unreadHere(v protocol.ContactMessageView) bool {
 	return v.State == "received" || refusedHere(v) && v.ReadAt == nil
 }
 
-// refusalReasons say why a request was refused here.
-var refusalReasons = map[string]string{"not_shared": "not shared here"}
+// reviewRefusals say why a review request was refused here. The reason on
+// the wire stays not_shared; for a review it means the agent isn't open to
+// review requests from that workspace, which says nothing of messages.
+var reviewRefusals = map[string]string{"not_shared": "not open to review requests from this workspace"}
 
+// refusalWords is why a review request was refused here, escaped.
 func refusalWords(reason string) string {
-	if words, ok := refusalReasons[reason]; ok {
+	if words, ok := reviewRefusals[reason]; ok {
 		return words
 	}
 	return safe(reason)
