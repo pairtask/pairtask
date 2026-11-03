@@ -68,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
 	// serialized write pattern.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -123,6 +123,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	// (#259), once an outcome names it; NULL until then. Set once, never
 	// changed.
 	{"review_asks_out", "review_id", "TEXT"},
+	// The digest of the directory a contact last answered (#305), and when;
+	// NULL until it answers one.
+	{"peer_contacts", "directory_ack", "TEXT"},
+	{"peer_contacts", "directory_ack_at", "TEXT"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the

@@ -86,22 +86,39 @@ func (m *Model) shareCommand(fields pairWords) tea.Cmd {
 	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: fields[0], ContactKey: key.contact,
 		MessageID: uuid.NewString(), ContactAgents: sharedAgents(fields[1:])}
 	m.status = fields[0] + "…"
-	return m.request(kindContactShare, msg, key.contact, fields[0])
+	m.startCard(&actionCard{id: msg.MessageID, kind: cardKind(fields[0]), conv: key, contact: key.contact, agents: msg.ContactAgents,
+		at: m.opts.Now()})
+	return m.request(kindContactShare, msg, key.contact, fields[0], msg.MessageID)
 }
 
 // contactShareResult shows what is shared now.
 func (m *Model) contactShareResult(req pendingRequest, resp protocol.Message) tea.Cmd {
 	contact, verb := req.ids[0], req.ids[1]
+	c := m.requestCard(req)
 	if !pageFor(resp, contact) {
 		m.status = verb + " refused: " + refusalReason(resp)
+		if c != nil {
+			c.failure = refusalReason(resp)
+		}
 		return nil
 	}
 	t := m.contacts.thread(contact)
 	t.shared, t.directory, t.grants = resp.ContactPage.Shared, resp.ContactPage.Directory, resp.ContactPage.ReviewGrants
 	m.directoryChanged(contact)
 	t.merge(resp.ContactPage.Messages)
-	m.status = "shared with this workspace: " + agentNames(t.shared, "no agents")
+	if c != nil {
+		m.shareSaved(c, resp.ContactPage)
+	}
+	m.status = verb + " saved here · shared with this workspace: " + agentNames(t.shared, "no agents")
 	return nil
+}
+
+// requestCard is the card of the action a request made, if it made one.
+func (m *Model) requestCard(req pendingRequest) *actionCard {
+	if len(req.ids) < 3 {
+		return nil
+	}
+	return m.card(req.ids[2])
 }
 
 // sharingLine is what each side shares, for the contact's card.

@@ -468,6 +468,34 @@ and pages it:
 - Nothing ages a failure out beyond the retention its review or request
   already has.
 
+## Sharing confirmed, and requests read by ID (v20)
+
+A broker with capability `contact_share_sync` says whether a paired
+workspace has what this side shares with it (#305):
+
+- When the peer answers the directory this side sent (its `End` after storing
+  it), this side keeps a digest of exactly that list: hex SHA-256 over the
+  agents sorted and deduplicated, each an 8-byte big-endian length then its
+  bytes. Nothing is kept for a lost answer, and an identical answer changes
+  nothing and raises no event.
+- A contact page carries, read with `shared` in one snapshot: `shared_digest`
+  (the set shared now), `shared_ack_digest` (the set the contact last answered,
+  absent when never), `shared_ack_at`, and `shared_sync`: `confirmed` when the
+  two digests match, else `pending`. A session that merely ran confirms nothing.
+
+A broker with capability `review_ask_refs` also reads given requests:
+`operator_review` with `review_op: "asked"` and `review_ask_refs` (1 to 8 of
+`{contact, ask_id}`, no `review_before`) returns exactly those found, in the
+order asked, each once, in `review_asked` with `more: false`. Anything else is
+`malformed_frame`.
+
+A review request a paired workspace refuses for good also tells the agent that
+sent it (#302): a message with origin `remote`, `in_reply_to` the request,
+saying who refused, why, and for `not_shared` that their operator can allow it
+with `/pair reviews AGENT ask`. At most 16 of an agent's refusal notices from one
+workspace are owed at a time; past that, one summary at a time counts the rest
+and points to `reviews_asked`. A reply to either is refused with guidance.
+
 ## Acknowledging a paired workspace's messages (v17)
 
 A broker with capability `contact_acks` keeps the operator's own

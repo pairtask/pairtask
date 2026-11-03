@@ -21,7 +21,14 @@ func (h *Hub) pendingReviews(ctx context.Context, msg protocol.Message) protocol
 		return rerr.frame(msg.MessageID)
 	}
 	out := protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp}
-	err := pageReaders[msg.ReviewOp](ctx, h.store, msg.ReviewBefore, &out)
+	var err error
+	if msg.ReviewAskRefs != nil {
+		var page protocol.ReviewAskedPage
+		page, err = h.store.AskedByRefs(ctx, msg.ReviewAskRefs)
+		out.ReviewAsked = &page
+	} else {
+		err = pageReaders[msg.ReviewOp](ctx, h.store, msg.ReviewBefore, &out)
+	}
 	switch {
 	case errors.Is(err, store.ErrReviewCursor):
 		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
@@ -53,9 +60,17 @@ var pageReaders = map[string]func(context.Context, *store.Store, string, *protoc
 // pendingRequestFields refuses anything but the operation and its cursor.
 func pendingRequestFields(msg protocol.Message) *routingError {
 	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ReviewOp: msg.ReviewOp,
-		ReviewBefore: msg.ReviewBefore}
-	if !sameJSON(msg, clean) {
+		ReviewBefore: msg.ReviewBefore, ReviewAskRefs: msg.ReviewAskRefs}
+	switch {
+	case !sameJSON(msg, clean):
 		return &routingError{protocol.ErrMalformedFrame, "review_op " + msg.ReviewOp + " takes only review_before"}
+	case msg.ReviewAskRefs == nil:
+		return nil
+	case msg.ReviewOp != protocol.ReviewOpAsked || msg.ReviewBefore != "":
+		return &routingError{protocol.ErrMalformedFrame, "review_ask_refs reads asked requests, without review_before"}
+	}
+	if err := protocol.ValidateReviewAskRefs(msg.ReviewAskRefs); err != nil {
+		return &routingError{protocol.ErrMalformedFrame, err.Error()}
 	}
 	return nil
 }

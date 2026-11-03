@@ -147,7 +147,11 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 	t.failed = false
 	page := resp.ContactPage
 	if before == "0" {
-		t.newestPage(page, gen == strconv.FormatUint(t.gen, 10))
+		current := gen == strconv.FormatUint(t.gen, 10)
+		t.newestPage(page, current)
+		if current {
+			m.cardsSeePage(contact, page) // only the newest read is evidence
+		}
 		m.directoryChanged(contact)
 	} else {
 		t.olderPage(page)

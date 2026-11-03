@@ -116,6 +116,7 @@ type Model struct {
 	agents    agentView
 	statuses  statusView
 	reviewSig reviewSignal  // pending reviews in the footer (#286)
+	cards     actionCards   // what the operator just did, where it was done (#305)
 	mono      bool          // the terminal shows no colour, as its profile says (#298)
 	sections  reviewPending // /reviews' paged sections (#286)
 	claims    claimView

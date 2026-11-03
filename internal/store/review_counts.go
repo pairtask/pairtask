@@ -228,6 +228,52 @@ FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND 
 	return page, err
 }
 
+// AskedByRefs are exactly the requests the refs name, in their order, each
+// once: those not kept are left out (#305).
+func (s *Store) AskedByRefs(ctx context.Context, refs []protocol.ReviewAskRef) (protocol.ReviewAskedPage, error) {
+	page := protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return page, err
+	}
+	defer tx.Rollback()
+	seen := map[protocol.ReviewAskRef]bool{}
+	for _, ref := range refs {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		item, found, err := askedItem(ctx, tx, ref)
+		if err != nil {
+			return page, err
+		}
+		if found {
+			page.Items = append(page.Items, item)
+		}
+	}
+	page.Total = len(page.Items)
+	return page, nil
+}
+
+// askedItem is one request as the asked list shows it.
+func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef) (protocol.ReviewAskedItem, bool, error) {
+	var item protocol.ReviewAskedItem
+	var updated string
+	err := tx.QueryRowContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
+    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, '')
+FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
+WHERE a.contact = ? AND a.ask_id = ?`, ref.Contact, ref.AskID).Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer,
+		&item.State, &item.Verdict, &item.URL, &updated, &item.Settled, &item.ReviewID)
+	if err == sql.ErrNoRows {
+		return item, false, nil
+	}
+	if err != nil {
+		return item, false, err
+	}
+	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
+	return item, err == nil, err
+}
+
 // pendingLimit reads one item past a page, to tell whether more follow.
 var pendingLimit = strconv.Itoa(protocol.ReviewPendingPage + 1)
 

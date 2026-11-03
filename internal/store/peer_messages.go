@@ -439,8 +439,9 @@ WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`
 		if state != messaging.StateRefused {
 			return nil
 		}
-		// A review request refused for good ends there; a held one waits.
-		return settleAsks(ctx, tx, askEnd{"refused", r.Reason, time.Now()}, oneAsk(contact, id))
+		// A review request refused for good ends there, and the agent that
+		// sent it is told (#302); a held one waits.
+		return settleRefusedAsk(ctx, tx, contact, id, r.Reason)
 	})
 }
 
