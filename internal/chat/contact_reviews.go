@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"charm.land/lipgloss/v2"
 	"slices"
 	"strings"
 
@@ -171,10 +172,10 @@ func reviewGrantsLine(t *contactThread) string {
 
 // reviewHead is a review request's line: the change, its pins, and for one
 // the contact sent here, where it is.
-func reviewHead(v protocol.ContactMessageView) string {
+func reviewHead(ws workspaceLabel, v protocol.ContactMessageView, l dotLook) string {
 	a := v.ReviewAsk
 	if a == nil {
-		return ""
+		return outcomeHead(ws, v.ReviewOutcome, l) // the request's record is gone; where it stands is not
 	}
 	head := " · review " + safe(a.Repository) + "#" + safe(a.Change) + " pinned " + safe(shortSHA(a.Base)) + ".." + safe(shortSHA(a.Head))
 	switch {
@@ -186,16 +187,20 @@ func reviewHead(v protocol.ContactMessageView) string {
 	if v.ReviewState == "awaiting" {
 		head += ": /pair approve " + safe(v.ID) + " or decline"
 	}
-	return head + outcomeHead(v.ReviewOutcome)
+	return head + outcomeHead(ws, v.ReviewOutcome, l)
 }
 
 // outcomeHead is where a request this side sent stands, as the other
 // workspace gave it, escaped.
-func outcomeHead(o *protocol.ReviewOutcomeView) string {
+// A request under way blinks with the footer's dot, a failed one stays.
+func outcomeHead(ws workspaceLabel, o *protocol.ReviewOutcomeView, l dotLook) string {
 	if o == nil {
 		return ""
 	}
-	head := " · " + safe(o.State)
+	head := " · " + theirState(o.State, o.Reviewer, ws)
+	if d := askDot(o.State); d != dotNone {
+		head = " · " + d.mark(lipgloss.NewStyle(), dotLook{off: d.blinks() && l.off, mono: l.mono}) + " " + theirState(o.State, o.Reviewer, ws)
+	}
 	if o.Verdict != "" {
 		head += " " + safe(o.Verdict)
 	}

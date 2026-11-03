@@ -97,7 +97,7 @@ func TestReviewCountsChatAcceptanceOlderBrokerLeavesLegacyReviewsAvailable(t *te
 	v3Contains(t, ansi.Strip(h.m.View().Content), "terminal-rev")
 }
 
-func TestReviewCountsChatAcceptanceViewingStopsBlinkAndChangedSetRearmsIt(t *testing.T) {
+func TestReviewCountsChatAcceptanceViewingKeepsBlinkAndChangedSetRemainsActive(t *testing.T) {
 	h := reviewCountsHarness(t, &protocol.ReviewCounts{AwaitingYou: 2, AwaitingToken: "set-A"})
 	chatEqual(t, "unseen set blinks", h.m.State().ReviewSignal.Blinking, true)
 	before := h.m.State().ReviewSignal.DotShown
@@ -105,18 +105,18 @@ func TestReviewCountsChatAcceptanceViewingStopsBlinkAndChangedSetRearmsIt(t *tes
 	chatEqual(t, "tick changes only dot", h.m.State().ReviewSignal.DotShown, !before)
 	v3Contains(t, ansi.Strip(h.m.View().Content), "2 need you · /reviews")
 	reviewPendingOpen(h, reviewBlinkPage("initial", "set-A"))
-	chatEqual(t, "explicit panel view stops blink", h.m.State().ReviewSignal.Blinking, false)
+	chatEqual(t, "explicit panel view keeps process blinking", h.m.State().ReviewSignal.Blinking, true)
 	chatEqual(t, "viewing does not acknowledge or decide", h.m.State().ReviewSignal.AwaitingYou, 2)
 	h.input(chatKey(tea.KeyEscape, 0))
 	reviewCountsEvent(h, protocol.EventReviewsChanged, 2)
 	reviewCountsLoadedRefresh(h, protocol.ReviewCounts{AwaitingYou: 2, AwaitingToken: "set-B"})
-	chatEqual(t, "same count with new identities rearms blink", h.m.State().ReviewSignal.Blinking, true)
+	chatEqual(t, "same count with new identities keeps blinking", h.m.State().ReviewSignal.Blinking, true)
 	chatEqual(t, "same count preserved", h.m.State().ReviewSignal.AwaitingYou, 2)
 	reviewPendingOpen(h, reviewBlinkPage("replacement", "set-B"))
 	h.input(chatKey(tea.KeyEscape, 0))
 	reviewCountsEvent(h, protocol.EventReviewsChanged, 3)
 	reviewCountsLoadedRefresh(h, protocol.ReviewCounts{AwaitingYou: 1, AwaitingToken: "set-C"})
-	chatEqual(t, "set removal conservatively rearms blink", h.m.State().ReviewSignal.Blinking, true)
+	chatEqual(t, "remaining request keeps blinking after removal", h.m.State().ReviewSignal.Blinking, true)
 	chatEqual(t, "removal authoritative count", h.m.State().ReviewSignal.AwaitingYou, 1)
 }
 

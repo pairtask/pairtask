@@ -62,12 +62,16 @@ func (s *pendingSection[T]) add(items []T, first bool, key func(T) itemKey) {
 
 // reviewPending is the panel's paged sections and their refs.
 type reviewPending struct {
-	needs pendingSection[protocol.ReviewAwaitingItem]
-	asked pendingSection[protocol.ReviewAskedItem]
-	refs  map[itemKey]sectionRef // identity → ref, for the session
-	byRef map[sectionRef]itemKey // ref → identity
-	count map[byte]int           // refs given per prefix
-	nav   *navTarget             // a request being looked for in its ⇄ tab
+	needs  pendingSection[protocol.ReviewAwaitingItem]
+	asked  pendingSection[protocol.ReviewAskedItem]
+	failed pendingSection[protocol.ReviewFailedItem] // #298
+	// failToken is the failure set the failed pages read so far all
+	// showed: one set, or the section is read again from its first page.
+	failToken string
+	refs      map[itemKey]sectionRef // identity → ref, for the session
+	byRef     map[sectionRef]itemKey // ref → identity
+	count     map[byte]int           // refs given per prefix
+	nav       *navTarget             // a request being looked for in its ⇄ tab
 }
 
 func needKey(it protocol.ReviewAwaitingItem) itemKey {
@@ -75,6 +79,9 @@ func needKey(it protocol.ReviewAwaitingItem) itemKey {
 }
 func askedKey(it protocol.ReviewAskedItem) itemKey {
 	return itemKey("a" + it.Contact + "\x00" + it.AskID)
+}
+func failedKey(it protocol.ReviewFailedItem) itemKey {
+	return itemKey("f" + it.Kind + "\x00" + it.Contact + "\x00" + it.ID)
 }
 
 // ref is an identity's ref, given on first sight and kept.
@@ -123,8 +130,12 @@ type fence struct {
 }
 
 func (m *Model) sectionFence(op sectionOp) fence {
-	if op == protocol.ReviewOpAwaiting {
+	switch op {
+	case protocol.ReviewOpAwaiting:
 		s := &m.sections.needs
+		return fence{&s.gen, &s.firstIn, &s.again}
+	case protocol.ReviewOpFailed:
+		s := &m.sections.failed
 		return fence{&s.gen, &s.firstIn, &s.again}
 	}
 	s := &m.sections.asked
@@ -150,19 +161,34 @@ func (m *Model) currentPage(req pendingRequest) (bool, tea.Cmd) {
 }
 
 func (m *Model) pendingNext(op sectionOp) string {
-	if op == protocol.ReviewOpAwaiting {
-		return m.sections.needs.next
-	}
-	return m.sections.asked.next
+	return map[sectionOp]string{protocol.ReviewOpAwaiting: m.sections.needs.next, protocol.ReviewOpAsked: m.sections.asked.next,
+		protocol.ReviewOpFailed: m.sections.failed.next}[op]
 }
 
-// refreshPendingSections reads both first pages again while /reviews is
+// refreshPendingSections reads the first pages again while /reviews is
 // open: a change never leaves an actionable request behind a stale cursor.
+// Failures are read only while the broker counts some.
 func (m *Model) refreshPendingSections() tea.Cmd {
 	if !m.reviewsPanelOpen() {
 		return nil
 	}
-	return tea.Batch(m.readSection(protocol.ReviewOpAwaiting, true), m.readSection(protocol.ReviewOpAsked, true))
+	return tea.Batch(m.readSection(protocol.ReviewOpAwaiting, true), m.readSection(protocol.ReviewOpAsked, true), m.refreshFailed())
+}
+
+// failuresWanted: the broker serves failures and counts some.
+func (m *Model) failuresWanted() bool {
+	return m.failuresServed() && m.reviewSig.counts != nil && m.reviewSig.counts.Failed > 0
+}
+
+// refreshFailed reads the failures' first page, or, with none counted,
+// empties the section.
+func (m *Model) refreshFailed() tea.Cmd {
+	if !m.failuresWanted() {
+		f := &m.sections.failed
+		f.items, f.total, f.more, f.next = nil, 0, false, ""
+		return nil
+	}
+	return m.readSection(protocol.ReviewOpFailed, true)
 }
 
 // reviewPendingResult keeps one section's page; a refusal leaves the
@@ -181,9 +207,6 @@ func (m *Model) reviewPendingResult(req pendingRequest, resp protocol.Message) t
 		}
 		m.sections.needs.add(page.Items, first, needKey)
 		m.sections.needs.total, m.sections.needs.more, m.sections.needs.next = page.Total, page.More, page.Next
-		if first && m.reviewsPanelOpen() {
-			m.reviewsShown(page.Token) // the set this page showed, and only while it is on screen
-		}
 	case resp.ReviewAsked != nil:
 		page := resp.ReviewAsked
 		for _, it := range page.Items {
@@ -191,6 +214,8 @@ func (m *Model) reviewPendingResult(req pendingRequest, resp protocol.Message) t
 		}
 		m.sections.asked.add(page.Items, first, askedKey)
 		m.sections.asked.total, m.sections.asked.more, m.sections.asked.next = page.Total, page.More, page.Next
+	case resp.ReviewFailed != nil:
+		return m.failedPage(resp.ReviewFailed, first)
 	default:
 		m.status = "pending reviews not read: " + brokerReason(resp)
 	}
@@ -203,21 +228,24 @@ func reviewsArg(a argument) error {
 	switch {
 	case len(fields) == 0:
 		return nil
-	case len(fields) == 2 && fields[0] == "more" && (fields[1] == "needs" || fields[1] == "asked"):
+	case len(fields) == 2 && fields[0] == "more" && moreSections[fields[1]] != "":
 		return nil
 	case len(fields) == 2 && fields[0] == "open":
 		return nil
 	}
-	return errors.New("usage: /reviews | /reviews more needs|asked | /reviews open REF")
+	return errors.New("usage: /reviews | /reviews more needs|asked|failed | /reviews open REF")
 }
 
-// pendingRef is a section ref: n or a, then a number.
-var pendingRef = regexp.MustCompile(`^[na][0-9]+$`)
+// moreSections are the sections /reviews more pages.
+var moreSections = map[string]sectionOp{"needs": protocol.ReviewOpAwaiting, "asked": protocol.ReviewOpAsked, "failed": protocol.ReviewOpFailed}
+
+// pendingRef is a section ref: n, a or f, then a number.
+var pendingRef = regexp.MustCompile(`^[naf][0-9]+$`)
 
 // reviewsSubcommand runs /reviews more and /reviews open.
 func (m *Model) reviewsSubcommand(fields []string) tea.Cmd {
 	if fields[0] == "more" {
-		op := map[string]sectionOp{"needs": protocol.ReviewOpAwaiting, "asked": protocol.ReviewOpAsked}[fields[1]]
+		op := moreSections[fields[1]]
 		if m.pendingNext(op) == "" {
 			m.status = "no more in that section"
 			return nil
@@ -226,6 +254,9 @@ func (m *Model) reviewsSubcommand(fields []string) tea.Cmd {
 	}
 	if !pendingRef.MatchString(fields[1]) {
 		return m.reviewStatus(fields[1]) // a review here: its detail, as /review status
+	}
+	if id, ok := m.failedReviewHere(sectionRef(fields[1])); ok {
+		return m.reviewStatus(id) // a failed review here: its detail
 	}
 	return m.openPending(sectionRef(fields[1]))
 }
@@ -271,8 +302,8 @@ const prunedStatus = "that request's message is no longer kept here (history pru
 func (m *Model) navTargetFor(ref sectionRef) (navTarget, bool) {
 	contact, cursor, ok := m.pendingTarget(m.sections.byRef[ref])
 	direction := "in"
-	if strings.HasPrefix(string(ref), "a") {
-		direction = "out"
+	if strings.HasPrefix(string(ref), "a") || strings.HasPrefix(string(ref), "f") {
+		direction = "out" // a request this side sent
 	}
 	return navTarget{ref: ref, contact: contact, direction: direction, cursor: cursor}, ok
 }
@@ -373,6 +404,9 @@ func (m *Model) pendingTarget(identity itemKey) (string, int64, bool) {
 	if it, ok := findItem(m.sections.asked.items, askedKey, identity); ok {
 		return it.Contact, it.Cursor, true
 	}
+	if it, ok := findItem(m.sections.failed.items, failedKey, identity); ok && it.Kind == protocol.FailedAsk {
+		return it.Contact, it.Cursor, true
+	}
 	return "", 0, false
 }
 
@@ -390,12 +424,17 @@ func findItem[T any](items []T, key func(T) itemKey, identity itemKey) (T, bool)
 // sectionRows are the panel's four sections, the ones needing the operator
 // first.
 func (m *Model) sectionRows() []string {
-	rows := append([]string{needStyle.Render("Needs you")}, m.needRows()...)
-	rows = append(rows, titleStyle.Render("Running here"))
+	var rows []string
+	if m.failedShown() {
+		rows = append([]string{m.heading(needStyle, "Failed", dotRed)}, m.failedRows()...)
+	}
+	rows = append(rows, m.heading(needStyle, "Needs you", itemsDot(m.sections.needs.items, func(protocol.ReviewAwaitingItem) reviewDot { return dotYellow })))
+	rows = append(rows, m.needRows()...)
+	rows = append(rows, m.heading(titleStyle, "Running here", itemsDot(m.runningReviews(), reviewHereDot)))
 	rows = append(rows, m.runningRows()...)
-	rows = append(rows, titleStyle.Render("Asked by you"))
+	rows = append(rows, m.heading(titleStyle, "Asked by you", itemsDot(m.sections.asked.items, func(it protocol.ReviewAskedItem) reviewDot { return askDot(it.State) })))
 	rows = append(rows, m.askedRows()...)
-	rows = append(rows, titleStyle.Render("All reviews here"))
+	rows = append(rows, m.heading(titleStyle, "All reviews here", itemsDot(m.reviews.list, reviewHereDot)))
 	return append(rows, m.listRows()...)
 }
 
@@ -406,7 +445,7 @@ func (m *Model) needRows() []string {
 	}
 	var rows []string
 	for _, it := range s.items {
-		rows = append(rows, fmt.Sprintf("  %s  %s  from %s  %s", m.sections.ref(needKey(it)), askLabel(it.Ask),
+		rows = append(rows, fmt.Sprintf("%s%s  %s  from %s  %s", m.rowMark(dotYellow), m.sections.ref(needKey(it)), askLabel(it.Ask),
 			safe(it.Sender)+"@"+safe(m.contactTitle(contactKey(it.Contact))), mutedStyle.Render(age(it.ReceivedAt))))
 	}
 	return append(rows, moreRow(s.more, "needs")...)
@@ -419,7 +458,9 @@ func (m *Model) askedRows() []string {
 	}
 	var rows []string
 	for _, it := range s.items {
-		row := fmt.Sprintf("  %s  %s  %s", m.sections.ref(askedKey(it)), safe(it.Reviewer)+"@"+safe(m.contactTitle(contactKey(it.Contact))), safe(it.State))
+		ws := workspaceLabel(safe(m.contactTitle(contactKey(it.Contact))))
+		row := fmt.Sprintf("%s%s  %s  %s", m.rowMark(askDot(it.State)), m.sections.ref(askedKey(it)), safe(it.Reviewer)+"@"+string(ws),
+			theirState(it.State, it.Reviewer, ws))
 		if it.Verdict != "" {
 			row += " " + safe(it.Verdict)
 		}
@@ -431,15 +472,25 @@ func (m *Model) askedRows() []string {
 // runningRows are the reviews here still waiting for or with their reviewer.
 func (m *Model) runningRows() []string {
 	var rows []string
-	for _, r := range m.reviews.list {
-		if openReview(r.State) {
-			rows = append(rows, reviewRow(r))
-		}
+	for _, r := range m.runningReviews() {
+		rows = append(rows, m.reviewLine(r))
 	}
 	if len(rows) == 0 {
 		return []string{mutedStyle.Render("  none")}
 	}
 	return rows
+}
+
+// runningReviews are the reviews here still waiting for or with their
+// reviewer.
+func (m *Model) runningReviews() []protocol.ReviewView {
+	var out []protocol.ReviewView
+	for _, r := range m.reviews.list {
+		if openReview(r.State) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func openReview(state string) bool {
@@ -469,7 +520,7 @@ func (m *Model) reviewsPanelCompletions(l argLine) []string {
 	case len(l.words) == 0:
 		return withPrefix([]string{"open", "more"}, l.current)
 	case len(l.words) == 1 && l.words[0] == "more":
-		return withPrefix([]string{"needs", "asked"}, l.current)
+		return withPrefix(m.pagedSections(), l.current)
 	case len(l.words) == 1 && l.words[0] == "open":
 		return withPrefix(m.openableRefs(), l.current)
 	}
@@ -480,6 +531,9 @@ func (m *Model) reviewsPanelCompletions(l argLine) []string {
 // then the reviews here.
 func (m *Model) openableRefs() []string {
 	var refs []string
+	for _, it := range m.sections.failed.items {
+		refs = append(refs, string(m.sections.ref(failedKey(it))))
+	}
 	for _, it := range m.sections.needs.items {
 		refs = append(refs, string(m.sections.ref(needKey(it))))
 	}
@@ -523,6 +577,8 @@ func reviewParties(s contactSides, v protocol.ContactMessageView) string {
 func (p *reviewPending) invalidate() {
 	p.needs.gen, p.needs.firstIn, p.needs.again = p.needs.gen+1, false, false
 	p.asked.gen, p.asked.firstIn, p.asked.again = p.asked.gen+1, false, false
+	p.failed.gen, p.failed.firstIn, p.failed.again = p.failed.gen+1, false, false
+	p.failToken = "" // pages read before are no evidence for what follows
 }
 
 // sectionsBaseline: a new baseline, after a reconnect or a gap, reads an

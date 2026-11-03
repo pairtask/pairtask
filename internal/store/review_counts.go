@@ -27,15 +27,33 @@ var ErrReviewCursor = errors.New("review_before is not a cursor this broker gave
 // here; and this side's requests to paired workspaces not yet settled.
 func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error) {
 	var c protocol.ReviewCounts
+	// One read, so what failed and what is in progress never disagree.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return c, err
+	}
+	defer tx.Rollback()
+	if c.AwaitingYou, c.AwaitingToken, err = awaitingSet(ctx, tx); err != nil {
+		return c, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews WHERE state IN `+openStates).Scan(&c.Running); err != nil {
+		return c, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out WHERE settled_at IS NULL`).Scan(&c.AskedOpen); err != nil {
+		return c, err
+	}
+	return c, failureCounts(ctx, tx, &c)
+}
+
+// failureCounts adds what failed and the asks still in progress (#298).
+func failureCounts(ctx context.Context, tx *sql.Tx, c *protocol.ReviewCounts) error {
 	var err error
-	if c.AwaitingYou, c.AwaitingToken, err = awaitingSet(ctx, s.db); err != nil {
-		return c, err
+	if c.Failed, c.FailedToken, err = failures(ctx, tx); err != nil {
+		return err
 	}
-	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews WHERE state IN `+openStates).Scan(&c.Running); err != nil {
-		return c, err
-	}
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out WHERE settled_at IS NULL`).Scan(&c.AskedOpen)
-	return c, err
+	active, err := activeAsks(ctx, tx)
+	c.AskedActive = &active
+	return err
 }
 
 // awaitingSet counts the requests awaiting the operator and hashes which
@@ -57,6 +75,7 @@ WHERE kind = 'review' AND state = 'awaiting' ORDER BY contact, remote_id`)
 // pendingCursor is a page's position in its order, opaque to the client.
 type pendingCursor struct {
 	Settled bool   `json:"s,omitempty"`
+	Kind    string `json:"k,omitempty"` // a failure's kind (#298)
 	At      string `json:"t"`
 	Contact string `json:"c"`
 	ID      string `json:"i"`
