@@ -197,6 +197,7 @@ func (m *Model) cardViews() []CardView {
 func (m *Model) cardsCommand(argument) tea.Cmd {
 	n := m.cards.clear(m.conv.selected)
 	m.status = fmt.Sprintf("cleared %d finished cards here; active ones stay", n)
+	m.cancelPinChecks() // a check of a card cleared, or not, is left behind
 	return m.bumpCardReads()
 }
 

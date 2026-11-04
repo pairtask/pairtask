@@ -76,9 +76,18 @@ func (c *Client) RequestReview(ctx context.Context, args RequestReviewArgs) (Sen
 		return SendResult{}, err
 	}
 	out := SendResult{Status: "written", MessageID: msg.MessageID, To: msg.To, DurableRequested: true}
+	out.PinChecks = c.checkPins(ctx, msg.ReviewAsk) // before queueing, bounded; never stops it
+	var accepted chan protocol.Message
+	if c.protocolVersion >= protocol.ReviewAdvisoriesVersion {
+		accepted = c.watchAccepted(msg.MessageID)
+		defer c.unwatchAccepted(msg.MessageID)
+	}
 	if err := c.writeFrame(ctx, msg); err != nil {
 		out.Status = "unconfirmed"
 		return out, fmt.Errorf("review request %s: %w; broker acceptance is unconfirmed", msg.MessageID, err)
+	}
+	if accepted != nil {
+		out.Advisories = brokerAdvice(ctx, accepted)
 	}
 	return out, nil
 }

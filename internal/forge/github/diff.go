@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -196,3 +197,30 @@ func startCount(s string) (int, int, bool) {
 	count, err := strconv.Atoi(countText)
 	return start, count, err == nil && count >= 0
 }
+
+// CommitExists says whether the repository has the commit: GitHub answers
+// 404, or 422 for an ID it can't take, when it doesn't. Read it after the
+// change, so a 404 means the commit and not the repository.
+func (a *Adapter) CommitExists(ctx context.Context, t forge.Target, sha string) (bool, error) {
+	repo, err := a.repo(t)
+	if err != nil {
+		return false, err
+	}
+	if !fullRevision(sha) {
+		return false, nil
+	}
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	err = a.get(ctx, "/repos/"+repo+"/commits/"+sha, nil, &commit)
+	var fe *forge.Error
+	switch {
+	case err == nil:
+		return commit.SHA == sha, nil
+	case errors.As(err, &fe) && (fe.Class == forge.ClassNotFound || fe.Class == forge.ClassInvalid):
+		return false, nil
+	}
+	return false, err
+}
+
+var _ forge.CommitChecker = (*Adapter)(nil)

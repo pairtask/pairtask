@@ -613,6 +613,34 @@ operator shared with it ([pairing guide](pairing.md#7-let-agents-talk-across)).
   most what was asked and granted, and publishing is checked against the
   grant again when it starts. The reviewer's notice has origin `remote`.
 
+## Review advisories (v22)
+
+A review request to a paired workspace's agent comes back with advice: what
+this side already knows that suggests it may be refused (#304). It's read
+in the same transaction that queues the request, before writing it. The
+request is queued as given either way; only the other side decides.
+- `not_in_directory {at}`: the workspace's sharing, last received at `at`,
+  leaves the agent out. Known-empty counts. A workspace that never sent its
+  sharing gets no advisory.
+- `refused_not_shared {at, ask_id}`: this side's last request to that agent
+  there was refused not_shared at `at`, and no outcome from there has moved a
+  request to it on since. A request merely queued here clears nothing.
+
+The operator gets them as `review_advisories` on `operator_contact_result`,
+with capability `review_advisories`. An agent gets them on its request's
+`accepted` stage; the stage still reaches its inbox as usual.
+
+Pins are checked on the requester's side, with its own code host access:
+- they must exist (an authoritative not-found only, after the change itself
+  was read);
+- HEAD must be the change's head now.
+
+A BASE that exists but isn't the change's base is never flagged, and pins are
+never changed. An agent's `request_review` checks before sending, for at most
+5 s. The operator's request is sent at once, and its card shows the check as
+"checked after sending". No answer gives `not_checked` with its class, never a
+missing pin.
+
 ## Review outcomes (v15)
 
 Where a review request stands comes back to the workspace that sent it, in

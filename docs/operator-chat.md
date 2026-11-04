@@ -169,7 +169,14 @@ have it all).
   A read that fails says `status unknown`; only a read that worked can say
   the request is `no longer kept here`. A review here shows its state,
   verdict and publication. A paired request's card is also drawn in that
-  workspace's `⇄` tab. An older broker says `status: see /reviews`. When the
+  workspace's `⇄` tab. An older broker says `status: see /reviews`. With
+  `--pin`, the pins are checked after sending (#304): `Pins checked after
+  sending: ok`, or which commit isn't found or that HEAD isn't the change's head
+  now; `Pins not checked: why` when the code host didn't answer within 5 s. The
+  broker's notes (the agent isn't in what that workspace shares, as last read;
+  its last request there was refused not_shared) show too, and the `/review`
+  line says the first before you send, when the tab already knows. Advice only:
+  nothing is held back or sent again. When the
   verdict's findings came back (#303), the card lists the first three as
   `path:line: summary`, then how many more arrived (`/reviews` counts them on
   the request's row) and how many stayed on their side.

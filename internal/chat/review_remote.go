@@ -187,7 +187,7 @@ func (m *Model) requestRemoteReview(words []string) tea.Cmd {
 	reread := m.bumpCardReads() // reads in flight predate this card: fenced, and read again
 	switch {
 	case pin != nil:
-		return tea.Batch(reread, m.sendRemoteReview(ask, *pin))
+		return tea.Batch(reread, m.sendRemoteReview(ask, *pin), m.checkPinsAfterSending(ask, *pin))
 	case m.opts.Bounds.ResolveChange == nil:
 		m.status = "can't look up changes here: add --pin BASE..HEAD"
 		m.cardFails(ask.card, "Not sent: can't look up changes here · add --pin BASE..HEAD")
@@ -375,5 +375,6 @@ func (m *Model) remoteReviewResult(req pendingRequest, resp protocol.Message) te
 	t := m.contacts.thread(req.ids[0])
 	t.merge([]protocol.ContactMessageView{*resp.ContactMessage})
 	m.status = req.ids[2]
+	m.keepAdvice(card, resp.ReviewAdvisories)
 	return m.remoteQueued(card, req.ids[1])
 }

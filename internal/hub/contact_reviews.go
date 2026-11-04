@@ -35,7 +35,7 @@ func (h *Hub) contactReviewAsk(ctx context.Context, req operatorRequest, auditID
 	if text == "" {
 		text = "Review request: " + ask.Repository + "#" + ask.Change
 	}
-	row, err := h.store.OperatorContactSend(ctx, store.ContactSend{OperationID: msg.MessageID, Contact: msg.ContactKey, Text: text,
+	row, advice, err := h.store.OperatorReviewAsk(ctx, store.ContactSend{OperationID: msg.MessageID, Contact: msg.ContactKey, Text: text,
 		To: msg.ContactTo, Review: wireAsk(ask), AuditID: auditID, Now: h.contactNow()})
 	if err != nil {
 		return protocol.Message{}, err
@@ -44,7 +44,7 @@ func (h *Hub) contactReviewAsk(ctx context.Context, req operatorRequest, auditID
 	h.MessagesChanged(msg.ContactKey)
 	view := contactMessageView(row)
 	return protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
-		ContactOp: msg.ContactOp, ContactMessage: &view}, nil
+		ContactOp: msg.ContactOp, ContactMessage: &view, ReviewAdvisories: advice}, nil
 }
 
 // contactReviewDecide approves or declines the contact's request that

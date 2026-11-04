@@ -225,6 +225,10 @@ const CapabilityReviewAskRefs = "review_ask_refs"
 // sent (#303).
 const CapabilityAskFindings = "ask_findings"
 
+// CapabilityReviewAdvisories: a review request queued to a paired
+// workspace's agent comes back with what suggests it may be refused (#304).
+const CapabilityReviewAdvisories = "review_advisories"
+
 // ReviewAskRef names one of this side's requests to a paired workspace.
 type ReviewAskRef struct {
 	Contact string `json:"contact"`

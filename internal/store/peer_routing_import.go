@@ -460,6 +460,8 @@ type RemoteReplyResult struct {
 	Row      messaging.Row
 	Seq      uint64 // its sequence in history here
 	Repeated bool   // a retry of a reply already queued: nothing was written
+	// Advisories are a review request's, read before it was queued (#304).
+	Advisories []protocol.ReviewAdvisory
 }
 
 // QueueRemoteReply keeps an agent's reply to an imported message in history
@@ -498,6 +500,10 @@ func queueFromAgent(ctx context.Context, tx *sql.Tx, a agentMessage) (RemoteRepl
 	if found {
 		return repeatedReply(ctx, tx, held, a.out)
 	}
+	advice, err := askAdvice(ctx, tx, a.out.key.contact, a.out.m)
+	if err != nil {
+		return RemoteReplyResult{}, err
+	}
 	local := a.local
 	local.Durable = false // kept as history: it has no inbox here
 	if err := persistMessage(ctx, tx, routedMessage{msg: local, senderSession: a.session}); err != nil {
@@ -507,7 +513,7 @@ func queueFromAgent(ctx context.Context, tx *sql.Tx, a agentMessage) (RemoteRepl
 	if err != nil {
 		return RemoteReplyResult{}, err
 	}
-	return RemoteReplyResult{Row: row, Seq: local.Seq}, tx.Commit()
+	return RemoteReplyResult{Row: row, Seq: local.Seq, Advisories: advice}, tx.Commit()
 }
 
 // replyOutgoing is the message a reply queues, once its parent allows it.

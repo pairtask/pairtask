@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // operatorContactSchema remembers every operator contact operation by the
@@ -77,6 +78,18 @@ func canonicalIDs(ids []string) []string {
 // message as first queued (its ID, sequence and time; collected text stays
 // collected); the operation ID reused for anything else is ErrConflict.
 func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messaging.Row, error) {
+	row, _, err := s.contactSend(ctx, c)
+	return row, err
+}
+
+// OperatorReviewAsk is OperatorContactSend for a review request: queued
+// the same, with the advisories read where it was queued, before it was
+// written (#304); none for a replay.
+func (s *Store) OperatorReviewAsk(ctx context.Context, c ContactSend) (messaging.Row, []protocol.ReviewAdvisory, error) {
+	return s.contactSend(ctx, c)
+}
+
+func (s *Store) contactSend(ctx context.Context, c ContactSend) (messaging.Row, []protocol.ReviewAdvisory, error) {
 	parts := append([]string{c.Text}, c.To...)
 	if ask := reviewAskJSON(c.Review); ask.Valid {
 		parts = append(parts, "review", ask.String)
@@ -84,6 +97,7 @@ func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messagi
 	op := operation{c.OperationID, "send", c.Contact, operationFingerprint("send", c.Contact, parts...), c.AuditID, c.Now}
 	key := messageKey{c.Contact, messaging.DirOut, c.OperationID}
 	var row messaging.Row
+	var advice []protocol.ReviewAdvisory
 	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
 		var err error
 		if replay {
@@ -96,13 +110,25 @@ func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messagi
 		if !validOutgoing(m) {
 			return fmt.Errorf("%w: ID, text, routing or review request", messaging.ErrInvalid)
 		}
+		if advice, err = askAdvice(ctx, tx, c.Contact, m); err != nil {
+			return err
+		}
 		row, err = queueIn(ctx, tx, outgoing{key: key, m: m, now: c.Now})
 		return err
 	})
 	if err != nil {
-		return messaging.Row{}, err
+		return messaging.Row{}, nil, err
 	}
-	return row, nil
+	return row, advice, nil
+}
+
+// askAdvice is a review request's advisories, read before it is queued;
+// none for any other message.
+func askAdvice(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) ([]protocol.ReviewAdvisory, error) {
+	if m.Review == nil || len(m.To) != 1 {
+		return nil, nil
+	}
+	return ReviewAdvisories(ctx, tx, contact, m.To[0])
 }
 
 // OperatorContactRead marks the shown messages read and finishes its audit

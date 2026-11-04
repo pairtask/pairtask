@@ -21,7 +21,8 @@ type Fake struct {
 	reviews   map[string][]fakeReview
 	attempts  []Submission
 	failures  map[string][]error
-	landThen  error // Publish records the review, then fails with this
+	commits   map[string]bool // repository + commit ID: known to exist
+	landThen  error           // Publish records the review, then fails with this
 	seq       int
 }
 
@@ -37,6 +38,7 @@ const (
 	OpChanges  = "changes"
 	OpPublish  = "publish"
 	OpFind     = "find"
+	OpCommit   = "commit"
 )
 
 // NewFake is a forge named "fake" that can do everything, publishing as
@@ -80,6 +82,16 @@ func (f *Fake) Fail(op string, err error) {
 
 // LandThenFail makes the next Publish record the review and then return
 // err, as a lost response would.
+// SetCommit makes a commit of the target's repository exist, or not.
+func (f *Fake) SetCommit(t Target, sha string, exists bool) {
+	f.locked(func() {
+		if f.commits == nil {
+			f.commits = map[string]bool{}
+		}
+		f.commits[t.Repository+"@"+sha] = exists
+	})
+}
+
 func (f *Fake) LandThenFail(err error) { f.locked(func() { f.landThen = err }) }
 
 // AddReview puts a review on the change as someone else might have, marker
@@ -211,3 +223,14 @@ func (f *Fake) Find(_ context.Context, t Target, e Expected) (Receipt, bool, err
 	}
 	return matches[0], true, nil
 }
+
+func (f *Fake) CommitExists(_ context.Context, t Target, sha string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(OpCommit); err != nil {
+		return false, err
+	}
+	return f.commits[t.Repository+"@"+sha], nil
+}
+
+var _ CommitChecker = (*Fake)(nil)

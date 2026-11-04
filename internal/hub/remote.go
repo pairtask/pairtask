@@ -293,7 +293,7 @@ func (h *Hub) sendRemote(ctx context.Context, clients map[string]*Client, in Inb
 	}
 	if out.AckRequested {
 		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted,
-			Seq: out.Seq, Durable: out.Durable, Repeated: out.Repeated})
+			Seq: out.Seq, Durable: out.Durable, Repeated: out.Repeated, ReviewAdvisories: result.Advisories})
 	}
 	h.SyncMessages(route.contact)
 	h.MessagesChanged(route.contact)

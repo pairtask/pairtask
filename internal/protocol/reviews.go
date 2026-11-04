@@ -393,3 +393,24 @@ type ReviewOutcomeView struct {
 	// while none are known: the reviewer's side's words, data.
 	Findings *AskFindings `json:"findings,omitempty"`
 }
+
+// ReviewAdvisory is advice on a review request (#304): something known here
+// that suggests the other side may refuse it, or what a check of its pins
+// found. Advice only; the request is queued regardless.
+type ReviewAdvisory struct {
+	Code    string     `json:"code"`
+	At      *time.Time `json:"at,omitempty"`      // when the evidence was seen
+	AskID   string     `json:"ask_id,omitempty"`  // the request refused before
+	Current string     `json:"current,omitempty"` // the change's head now
+	Class   string     `json:"class,omitempty"`   // why a check got no answer
+}
+
+// Review advisory codes.
+const (
+	AdvisoryNotInDirectory   = "not_in_directory"   // their sharing, as last received, leaves the agent out
+	AdvisoryRefusedNotShared = "refused_not_shared" // they refused the last request to it, not_shared
+	AdvisoryHeadMissing      = "head_missing"
+	AdvisoryBaseMissing      = "base_missing"
+	AdvisoryHeadMoved        = "head_moved"
+	AdvisoryNotChecked       = "not_checked"
+)
