@@ -24,7 +24,11 @@ func (cs *actionCards) drop(i int) {
 		if cs.failed == nil {
 			cs.failed = map[viewKey]int{}
 		}
-		cs.failed[c.conv]++
+		for _, conv := range c.places() {
+			if !c.cleared[conv] {
+				cs.failed[conv]++
+			}
+		}
 	}
 	cs.list = slices.Delete(cs.list, i, i+1)
 }
@@ -134,9 +138,7 @@ func (cs *actionCards) clear(conv viewKey) int {
 
 // drawnIn: the card is drawn in conv, where it was done or, for a request
 // of a paired workspace's agent, in that workspace's tab.
-func (c *actionCard) drawnIn(conv viewKey) bool {
-	return c.conv == conv || c.kind == cardRemoteReview && contactKey(c.contact) == conv
-}
+func (c *actionCard) drawnIn(conv viewKey) bool { return slices.Contains(c.places(), conv) }
 
 // shownIn: drawn in conv and not cleared there.
 func (c *actionCard) shownIn(conv viewKey) bool { return c.drawnIn(conv) && !c.cleared[conv] }
@@ -149,12 +151,23 @@ func (c *actionCard) hide(conv viewKey) {
 	c.cleared[conv] = true
 }
 
+// places are where the card is drawn: where it was done and, for a request
+// of a paired workspace's agent, that workspace's tab.
+func (c *actionCard) places() []viewKey {
+	if mirror := contactKey(c.contact); c.kind == cardRemoteReview && mirror != c.conv {
+		return []viewKey{c.conv, mirror}
+	}
+	return []viewKey{c.conv}
+}
+
 // clearedEverywhere: hidden wherever it is drawn.
 func (c *actionCard) clearedEverywhere() bool {
-	if !c.cleared[c.conv] {
-		return false
+	for _, conv := range c.places() {
+		if !c.cleared[conv] {
+			return false
+		}
 	}
-	return c.kind != cardRemoteReview || c.cleared[contactKey(c.contact)]
+	return true
 }
 
 // CardView is one card for tests and the CLI.

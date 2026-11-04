@@ -186,6 +186,72 @@ func TestActionCardsAcceptanceRefusalGuidanceMatchesActualReason(t *testing.T) {
 	}
 }
 
+func actionFillLocalCardWindow(t *testing.T, h *chatHarness) {
+	t.Helper()
+	for i := 0; i < 32; i++ {
+		v2Command(h, "/review pairtask/pairtask#305 reviewer")
+		req := actionTakeNewRequest(t, h, protocol.TypeOperatorReview, protocol.ReviewOpRequest)
+		reviewChatSettle(h, req, reviewChatRow(req.MessageID))
+	}
+	h.input(chatKey(tea.KeyEscape, 0))
+}
+
+func TestActionCardsAcceptanceEvictedRemoteFailurePreservesUnclearedMirrors(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		clearOriginal bool
+	}{{"shown", false}, {"cleared", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, ask := actionRemoteQueued(t)
+			read := actionRemoteRefresh(t, h, ask.ContactKey)
+			actionAnswerAskRefs(h, read, "refused", true)
+			h.await(func() bool { return h.m.State().InFlight == 0 })
+			if tc.clearOriginal {
+				v2Command(h, "/cards clear")
+			}
+			actionFillLocalCardWindow(t, h)
+			wantOriginal := 1
+			if tc.clearOriginal {
+				wantOriginal = 0
+			}
+			chatEqual(t, "eviction preserves original dismissal", h.m.State().CardOverflow.Failures, wantOriginal)
+			h.input(chatKey(tea.KeyTab, 0))
+			page := h.take(protocol.TypeOperatorContact)
+			h.reply(page, contactMessagesPage(ask.ContactKey))
+			h.await(func() bool { return h.m.State().InFlight == 0 })
+			chatEqual(t, "uncleared contact retains evicted failure", h.m.State().CardOverflow.Failures, 1)
+		})
+	}
+}
+
+func TestActionCardsAcceptanceEvictedLocalPublicationFailureRemainsCounted(t *testing.T) {
+	h := reviewChatHarness(t)
+	v2Command(h, "/review pairtask/pairtask#305 reviewer")
+	req := h.take(protocol.TypeOperatorReview)
+	row := reviewChatCompleted(req.MessageID)
+	row.Publication = protocol.Publication{State: protocol.PublicationFailed, Reason: "provider rejected publication"}
+	reviewChatSettle(h, req, row)
+	chatEqual(t, "failed publication is a finished card", actionCardWithID(t, h, row.ID).Finished, true)
+	actionFillLocalCardWindow(t, h)
+	chatEqual(t, "evicted local publication failure remains counted", h.m.State().CardOverflow.Failures, 1)
+}
+
+func TestActionCardsAcceptanceLocalOutcomeSurvivesUnrelatedListPage(t *testing.T) {
+	h := reviewChatHarness(t)
+	v2Command(h, "/review pairtask/pairtask#305 reviewer")
+	req := h.take(protocol.TypeOperatorReview)
+	row := reviewChatCompleted(req.MessageID)
+	reviewChatSettle(h, req, row)
+	before := actionCardWithID(t, h, row.ID)
+	v2Command(h, "/reviews")
+	list := h.take(protocol.TypeOperatorReview)
+	h.reply(list, reviewChatPage())
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	after := actionCardWithID(t, h, row.ID)
+	chatEqual(t, "another list page cannot erase known local outcome", strings.Join(after.Steps, "\n"), strings.Join(before.Steps, "\n"))
+	chatEqual(t, "known completed card stays finished", after.Finished, true)
+}
+
 func TestActionCardsAcceptanceLocalRequestKeepsCardBoundToReview(t *testing.T) {
 	h := reviewChatHarness(t)
 	v2Command(h, "/review --no-publish pairtask/pairtask#305 reviewer inspect cards")

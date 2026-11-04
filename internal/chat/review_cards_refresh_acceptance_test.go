@@ -235,6 +235,28 @@ func actionRequestMatches(req protocol.Message, kind, op string) bool {
 	return req.ContactOp == op
 }
 
+func TestActionCardsAcceptanceOlderEventReadCannotReplaceNewerOutcome(t *testing.T) {
+	for _, older := range []string{"requested", "omitted"} {
+		t.Run(older, func(t *testing.T) {
+			h, ask := actionRemoteQueued(t)
+			old := actionRemoteRefresh(t, h, ask.ContactKey)
+			fresh := actionRemoteRefresh(t, h, ask.ContactKey)
+			completed := protocol.ReviewAskedItem{Contact: ask.ContactKey, AskID: ask.MessageID, Reviewer: "reviewer", State: "completed", Verdict: "approve", Settled: true}
+			h.launch(h.holdResponse(fresh, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewAsked: &protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{completed}, Total: 1}}))
+			before := actionCardWithID(t, h, ask.MessageID)
+			chatEqual(t, "newer outcome is finished", before.Finished, true)
+			items := []protocol.ReviewAskedItem{}
+			if older == "requested" {
+				items = append(items, protocol.ReviewAskedItem{Contact: ask.ContactKey, AskID: ask.MessageID, Reviewer: "reviewer", State: "requested"})
+			}
+			h.launch(h.holdResponse(old, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewAsked: &protocol.ReviewAskedPage{Items: items, Total: len(items)}}))
+			after := actionCardWithID(t, h, ask.MessageID)
+			chatEqual(t, "older event response cannot replace newer outcome", strings.Join(after.Steps, "\n"), strings.Join(before.Steps, "\n"))
+			chatEqual(t, "older event cannot reopen completed card", after.Active, false)
+		})
+	}
+}
+
 func actionSelectRemoteCard(t *testing.T, h *chatHarness, key string) {
 	t.Helper()
 	h.input(chatKey(tea.KeyTab, 0))

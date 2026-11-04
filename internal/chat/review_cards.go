@@ -35,6 +35,8 @@ type reviewProgress struct {
 	askID     string                    // its request's ID, once the broker queued it
 	reviewID  string                    // a review here's ID, once the broker took it
 	item      *protocol.ReviewAskedItem // the request as last read
+	readSeq   uint64                    // the newest read applied to it
+	seen      *protocol.ReviewView      // a review here as last seen
 	gone      bool                      // a read that worked no longer has it
 	unknown   bool                      // the last read failed
 	readDue   bool                      // something changed before it was queued
@@ -99,7 +101,8 @@ func (m *Model) cardAsksChanged() tea.Cmd {
 func (c *actionCard) activeRemote() bool { return c.kind == cardRemoteReview && !finishedCard(c) }
 
 // readCardAsks reads where the active paired requests stand, eight at a
-// time, under the current read generation.
+// time, under the current read generation; each read is numbered, so an
+// older one answering late can't undo a newer one.
 func (m *Model) readCardAsks() tea.Cmd {
 	if !m.session.HasCapability(protocol.CapabilityReviewAskRefs) {
 		return nil
@@ -111,11 +114,13 @@ func (m *Model) readCardAsks() tea.Cmd {
 		}
 	}
 	var cmds []tea.Cmd
+	m.cards.readSeq++
+	gen, seq := strconv.FormatUint(m.cards.readGen, 10), strconv.FormatUint(m.cards.readSeq, 10)
 	for len(refs) > 0 {
 		batch := refs[:min(len(refs), protocol.ReviewAskRefsMax)]
 		refs = refs[len(batch):]
 		msg := protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpAsked, ReviewAskRefs: batch}
-		ids := append([]string{strconv.FormatUint(m.cards.readGen, 10)}, refKeys(batch)...)
+		ids := append([]string{gen, seq}, refKeys(batch)...)
 		cmds = append(cmds, m.request(kindCardAsks, msg, ids...))
 	}
 	return tea.Batch(cmds...)
@@ -143,27 +148,30 @@ func (m *Model) cardAsksResult(req pendingRequest, resp protocol.Message) tea.Cm
 			found[it.Contact+"\x00"+it.AskID] = it
 		}
 	}
-	for _, key := range req.ids[1:] {
+	seq, _ := strconv.ParseUint(req.ids[1], 10, 64)
+	for _, key := range req.ids[2:] {
 		contact, askID, _ := strings.Cut(key, "\x00")
 		it, has := found[key]
-		m.cardReadAnswer(protocol.ReviewAskRef{Contact: contact, AskID: askID}, readAnswer{it, has, ok})
+		m.cardReadAnswer(protocol.ReviewAskRef{Contact: contact, AskID: askID}, readAnswer{it, seq, has, ok})
 	}
 	return nil
 }
 
 // readAnswer is what a batch's answer says of one request: ok, the read
-// worked; has, the request was in it, as it.
+// worked; has, the request was in it, as it; seq, which read it was.
 type readAnswer struct {
 	it      protocol.ReviewAskedItem
+	seq     uint64
 	has, ok bool
 }
 
 func (m *Model) cardReadAnswer(ref protocol.ReviewAskRef, a readAnswer) {
 	for _, c := range m.cards.list {
-		if !c.asks(ref) {
-			continue
+		if !c.asks(ref) || a.seq <= c.review.readSeq {
+			continue // another card, or a newer read already applied
 		}
 		r := c.review
+		r.readSeq = a.seq
 		switch {
 		case !a.ok:
 			r.unknown = true
@@ -208,12 +216,17 @@ func reviewFailed(c *actionCard) bool {
 	return c.readDot() == dotRed
 }
 
-// readDot is a paired request's dot as last read, else none.
+// readDot is the dot of a paired request as last read, or of a review
+// here as last seen, else none.
 func (c *actionCard) readDot() reviewDot {
-	if c.kind != cardRemoteReview || c.review.item == nil {
-		return dotNone
+	r := c.review
+	switch {
+	case c.kind == cardRemoteReview && r.item != nil:
+		return askDot(r.item.State)
+	case c.kind == cardLocalReview && r.seen != nil:
+		return reviewHereDot(*r.seen)
 	}
-	return askDot(c.review.item.State)
+	return dotNone
 }
 
 // reviewTitle and reviewFooter frame a review card.
@@ -326,11 +339,10 @@ func (m *Model) localReviewSteps(c *actionCard, green func(string) string) []str
 	if r.reviewID == "" {
 		return []string{green("Requesting…")}
 	}
-	v, ok := m.reviewByID(r.reviewID)
-	if !ok {
+	if r.seen == nil {
 		return []string{"✓ Requested"}
 	}
-	d := reviewHereDot(v)
+	v, d := *r.seen, c.readDot()
 	line := d.mark(lipgloss.NewStyle(), m.look(d.blinks() && m.reviewSig.dotOff)) + " " + safe(v.State)
 	if v.Verdict != nil {
 		line += " · " + safe(v.Verdict.Outcome)
@@ -355,7 +367,8 @@ func (m *Model) reviewByID(id string) (protocol.ReviewView, bool) {
 	return protocol.ReviewView{}, false
 }
 
-// syncLocalCards marks the reviews here that nothing more will change.
+// syncLocalCards keeps each review here as last seen, so a later page
+// without it erases nothing, and marks those nothing more will change.
 func (m *Model) syncLocalCards() {
 	for _, c := range m.cards.list {
 		if c.kind != cardLocalReview || c.review.reviewID == "" {
@@ -363,7 +376,7 @@ func (m *Model) syncLocalCards() {
 		}
 		if v, ok := m.reviewByID(c.review.reviewID); ok {
 			pending := v.Publication.State == protocol.PublicationPending || v.Publication.State == protocol.PublicationSubmitting
-			c.review.settled = !openReview(v.State) && !pending
+			c.review.seen, c.review.settled = &v, !openReview(v.State) && !pending
 		}
 	}
 }

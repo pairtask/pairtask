@@ -53,6 +53,7 @@ type actionCards struct {
 	failed    map[viewKey]int              // failures dropped past the window, until cleared
 	untracked map[viewKey]map[cardKind]int // actions run with every card still active
 	readGen   uint64                       // fences reads of where requests stand
+	readSeq   uint64                       // numbers them, newest last
 }
 
 // startCard keeps a new action's card. Past the window the oldest finished
