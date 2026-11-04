@@ -22,6 +22,7 @@ const pinCheckBudget = 5 * time.Second
 type pinCheckedMsg struct {
 	card   *actionCard
 	gen    uint64
+	id     uint64 // the check's number, to release its handle
 	advice []protocol.ReviewAdvisory
 }
 
@@ -38,11 +39,15 @@ func (m *Model) checkPinsAfterSending(ask remoteAsk, pins protocol.Revisions) te
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pinCheckBudget)
-	m.cards.pinCancels = append(m.cards.pinCancels, cancel)
-	gen, target := m.cards.pinGen, ask.target
+	if m.cards.pinCancels == nil {
+		m.cards.pinCancels = map[uint64]context.CancelFunc{}
+	}
+	m.cards.pinSeq++
+	id, gen, target := m.cards.pinSeq, m.cards.pinGen, ask.target
+	m.cards.pinCancels[id] = cancel // only checks in flight are held
 	return func() tea.Msg {
 		defer cancel()
-		return pinCheckedMsg{card: c, gen: gen, advice: check(ctx, target, pins)}
+		return pinCheckedMsg{card: c, gen: gen, id: id, advice: check(ctx, target, pins)}
 	}
 }
 
@@ -56,8 +61,10 @@ func (m *Model) cancelPinChecks() {
 	m.cards.pinCancels = nil
 }
 
-// pinsChecked puts a check's answer on its card, if it is still asked for.
+// pinsChecked puts a check's answer on its card, if it is still asked for,
+// and lets go of the check either way.
 func (m *Model) pinsChecked(msg pinCheckedMsg) tea.Cmd {
+	delete(m.cards.pinCancels, msg.id) // numbers never repeat: an answer frees only its own
 	c := msg.card
 	if msg.gen != m.cards.pinGen || !slicesContains(m.cards.list, c) || c.review.pins == nil {
 		return nil

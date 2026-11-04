@@ -33,7 +33,7 @@ func TestCommitCheckerAcceptanceDistinguishesMissingFromInaccessible(t *testing.
 		exists bool
 		class  string
 	}{
-		{200, true, ""}, {404, false, ""}, {422, false, ""},
+		{200, true, ""}, {404, false, ""}, {422, false, forge.ClassInvalid},
 		{403, false, forge.ClassForbidden}, {429, false, forge.ClassRateLimited}, {500, false, forge.ClassUnavailable},
 	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
@@ -113,4 +113,59 @@ func TestCommitCheckerAcceptanceCheckPinsClassifiesRealHTTPCancellationAsTimeout
 			}
 		})
 	}
+}
+
+func TestCommitCheckerAcceptanceUnusableEvidenceNeverBecomesMissingPin(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   map[string]any
+	}{
+		{"empty-success", 200, map[string]any{}},
+		{"invalid-sha-success", 200, map[string]any{"sha": "not-a-commit"}},
+		{"different-sha-success", 200, map[string]any{"sha": "cccccccccccccccccccccccccccccccccccccccc"}},
+		{"generic-validation", 422, map[string]any{"message": "Validation failed"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := ghFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/repos/owner/repo/pulls/42" {
+					ghJSON(w, map[string]any{"base": map[string]string{"sha": fixturePins.Base}, "head": map[string]string{"sha": fixturePins.Head}})
+					return
+				}
+				w.WriteHeader(tc.status)
+				ghJSON(w, tc.body)
+			})
+			exists, err := advisoryChecker(t, f).CommitExists(context.Background(), fixtureTarget, fixturePins.Head)
+			ghClass(t, err, forge.ClassInvalid)
+			ghEqual(t, "unusable answer does not establish existence", exists, false)
+			checks := forge.CheckPins(context.Background(), f, fixtureTarget, fixturePins)
+			if len(checks) == 0 {
+				t.Fatal("unusable evidence was reported as a successful check")
+			}
+			for _, check := range checks {
+				ghEqual(t, "unusable evidence is not a definitive missing pin", check.Code, "not_checked")
+				ghEqual(t, "classification survives preflight", check.Class, forge.ClassInvalid)
+			}
+		})
+	}
+}
+
+func TestCommitCheckerAcceptanceSpecificMissingCommit422IsDefinitive(t *testing.T) {
+	f := ghFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(422)
+		ghJSON(w, map[string]string{"message": "No commit found for SHA: " + fixturePins.Head})
+	})
+	exists, err := advisoryChecker(t, f).CommitExists(context.Background(), fixtureTarget, fixturePins.Head)
+	ghOK(t, err)
+	ghEqual(t, "specific provider absence is definitive", exists, false)
+}
+
+func TestCommitCheckerAcceptanceOtherEndpoint422KeepsValidationClass(t *testing.T) {
+	f := ghFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		ghEqual(t, "read change rather than commit", r.URL.Path, "/repos/owner/repo/pulls/42")
+		w.WriteHeader(422)
+		ghJSON(w, map[string]string{"message": "No commit found for SHA: " + fixturePins.Head})
+	})
+	_, err := f.Resolve(context.Background(), fixtureTarget)
+	ghClass(t, err, forge.ClassInvalid)
 }

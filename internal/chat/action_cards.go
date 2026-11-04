@@ -51,12 +51,13 @@ func newCardID() string { return "card-" + uuid.NewString() }
 // what can't be drawn as one.
 type actionCards struct {
 	list       []*actionCard
-	failed     map[viewKey]int              // failures dropped past the window, until cleared
-	untracked  map[viewKey]map[cardKind]int // actions run with every card still active
-	readGen    uint64                       // fences reads of where requests stand
-	readSeq    uint64                       // numbers them, newest last
-	pinGen     uint64                       // fences checks of pins (#304)
-	pinCancels []context.CancelFunc         // the checks in flight
+	failed     map[viewKey]int               // failures dropped past the window, until cleared
+	untracked  map[viewKey]map[cardKind]int  // actions run with every card still active
+	readGen    uint64                        // fences reads of where requests stand
+	readSeq    uint64                        // numbers them, newest last
+	pinGen     uint64                        // fences checks of pins (#304)
+	pinCancels map[uint64]context.CancelFunc // the checks in flight, by number
+	pinSeq     uint64                        // numbers them
 }
 
 // startCard keeps a new action's card. Past the window the oldest finished
