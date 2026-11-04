@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
@@ -159,7 +158,7 @@ FROM review_asks_out WHERE contact = ? AND ask_id = ?`, contact, askID).Scan(
 	if err != nil {
 		return a, nil, false, err
 	}
-	a.Settled, a.ReviewID, a.Findings = settled.Valid, reviewID.String, f.view()
+	a.Settled, a.ReviewID, a.Findings = settled.Valid, reviewID.String, f.view(protocol.FindingsAll)
 	if a.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
 		return a, nil, false, err
 	}
@@ -556,15 +555,94 @@ func outcomeNotice(imp RemoteImport, a AskOut, label string, at importSlot) (pro
 // AsksLimit bounds a listing of requests.
 const AsksLimit = 64
 
-// AsksBy are the requests an agent here sent, newest first.
-func (s *Store) AsksBy(ctx context.Context, agent string) ([]AskOut, error) {
-	keys, err := askKeys(ctx, s.db, `SELECT contact || char(0) || ask_id FROM review_asks_out WHERE requester_agent = ? AND requester_agent != ''
-ORDER BY created_at DESC, rowid DESC LIMIT ?`, agent, AsksLimit)
-	if err != nil {
-		return nil, err
-	}
-	return loadAsks(ctx, s.db, keys)
+// AsksPage is a page of the requests an agent here sent, newest first:
+// each with the cursor that reads on after it, and whether more follow.
+type AsksPage struct {
+	Asks    []AskOut
+	Cursors []string
+	More    bool
 }
+
+// AsksBy are the requests an agent here sent, newest first, from the one
+// after before ("" for the newest): at most AsksLimit, in an order that
+// stays put (#303), each with counts of its findings only.
+func (s *Store) AsksBy(ctx context.Context, agent, before string) (AsksPage, error) {
+	where, args, err := asksAfter(agent, before)
+	if err != nil {
+		return AsksPage{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true}) // keys and rows from one snapshot
+	if err != nil {
+		return AsksPage{}, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT contact, ask_id, created_at FROM review_asks_out
+WHERE requester_agent = :agent AND requester_agent != ''`+where+` ORDER BY created_at DESC, contact DESC, ask_id DESC LIMIT :limit`, args...)
+	if err != nil {
+		return AsksPage{}, err
+	}
+	keys, cursors, err := askPageKeys(rows)
+	if err != nil {
+		return AsksPage{}, err
+	}
+	page := AsksPage{More: len(keys) > AsksLimit}
+	return page, page.load(ctx, tx, keys[:min(len(keys), AsksLimit)], cursors)
+}
+
+// asksAfter is the condition and arguments of the page after before.
+func asksAfter(agent, before string) (string, []any, error) {
+	cur, err := decodeCursor(before)
+	args := []any{sql.Named("agent", agent), sql.Named("limit", AsksLimit+1)}
+	if err != nil || cur == nil {
+		return "", args, err
+	}
+	return ` AND (created_at < :t OR created_at = :t AND (contact < :c OR contact = :c AND ask_id < :i))`,
+		append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID)), nil
+}
+
+// load reads the page's requests, with counts of their findings only; one
+// gone since is left out with its cursor.
+func (page *AsksPage) load(ctx context.Context, tx *sql.Tx, keys [][2]string, cursors []string) error {
+	for i, k := range keys {
+		a, _, found, err := loadAsk(ctx, tx, k[0], k[1])
+		if err != nil {
+			return err
+		}
+		if found {
+			a.Findings = withoutItems(a.Findings) // a list carries counts (#303)
+			page.Asks, page.Cursors = append(page.Asks, a), append(page.Cursors, cursors[i])
+		}
+	}
+	return nil
+}
+
+// askPageKeys are a page's requests, as keys and cursors.
+func askPageKeys(rows *sql.Rows) ([][2]string, []string, error) {
+	defer rows.Close()
+	var keys [][2]string
+	var cursors []string
+	for rows.Next() {
+		var c pendingCursor
+		if err := rows.Scan(&c.Contact, &c.ID, &c.At); err != nil {
+			return nil, nil, err
+		}
+		keys, cursors = append(keys, [2]string{c.Contact, c.ID}), append(cursors, c.encode())
+	}
+	return keys, cursors, rows.Err()
+}
+
+// AskBy is one request an agent here sent, with every finding received
+// (#303); another agent's request is not found.
+func (s *Store) AskBy(ctx context.Context, agent string, ref protocol.ReviewAskRef) (AskOut, bool, error) {
+	a, _, found, err := loadAsk(ctx, s.db, ref.Contact, ref.AskID)
+	if err != nil {
+		return AskOut{}, false, err
+	}
+	return a, found && sentBy(a, agent), nil
+}
+
+// sentBy: an agent here sent the request, and it is this one.
+func sentBy(a AskOut, agent string) bool { return agent != "" && a.RequesterAgent == agent }
 
 // AskOutFor is a request this side sent contact, when the ID is one.
 func (p *PeerMessages) AskOutFor(ctx context.Context, contact, askID string) (AskOut, bool, error) {
@@ -572,31 +650,9 @@ func (p *PeerMessages) AskOutFor(ctx context.Context, contact, askID string) (As
 	return a, found, err
 }
 
-func askKeys(ctx context.Context, q rowsQuerier, query string, args ...any) ([][2]string, error) {
-	rows, err := queryStrings(ctx, q, query, args...)
-	var out [][2]string
-	for _, r := range rows {
-		contact, id, _ := strings.Cut(r, "\x00")
-		out = append(out, [2]string{contact, id})
-	}
-	return out, err
-}
-
-func loadAsks(ctx context.Context, q rowQuerier, keys [][2]string) ([]AskOut, error) {
-	out := make([]AskOut, 0, len(keys))
-	for _, k := range keys {
-		a, _, _, err := loadAsk(ctx, q, k[0], k[1])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, nil
-}
-
 // View is the request as an agent or the operator sees it.
 func (a AskOut) View() protocol.ReviewOutcomeView {
-	return protocol.ReviewOutcomeView{AskID: a.AskID, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
+	return protocol.ReviewOutcomeView{AskID: a.AskID, Workspace: a.Contact, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
 		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason,
 		ReviewID: a.ReviewID, Findings: a.Findings}
 }

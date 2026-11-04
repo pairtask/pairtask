@@ -118,6 +118,9 @@ A ref stays with its request for the session, and one that has left says so.
 - `/reviews open REF` opens that request's `⇄` tab and scrolls to it, reading back
   from the newest page 20 pages at a time; running it again continues. Esc or
   another tab stops it, and "history pruned" means the message really is gone.
+- `/reviews findings aN` shows a request you sent with every finding its verdict
+  sent back (#303), read from the broker, so it doesn't depend on the session's
+  cards. It says how many stayed on their side.
 - Opening or viewing never approves, declines or acknowledges anything: you decide
   with `/pair approve` or `decline`.
 
@@ -178,8 +181,9 @@ have it all).
   line says the first before you send, when the tab already knows. Advice only:
   nothing is held back or sent again. When the
   verdict's findings came back (#303), the card lists the first three as
-  `path:line: summary`, then how many more arrived (`/reviews` counts them on
-  the request's row) and how many stayed on their side.
+  `path:line: summary`, then how many more arrived (`/reviews findings aN`
+  shows every one; `/reviews` counts them on the request's row) and how many
+  stayed on their side.
 - A conversation draws at most 8 cards, the active first; the rest are counted
   below them, with where to look. Up to 32 actions are kept per session; a
   failure is never dropped without being counted. `/cards clear` removes this

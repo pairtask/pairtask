@@ -145,7 +145,7 @@ func findingsText(e *messaging.FindingsEnvelope) string {
 		b.WriteString(" " + findingLine(f) + ";")
 	}
 	if more := len(e.Items) - noticeFindings; more > 0 {
-		fmt.Fprintf(&b, " %d more received: reviews_asked;", more)
+		fmt.Fprintf(&b, " %d more received: reviews_asked with ask_id and workspace;", more)
 	}
 	if kept := e.Total - len(e.Items); kept > 0 {
 		fmt.Fprintf(&b, " %d not transferred, kept on their side;", kept)
@@ -178,8 +178,9 @@ type keptFindings struct {
 	seq, attempt sql.NullInt64
 }
 
-// view is the findings as the asked list shows them, nil for none.
-func (k keptFindings) view() *protocol.AskFindings {
+// view is the findings with at most limit items, all for FindingsAll;
+// nil for none.
+func (k keptFindings) view(limit int) *protocol.AskFindings {
 	if !k.envelope.Valid {
 		return nil
 	}
@@ -187,9 +188,27 @@ func (k keptFindings) view() *protocol.AskFindings {
 	if err != nil || e == nil {
 		return nil // only a valid envelope is ever kept
 	}
-	out := &protocol.AskFindings{Total: e.Total, Items: make([]protocol.AskFinding, len(e.Items)), Seq: uint64(k.seq.Int64), Attempt: uint32(k.attempt.Int64)}
-	for i, f := range e.Items {
-		out.Items[i] = protocol.AskFinding{Path: f.Path, Line: f.Line, Summary: f.Summary, Truncated: f.Truncated}
+	out := &protocol.AskFindings{Total: e.Total, Received: len(e.Items), Seq: uint64(k.seq.Int64), Attempt: uint32(k.attempt.Int64)}
+	return withItems(out, e.Items, limit)
+}
+
+// withItems gives findings at most limit of the items received.
+func withItems(out *protocol.AskFindings, items []messaging.Finding, limit int) *protocol.AskFindings {
+	if limit != protocol.FindingsAll {
+		items = items[:min(limit, len(items))]
+	}
+	for _, f := range items {
+		out.Items = append(out.Items, protocol.AskFinding{Path: f.Path, Line: f.Line, Summary: f.Summary, Truncated: f.Truncated})
 	}
 	return out
+}
+
+// withoutItems is findings as a list carries them: the counts alone.
+func withoutItems(f *protocol.AskFindings) *protocol.AskFindings {
+	if f == nil {
+		return nil
+	}
+	counts := *f
+	counts.Items = nil
+	return &counts
 }

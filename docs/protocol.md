@@ -649,8 +649,9 @@ message: the latest outcome of each request, numbered, each answered.
 Outcomes only move on; one that goes back, comes from another reviewer, or
 answers no request sent is refused. For a request an agent sent, the agent
 gets a message with origin `remote`, `in_reply_to` its request and
-`review_outcome: {ask_id, reviewer, repository, change, state, attempt,
-intent, verdict?, summary?, url?, reason?, review_id?}`; summary and URL are the other
+`review_outcome: {ask_id, workspace, reviewer, repository, change, state, attempt,
+intent, verdict?, summary?, url?, reason?, review_id?}` (`workspace`, the
+identity key it went to, from v21); summary and URL are the other
 workspace's words. `reviews_asked_get` `{request_id}` (v15) answers
 `reviews_asked_result` with `reviews_asked`: the caller's own requests.
 
@@ -694,12 +695,28 @@ v5, 11 at v6 and 12 at v7.
     other findings than those known, it is refused as a conflict.
   - Unsharing or removing the reviewer keeps the findings, for as long as
     the request is kept.
-- **Readers:** `findings: {total, items, seq, attempt}` on `review_outcome`
-  and `reviews_asked` (absent while none are known), and on the operator's
-  asked page with capability `ask_findings` (v21).
+- **Readers:** `findings: {total, received, items?, seq, attempt}` (absent
+  while none are known). `total` is the verdict's count, `received` how many
+  came over, and `items` what this read carries, so a frame stays bounded:
+  - lists carry no items: the agent's `reviews_asked`, the operator's asked
+    page;
+  - the operator's read by `review_ask_refs` (at most 8) carries the first 3;
+  - one request read alone carries every received item:
+    - an agent's `reviews_asked_get` with exactly one `review_ask_refs`
+      entry `{contact, ask_id}` (v21), only for the agent's own request;
+    - the operator's `review_op: "asked_detail"` with exactly one
+      `review_ask_refs` entry, and nothing else.
+  - `review_outcome` on the notice carries every received item.
+  The operator's reads carry `findings` with capability `ask_findings` (v21).
+- **Agent list paging:** `reviews_asked_get` answers newest first, in a fixed
+  order (created, then contact, then ask ID), with as many requests (at most
+  64) as fit one frame encoded, at least one. `reviews_asked_more: true` and
+  `reviews_asked_next` say older ones follow; `review_before` set to that cursor
+  reads them. A bad cursor, or a cursor with `review_ask_refs`, is
+  `malformed_frame`.
 - **Notice:** the outcome notice lists the first 3. It then says how many
-  more were received (in `reviews_asked`), apart from how many weren't
-  transferred.
+  more were received (`reviews_asked` with the ask ID and workspace), apart
+  from how many weren't transferred.
 
 ## State
 

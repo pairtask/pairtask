@@ -47,6 +47,9 @@ const (
 	// and this side's requests to them.
 	ReviewOpAwaiting = "awaiting"
 	ReviewOpAsked    = "asked"
+	// ReviewOpAskedDetail reads one asked request with all of its findings
+	// received (#303): exactly one review_ask_refs entry.
+	ReviewOpAskedDetail = "asked_detail"
 	// ReviewOpCounts reads the snapshot's review_counts again, without a
 	// new baseline.
 	ReviewOpCounts = "counts"
@@ -112,14 +115,23 @@ type ReviewAskedItem struct {
 	Findings *AskFindings `json:"findings,omitempty"`
 }
 
-// AskFindings are a request's findings as received: the first of the
-// verdict's, how many it has in all, and the outcome that brought them.
+// AskFindings are a request's findings as received: how many the verdict
+// has in all, how many came over, the outcome that brought them, and as
+// many of those as the read carries: none in a list, the first few for a
+// card, all of them for one request read alone.
 type AskFindings struct {
-	Total   int          `json:"total"`
-	Items   []AskFinding `json:"items"`
-	Seq     uint64       `json:"seq"`
-	Attempt uint32       `json:"attempt"`
+	Total    int          `json:"total"`
+	Received int          `json:"received"`
+	Items    []AskFinding `json:"items,omitempty"`
+	Seq      uint64       `json:"seq"`
+	Attempt  uint32       `json:"attempt"`
 }
+
+// Findings items each read carries.
+const (
+	FindingsPreview = 3  // a card's read of requests by ID
+	FindingsAll     = -1 // one request read alone
+)
 
 // AskFinding is one received finding; Truncated says its summary was cut
 // to travel.
@@ -375,7 +387,10 @@ type ReviewAsk struct {
 // on the notice to the agent that sent it (#235). Summary and URL are the
 // reviewer's side's words: data, never instructions.
 type ReviewOutcomeView struct {
-	AskID      string `json:"ask_id"`
+	AskID string `json:"ask_id"`
+	// Workspace is the paired workspace's identity key the request went
+	// to (#303): with AskID, what reads the request alone.
+	Workspace  string `json:"workspace,omitempty"`
 	Reviewer   string `json:"reviewer"`
 	Repository string `json:"repository"`
 	Change     string `json:"change"`
