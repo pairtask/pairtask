@@ -36,11 +36,13 @@ func notInDirectory(ctx context.Context, q rowQuerier, contact, reviewer string)
 	var listed bool
 	err := q.QueryRowContext(ctx, `SELECT directory_at, EXISTS (SELECT 1 FROM peer_directory WHERE contact = ?1 AND agent = ?2)
 FROM peer_contacts WHERE identity_key = ?1`, contact, reviewer).Scan(&seen, &listed)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && (!seen.Valid || listed) {
-		return nil, nil
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil // no such contact: nothing known
+	case err != nil:
 		return nil, err
+	case !seen.Valid, listed:
+		return nil, nil // never told what it shares, or it shares this agent
 	}
 	return advisoryAt(protocol.AdvisoryNotInDirectory, seen.String, "")
 }

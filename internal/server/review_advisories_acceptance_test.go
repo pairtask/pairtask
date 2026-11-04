@@ -39,15 +39,15 @@ func advisoriesQueue(t *testing.T, f *reviewSignalFixture, id, reviewer string) 
 	return notes
 }
 
-func advisoriesWant(t *testing.T, notes []acceptanceReviewAdvisory, code, askID string, at time.Time) {
+func advisoriesWant(t *testing.T, notes []acceptanceReviewAdvisory, want acceptanceReviewAdvisory) {
 	t.Helper()
 	operatorEqual(t, "one scoped advisory", len(notes), 1)
-	operatorEqual(t, "advisory code", notes[0].Code, code)
-	operatorEqual(t, "advisory identifies prior request only when relevant", notes[0].AskID, askID)
+	operatorEqual(t, "advisory code", notes[0].Code, want.Code)
+	operatorEqual(t, "advisory identifies prior request only when relevant", notes[0].AskID, want.AskID)
 	if notes[0].At == nil {
 		t.Fatal("advisory lacks evidence timestamp")
 	}
-	operatorEqual(t, "advisory uses actual evidence timestamp", notes[0].At.Equal(at), true)
+	operatorEqual(t, "advisory uses actual evidence timestamp", notes[0].At.Equal(*want.At), true)
 }
 
 func TestReviewAdvisoriesServerAcceptanceDirectoryHintRequiresKnownObservation(t *testing.T) {
@@ -65,7 +65,7 @@ func TestReviewAdvisoriesServerAcceptanceDirectoryHintRequiresKnownObservation(t
 			}
 			notes := advisoriesQueue(t, f, "directory-hint", "reviewer")
 			if tc.warn {
-				advisoriesWant(t, notes, "not_in_directory", "", at)
+				advisoriesWant(t, notes, acceptanceReviewAdvisory{Code: "not_in_directory", At: &at})
 			} else {
 				operatorEqual(t, "no unsupported directory claim", len(notes), 0)
 			}
@@ -83,8 +83,8 @@ func TestReviewAdvisoriesServerAcceptanceLocalQueueDoesNotClearRemoteRefusal(t *
 	operatorEqual(t, "refused request retained", found, true)
 	operatorEqual(t, "real refusal applied", refused.State, "refused")
 	at := refused.UpdatedAt
-	advisoriesWant(t, advisoriesQueue(t, f, "second", "reviewer"), "refused_not_shared", "first", at)
-	advisoriesWant(t, advisoriesQueue(t, f, "third", "reviewer"), "refused_not_shared", "first", at)
+	advisoriesWant(t, advisoriesQueue(t, f, "second", "reviewer"), acceptanceReviewAdvisory{Code: "refused_not_shared", AskID: "first", At: &at})
+	advisoriesWant(t, advisoriesQueue(t, f, "third", "reviewer"), acceptanceReviewAdvisory{Code: "refused_not_shared", AskID: "first", At: &at})
 	operatorEqual(t, "refusal belongs only to its reviewer", len(advisoriesQueue(t, f, "other-scope", "other")), 0)
 	id := messageIdentity(t)
 	messageConfirm(f.redeemOperatorFixture, id, 2)
@@ -95,7 +95,7 @@ func TestReviewAdvisoriesServerAcceptanceLocalQueueDoesNotClearRemoteRefusal(t *
 	a, err := f.st.PeerMessages().AcceptOutcome(context.Background(), f.key, invalid, at.Add(time.Second))
 	operatorNoError(t, err)
 	operatorEqual(t, "invalid remote progress rejected", a.Stored, false)
-	advisoriesWant(t, advisoriesQueue(t, f, "after-invalid", "reviewer"), "refused_not_shared", "first", at)
+	advisoriesWant(t, advisoriesQueue(t, f, "after-invalid", "reviewer"), acceptanceReviewAdvisory{Code: "refused_not_shared", AskID: "first", At: &at})
 	progress := messaging.ReviewOutcome{AskID: "second", Reviewer: "reviewer", Seq: 1, State: "requested"}
 	a, err = f.st.PeerMessages().AcceptOutcome(context.Background(), f.key, progress, at.Add(2*time.Second))
 	operatorNoError(t, err)
@@ -109,7 +109,7 @@ func TestReviewAdvisoriesServerAcceptanceReplayDoesNotReadLaterEvidence(t *testi
 	at := time.Now().UTC()
 	operatorNoError(t, f.st.PeerMessages().SetPeerDirectory(context.Background(), f.key, []string{}, at))
 	operatorEqual(t, "replay does not reevaluate later evidence", len(advisoriesQueue(t, f, "stable", "reviewer")), 0)
-	advisoriesWant(t, advisoriesQueue(t, f, "fresh", "reviewer"), "not_in_directory", "", at)
+	advisoriesWant(t, advisoriesQueue(t, f, "fresh", "reviewer"), acceptanceReviewAdvisory{Code: "not_in_directory", At: &at})
 }
 
 func TestReviewAdvisoriesServerAcceptanceAgentAcceptedStageCarriesQueueAdvice(t *testing.T) {
@@ -130,7 +130,7 @@ func TestReviewAdvisoriesServerAcceptanceAgentAcceptedStageCarriesQueueAdvice(t 
 		Notes []acceptanceReviewAdvisory `json:"review_advisories"`
 	}
 	operatorNoError(t, json.Unmarshal(data, &decoded))
-	advisoriesWant(t, decoded.Notes, "not_in_directory", "", at)
+	advisoriesWant(t, decoded.Notes, acceptanceReviewAdvisory{Code: "not_in_directory", At: &at})
 	kept, found, err := f.st.PeerMessages().AskOutFor(ctx, f.key, "agent-advice")
 	operatorNoError(t, err)
 	operatorEqual(t, "accepted stage accompanies real stored request", found, true)

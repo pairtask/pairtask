@@ -30,7 +30,7 @@ type pinCheckedMsg struct {
 // without a checker the card says it wasn't.
 func (m *Model) checkPinsAfterSending(ask remoteAsk, pins protocol.Revisions) tea.Cmd {
 	c := m.card(ask.card)
-	if c == nil || c.review == nil || c.failure != "" {
+	if !c.sentReview() {
 		return nil
 	}
 	check := m.opts.Bounds.CheckPins
@@ -49,6 +49,11 @@ func (m *Model) checkPinsAfterSending(ask remoteAsk, pins protocol.Revisions) te
 		defer cancel()
 		return pinCheckedMsg{card: c, gen: gen, id: id, advice: check(ctx, target, pins)}
 	}
+}
+
+// sentReview: a review card whose request didn't fail before sending.
+func (c *actionCard) sentReview() bool {
+	return c != nil && c.review != nil && c.failure == ""
 }
 
 // cancelPinChecks leaves the checks in flight behind: their answers come

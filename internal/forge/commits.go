@@ -41,8 +41,8 @@ func CheckPins(ctx context.Context, f Forge, t Target, pins Revisions) []PinChec
 		return []PinCheck{notChecked(ctx, err)}
 	}
 	var out []PinCheck
-	for _, pin := range []struct{ sha, missing string }{{pins.Head, PinHeadMissing}, {pins.Base, PinBaseMissing}} {
-		if c, found := checkCommit(ctx, checker, t, pin.sha, pin.missing); found {
+	for _, pin := range []pinnedCommit{{pins.Head, PinHeadMissing}, {pins.Base, PinBaseMissing}} {
+		if c, found := pin.check(ctx, checker, t); found {
 			out = append(out, c)
 		}
 	}
@@ -52,14 +52,17 @@ func CheckPins(ctx context.Context, f Forge, t Target, pins Revisions) []PinChec
 	return out
 }
 
-// checkCommit is what one pinned commit's lookup found, if anything.
-func checkCommit(ctx context.Context, c CommitChecker, t Target, sha, code string) (PinCheck, bool) {
-	exists, err := c.CommitExists(ctx, t, sha)
+// pinnedCommit is one pin, and the code its absence gives.
+type pinnedCommit struct{ sha, missing string }
+
+// check is what the pin's lookup found, if anything.
+func (p pinnedCommit) check(ctx context.Context, c CommitChecker, t Target) (PinCheck, bool) {
+	exists, err := c.CommitExists(ctx, t, p.sha)
 	switch {
 	case err != nil:
 		return notChecked(ctx, err), true
 	case !exists:
-		return PinCheck{Code: code}, true
+		return PinCheck{Code: p.missing}, true
 	}
 	return PinCheck{}, false
 }

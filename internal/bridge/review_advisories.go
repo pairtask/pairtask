@@ -23,7 +23,7 @@ const acceptedWait = 2 * time.Second
 // checkPins is what a check of the request's pins found, nil when all is
 // as pinned.
 func (c *Client) checkPins(ctx context.Context, ask *protocol.ReviewAsk) []protocol.ReviewAdvisory {
-	if ask == nil || ask.Base == "" || ask.Head == "" {
+	if !pinned(ask) {
 		return nil
 	}
 	f, ok := c.forges[ask.Forge]
@@ -34,6 +34,9 @@ func (c *Client) checkPins(ctx context.Context, ask *protocol.ReviewAsk) []proto
 	defer cancel()
 	return pinAdvisories(forge.CheckPins(ctx, f, ask.ReviewTarget, protocol.Revisions{Base: ask.Base, Head: ask.Head}))
 }
+
+// pinned: a request with both revisions given.
+func pinned(ask *protocol.ReviewAsk) bool { return ask != nil && ask.Base != "" && ask.Head != "" }
 
 func pinAdvisories(checks []forge.PinCheck) []protocol.ReviewAdvisory {
 	var out []protocol.ReviewAdvisory
