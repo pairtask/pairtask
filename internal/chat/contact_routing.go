@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -54,6 +55,9 @@ func contactAddress(draft string) address {
 
 // addressProblem is why an addressed draft can't be sent, or "".
 func (m *Model) addressProblem(a address) string {
+	if problem := m.localOnlyProblem(a); problem != "" {
+		return problem
+	}
 	switch {
 	case len(a.to) == 0:
 		return ""
@@ -103,7 +107,7 @@ func (m *Model) contactShareResult(req pendingRequest, resp protocol.Message) te
 		return nil
 	}
 	t := m.contacts.thread(contact)
-	t.shared, t.directory, t.grants = resp.ContactPage.Shared, resp.ContactPage.Directory, resp.ContactPage.ReviewGrants
+	t.shared, t.directory, t.grants, t.dirKnown = resp.ContactPage.Shared, resp.ContactPage.Directory, resp.ContactPage.ReviewGrants, true
 	m.directoryChanged(contact)
 	t.merge(resp.ContactPage.Messages)
 	if c != nil {
@@ -168,4 +172,41 @@ func theirAgents(agents []string, ws workspaceLabel) string {
 		names[i] = safe(a) + "@" + string(ws)
 	}
 	return strings.Join(names, ", ")
+}
+
+// localOnlyProblem says why a draft can't go, once the contact said what it
+// shares: it names an agent of this workspace's the contact doesn't share,
+// and a ⇄ tab writes only to that workspace. A name on both sides is theirs
+// here. "" when there is no such agent.
+func (m *Model) localOnlyProblem(a address) string {
+	t := m.contacts.threads[m.conv.selected.contact]
+	if t == nil || !t.dirKnown {
+		return ""
+	}
+	for _, name := range a.to {
+		ours := func(p protocol.AgentPresence) bool { return p.AgentID == name }
+		if slices.ContainsFunc(m.agents.list, ours) && !slices.Contains(t.directory, name) {
+			return safe(name) + " is your agent here; this tab writes to " + safe(m.contactTitle(m.conv.selected)) + ". Send it in * instead"
+		}
+	}
+	return ""
+}
+
+// recipientScope is who a ⇄ tab's draft goes to: that workspace's operator,
+// or the agents of theirs it starts with; never the agents here.
+func (m *Model) recipientScope(key viewKey) string {
+	ws := safe(m.contactTitle(key))
+	a := contactAddress(m.compose.editor.Value())
+	if problem := m.localOnlyProblem(a); problem != "" {
+		return "✗ " + problem
+	}
+	to := ws + "'s operator"
+	if len(a.to) > 0 {
+		named := make([]string, len(a.to))
+		for i, name := range a.to {
+			named[i] = safe(name) + "@" + ws
+		}
+		to = strings.Join(named, ", ")
+	}
+	return "→ " + to + " · your agents here won't get it"
 }

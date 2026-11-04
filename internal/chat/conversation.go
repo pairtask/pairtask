@@ -360,7 +360,7 @@ func (m *Model) placeholder() string {
 		return "Message everyone · @agent for one · / for commands"
 	}
 	if m.conv.selected.isContact() {
-		return "Message this workspace's operator · / for commands"
+		return "Message " + safe(m.contactTitle(m.conv.selected)) + "'s operator · @agent for theirs · / for commands"
 	}
 	return "Message " + m.conv.selected.label() + " · / for commands"
 }

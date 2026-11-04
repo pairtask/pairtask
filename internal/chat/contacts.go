@@ -125,7 +125,7 @@ func (m *Model) contactHint(key viewKey) string {
 	if notice := m.contactNotice(key); notice != "" {
 		return "✗ " + notice
 	}
-	return "to ⇄ " + safe(m.contactTitle(key)) + " · " + m.departureNote(key)
+	return "to ⇄ " + safe(m.contactTitle(key)) + " · " + m.recipientScope(key) + " · " + m.departureNote(key)
 }
 
 // refreshContacts quietly reads the pairing state after a baseline, so

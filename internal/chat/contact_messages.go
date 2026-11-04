@@ -34,6 +34,7 @@ type contactThread struct {
 	sync      protocol.ContactSyncView
 	shared    []string                    // this workspace's agents the contact may message
 	directory []string                    // what the contact says it shares
+	dirKnown  bool                        // a page or share answer said it, if only that it's empty
 	grants    []protocol.ReviewGrantView  // what the contact may ask of agents here (#235)
 	offset    int                         // rows scrolled up from the newest
 	read      map[string]bool             // inbound IDs a read was confirmed for
@@ -223,7 +224,7 @@ func keepForward(old, v protocol.ContactMessageView) protocol.ContactMessageView
 // fetches the rest again, so no gap is ever drawn as continuous.
 func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bool) {
 	if !t.loaded || current {
-		t.sync, t.shared, t.directory, t.grants = page.Sync, page.Shared, page.Directory, page.ReviewGrants
+		t.sync, t.shared, t.directory, t.grants, t.dirKnown = page.Sync, page.Shared, page.Directory, page.ReviewGrants, true
 		t.acks = page.Acks
 		clear(t.refused) // a fresh page gives refused reads one more try
 	}
