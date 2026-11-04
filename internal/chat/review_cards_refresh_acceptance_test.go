@@ -257,6 +257,24 @@ func TestActionCardsAcceptanceOlderEventReadCannotReplaceNewerOutcome(t *testing
 	}
 }
 
+func TestActionCardsAcceptanceNewerFoundResultClearsEarlierOmission(t *testing.T) {
+	h, ask := actionRemoteQueued(t)
+	old := actionRemoteRefresh(t, h, ask.ContactKey)
+	fresh := actionRemoteRefresh(t, h, ask.ContactKey)
+	h.launch(h.holdResponse(old, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewAsked: &protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}}))
+	v3Contains(t, strings.Join(actionCardWithID(t, h, ask.MessageID).Steps, "\n"), "no longer kept here")
+	completed := protocol.ReviewAskedItem{Contact: ask.ContactKey, AskID: ask.MessageID, Reviewer: "reviewer", State: "completed", Verdict: "approve", Settled: true}
+	h.launch(h.holdResponse(fresh, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewAsked: &protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{completed}, Total: 1}}))
+	card := actionCardWithID(t, h, ask.MessageID)
+	steps := strings.Join(card.Steps, "\n")
+	v3Contains(t, steps, "completed")
+	v3Contains(t, steps, "approve")
+	if strings.Contains(steps, "no longer kept here") {
+		t.Fatal("newer found result left obsolete omission visible")
+	}
+	chatEqual(t, "newer completed outcome stays finished", card.Finished, true)
+}
+
 func actionSelectRemoteCard(t *testing.T, h *chatHarness, key string) {
 	t.Helper()
 	h.input(chatKey(tea.KeyTab, 0))

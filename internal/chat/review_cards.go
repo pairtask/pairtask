@@ -177,7 +177,7 @@ func (m *Model) cardReadAnswer(ref protocol.ReviewAskRef, a readAnswer) {
 			r.unknown = true
 		case a.has:
 			it := a.it
-			r.item, r.unknown = &it, false
+			r.item, r.unknown, r.gone = &it, false, false // the newest read decides
 		default:
 			r.gone, r.unknown = true, false
 		}
