@@ -272,6 +272,21 @@ func (h *Hub) contactShare(ctx context.Context, req operatorRequest, auditID int
 		ContactOp: msg.ContactOp}), nil
 }
 
+// sharedSync fills what is shared with the contact and whether it has
+// answered exactly that, from one snapshot.
+func sharedSync(ctx context.Context, peer *store.PeerMessages, page *protocol.ContactMessagePage) error {
+	snap, err := peer.SharedSnapshot(ctx, page.Contact)
+	if err != nil {
+		return err
+	}
+	page.Shared, page.SharedDigest, page.SharedAckDigest, page.SharedAckAt = snap.Agents, snap.Digest, snap.AckDigest, snap.AckAt
+	page.SharedSync = protocol.SharedSyncPending
+	if snap.Confirmed() {
+		page.SharedSync = protocol.SharedSyncConfirmed
+	}
+	return nil
+}
+
 // routingViews fills a page's messages, with the agents that acknowledged
 // each one sent to the contact's agents, and what each side shares.
 func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePage, rows []messaging.Row) error {
@@ -287,7 +302,7 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 		page.Messages = append(page.Messages, view)
 	}
 	var err error
-	if page.Shared, err = peer.SharedAgents(ctx, page.Contact); err != nil {
+	if err = sharedSync(ctx, peer, page); err != nil {
 		return err
 	}
 	if page.ReviewGrants, err = h.grantViews(ctx, page.Contact); err != nil {

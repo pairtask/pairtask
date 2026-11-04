@@ -510,6 +510,9 @@ var _ messaging.OutcomeStore = (*PeerMessages)(nil)
 // request: from the reviewer, origin remote, answering that agent's
 // request, with the outcome as data.
 func dispatchOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
+	if imp.ReplyTo.ID == "" {
+		return persistImport(ctx, tx, imp, at) // a summary of refusals (#302): from the workspace, answering no request
+	}
 	a, _, found, err := loadAsk(ctx, tx, imp.Contact, imp.ReplyTo.ID)
 	if err != nil || !found {
 		return ImportResult{}, errors.Join(err, ErrNoImport)

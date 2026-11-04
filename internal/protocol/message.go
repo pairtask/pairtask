@@ -35,27 +35,28 @@ const (
 )
 
 const (
-	Version                = ReviewFailuresVersion
-	AcknowledgmentVersion  = 2
-	DurableVersion         = 3
-	OriginVersion          = 4
-	OperatorInboxVersion   = 5
-	AgentStatusVersion     = 6  // agent_status_set/get/result and agent_activity
-	PublicBroadcastVersion = 7  // an agent's "*" also reaches the operator inbox
-	ClaimVersion           = 8  // claim_set/release/done/get and claim_result
-	RoomVersion            = 9  // project rooms: room on msg, rooms on hello and welcome
-	ContactMessagesVersion = 11 // operator_contact and contact_messages_changed (#210), operator only
-	RemoteVersion          = 12 // msg with origin remote: from a paired workspace's agents or operator (#222)
-	WorkspaceVersion       = 13 // msg workspace and workspaces_get: an agent writes to a paired workspace (#222)
-	ReviewAskVersion       = 14 // msg review_ask: an agent asks a paired workspace's agent for a review (#235)
-	AskedVersion           = 15 // reviews_asked_get: the review requests an agent sent, and where they stand (#235)
-	AssignVersion          = 16 // an operator's tag assigns the tagged agent its message's reply (#278)
-	AckVersion             = 17 // the operator acknowledges a paired workspace's messages, privately (#287)
-	ReviewCountsVersion    = 18 // the operator snapshot counts pending reviews; operator_review pages them (#286)
-	ReviewFailuresVersion  = 19 // review_counts count failures and active asks; operator_review pages the failures (#298)
-	StageAccepted          = "accepted"
-	StageAdapterReceived   = "adapter_received"
-	StageAgentAcknowledged = "agent_acknowledged"
+	Version                 = ContactShareSyncVersion
+	AcknowledgmentVersion   = 2
+	DurableVersion          = 3
+	OriginVersion           = 4
+	OperatorInboxVersion    = 5
+	AgentStatusVersion      = 6  // agent_status_set/get/result and agent_activity
+	PublicBroadcastVersion  = 7  // an agent's "*" also reaches the operator inbox
+	ClaimVersion            = 8  // claim_set/release/done/get and claim_result
+	RoomVersion             = 9  // project rooms: room on msg, rooms on hello and welcome
+	ContactMessagesVersion  = 11 // operator_contact and contact_messages_changed (#210), operator only
+	RemoteVersion           = 12 // msg with origin remote: from a paired workspace's agents or operator (#222)
+	WorkspaceVersion        = 13 // msg workspace and workspaces_get: an agent writes to a paired workspace (#222)
+	ReviewAskVersion        = 14 // msg review_ask: an agent asks a paired workspace's agent for a review (#235)
+	AskedVersion            = 15 // reviews_asked_get: the review requests an agent sent, and where they stand (#235)
+	AssignVersion           = 16 // an operator's tag assigns the tagged agent its message's reply (#278)
+	AckVersion              = 17 // the operator acknowledges a paired workspace's messages, privately (#287)
+	ReviewCountsVersion     = 18 // the operator snapshot counts pending reviews; operator_review pages them (#286)
+	ReviewFailuresVersion   = 19 // review_counts count failures and active asks; operator_review pages the failures (#298)
+	ContactShareSyncVersion = 20 // a contact page says whether the contact has what this side shares (#305)
+	StageAccepted           = "accepted"
+	StageAdapterReceived    = "adapter_received"
+	StageAgentAcknowledged  = "agent_acknowledged"
 )
 
 // Origin is set by the broker from the connection, never accepted from a client.
@@ -229,6 +230,7 @@ type Message struct {
 	Review             *ReviewView         `json:"review,omitempty"`               // review_result, operator_review_result: one review
 	ReviewPage         *ReviewPage         `json:"review_page,omitempty"`          // review_result, operator_review_result: a list of reviews
 	ReviewBefore       string              `json:"review_before,omitempty"`        // operator_review awaiting, asked: the page after this cursor
+	ReviewAskRefs      []ReviewAskRef      `json:"review_ask_refs,omitempty"`      // operator_review asked: exactly these requests (v20)
 	ReviewAwaiting     *ReviewAwaitingPage `json:"review_awaiting,omitempty"`      // operator_review_result for awaiting
 	ReviewAsked        *ReviewAskedPage    `json:"review_asked,omitempty"`         // operator_review_result for asked
 	ReviewCounts       *ReviewCounts       `json:"review_counts,omitempty"`        // operator_review_result for counts

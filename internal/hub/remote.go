@@ -55,6 +55,14 @@ func (h *Hub) background(ctx context.Context, clients map[string]*Client) {
 	}
 }
 
+// flushRefusalSummaries stages the summaries of refusals counted past an
+// agent's bound whose last summary it acknowledged (#302).
+func (h *Hub) flushRefusalSummaries(ctx context.Context) {
+	if _, err := h.store.PeerMessages().FlushRefusalSummaries(ctx, time.Now()); err != nil {
+		h.log.Info("refusal summaries not staged", "err", err)
+	}
+}
+
 // drainImports imports what is staged, oldest first, a bounded pass at a
 // time: a pass goes on from where the last one stopped, so ones a full
 // inbox holds back never hide later ones, and asks for the next until the
@@ -66,6 +74,7 @@ func (h *Hub) drainImports(ctx context.Context, clients map[string]*Client) {
 	}
 	if h.importAt == 0 {
 		h.rescan.Store(false) // this scan sees everything staged before it
+		h.flushRefusalSummaries(ctx)
 	}
 	for tried := 0; tried < importPass; tried += importBatch {
 		if h.importPage(ctx, clients) {

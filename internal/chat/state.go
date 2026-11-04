@@ -50,6 +50,8 @@ type StateView struct {
 	Panel             string                // the open panel\'s kind, "" for none
 	Reviews           []protocol.ReviewView // the last reviews listed or requested (#201)
 	ReviewSignal      ReviewSignalView      // pending reviews in the footer (#286)
+	Cards             []CardView            // the session's action cards (#305)
+	CardOverflow      CardOverflowView      // what the selected conversation can't draw as cards
 	ReviewSelected    string                // the review shown in detail
 	TooSmall          bool
 	KeyDisambiguation bool
@@ -130,6 +132,7 @@ func (m *Model) State() StateView {
 		Status: m.status, Help: m.panel != nil && m.panel.kind == panelHelp, TooSmall: m.tooSmall(),
 		Reviews: append([]protocol.ReviewView(nil), m.reviews.list...), ReviewSelected: m.reviews.selected, ReviewSignal: m.reviewSignalView(),
 		KeyDisambiguation: m.keyboard, ExitCode: m.exitCode, Fatal: m.fatal,
+		Cards: m.cardViews(), CardOverflow: m.cards.overflow(m.conv.selected),
 	}
 	if m.panel != nil {
 		v.Panel = m.panel.kind

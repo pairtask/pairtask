@@ -76,8 +76,10 @@ func (s Session) receiveAgentReads(ctx context.Context, r *Result) error {
 	}
 }
 
-// sendDirectory sends the agents this side shares with the contact.
-func (s Session) sendDirectory(ctx context.Context, _ *Result) error {
+// sendDirectory sends the agents this side shares with the contact; its
+// End says the contact stored exactly them, which a store that keeps
+// answered directories records (#305).
+func (s Session) sendDirectory(ctx context.Context, r *Result) error {
 	rs, _ := s.routing()
 	agents, err := rs.SharedAgents(ctx, s.Contact)
 	if err != nil {
@@ -90,7 +92,25 @@ func (s Session) sendDirectory(ctx context.Context, _ *Result) error {
 	if err != nil {
 		return err
 	}
-	return DecodeEnd(frame)
+	if err := DecodeEnd(frame); err != nil {
+		return err
+	}
+	acker, ok := rs.(DirectoryAcker)
+	if !ok {
+		return nil
+	}
+	changed, err := acker.DirectoryAcked(ctx, s.Contact, agents, s.Now())
+	if err != nil {
+		return storeErr(err) // nothing committed: no progress to report
+	}
+	r.DirectoryAcked = r.DirectoryAcked || changed
+	return nil
+}
+
+// DirectoryAcker is a routing store that keeps the directory the contact
+// answered.
+type DirectoryAcker interface {
+	DirectoryAcked(ctx context.Context, contact string, agents []string, at time.Time) (bool, error)
 }
 
 // receiveDirectory records what the contact shares, a hint, and answers.
@@ -171,6 +191,14 @@ func (s routingSessionStore) PeerAgentRead(ctx context.Context, contact string, 
 func (s routingSessionStore) SharedAgents(ctx context.Context, contact string) ([]string, error) {
 	agents, err := s.rs.SharedAgents(ctx, contact)
 	return agents, storeErr(err)
+}
+
+// DirectoryAcked forwards to the store, when it keeps answered directories.
+func (s routingSessionStore) DirectoryAcked(ctx context.Context, contact string, agents []string, at time.Time) (bool, error) {
+	if a, ok := s.rs.(DirectoryAcker); ok {
+		return a.DirectoryAcked(ctx, contact, agents, at)
+	}
+	return false, nil
 }
 
 // ReplacePeerDirectory is SetPeerDirectory, saying whether it changed.

@@ -296,6 +296,13 @@ func importPlain(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlo
 			msgStamp(ts), imp.Contact, imp.RemoteID)
 		return ImportResult{State: ImportWithheld, Changed: true}, err
 	}
+	return persistImport(ctx, tx, imp, at)
+}
+
+// persistImport makes a pending import the durable message it becomes.
+func persistImport(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
+	ts := at.ts
+	var err error
 	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
 		return ImportResult{}, err
 	}
