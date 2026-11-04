@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = ContactShareSyncVersion
+	Version                 = ReviewFindingsVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -54,6 +54,7 @@ const (
 	ReviewCountsVersion     = 18 // the operator snapshot counts pending reviews; operator_review pages them (#286)
 	ReviewFailuresVersion   = 19 // review_counts count failures and active asks; operator_review pages the failures (#298)
 	ContactShareSyncVersion = 20 // a contact page says whether the contact has what this side shares (#305)
+	ReviewFindingsVersion   = 21 // asked requests carry the findings their verdict sent (#303)
 	StageAccepted           = "accepted"
 	StageAdapterReceived    = "adapter_received"
 	StageAgentAcknowledged  = "agent_acknowledged"
@@ -189,6 +190,8 @@ type Message struct {
 	ReviewAsk          *ReviewAsk          `json:"review_ask,omitempty"`          // msg with workspace (agent -> broker, v14): a review request for to (#235)
 	ReviewOutcome      *ReviewOutcomeView  `json:"review_outcome,omitempty"`      // msg with origin remote: where a review request the recipient sent stands (#235)
 	ReviewsAsked       []ReviewOutcomeView `json:"reviews_asked,omitempty"`       // reviews_asked_result (v15)
+	ReviewsAskedMore   bool                `json:"reviews_asked_more,omitempty"`  // reviews_asked_result: older requests follow (#303)
+	ReviewsAskedNext   string              `json:"reviews_asked_next,omitempty"`  // reviews_asked_result: the review_before that reads them
 	Workspaces         []WorkspaceView     `json:"workspaces,omitempty"`          // workspaces_result (v13)
 	Group              []string            `json:"group,omitempty"`               // operator_send: explicit recipient set
 	Excluded           []string            `json:"excluded,omitempty"`            // operator accepted: connected agents left out of "*"

@@ -72,6 +72,8 @@ type reviewPending struct {
 	byRef     map[sectionRef]itemKey // ref → identity
 	count     map[byte]int           // refs given per prefix
 	nav       *navTarget             // a request being looked for in its ⇄ tab
+	detail    *askedDetail           // a request sent, shown with its findings (#303)
+	detailGen uint64                 // fences its reads
 }
 
 func needKey(it protocol.ReviewAwaitingItem) itemKey {
@@ -230,10 +232,10 @@ func reviewsArg(a argument) error {
 		return nil
 	case len(fields) == 2 && fields[0] == "more" && moreSections[fields[1]] != "":
 		return nil
-	case len(fields) == 2 && fields[0] == "open":
+	case len(fields) == 2 && (fields[0] == "open" || fields[0] == "findings"):
 		return nil
 	}
-	return errors.New("usage: /reviews | /reviews more needs|asked|failed | /reviews open REF")
+	return errors.New("usage: /reviews | /reviews more needs|asked|failed | /reviews open REF | /reviews findings aN")
 }
 
 // moreSections are the sections /reviews more pages.
@@ -242,8 +244,11 @@ var moreSections = map[string]sectionOp{"needs": protocol.ReviewOpAwaiting, "ask
 // pendingRef is a section ref: n, a or f, then a number.
 var pendingRef = regexp.MustCompile(`^[naf][0-9]+$`)
 
-// reviewsSubcommand runs /reviews more and /reviews open.
+// reviewsSubcommand runs /reviews more, /reviews findings and /reviews open.
 func (m *Model) reviewsSubcommand(fields []string) tea.Cmd {
+	if fields[0] == "findings" {
+		return m.askedFindings(sectionRef(fields[1]))
+	}
 	if fields[0] == "more" {
 		op := moreSections[fields[1]]
 		if m.pendingNext(op) == "" {
@@ -464,6 +469,7 @@ func (m *Model) askedRows() []string {
 		if it.Verdict != "" {
 			row += " " + safe(it.Verdict)
 		}
+		row += m.findingsCount(it.Findings)
 		rows = append(rows, row+"  "+mutedStyle.Render(theirReviewID(it.ReviewID)))
 	}
 	return append(rows, moreRow(s.more, "asked")...)
@@ -518,11 +524,13 @@ func askLabel(a *protocol.ReviewAsk) string {
 func (m *Model) reviewsPanelCompletions(l argLine) []string {
 	switch {
 	case len(l.words) == 0:
-		return withPrefix([]string{"open", "more"}, l.current)
+		return withPrefix([]string{"open", "more", "findings"}, l.current)
 	case len(l.words) == 1 && l.words[0] == "more":
 		return withPrefix(m.pagedSections(), l.current)
 	case len(l.words) == 1 && l.words[0] == "open":
 		return withPrefix(m.openableRefs(), l.current)
+	case len(l.words) == 1 && l.words[0] == "findings":
+		return withPrefix(m.askedRefs(), l.current)
 	}
 	return nil
 }

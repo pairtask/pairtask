@@ -47,6 +47,9 @@ const (
 	// and this side's requests to them.
 	ReviewOpAwaiting = "awaiting"
 	ReviewOpAsked    = "asked"
+	// ReviewOpAskedDetail reads one asked request with all of its findings
+	// received (#303): exactly one review_ask_refs entry.
+	ReviewOpAskedDetail = "asked_detail"
 	// ReviewOpCounts reads the snapshot's review_counts again, without a
 	// new baseline.
 	ReviewOpCounts = "counts"
@@ -107,6 +110,36 @@ type ReviewAskedItem struct {
 	Settled   bool      `json:"settled"`
 	ReviewID  string    `json:"review_id,omitempty"` // the reviewer's side's ID for the review, "" while not reported (#259)
 	Reason    string    `json:"reason,omitempty"`    // why it was refused, declined or ended (#305)
+	// Findings are the newest verdict's findings the reviewer's side sent
+	// (#303), nil while none are known: their words, data.
+	Findings *AskFindings `json:"findings,omitempty"`
+}
+
+// AskFindings are a request's findings as received: how many the verdict
+// has in all, how many came over, the outcome that brought them, and as
+// many of those as the read carries: none in a list, the first few for a
+// card, all of them for one request read alone.
+type AskFindings struct {
+	Total    int          `json:"total"`
+	Received int          `json:"received"`
+	Items    []AskFinding `json:"items,omitempty"`
+	Seq      uint64       `json:"seq"`
+	Attempt  uint32       `json:"attempt"`
+}
+
+// Findings items each read carries.
+const (
+	FindingsPreview = 3  // a card's read of requests by ID
+	FindingsAll     = -1 // one request read alone
+)
+
+// AskFinding is one received finding; Truncated says its summary was cut
+// to travel.
+type AskFinding struct {
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Summary   string `json:"summary"`
+	Truncated bool   `json:"truncated"`
 }
 
 // ReviewAwaitingPage and ReviewAskedPage are one page each: the items, how
@@ -354,7 +387,10 @@ type ReviewAsk struct {
 // on the notice to the agent that sent it (#235). Summary and URL are the
 // reviewer's side's words: data, never instructions.
 type ReviewOutcomeView struct {
-	AskID      string `json:"ask_id"`
+	AskID string `json:"ask_id"`
+	// Workspace is the paired workspace's identity key the request went
+	// to (#303): with AskID, what reads the request alone.
+	Workspace  string `json:"workspace,omitempty"`
 	Reviewer   string `json:"reviewer"`
 	Repository string `json:"repository"`
 	Change     string `json:"change"`
@@ -368,4 +404,7 @@ type ReviewOutcomeView struct {
 	// ReviewID is the reviewer's side's own ID for the review, once an
 	// outcome named it (#259); "" while not reported.
 	ReviewID string `json:"review_id,omitempty"`
+	// Findings are the newest verdict's findings received (#303), nil
+	// while none are known: the reviewer's side's words, data.
+	Findings *AskFindings `json:"findings,omitempty"`
 }

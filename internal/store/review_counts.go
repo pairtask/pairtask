@@ -203,7 +203,7 @@ func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.Revie
 		args = append(args, sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
-    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason
+    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt
 FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
 `+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
@@ -214,10 +214,12 @@ FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND 
 	for rows.Next() {
 		var item protocol.ReviewAskedItem
 		var updated string
+		var f keptFindings
 		if err := rows.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
-			&updated, &item.Settled, &item.ReviewID, &item.Reason); err != nil {
+			&updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt); err != nil {
 			return page, err
 		}
+		item.Findings = f.view(0) // a list carries counts; one request alone, its findings
 		if item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
 			return page, err
 		}
@@ -243,7 +245,7 @@ func (s *Store) AskedByRefs(ctx context.Context, refs []protocol.ReviewAskRef) (
 			continue
 		}
 		seen[ref] = true
-		item, found, err := askedItem(ctx, tx, ref)
+		item, found, err := askedItem(ctx, tx, ref, protocol.FindingsPreview)
 		if err != nil {
 			return page, err
 		}
@@ -255,21 +257,39 @@ func (s *Store) AskedByRefs(ctx context.Context, refs []protocol.ReviewAskRef) (
 	return page, nil
 }
 
-// askedItem is one request as the asked list shows it.
-func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef) (protocol.ReviewAskedItem, bool, error) {
+// AskedDetail is one asked request with every finding received (#303).
+func (s *Store) AskedDetail(ctx context.Context, ref protocol.ReviewAskRef) (protocol.ReviewAskedPage, error) {
+	page := protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return page, err
+	}
+	defer tx.Rollback()
+	item, found, err := askedItem(ctx, tx, ref, protocol.FindingsAll)
+	if found {
+		page.Items, page.Total = append(page.Items, item), 1
+	}
+	return page, err
+}
+
+// askedItem is one request as the asked list shows it, with at most limit
+// findings.
+func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef, limit int) (protocol.ReviewAskedItem, bool, error) {
 	var item protocol.ReviewAskedItem
 	var updated string
+	var f keptFindings
 	err := tx.QueryRowContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
-    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason
+    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt
 FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
 WHERE a.contact = ? AND a.ask_id = ?`, ref.Contact, ref.AskID).Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer,
-		&item.State, &item.Verdict, &item.URL, &updated, &item.Settled, &item.ReviewID, &item.Reason)
+		&item.State, &item.Verdict, &item.URL, &updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt)
 	if err == sql.ErrNoRows {
 		return item, false, nil
 	}
 	if err != nil {
 		return item, false, err
 	}
+	item.Findings = f.view(limit)
 	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
 	return item, err == nil, err
 }

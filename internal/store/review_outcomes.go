@@ -269,7 +269,21 @@ func reviewChanged(ctx context.Context, tx *sql.Tx, before, after review.Record)
 	if was == now {
 		return nil
 	}
+	now.Findings = verdictFindings(v.Verdict) // projected once, kept with the outcome (#303)
 	return emitOutcome(ctx, tx, outcomeEvent{contact: v.Remote.Contact, askID: v.RemoteRequest, o: now, terminal: terminal, at: v.UpdatedAt})
+}
+
+// verdictFindings is what an outcome carries of a verdict's findings, nil
+// without a verdict.
+func verdictFindings(v *protocol.Verdict) *messaging.FindingsEnvelope {
+	if v == nil {
+		return nil
+	}
+	full := make([]messaging.Finding, len(v.Findings))
+	for i, f := range v.Findings {
+		full[i] = messaging.Finding{Path: f.Path, Line: f.Line, Summary: f.Summary}
+	}
+	return messaging.ProjectFindings(len(v.Findings), full)
 }
 
 // pruneOutcomes forgets the outcome numbering of requests whose outcomes

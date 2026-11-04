@@ -102,4 +102,22 @@ var readOnlyReviewOps = map[string]func(*Hub, context.Context, protocol.Message)
 	protocol.ReviewOpAsked:    (*Hub).pendingReviews,
 	protocol.ReviewOpCounts:   (*Hub).reviewCounts,
 	protocol.ReviewOpFailed:   (*Hub).pendingReviews, // #298
+	// One asked request with all its findings received (#303).
+	protocol.ReviewOpAskedDetail: (*Hub).askedDetail,
+}
+
+// askedDetail answers asked_detail: exactly one request, by ID, nothing else.
+func (h *Hub) askedDetail(ctx context.Context, msg protocol.Message) protocol.Message {
+	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ReviewOp: msg.ReviewOp, ReviewAskRefs: msg.ReviewAskRefs}
+	if !sameJSON(msg, clean) || len(msg.ReviewAskRefs) != 1 {
+		return (&routingError{protocol.ErrMalformedFrame, "review_op asked_detail takes exactly one review_ask_refs entry"}).frame(msg.MessageID)
+	}
+	if err := protocol.ValidateReviewAskRefs(msg.ReviewAskRefs); err != nil {
+		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
+	}
+	page, err := h.store.AskedDetail(ctx, msg.ReviewAskRefs[0])
+	if err != nil {
+		return (&routingError{protocol.ErrInternal, "reviews unavailable"}).frame(msg.MessageID)
+	}
+	return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp, ReviewAsked: &page}
 }

@@ -193,6 +193,17 @@ it shows their review ID once they report it, or "reviewer ID not
 reported" until then. Nothing is reported before the request becomes a
 review there, or by a pairtask that predates review IDs.
 
+The verdict's findings come back with it, even when nothing is published
+(#303). Up to 24 travel, each summary cut at 512 bytes if longer; the rest
+stay on the reviewer's side, and the count says how many. They stay with your
+request after the reviewer is unshared, for as long as the request is kept.
+The review card shows the first three, `/reviews` counts them, and
+`/reviews findings aN` shows them all. An agent gets the first three in its
+notice, and all of them from `reviews_asked` with the request's ask ID and
+workspace. Both sides need a pairtask
+with findings (peer messaging v7); otherwise the verdict comes back without
+them.
+
 ## Names
 
 A paired workspace has a key and up to two names:
