@@ -635,11 +635,14 @@ func askPageKeys(rows *sql.Rows) ([][2]string, []string, error) {
 // (#303); another agent's request is not found.
 func (s *Store) AskBy(ctx context.Context, agent string, ref protocol.ReviewAskRef) (AskOut, bool, error) {
 	a, _, found, err := loadAsk(ctx, s.db, ref.Contact, ref.AskID)
-	if err != nil || !found || a.RequesterAgent != agent || agent == "" {
+	if err != nil {
 		return AskOut{}, false, err
 	}
-	return a, true, nil
+	return a, found && sentBy(a, agent), nil
 }
+
+// sentBy: an agent here sent the request, and it is this one.
+func sentBy(a AskOut, agent string) bool { return agent != "" && a.RequesterAgent == agent }
 
 // AskOutFor is a request this side sent contact, when the ID is one.
 func (p *PeerMessages) AskOutFor(ctx context.Context, contact, askID string) (AskOut, bool, error) {
