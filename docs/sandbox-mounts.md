@@ -30,7 +30,7 @@ under `/workspace`. Project names must be unique: 1–30 lowercase letters, digi
 or hyphens, starting with a letter. Host permissions still apply.
 
 ```sh
-python3 scripts/sandbox-host.py mounts-plan --mounts-file /path/to/mounts.json
+pairtask mounts plan --mounts-file /path/to/mounts.json
 ```
 
 ## Mac writable sharing
@@ -56,11 +56,11 @@ directory available at its original path.
 
 ```sh
 # HOST: inspect first; setup creates the sharing account and grants directory access
-python3 scripts/sandbox-share.py plan --mounts-file /path/to/mounts.json
-python3 scripts/sandbox-share.py setup --mounts-file /path/to/mounts.json
+pairtask share plan --mounts-file /path/to/mounts.json
+pairtask share setup --mounts-file /path/to/mounts.json
 
 # Keep running in a separate host terminal; sudo starts the restricted file helper
-python3 scripts/sandbox-share.py run --mounts-file /path/to/mounts.json
+pairtask share run --mounts-file /path/to/mounts.json
 ```
 
 Inside workspace, `cd` to that same path. Edits reach host files immediately.
@@ -72,7 +72,7 @@ files written from the workspace belong to `collab-share` and inherit your
 access from the directory. A later `setup` leaves those entries alone, since
 only an owner may change an ACL, and grants the rest as before.
 
-**Existing Mac installs:** rerun `sandbox-share.py setup --mounts-file /path/to/mounts.json`
+**Existing Mac installs:** rerun `pairtask share setup --mounts-file /path/to/mounts.json`
 before upgrading macOS. Setup sets `RealName` on both sharing records, including
 older accounts; missing names can break macOS account migration.
 If only the group remains after a failed upgrade, setup stops with inspection
@@ -80,7 +80,7 @@ instructions. After the operator repairs the account/group, rerun setup to reapp
 
 **Stop:** Ctrl+C disconnects shares. Restart workspace before reconnecting.
 Disconnected mounts refuse writes; files remain on the host. Account/ACL grants
-remain after stopping. This mode does not use `mounts-apply` or require a VM restart.
+remain after stopping. This mode does not use `pairtask mounts apply` or require a VM restart.
 Writable files can later execute on the host; [review them first](sandbox.md#security-can-agents-execute-code-on-my-host).
 
 ## Linux writable sharing
@@ -105,7 +105,7 @@ share_uid=$(id -u collab-share)
 share_gid=$(id -g collab-share)
 sudo usermod --add-subuids "$share_uid-$share_uid" --add-subgids "$share_gid-$share_gid" root
 
-python3 scripts/sandbox-host.py mounts-plan --mounts-file /path/to/mounts.json --share-user collab-share
+pairtask mounts plan --mounts-file /path/to/mounts.json --share-user collab-share
 ```
 
 Install `acl` if needed. Private parent directories may need traverse permission
@@ -120,14 +120,14 @@ For **macOS read-only VirtioFS mounts**, stop the dedicated VM before changing m
 
 ```sh
 colima stop pairtask
-python3 scripts/sandbox-host.py mounts-apply --mounts-file /path/to/mounts.json
-python3 scripts/sandbox-host.py apply
+pairtask mounts apply --mounts-file /path/to/mounts.json
+pairtask vm apply
 ```
 
 On **Linux**, generate the Incus variables directly:
 
 ```sh
-python3 scripts/sandbox-host.py mounts-apply --mounts-file /path/to/mounts.json
+pairtask mounts apply --mounts-file /path/to/mounts.json
 
 # Add --share-user collab-share for writable mounts or access via that account.
 ```
@@ -136,8 +136,8 @@ The helper writes mount settings into the discovered deployment directory.
 On **both platforms**, review and apply:
 
 ```sh
-python3 scripts/sandbox-provision.py plan
-python3 scripts/sandbox-provision.py apply
+pairtask plan
+pairtask apply
 ```
 
 For a first deployment, also pass `--image-dir` to plan. `--output` still overrides
