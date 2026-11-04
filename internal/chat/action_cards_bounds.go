@@ -45,7 +45,7 @@ func (cs *actionCards) countUntracked(c *actionCard) {
 func (cs *actionCards) inConversation(conv viewKey) []*actionCard {
 	var out []*actionCard
 	for i := len(cs.list) - 1; i >= 0; i-- {
-		if c := cs.list[i]; c.drawnIn(conv) && !c.cleared[conv] {
+		if c := cs.list[i]; c.shownIn(conv) {
 			out = append(out, c)
 		}
 	}
@@ -121,11 +121,8 @@ func (cs *actionCards) untrackedLine(conv viewKey) string {
 func (cs *actionCards) clear(conv viewKey) int {
 	n := 0
 	for _, c := range cs.list {
-		if c.drawnIn(conv) && !c.cleared[conv] && finishedCard(c) {
-			if c.cleared == nil {
-				c.cleared = map[viewKey]bool{}
-			}
-			c.cleared[conv] = true
+		if c.shownIn(conv) && finishedCard(c) {
+			c.hide(conv)
 			n++
 		}
 	}
@@ -139,6 +136,17 @@ func (cs *actionCards) clear(conv viewKey) int {
 // of a paired workspace's agent, in that workspace's tab.
 func (c *actionCard) drawnIn(conv viewKey) bool {
 	return c.conv == conv || c.kind == cardRemoteReview && contactKey(c.contact) == conv
+}
+
+// shownIn: drawn in conv and not cleared there.
+func (c *actionCard) shownIn(conv viewKey) bool { return c.drawnIn(conv) && !c.cleared[conv] }
+
+// hide clears the card from conv.
+func (c *actionCard) hide(conv viewKey) {
+	if c.cleared == nil {
+		c.cleared = map[viewKey]bool{}
+	}
+	c.cleared[conv] = true
 }
 
 // clearedEverywhere: hidden wherever it is drawn.

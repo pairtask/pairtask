@@ -145,23 +145,33 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 		return m.navAfterPage(contact, false)
 	}
 	t.failed = false
-	page := resp.ContactPage
-	if before == "0" {
-		current := gen == strconv.FormatUint(t.gen, 10)
-		t.newestPage(page, current)
-		if current {
-			m.cardsSeePage(contact, page) // only the newest read is evidence
-		}
-		m.directoryChanged(contact)
-	} else {
-		t.olderPage(page)
-		if cmd := m.recheckNext(contact, page); cmd != nil {
-			return cmd
-		}
+	if before != "0" {
+		return m.olderResult(contact, resp.ContactPage)
 	}
-	if t.stale && before == "0" {
+	return m.newestResult(contact, resp.ContactPage, gen == strconv.FormatUint(t.gen, 10))
+}
+
+// newestResult takes a contact's newest page, evidence for its cards only
+// when it is the current read; changed meanwhile, it is read again.
+func (m *Model) newestResult(contact string, page *protocol.ContactMessagePage, current bool) tea.Cmd {
+	t := m.contacts.thread(contact)
+	t.newestPage(page, current)
+	if current {
+		m.cardsSeePage(contact, page)
+	}
+	m.directoryChanged(contact)
+	if t.stale {
 		t.stale = false
 		return m.refreshContact(contact, 0)
+	}
+	return m.navAfterPage(contact, true)
+}
+
+// olderResult takes an older page of a contact's messages.
+func (m *Model) olderResult(contact string, page *protocol.ContactMessagePage) tea.Cmd {
+	m.contacts.thread(contact).olderPage(page)
+	if cmd := m.recheckNext(contact, page); cmd != nil {
+		return cmd
 	}
 	return m.navAfterPage(contact, true)
 }

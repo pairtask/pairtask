@@ -88,12 +88,15 @@ func (m *Model) remoteQueued(id, askID string) tea.Cmd {
 // queued remember it; the others are read.
 func (m *Model) cardAsksChanged() tea.Cmd {
 	for _, c := range m.cards.list {
-		if c.kind == cardRemoteReview && c.review.askID == "" && !finishedCard(c) {
+		if c.activeRemote() && c.review.askID == "" {
 			c.review.readDue = true
 		}
 	}
 	return m.readCardAsks()
 }
+
+// activeRemote: a paired request's card that can still change.
+func (c *actionCard) activeRemote() bool { return c.kind == cardRemoteReview && !finishedCard(c) }
 
 // readCardAsks reads where the active paired requests stand, eight at a
 // time, under the current read generation.
@@ -103,7 +106,7 @@ func (m *Model) readCardAsks() tea.Cmd {
 	}
 	var refs []protocol.ReviewAskRef
 	for _, c := range m.cards.list {
-		if c.kind == cardRemoteReview && c.review.askID != "" && !finishedCard(c) {
+		if c.activeRemote() && c.review.askID != "" {
 			refs = append(refs, protocol.ReviewAskRef{Contact: c.contact, AskID: c.review.askID})
 		}
 	}
@@ -141,28 +144,41 @@ func (m *Model) cardAsksResult(req pendingRequest, resp protocol.Message) tea.Cm
 		}
 	}
 	for _, key := range req.ids[1:] {
-		m.cardReadAnswer(key, found, ok)
+		contact, askID, _ := strings.Cut(key, "\x00")
+		it, has := found[key]
+		m.cardReadAnswer(protocol.ReviewAskRef{Contact: contact, AskID: askID}, readAnswer{it, has, ok})
 	}
 	return nil
 }
 
-func (m *Model) cardReadAnswer(key string, found map[string]protocol.ReviewAskedItem, ok bool) {
-	contact, askID, _ := strings.Cut(key, "\x00")
+// readAnswer is what a batch's answer says of one request: ok, the read
+// worked; has, the request was in it, as it.
+type readAnswer struct {
+	it      protocol.ReviewAskedItem
+	has, ok bool
+}
+
+func (m *Model) cardReadAnswer(ref protocol.ReviewAskRef, a readAnswer) {
 	for _, c := range m.cards.list {
-		if c.kind != cardRemoteReview || c.contact != contact || c.review.askID != askID {
+		if !c.asks(ref) {
 			continue
 		}
 		r := c.review
-		it, has := found[key]
 		switch {
-		case !ok:
+		case !a.ok:
 			r.unknown = true
-		case has:
+		case a.has:
+			it := a.it
 			r.item, r.unknown = &it, false
 		default:
 			r.gone, r.unknown = true, false
 		}
 	}
+}
+
+// asks: the paired request's card for this request.
+func (c *actionCard) asks(ref protocol.ReviewAskRef) bool {
+	return c.kind == cardRemoteReview && c.contact == ref.Contact && c.review.askID == ref.AskID
 }
 
 // bumpCardReads fences reads in flight and, with active cards left, reads
@@ -189,8 +205,15 @@ func reviewFailed(c *actionCard) bool {
 	if c.failure != "" {
 		return true
 	}
-	r := c.review
-	return c.kind == cardRemoteReview && r.item != nil && askDot(r.item.State) == dotRed
+	return c.readDot() == dotRed
+}
+
+// readDot is a paired request's dot as last read, else none.
+func (c *actionCard) readDot() reviewDot {
+	if c.kind != cardRemoteReview || c.review.item == nil {
+		return dotNone
+	}
+	return askDot(c.review.item.State)
 }
 
 // reviewTitle and reviewFooter frame a review card.
@@ -243,30 +266,43 @@ func (m *Model) remoteStateSteps(c *actionCard) []string {
 	case r.item == nil:
 		return nil
 	}
-	it := r.item
-	ws := workspaceLabel(safe(m.contactTitle(contactKey(c.contact))))
-	line := askDot(it.State).mark(lipgloss.NewStyle(), m.look(askDot(it.State).blinks() && m.reviewSig.dotOff)) + " " +
-		theirState(it.State, it.Reviewer, ws) + verdictWords(it.Verdict, it.URL)
-	steps := []string{strings.TrimSpace(line)}
-	if it.Reason != "" && askDot(it.State) == dotRed {
-		steps = append(steps, "Refused: "+safe(it.Reason))
-		if it.Reason == "not_shared" {
-			steps = append(steps, "Their operator can allow it with /pair reviews "+safe(r.agent)+" ask; then send a new request.")
-		}
-	}
+	steps := append([]string{m.theirStep(c)}, refusalSteps(c)...)
 	if r.unknown {
 		steps = append(steps, mutedStyle.Render("status unknown (read failed)"))
 	}
 	return steps
 }
 
-func verdictWords(verdict, url string) string {
-	out := ""
-	if verdict != "" {
-		out += " · " + safe(verdict)
+// theirStep is where their side has a paired request, as last read.
+func (m *Model) theirStep(c *actionCard) string {
+	it, d := c.review.item, c.readDot()
+	ws := workspaceLabel(safe(m.contactTitle(contactKey(c.contact))))
+	line := d.mark(lipgloss.NewStyle(), m.look(d.blinks() && m.reviewSig.dotOff)) + " " +
+		theirState(it.State, it.Reviewer, ws) + verdictWords(*it)
+	return strings.TrimSpace(line)
+}
+
+// refusalSteps say why their side refused a request, and for not_shared
+// what fixes it.
+func refusalSteps(c *actionCard) []string {
+	it := c.review.item
+	if it.Reason == "" || c.readDot() != dotRed {
+		return nil
 	}
-	if url != "" {
-		out += " · " + safe(url)
+	steps := []string{"Refused: " + safe(it.Reason)}
+	if it.Reason == "not_shared" {
+		steps = append(steps, "Their operator can allow it with /pair reviews "+safe(c.review.agent)+" ask; then send a new request.")
+	}
+	return steps
+}
+
+func verdictWords(it protocol.ReviewAskedItem) string {
+	out := ""
+	if it.Verdict != "" {
+		out += " · " + safe(it.Verdict)
+	}
+	if it.URL != "" {
+		out += " · " + safe(it.URL)
 	}
 	return out
 }

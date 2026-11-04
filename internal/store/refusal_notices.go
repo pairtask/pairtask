@@ -49,7 +49,7 @@ type refusalScope struct{ contact, agent string }
 // noticeRefusal tells the agent that sent a request the contact refused:
 // a notice of its own, or, past the bound, a count for the next summary.
 // A request no agent sent, or one already settled, is told nothing.
-func noticeRefusal(ctx context.Context, tx *sql.Tx, a AskOut, reason string, at time.Time) error {
+func noticeRefusal(ctx context.Context, tx *sql.Tx, a AskOut, end askEnd) error {
 	if a.RequesterAgent == "" || a.Settled {
 		return nil
 	}
@@ -59,14 +59,14 @@ func noticeRefusal(ctx context.Context, tx *sql.Tx, a AskOut, reason string, at 
 		return err
 	}
 	if full {
-		return countRefusal(ctx, tx, scope, at)
+		return countRefusal(ctx, tx, scope, end.at)
 	}
 	label, err := workspaceWords(ctx, tx, a.Contact)
 	if err != nil {
 		return err
 	}
 	return stageNotice(ctx, tx, notice{scope: scope, key: refusalKey(a.AskID), sender: a.Reviewer, replyID: a.AskID,
-		text: refusalText(label, a.Reviewer, reason), at: at})
+		text: refusalText(label, a.Reviewer, end.reason), at: end.at})
 }
 
 // settleRefusedAsk ends a request the contact refused for good and tells
@@ -77,10 +77,11 @@ func settleRefusedAsk(ctx context.Context, tx *sql.Tx, contact, askID, reason st
 	if err != nil || !found {
 		return err // a message that was no review request
 	}
-	if err := settleAsks(ctx, tx, askEnd{"refused", reason, now}, oneAsk(contact, askID)); err != nil {
+	end := askEnd{"refused", reason, now}
+	if err := settleAsks(ctx, tx, end, oneAsk(contact, askID)); err != nil {
 		return err
 	}
-	if err := noticeRefusal(ctx, tx, a, reason, now); err != nil {
+	if err := noticeRefusal(ctx, tx, a, end); err != nil {
 		return err
 	}
 	_, err = flushSummary(ctx, tx, refusalScope{contact, a.RequesterAgent}, now)

@@ -111,10 +111,15 @@ func (m *Model) cardsSeePage(contact string, page *protocol.ContactMessagePage) 
 		return
 	}
 	for _, c := range m.cards.list {
-		if c.contact == contact && c.saved && c.replaced == nil {
+		if c.awaitsPage(contact) {
 			c.see(page, m.opts.Now())
 		}
 	}
+}
+
+// awaitsPage: a saved share card of this contact a page can still move on.
+func (c *actionCard) awaitsPage(contact string) bool {
+	return c.contact == contact && c.saved && c.replaced == nil
 }
 
 // see takes a page's evidence: another set shared now replaces this

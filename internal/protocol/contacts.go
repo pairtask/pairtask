@@ -240,11 +240,16 @@ func ValidateReviewAskRefs(refs []ReviewAskRef) error {
 		if err := validContactKey(r.Contact); err != nil {
 			return err
 		}
-		if r.AskID == "" || len(r.AskID) > 128 || strings.ContainsFunc(r.AskID, unicode.IsControl) {
+		if !validAskRef(r.AskID) {
 			return errors.New("review_ask_refs needs each ask_id, at most 128 bytes")
 		}
 	}
 	return nil
+}
+
+// validAskRef: an ask ID of 1 to 128 bytes, no control characters.
+func validAskRef(id string) bool {
+	return id != "" && len(id) <= 128 && !strings.ContainsFunc(id, unicode.IsControl)
 }
 
 // Shared sync states.
