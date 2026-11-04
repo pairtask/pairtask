@@ -142,7 +142,10 @@ review counts the cards' dots don't blink.
 
 **Action cards** (#305). `/pair share` and `/pair unshare` leave a card in the
 `⇄` tab where they ran, updated in place and kept for the session; background
-updates never remove it or move your typing.
+updates never remove it or move your typing. A reconnect to the broker keeps
+every card and reads where it stands again; quitting chat ends the session,
+and a new one starts with no cards (`/reviews` and `/pair status` still
+have it all).
 - `✓ Saved here` once the broker answered; `Not saved: …` in red when it didn't.
 - `● Peer update pending` until the paired workspace answered exactly the set
   this action left: then `✓ Their side has it (HH:MM)`, or `already had it`.
