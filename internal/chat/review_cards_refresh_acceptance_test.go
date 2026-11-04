@@ -97,6 +97,26 @@ func TestActionCardsAcceptanceEarlyEventIsReadAfterAskIDBinds(t *testing.T) {
 }
 
 func TestActionCardsAcceptanceNineRemoteCardsReadInBoundedBatches(t *testing.T) {
+	h, key, asks := actionQueueNineRemoteCards(t)
+	first := actionRemoteRefresh(t, h, key)
+	// A batch may be dispatched concurrently or after the previous response.
+	h.launch(h.holdResponse(first, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewOp: protocol.ReviewOpAsked, ReviewAsked: &protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}}))
+	second := actionTakeAskRefs(t, h)
+	chatEqual(t, "nine refs split into two batches", len(first.ReviewAskRefs)+len(second.ReviewAskRefs), 9)
+	seen := map[string]bool{}
+	actionCheckBatchRefs(t, first, asks, seen, key)
+	actionCheckBatchRefs(t, second, asks, seen, key)
+	chatEqual(t, "all nine active asks stay reachable", len(seen), 9)
+	// Successful omission is evidence only for this batch, never the other one.
+	actionCheckBatchActive(t, h, second)
+	actionAnswerAskRefs(h, second, "accepted", false)
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	actionCheckBatchSteps(t, h, first, "no longer kept here")
+	actionCheckBatchSteps(t, h, second, "accepted by reviewer@Office")
+}
+
+func actionQueueNineRemoteCards(t *testing.T) (*chatHarness, string, map[string]bool) {
+	t.Helper()
 	h, _ := remoteHarness(t)
 	asks := map[string]bool{}
 	key := ""
@@ -107,33 +127,31 @@ func TestActionCardsAcceptanceNineRemoteCardsReadInBoundedBatches(t *testing.T) 
 		actionQueueAnswer(h, ask)
 		actionDrainAskRefs(t, h)
 	}
-	first := actionRemoteRefresh(t, h, key)
-	// A batch may be dispatched concurrently or after the previous response.
-	h.launch(h.holdResponse(first, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewOp: protocol.ReviewOpAsked, ReviewAsked: &protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}}))
-	second := actionTakeAskRefs(t, h)
-	chatEqual(t, "nine refs split into two batches", len(first.ReviewAskRefs)+len(second.ReviewAskRefs), 9)
-	seen := map[string]bool{}
-	for _, read := range []protocol.Message{first, second} {
-		for _, ref := range read.ReviewAskRefs {
-			if !asks[ref.AskID] || seen[ref.AskID] {
-				t.Fatal("batched lookup duplicated or invented a request")
-			}
-			seen[ref.AskID] = true
-			chatEqual(t, "every ref is workspace scoped", ref.Contact, key)
+	return h, key, asks
+}
+
+func actionCheckBatchRefs(t *testing.T, read protocol.Message, asks, seen map[string]bool, key string) {
+	t.Helper()
+	for _, ref := range read.ReviewAskRefs {
+		if !asks[ref.AskID] || seen[ref.AskID] {
+			t.Fatal("batched lookup duplicated or invented a request")
 		}
+		seen[ref.AskID] = true
+		chatEqual(t, "every ref is workspace scoped", ref.Contact, key)
 	}
-	chatEqual(t, "all nine active asks stay reachable", len(seen), 9)
-	// Successful omission is evidence only for this batch, never the other one.
-	for _, ref := range second.ReviewAskRefs {
+}
+
+func actionCheckBatchActive(t *testing.T, h *chatHarness, read protocol.Message) {
+	t.Helper()
+	for _, ref := range read.ReviewAskRefs {
 		chatEqual(t, "other batch omission does not settle this card", actionCardWithID(t, h, ref.AskID).Active, true)
 	}
-	actionAnswerAskRefs(h, second, "accepted", false)
-	h.await(func() bool { return h.m.State().InFlight == 0 })
-	for _, ref := range first.ReviewAskRefs {
-		v3Contains(t, strings.Join(actionCardWithID(t, h, ref.AskID).Steps, "\n"), "no longer kept here")
-	}
-	for _, ref := range second.ReviewAskRefs {
-		v3Contains(t, strings.Join(actionCardWithID(t, h, ref.AskID).Steps, "\n"), "accepted by reviewer@Office")
+}
+
+func actionCheckBatchSteps(t *testing.T, h *chatHarness, read protocol.Message, want string) {
+	t.Helper()
+	for _, ref := range read.ReviewAskRefs {
+		v3Contains(t, strings.Join(actionCardWithID(t, h, ref.AskID).Steps, "\n"), want)
 	}
 }
 
@@ -190,7 +208,7 @@ func actionTakeNewRequest(t *testing.T, h *chatHarness, kind, op string) protoco
 	index := -1
 	h.await(func() bool {
 		for i, req := range h.requests {
-			if req.Type == kind && (req.ReviewOp == op || req.ContactOp == op) {
+			if actionRequestMatches(req, kind, op) {
 				index = i
 				return true
 			}
@@ -200,6 +218,16 @@ func actionTakeNewRequest(t *testing.T, h *chatHarness, kind, op string) protoco
 	req := h.requests[index]
 	h.requests = append(h.requests[:index], h.requests[index+1:]...)
 	return req
+}
+
+func actionRequestMatches(req protocol.Message, kind, op string) bool {
+	if req.Type != kind {
+		return false
+	}
+	if req.ReviewOp == op {
+		return true
+	}
+	return req.ContactOp == op
 }
 
 func actionSelectRemoteCard(t *testing.T, h *chatHarness, key string) {
