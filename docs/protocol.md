@@ -621,8 +621,9 @@ message: the latest outcome of each request, numbered, each answered.
 Outcomes only move on; one that goes back, comes from another reviewer, or
 answers no request sent is refused. For a request an agent sent, the agent
 gets a message with origin `remote`, `in_reply_to` its request and
-`review_outcome: {ask_id, reviewer, repository, change, state, attempt,
-intent, verdict?, summary?, url?, reason?, review_id?}`; summary and URL are the other
+`review_outcome: {ask_id, workspace, reviewer, repository, change, state, attempt,
+intent, verdict?, summary?, url?, reason?, review_id?}` (`workspace`, the
+identity key it went to, from v21); summary and URL are the other
 workspace's words. `reviews_asked_get` `{request_id}` (v15) answers
 `reviews_asked_result` with `reviews_asked`: the caller's own requests.
 

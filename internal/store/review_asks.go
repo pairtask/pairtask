@@ -576,7 +576,12 @@ func (s *Store) AsksBy(ctx context.Context, agent, before string) (AsksPage, err
 		where = ` AND (created_at < :t OR created_at = :t AND (contact < :c OR contact = :c AND ask_id < :i))`
 		args = append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT contact, ask_id, created_at FROM review_asks_out
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true}) // keys and rows from one snapshot
+	if err != nil {
+		return AsksPage{}, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT contact, ask_id, created_at FROM review_asks_out
 WHERE requester_agent = :agent AND requester_agent != ''`+where+` ORDER BY created_at DESC, contact DESC, ask_id DESC LIMIT :limit`, args...)
 	if err != nil {
 		return AsksPage{}, err
@@ -586,12 +591,15 @@ WHERE requester_agent = :agent AND requester_agent != ''`+where+` ORDER BY creat
 		return AsksPage{}, err
 	}
 	page := AsksPage{More: len(keys) > AsksLimit}
-	keys, page.Cursors = keys[:min(len(keys), AsksLimit)], cursors[:min(len(cursors), AsksLimit)]
-	if page.Asks, err = loadAsks(ctx, s.db, keys); err != nil {
-		return AsksPage{}, err
-	}
-	for i := range page.Asks {
-		page.Asks[i].Findings = withoutItems(page.Asks[i].Findings) // a list carries counts (#303)
+	for i, k := range keys[:min(len(keys), AsksLimit)] {
+		a, _, found, err := loadAsk(ctx, tx, k[0], k[1])
+		if err != nil {
+			return AsksPage{}, err
+		}
+		if found {
+			a.Findings = withoutItems(a.Findings) // a list carries counts (#303)
+			page.Asks, page.Cursors = append(page.Asks, a), append(page.Cursors, cursors[i])
+		}
 	}
 	return page, nil
 }
@@ -627,21 +635,9 @@ func (p *PeerMessages) AskOutFor(ctx context.Context, contact, askID string) (As
 	return a, found, err
 }
 
-func loadAsks(ctx context.Context, q rowQuerier, keys [][2]string) ([]AskOut, error) {
-	out := make([]AskOut, 0, len(keys))
-	for _, k := range keys {
-		a, _, _, err := loadAsk(ctx, q, k[0], k[1])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, nil
-}
-
 // View is the request as an agent or the operator sees it.
 func (a AskOut) View() protocol.ReviewOutcomeView {
-	return protocol.ReviewOutcomeView{AskID: a.AskID, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
+	return protocol.ReviewOutcomeView{AskID: a.AskID, Workspace: a.Contact, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
 		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason,
 		ReviewID: a.ReviewID, Findings: a.Findings}
 }

@@ -313,3 +313,62 @@ func TestFindingsNoticeAcceptanceDetailRejectsAmbiguousSelectors(t *testing.T) {
 	r, _ := owner.request(protocol.TypeOperatorReview, map[string]any{"review_op": "asked_detail", "review_ask_refs": []protocol.ReviewAskRef{ref}, "review_before": "cursor"})
 	operatorEqual(t, "operator refuses detail combined with cursor", r.text("code"), "malformed_frame")
 }
+
+func findingsSecondContactAsk(t *testing.T, f *outcomeNoticeServer) string {
+	t.Helper()
+	id := messageIdentity(t)
+	messageConfirm(f.redeemOperatorFixture, id, 2)
+	key := id.Fingerprint()
+	// Retained anchors may outlive their original chat rows. Give the second
+	// contact the same contact-scoped ask ID with independently retained data.
+	data, err := messaging.EncodeFindings(&messaging.FindingsEnvelope{Total: 1, Items: []messaging.Finding{{Path: "second-contact.go", Line: 4, Summary: "second contact finding"}}})
+	operatorNoError(t, err)
+	_, err = f.db.Exec(`INSERT INTO review_asks_out
+(contact,ask_id,reviewer,requester_agent,local_id,ask,state,seq,digest,attempt,intent,verdict,summary,url,reason,review_id,created_at,updated_at,settled_at,findings,findings_seq,findings_attempt,findings_intent,findings_digest)
+SELECT ?,ask_id,reviewer,requester_agent,'second-retained-local-id',ask,state,seq,digest,attempt,intent,verdict,summary,url,reason,review_id,created_at,updated_at,settled_at,?,findings_seq,findings_attempt,findings_intent,findings_digest
+FROM review_asks_out WHERE contact=? AND ask_id='ask'`, key, string(data), f.key)
+	operatorNoError(t, err)
+	return key
+}
+
+func findingsListIdentity(t *testing.T, row protocol.ReviewOutcomeView) protocol.ReviewAskRef {
+	t.Helper()
+	data, err := json.Marshal(row)
+	operatorNoError(t, err)
+	var selector struct {
+		Workspace string `json:"workspace"`
+		AskID     string `json:"ask_id"`
+	}
+	operatorNoError(t, json.Unmarshal(data, &selector))
+	if selector.Workspace == "" {
+		t.Fatal("agent list row omits the workspace required to read its detail")
+	}
+	return protocol.ReviewAskRef{Contact: selector.Workspace, AskID: selector.AskID}
+}
+
+func TestFindingsNoticeAcceptanceListDiscoversDetailAcrossContactScopedAskIDs(t *testing.T) {
+	f := newOutcomeNoticeServer(t)
+	notice := findingsServerNotice(t, f, findingsServerOutcome(t, 9, 5))
+	acknowledgeRemoteAgent(t, f.agent, notice.MessageID)
+	second := findingsSecondContactAsk(t, f)
+	want := map[string]string{f.key: "src/issue-0.go", second: "second-contact.go"}
+	f.agent.write(protocol.Message{Type: protocol.TypeReviewsAskedGet, RequestID: "discover-detail"})
+	list := f.agent.read()
+	operatorEqual(t, "both contact-scoped asks are listed", len(list.ReviewsAsked), 2)
+	for _, row := range list.ReviewsAsked {
+		ref := findingsListIdentity(t, row) // no caller-supplied workspace fallback
+		operatorEqual(t, "both contacts may use the same ask ID", ref.AskID, "ask")
+		path, known := want[ref.Contact]
+		operatorEqual(t, "list supplies canonical retained contact", known, true)
+		f.agent.write(protocol.Message{Type: protocol.TypeReviewsAskedGet, RequestID: "discovered-detail", ReviewAskRefs: []protocol.ReviewAskRef{ref}})
+		answer := f.agent.read()
+		operatorEqual(t, "discovered selector reads one detail", len(answer.ReviewsAsked), 1)
+		got := answer.ReviewsAsked[0].Findings
+		if got == nil {
+			t.Fatal("discovered detail lost findings")
+		}
+		operatorEqual(t, "list selector disambiguates correct contact's data", got.Items[0].Path, path)
+		delete(want, ref.Contact)
+	}
+	operatorEqual(t, "both contacts were discoverable", len(want), 0)
+}

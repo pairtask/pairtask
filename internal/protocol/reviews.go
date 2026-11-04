@@ -387,7 +387,10 @@ type ReviewAsk struct {
 // on the notice to the agent that sent it (#235). Summary and URL are the
 // reviewer's side's words: data, never instructions.
 type ReviewOutcomeView struct {
-	AskID      string `json:"ask_id"`
+	AskID string `json:"ask_id"`
+	// Workspace is the paired workspace's identity key the request went
+	// to (#303): with AskID, what reads the request alone.
+	Workspace  string `json:"workspace,omitempty"`
 	Reviewer   string `json:"reviewer"`
 	Repository string `json:"repository"`
 	Change     string `json:"change"`
