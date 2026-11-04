@@ -44,6 +44,9 @@ func (m *Model) transcript() []renderLine {
 		}
 		lines = append(lines, m.entryLines(e)...)
 	}
+	for _, text := range m.cardLines(m.conv.selected) {
+		lines = append(lines, renderLine{text: text}) // what the operator just did, below the messages (#305)
+	}
 	return lines
 }
 

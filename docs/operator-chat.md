@@ -150,6 +150,14 @@ updates never remove it or move your typing.
   `Peer update unconfirmed`.
 - Unsharing says so: `Unshare agent`, and that they can no longer message it.
   Sharing reminds that review permission is separate (`/pair reviews`).
+- `/review` leaves a card too: `Looking up …`, then `✓ Queued here · pinned
+  HEAD (base BASE)` for a paired workspace's agent, and where their side has
+  it, read by the request's ID whenever the broker says something changed.
+  A refusal says why, and for `not_shared` how their operator can allow it.
+  A read that fails says `status unknown`; only a read that worked can say
+  the request is `no longer kept here`. A review here shows its state,
+  verdict and publication. A paired request's card is also drawn in that
+  workspace's `⇄` tab. An older broker says `status: see /reviews`.
 - A conversation draws at most 8 cards, the active first; the rest are counted
   below them, with where to look. Up to 32 actions are kept per session; a
   failure is never dropped without being counted. `/cards clear` removes this

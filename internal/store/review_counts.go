@@ -203,7 +203,7 @@ func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.Revie
 		args = append(args, sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
-    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, '')
+    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason
 FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
 `+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
@@ -215,7 +215,7 @@ FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND 
 		var item protocol.ReviewAskedItem
 		var updated string
 		if err := rows.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
-			&updated, &item.Settled, &item.ReviewID); err != nil {
+			&updated, &item.Settled, &item.ReviewID, &item.Reason); err != nil {
 			return page, err
 		}
 		if item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
@@ -260,10 +260,10 @@ func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef) (prot
 	var item protocol.ReviewAskedItem
 	var updated string
 	err := tx.QueryRowContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
-    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, '')
+    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason
 FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
 WHERE a.contact = ? AND a.ask_id = ?`, ref.Contact, ref.AskID).Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer,
-		&item.State, &item.Verdict, &item.URL, &updated, &item.Settled, &item.ReviewID)
+		&item.State, &item.Verdict, &item.URL, &updated, &item.Settled, &item.ReviewID, &item.Reason)
 	if err == sql.ErrNoRows {
 		return item, false, nil
 	}

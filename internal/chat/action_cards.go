@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/google/uuid"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -35,11 +36,15 @@ type actionCard struct {
 	at       time.Time
 	saved    bool
 	failure  string
-	digest   string     // the set this action left, once saved
-	ackAt    *time.Time // when their side answered that set
-	already  bool       // it had that set before this action
-	replaced *time.Time // a later change left another set: sticky
+	digest   string           // the set this action left, once saved
+	ackAt    *time.Time       // when their side answered that set
+	already  bool             // it had that set before this action
+	replaced *time.Time       // a later change left another set: sticky
+	review   *reviewProgress  // a review request's, else nil
+	cleared  map[viewKey]bool // /cards clear hid it there
 }
+
+func newCardID() string { return "card-" + uuid.NewString() }
 
 // actionCards are the session's cards, oldest first, and per conversation
 // what can't be drawn as one.
@@ -47,6 +52,7 @@ type actionCards struct {
 	list      []*actionCard
 	failed    map[viewKey]int              // failures dropped past the window, until cleared
 	untracked map[viewKey]map[cardKind]int // actions run with every card still active
+	readGen   uint64                       // fences reads of where requests stand
 }
 
 // startCard keeps a new action's card. Past the window the oldest finished
@@ -68,7 +74,18 @@ func (m *Model) startCard(c *actionCard) bool {
 
 // finishedCard: nothing more will change on it.
 func finishedCard(c *actionCard) bool {
+	if c.review != nil {
+		return reviewFinished(c)
+	}
 	return c.failure != "" || c.replaced != nil || c.ackAt != nil
+}
+
+// failedCard: it ended badly.
+func failedCard(c *actionCard) bool {
+	if c.review != nil {
+		return reviewFailed(c)
+	}
+	return c.failure != ""
 }
 
 // card is the action with this ID, if kept.
@@ -137,13 +154,21 @@ var (
 // drawCard is one card: a title, its steps, and what to know, each line
 // wrapped to the width.
 func (m *Model) drawCard(c *actionCard) []string {
+	if c.review != nil {
+		return m.frameCard(m.reviewTitle(c), m.reviewSteps(c), m.reviewFooter(c))
+	}
 	ws := safe(m.contactTitle(contactKey(c.contact)))
 	title, footer := "Share agent · "+agentNames(c.agents, "no agents")+" → "+ws, "Message sharing; review permission is separate (/pair reviews)"
 	if c.kind == cardUnshare {
 		title, footer = "Unshare agent · "+agentNames(c.agents, "no agents")+" ← "+ws, "They can no longer message "+agentNames(c.agents, "them")
 	}
+	return m.frameCard(title, m.cardSteps(c), footer)
+}
+
+// frameCard draws a title, steps and a footer in the card's frame.
+func (m *Model) frameCard(title string, steps []string, footer string) []string {
 	lines := []string{cardEdge.Render("┌ ") + cardTitle.Render(title)}
-	for _, step := range m.cardSteps(c) {
+	for _, step := range steps {
 		lines = append(lines, cardEdge.Render("│ ")+step)
 	}
 	return append(lines, cardEdge.Render("└ ")+mutedStyle.Render(footer))
@@ -151,6 +176,9 @@ func (m *Model) drawCard(c *actionCard) []string {
 
 // cardSteps are what is known of the action, in order.
 func (m *Model) cardSteps(c *actionCard) []string {
+	if c.review != nil {
+		return m.reviewSteps(c)
+	}
 	switch {
 	case c.failure != "":
 		return []string{dotRed.mark(lipgloss.NewStyle(), m.look(false)) + " Not saved: " + safe(c.failure)}

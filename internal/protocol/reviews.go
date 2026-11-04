@@ -106,6 +106,7 @@ type ReviewAskedItem struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Settled   bool      `json:"settled"`
 	ReviewID  string    `json:"review_id,omitempty"` // the reviewer's side's ID for the review, "" while not reported (#259)
+	Reason    string    `json:"reason,omitempty"`    // why it was refused, declined or ended (#305)
 }
 
 // ReviewAwaitingPage and ReviewAskedPage are one page each: the items, how

@@ -20,7 +20,7 @@ const cardsDrawn = 8
 // drop removes the card at i, counting a failure its conversation must
 // still be told of.
 func (cs *actionCards) drop(i int) {
-	if c := cs.list[i]; c.failure != "" {
+	if c := cs.list[i]; failedCard(c) {
 		if cs.failed == nil {
 			cs.failed = map[viewKey]int{}
 		}
@@ -45,8 +45,8 @@ func (cs *actionCards) countUntracked(c *actionCard) {
 func (cs *actionCards) inConversation(conv viewKey) []*actionCard {
 	var out []*actionCard
 	for i := len(cs.list) - 1; i >= 0; i-- {
-		if cs.list[i].conv == conv {
-			out = append(out, cs.list[i])
+		if c := cs.list[i]; c.drawnIn(conv) && !c.cleared[conv] {
+			out = append(out, c)
 		}
 	}
 	slices.SortStableFunc(out, func(a, b *actionCard) int { return boolOrder(finishedCard(a), finishedCard(b)) })
@@ -76,7 +76,7 @@ func (cs *actionCards) overflow(conv viewKey) CardOverflowView {
 		case i < cardsDrawn:
 		case !finishedCard(c):
 			v.InProgress++
-		case c.failure != "":
+		case failedCard(c):
 			v.Failures++
 		}
 	}
@@ -106,22 +106,47 @@ func (cs *actionCards) overflowLines(conv viewKey) []string {
 // where they stand.
 func (cs *actionCards) untrackedLine(conv viewKey) string {
 	var parts []string
-	for _, k := range []cardKind{cardShare, cardUnshare} {
+	words := map[cardKind]string{cardShare: "share changes", cardUnshare: "unshare changes", cardRemoteReview: "review requests to paired workspaces",
+		cardLocalReview: "review requests here"}
+	for _, k := range []cardKind{cardLocalReview, cardRemoteReview, cardShare, cardUnshare} {
 		if n := cs.untracked[conv][k]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s changes", n, k))
+			parts = append(parts, fmt.Sprintf("%d %s", n, words[k]))
 		}
 	}
-	return strings.Join(parts, " and ") + " not shown as cards · /pair status"
+	return strings.Join(parts, " and ") + " not shown as cards · /reviews · /pair status"
 }
 
-// clear removes a conversation's finished cards and its counts; active
-// cards stay.
+// clear hides a conversation's finished cards there, and its counts; a
+// card is dropped once hidden everywhere it is drawn. Active cards stay.
 func (cs *actionCards) clear(conv viewKey) int {
-	n := len(cs.list)
-	cs.list = slices.DeleteFunc(cs.list, func(c *actionCard) bool { return c.conv == conv && finishedCard(c) })
+	n := 0
+	for _, c := range cs.list {
+		if c.drawnIn(conv) && !c.cleared[conv] && finishedCard(c) {
+			if c.cleared == nil {
+				c.cleared = map[viewKey]bool{}
+			}
+			c.cleared[conv] = true
+			n++
+		}
+	}
+	cs.list = slices.DeleteFunc(cs.list, (*actionCard).clearedEverywhere)
 	delete(cs.failed, conv)
 	delete(cs.untracked, conv)
-	return n - len(cs.list)
+	return n
+}
+
+// drawnIn: the card is drawn in conv, where it was done or, for a request
+// of a paired workspace's agent, in that workspace's tab.
+func (c *actionCard) drawnIn(conv viewKey) bool {
+	return c.conv == conv || c.kind == cardRemoteReview && contactKey(c.contact) == conv
+}
+
+// clearedEverywhere: hidden wherever it is drawn.
+func (c *actionCard) clearedEverywhere() bool {
+	if !c.cleared[c.conv] {
+		return false
+	}
+	return c.kind != cardRemoteReview || c.cleared[contactKey(c.contact)]
 }
 
 // CardView is one card for tests and the CLI.
@@ -145,7 +170,7 @@ func (m *Model) cardViews() []CardView {
 func (m *Model) cardsCommand(argument) tea.Cmd {
 	n := m.cards.clear(m.conv.selected)
 	m.status = fmt.Sprintf("cleared %d finished cards here; active ones stay", n)
-	return nil
+	return m.bumpCardReads()
 }
 
 func cardsArg(a argument) error {

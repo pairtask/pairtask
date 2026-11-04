@@ -69,7 +69,7 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 	case protocol.EventSendRefused:
 		return m.sendRefused(ev)
 	case protocol.EventContactMessagesChanged:
-		return tea.Batch(m.contactsChanged(ev.ContactKey), m.reviewsMoved())
+		return tea.Batch(m.contactsChanged(ev.ContactKey), m.reviewsMoved(), m.cardAsksChanged())
 	}
 	if refresh := refreshEvents[ev.Kind]; refresh != nil {
 		return refresh(m)
@@ -84,7 +84,7 @@ var refreshEvents = map[string]func(*Model) tea.Cmd{
 	protocol.EventClaimsChanged:  (*Model).refreshStatuses,
 	protocol.EventRoomsChanged:   (*Model).refreshStatuses,
 	protocol.EventPairingChanged: (*Model).pairingChanged,
-	protocol.EventReviewsChanged: func(m *Model) tea.Cmd { return tea.Batch(m.reviewsChanged(), m.reviewsMoved()) },
+	protocol.EventReviewsChanged: func(m *Model) tea.Cmd { return tea.Batch(m.reviewsChanged(), m.reviewsMoved(), m.cardAsksChanged()) },
 }
 
 func (m *Model) conversationChanged(ev *protocol.SessionEvent) tea.Cmd {
@@ -161,6 +161,7 @@ var responseHandlers = map[string]responseHandler{
 	kindContactPause:   (*Model).contactPauseResult,
 	kindContactAddress: (*Model).contactAddressResult,
 	kindContactAsk:     (*Model).contactAskResult,
+	kindCardAsks:       (*Model).cardAsksResult,
 	kindRemoteReview:   (*Model).remoteReviewResult,
 }
 
@@ -226,7 +227,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 	}
 	m.pairing.listed = false // a /pair picker reads again after a reconnection
 	m.cancelLookup()         // a new baseline: the contacts it was for may have changed
-	return tea.Batch(m.setReviewCounts(snap), m.sectionsBaseline(), m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
+	return tea.Batch(m.setReviewCounts(snap), m.sectionsBaseline(), m.bumpCardReads(), m.startDrain(), m.startCatchup(), m.resendUnknown(), m.refreshUsage(snap.InboxPending > 0), m.statusTicker(),
 		m.refreshContacts(), m.reviewsReconnected(), m.contactsReconnected())
 }
 

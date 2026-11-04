@@ -401,7 +401,8 @@ func (m *Model) closed(gen uint64, err error) tea.Cmd {
 		return nil
 	}
 	closeTransport(m.transport)
-	m.cancelLookup() // what it was for may be gone when the link is back
+	m.cancelLookup()  // what it was for may be gone when the link is back
+	m.cards.readGen++ // reads in flight are lost; the next baseline reads again
 	m.transport, m.baseline = nil, false
 	m.pending, m.outbox = map[string]pendingRequest{}, nil
 	m.inbox.disconnected()

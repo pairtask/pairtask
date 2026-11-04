@@ -88,7 +88,7 @@ func (m *Model) shareCommand(fields pairWords) tea.Cmd {
 	m.status = fields[0] + "…"
 	m.startCard(&actionCard{id: msg.MessageID, kind: cardKind(fields[0]), conv: key, contact: key.contact, agents: msg.ContactAgents,
 		at: m.opts.Now()})
-	return m.request(kindContactShare, msg, key.contact, fields[0], msg.MessageID)
+	return tea.Batch(m.bumpCardReads(), m.request(kindContactShare, msg, key.contact, fields[0], msg.MessageID)) // a new card fences older reads
 }
 
 // contactShareResult shows what is shared now.
