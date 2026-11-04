@@ -1,11 +1,15 @@
 package protocol
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/pairtask/pairtask/internal/peer"
@@ -185,7 +189,74 @@ type ContactMessagePage struct {
 	// Acks are the operator's acknowledgments of this contact's messages
 	// (#287), from a broker serving contact_acks.
 	Acks *ContactAckSummary `json:"acks,omitempty"`
+	// From a broker serving contact_share_sync (#305), read with Shared in
+	// one snapshot: SharedSync is whether the contact has answered exactly
+	// that set, "confirmed" or "pending"; SharedDigest names the set,
+	// SharedAckDigest the one the contact last answered ("" when never),
+	// and SharedAckAt when.
+	SharedSync      string     `json:"shared_sync,omitempty"`
+	SharedDigest    string     `json:"shared_digest,omitempty"`
+	SharedAckDigest string     `json:"shared_ack_digest,omitempty"`
+	SharedAckAt     *time.Time `json:"shared_ack_at,omitempty"`
 }
+
+// DirectoryDigest names a list of agents as a set (#305): sorted, each
+// once, each length-prefixed, an unambiguous framing; hex SHA-256.
+func DirectoryDigest(agents []string) string {
+	set := slices.Clone(agents)
+	slices.Sort(set)
+	h := sha256.New()
+	for _, agent := range slices.Compact(set) {
+		h.Write(binary.BigEndian.AppendUint64(nil, uint64(len(agent))))
+		h.Write([]byte(agent))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// CapabilityContactShareSync: contact pages say whether the contact has
+// what this side shares (#305).
+const CapabilityContactShareSync = "contact_share_sync"
+
+// CapabilityReviewAskRefs: operator_review asked also reads given requests
+// by contact and ask ID (#305).
+const CapabilityReviewAskRefs = "review_ask_refs"
+
+// ReviewAskRef names one of this side's requests to a paired workspace.
+type ReviewAskRef struct {
+	Contact string `json:"contact"`
+	AskID   string `json:"ask_id"`
+}
+
+// ReviewAskRefsMax bounds the refs one read names.
+const ReviewAskRefsMax = 8
+
+// ValidateReviewAskRefs checks the refs a read names, as supplied: 1 to
+// ReviewAskRefsMax, each a contact key and an ask ID.
+func ValidateReviewAskRefs(refs []ReviewAskRef) error {
+	if len(refs) == 0 || len(refs) > ReviewAskRefsMax {
+		return fmt.Errorf("review_ask_refs names 1 to %d requests", ReviewAskRefsMax)
+	}
+	for _, r := range refs {
+		if err := validContactKey(r.Contact); err != nil {
+			return err
+		}
+		if !validAskRef(r.AskID) {
+			return errors.New("review_ask_refs needs each ask_id, at most 128 bytes")
+		}
+	}
+	return nil
+}
+
+// validAskRef: an ask ID of 1 to 128 bytes, no control characters.
+func validAskRef(id string) bool {
+	return id != "" && len(id) <= 128 && !strings.ContainsFunc(id, unicode.IsControl)
+}
+
+// Shared sync states.
+const (
+	SharedSyncConfirmed = "confirmed"
+	SharedSyncPending   = "pending"
+)
 
 // ContactSyncView is what this side knows of syncing with a contact.
 // Requested means a session was asked for, not that one ran.

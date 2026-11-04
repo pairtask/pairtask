@@ -128,6 +128,7 @@ type Model struct {
 	agents    agentView
 	statuses  statusView
 	reviewSig reviewSignal  // pending reviews in the footer (#286)
+	cards     actionCards   // what the operator just did, where it was done (#305)
 	mono      bool          // the terminal shows no colour, as its profile says (#298)
 	lookup    remoteLookup  // a change looked up for a paired workspace's review (#297)
 	sections  reviewPending // /reviews' paged sections (#286)
@@ -400,7 +401,8 @@ func (m *Model) closed(gen uint64, err error) tea.Cmd {
 		return nil
 	}
 	closeTransport(m.transport)
-	m.cancelLookup() // what it was for may be gone when the link is back
+	m.cancelLookup()  // what it was for may be gone when the link is back
+	m.cards.readGen++ // reads in flight are lost; the next baseline reads again
 	m.transport, m.baseline = nil, false
 	m.pending, m.outbox = map[string]pendingRequest{}, nil
 	m.inbox.disconnected()

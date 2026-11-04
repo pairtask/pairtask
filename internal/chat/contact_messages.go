@@ -137,7 +137,7 @@ func (m *Model) refreshContact(contact string, before int64) tea.Cmd {
 // by direction and ID, never moving a message's state back, so a late page
 // can't undo a newer one; only the newest refresh decides the sync view.
 func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea.Cmd {
-	contact, gen, before := req.ids[0], req.ids[1], req.ids[2]
+	contact, before := req.ids[0], req.ids[2]
 	t := m.contacts.thread(contact)
 	if !pageFor(resp, contact) {
 		t.failed = true // no retry on every update; an event, a reconnect or reopening the tab retries
@@ -145,19 +145,36 @@ func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea
 		return m.navAfterPage(contact, false)
 	}
 	t.failed = false
-	page := resp.ContactPage
-	if before == "0" {
-		t.newestPage(page, gen == strconv.FormatUint(t.gen, 10))
-		m.directoryChanged(contact)
-	} else {
-		t.olderPage(page)
-		if cmd := m.recheckNext(contact, page); cmd != nil {
-			return cmd
-		}
+	if before != "0" {
+		return m.olderResult(req, resp.ContactPage)
 	}
-	if t.stale && before == "0" {
+	return m.newestResult(req, resp.ContactPage)
+}
+
+// newestResult takes a contact's newest page, evidence for its cards only
+// when it is the current read; changed meanwhile, it is read again.
+func (m *Model) newestResult(req pendingRequest, page *protocol.ContactMessagePage) tea.Cmd {
+	contact := req.ids[0]
+	t := m.contacts.thread(contact)
+	current := req.ids[1] == strconv.FormatUint(t.gen, 10)
+	t.newestPage(page, current)
+	if current {
+		m.cardsSeePage(contact, page)
+	}
+	m.directoryChanged(contact)
+	if t.stale {
 		t.stale = false
 		return m.refreshContact(contact, 0)
+	}
+	return m.navAfterPage(contact, true)
+}
+
+// olderResult takes an older page of a contact's messages.
+func (m *Model) olderResult(req pendingRequest, page *protocol.ContactMessagePage) tea.Cmd {
+	contact := req.ids[0]
+	m.contacts.thread(contact).olderPage(page)
+	if cmd := m.recheckNext(contact, page); cmd != nil {
+		return cmd
 	}
 	return m.navAfterPage(contact, true)
 }

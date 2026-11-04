@@ -58,6 +58,7 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 		l.spans = append(l.spans, contactSpan{id: v.ID, direction: v.Direction, cursor: v.Cursor, from: from, upto: len(l.lines),
 			unread: v.Direction == "in" && unreadHere(v)})
 	}
+	l.lines = append(l.lines, m.cardLines(contactKey(fingerprint))...) // what the operator just did, below the messages
 	return l
 }
 

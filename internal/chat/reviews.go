@@ -160,11 +160,12 @@ func (m *Model) requestReview(arg argument) tea.Cmd {
 	spec, reviewer, _ := parseReviewRequest(words)
 	msg := protocol.Message{Type: protocol.TypeOperatorReview, MessageID: uuid.NewString(), ReviewOp: protocol.ReviewOpRequest, ReviewSpec: &spec}
 	m.reviews.intent, m.reviews.unknown, m.reviews.loaded = &msg, false, true
+	m.startLocalCard(msg.MessageID, spec)
 	m.reviews.pending = &pendingReview{id: msg.MessageID, spec: spec, line: "review " + string(arg)}
 	m.reviews.selected, m.reviews.detail = msg.MessageID, nil
 	m.panel = &panel{kind: panelReviews} // the request shows at once, not only in the status line
 	m.status = "requesting a review from " + safe(reviewer) + "…"
-	return m.request(kindReview, msg, protocol.ReviewOpRequest, msg.MessageID)
+	return tea.Batch(m.bumpCardReads(), m.request(kindReview, msg, protocol.ReviewOpRequest, msg.MessageID)) // a new card fences older reads
 }
 
 // reviewsCommand is /reviews: list them in the panel.
@@ -237,10 +238,14 @@ func (m *Model) reviewResult(req pendingRequest, resp protocol.Message) tea.Cmd 
 		follow = m.refreshAfterResend()
 	}
 	if resp.Type != protocol.TypeOperatorReviewResult {
+		if a.settled {
+			m.cardFails(req.ids[1], "Refused: "+refusalReason(resp))
+		}
 		m.reviewRefused(a)
 		return follow
 	}
 	if a.settled {
+		m.localBound(req.ids[1], resp.Review)
 		m.requestAnswered(resp)
 	}
 	m.applyReviews(resp)
@@ -373,6 +378,7 @@ func (m *Model) refreshReviews() tea.Cmd {
 // applyReviews merges an answer into what chat knows: a list replaces it,
 // one review updates its row.
 func (m *Model) applyReviews(resp protocol.Message) {
+	defer m.syncLocalCards() // the action cards of reviews here follow them (#305)
 	if p := resp.ReviewPage; p != nil {
 		m.reviews.list, m.reviews.total, m.reviews.partial = p.Reviews, p.Total, p.Truncated
 		for _, r := range p.Reviews {

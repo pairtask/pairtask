@@ -234,7 +234,7 @@ func (p *PeerMessages) ReplacePeerDirectory(ctx context.Context, contact string,
 		}
 		return writeDirectory(ctx, tx, peerDirectory{contact, agents, at})
 	})
-	return changed, err
+	return changed && err == nil, err
 }
 
 // directoryDiffers: the agents listed aren't the ones stored.

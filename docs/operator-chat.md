@@ -140,6 +140,32 @@ card: who asked whom, and `◆ … awaiting you` until it is decided.
 An older broker has no red (v18), or no footer signal at all (before v18); without
 review counts the cards' dots don't blink.
 
+**Action cards** (#305). `/pair share` and `/pair unshare` leave a card in the
+`⇄` tab where they ran, updated in place and kept for the session; background
+updates never remove it or move your typing. A reconnect to the broker keeps
+every card and reads where it stands again; quitting chat ends the session,
+and a new one starts with no cards (`/reviews` and `/pair status` still
+have it all).
+- `✓ Saved here` once the broker answered; `Not saved: …` in red when it didn't.
+- `● Peer update pending` until the paired workspace answered exactly the set
+  this action left: then `✓ Their side has it (HH:MM)`, or `already had it`.
+  A later change marks the card `superseded`, for good. An older broker says
+  `Peer update unconfirmed`.
+- Unsharing says so: `Unshare agent`, and that they can no longer message it.
+  Sharing reminds that review permission is separate (`/pair reviews`).
+- `/review` leaves a card too: `Looking up …`, then `✓ Queued here · pinned
+  HEAD (base BASE)` for a paired workspace's agent, and where their side has
+  it, read by the request's ID whenever the broker says something changed.
+  A refusal says why, and for `not_shared` how their operator can allow it.
+  A read that fails says `status unknown`; only a read that worked can say
+  the request is `no longer kept here`. A review here shows its state,
+  verdict and publication. A paired request's card is also drawn in that
+  workspace's `⇄` tab. An older broker says `status: see /reviews`.
+- A conversation draws at most 8 cards, the active first; the rest are counted
+  below them, with where to look. Up to 32 actions are kept per session; a
+  failure is never dropped without being counted. `/cards clear` removes this
+  conversation's finished cards and counts; active ones stay. Esc is untouched.
+
 ## Messages and delivery
 
 Enter sends; Shift+Enter, Alt+Enter, Ctrl+J, or `\` then Enter inserts a new

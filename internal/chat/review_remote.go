@@ -131,6 +131,7 @@ func (w reviewerWord) paired() (pairedAgent, bool) {
 // remoteAsk is a review request for a paired workspace's agent, its
 // workspace fixed by key.
 type remoteAsk struct {
+	card            string // its action card's ID, "" without one
 	key             identityKey
 	who             pairedAgent
 	target          protocol.ReviewTarget
@@ -178,17 +179,21 @@ func checkRemoteReview(words []string) error {
 func (m *Model) requestRemoteReview(words []string) tea.Cmd {
 	m.cancelLookup()
 	ask, pin, problem := m.remoteAskFor(words)
-	switch {
-	case problem != "":
+	if problem != "" {
 		m.status = problem
 		return nil
+	}
+	m.startRemoteCard(&ask)
+	reread := m.bumpCardReads() // reads in flight predate this card: fenced, and read again
+	switch {
 	case pin != nil:
-		return m.sendRemoteReview(ask, *pin)
+		return tea.Batch(reread, m.sendRemoteReview(ask, *pin))
 	case m.opts.Bounds.ResolveChange == nil:
 		m.status = "can't look up changes here: add --pin BASE..HEAD"
-		return nil
+		m.cardFails(ask.card, "Not sent: can't look up changes here · add --pin BASE..HEAD")
+		return reread
 	}
-	return m.startLookup(ask)
+	return tea.Batch(reread, m.startLookup(ask))
 }
 
 // remoteAskFor is the request the words make, its pins when given, or why
@@ -219,6 +224,9 @@ func (m *Model) startLookup(ask remoteAsk) tea.Cmd {
 	m.lookup.gen++
 	m.lookup.ask, m.lookup.cancel = &ask, cancel
 	gen, resolve, target := m.lookup.gen, m.opts.Bounds.ResolveChange, ask.target
+	if r := m.reviewCardOf(ask.card); r != nil {
+		r.looking = true
+	}
 	m.status = "looking up " + targetName(target) + "…"
 	return func() tea.Msg {
 		pins, err := resolve(ctx, target)
@@ -232,6 +240,9 @@ func (m *Model) cancelLookup() bool {
 	l := &m.lookup
 	if l.ask == nil {
 		return false
+	}
+	if r := m.reviewCardOf(l.ask.card); r != nil {
+		r.looking, r.cancelled = false, true
 	}
 	l.cancel()
 	l.gen++
@@ -252,8 +263,12 @@ func (m *Model) lookupDone(msg remoteLookupMsg) tea.Cmd {
 	if err == nil && protocol.ValidateRevisions(&msg.pins) != nil {
 		err = forge.Errorf(forge.ClassInvalid, "not full commit IDs") // the code host's answer, not pins
 	}
+	if r := m.reviewCardOf(ask.card); r != nil {
+		r.looking = false
+	}
 	if err != nil {
 		m.status = "can't look up " + targetName(ask.target) + ": " + lookupFailure(err) + " · add --pin BASE..HEAD to pin it yourself"
+		m.cardFails(ask.card, "Not sent: "+lookupFailure(err)+" · add --pin BASE..HEAD")
 		return nil
 	}
 	return m.sendRemoteReview(ask, msg.pins)
@@ -283,6 +298,7 @@ func lookupFailure(err error) string {
 func (m *Model) sendRemoteReview(ask remoteAsk, pins protocol.Revisions) tea.Cmd {
 	if !m.contactTakesRequests(ask.key) {
 		m.status = safe(string(ask.who.workspace)) + " can't take requests now (not confirmed, paused or removed): not sent"
+		m.cardFails(ask.card, "Not sent: "+string(ask.who.workspace)+" can't take requests now")
 		return nil
 	}
 	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpReviewAsk, ContactKey: string(ask.key),
@@ -291,9 +307,13 @@ func (m *Model) sendRemoteReview(ask remoteAsk, pins protocol.Revisions) tea.Cmd
 			Publish: ask.publish, Formal: ask.formal}}
 	if problem := validReviewWords(msg); problem != "" {
 		m.status = problem
+		m.cardFails(ask.card, "Not sent: "+problem)
 		return nil
 	}
-	return m.request(kindRemoteReview, msg, string(ask.key), msg.MessageID, m.sentRemoteStatus(ask, pins))
+	if r := m.reviewCardOf(ask.card); r != nil {
+		r.looking, r.pins = false, &pins
+	}
+	return m.request(kindRemoteReview, msg, string(ask.key), msg.MessageID, m.sentRemoteStatus(ask, pins), ask.card)
 }
 
 // contactTakesRequests: the contact is known, confirmed and not paused.
@@ -343,12 +363,17 @@ func (m *Model) theirDirectory(key identityKey) []string {
 // remoteReviewResult shows the request queued for the workspace, or why it
 // was refused.
 func (m *Model) remoteReviewResult(req pendingRequest, resp protocol.Message) tea.Cmd {
+	card := ""
+	if len(req.ids) > 3 {
+		card = req.ids[3]
+	}
 	if resp.Type != protocol.TypeOperatorContactResult || resp.ContactMessage == nil {
 		m.status = "review request refused: " + refusalReason(resp)
+		m.cardFails(card, "Refused: "+refusalReason(resp))
 		return nil
 	}
 	t := m.contacts.thread(req.ids[0])
 	t.merge([]protocol.ContactMessageView{*resp.ContactMessage})
 	m.status = req.ids[2]
-	return nil
+	return m.remoteQueued(card, req.ids[1])
 }
