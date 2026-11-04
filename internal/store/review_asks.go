@@ -567,14 +567,9 @@ type AsksPage struct {
 // after before ("" for the newest): at most AsksLimit, in an order that
 // stays put (#303), each with counts of its findings only.
 func (s *Store) AsksBy(ctx context.Context, agent, before string) (AsksPage, error) {
-	cur, err := decodeCursor(before)
+	where, args, err := asksAfter(agent, before)
 	if err != nil {
 		return AsksPage{}, err
-	}
-	where, args := "", []any{sql.Named("agent", agent), sql.Named("limit", AsksLimit+1)}
-	if cur != nil {
-		where = ` AND (created_at < :t OR created_at = :t AND (contact < :c OR contact = :c AND ask_id < :i))`
-		args = append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true}) // keys and rows from one snapshot
 	if err != nil {
@@ -591,17 +586,34 @@ WHERE requester_agent = :agent AND requester_agent != ''`+where+` ORDER BY creat
 		return AsksPage{}, err
 	}
 	page := AsksPage{More: len(keys) > AsksLimit}
-	for i, k := range keys[:min(len(keys), AsksLimit)] {
+	return page, page.load(ctx, tx, keys[:min(len(keys), AsksLimit)], cursors)
+}
+
+// asksAfter is the condition and arguments of the page after before.
+func asksAfter(agent, before string) (string, []any, error) {
+	cur, err := decodeCursor(before)
+	args := []any{sql.Named("agent", agent), sql.Named("limit", AsksLimit+1)}
+	if err != nil || cur == nil {
+		return "", args, err
+	}
+	return ` AND (created_at < :t OR created_at = :t AND (contact < :c OR contact = :c AND ask_id < :i))`,
+		append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID)), nil
+}
+
+// load reads the page's requests, with counts of their findings only; one
+// gone since is left out with its cursor.
+func (page *AsksPage) load(ctx context.Context, tx *sql.Tx, keys [][2]string, cursors []string) error {
+	for i, k := range keys {
 		a, _, found, err := loadAsk(ctx, tx, k[0], k[1])
 		if err != nil {
-			return AsksPage{}, err
+			return err
 		}
 		if found {
 			a.Findings = withoutItems(a.Findings) // a list carries counts (#303)
 			page.Asks, page.Cursors = append(page.Asks, a), append(page.Cursors, cursors[i])
 		}
 	}
-	return page, nil
+	return nil
 }
 
 // askPageKeys are a page's requests, as keys and cursors.

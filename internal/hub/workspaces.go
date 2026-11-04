@@ -50,11 +50,15 @@ func (h *Hub) reviewsAsked(ctx context.Context, in Inbound) protocol.Message {
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
 	case in.From.ProtocolVersion < protocol.AskedVersion:
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "reviews_asked requires protocol_version 15")
-	case msg.ReviewAskRefs != nil && msg.ReviewBefore != "":
-		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "reviews_asked reads one request or a page, not both")
 	case msg.ReviewAskRefs != nil:
 		return h.reviewAskedDetail(ctx, in)
 	}
+	return h.reviewsAskedPage(ctx, in)
+}
+
+// reviewsAskedPage answers one page of the caller's requests (#303).
+func (h *Hub) reviewsAskedPage(ctx context.Context, in Inbound) protocol.Message {
+	msg := in.Msg
 	page, err := h.store.AsksBy(ctx, in.From.ID, msg.ReviewBefore)
 	switch {
 	case errors.Is(err, store.ErrReviewCursor):
@@ -101,6 +105,8 @@ func encodedSize(v any) int {
 func (h *Hub) reviewAskedDetail(ctx context.Context, in Inbound) protocol.Message {
 	msg := in.Msg
 	switch {
+	case msg.ReviewBefore != "":
+		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "reviews_asked reads one request or a page, not both")
 	case in.From.ProtocolVersion < protocol.ReviewFindingsVersion:
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "reviews_asked for one request requires protocol_version 21")
 	case len(msg.ReviewAskRefs) != 1:
