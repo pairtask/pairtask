@@ -441,7 +441,7 @@ WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`
 		}
 		// A review request refused for good ends there, and the agent that
 		// sent it is told (#302); a held one waits.
-		return settleRefusedAsk(ctx, tx, contact, id, r.Reason)
+		return settleRefusedAsk(ctx, tx, contact, refused)
 	})
 }
 

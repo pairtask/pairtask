@@ -103,10 +103,10 @@ func TestActionCardsAcceptanceNineRemoteCardsReadInBoundedBatches(t *testing.T) 
 	h.launch(h.holdResponse(first, protocol.Message{Type: protocol.TypeOperatorReviewResult, ReviewOp: protocol.ReviewOpAsked, ReviewAsked: &protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}}))
 	second := actionTakeAskRefs(t, h)
 	chatEqual(t, "nine refs split into two batches", len(first.ReviewAskRefs)+len(second.ReviewAskRefs), 9)
-	seen := map[string]bool{}
-	actionCheckBatchRefs(t, first, asks, seen, key)
-	actionCheckBatchRefs(t, second, asks, seen, key)
-	chatEqual(t, "all nine active asks stay reachable", len(seen), 9)
+	coverage := actionBatchCoverage{asks: asks, seen: map[string]bool{}, contact: key}
+	coverage.check(t, first)
+	coverage.check(t, second)
+	chatEqual(t, "all nine active asks stay reachable", len(coverage.seen), 9)
 	// Successful omission is evidence only for this batch, never the other one.
 	actionCheckBatchActive(t, h, second)
 	actionAnswerAskRefs(h, second, "accepted", false)
@@ -130,14 +130,19 @@ func actionQueueNineRemoteCards(t *testing.T) (*chatHarness, string, map[string]
 	return h, key, asks
 }
 
-func actionCheckBatchRefs(t *testing.T, read protocol.Message, asks, seen map[string]bool, key string) {
+type actionBatchCoverage struct {
+	asks, seen map[string]bool
+	contact    string
+}
+
+func (coverage actionBatchCoverage) check(t *testing.T, read protocol.Message) {
 	t.Helper()
 	for _, ref := range read.ReviewAskRefs {
-		if !asks[ref.AskID] || seen[ref.AskID] {
+		if !coverage.asks[ref.AskID] || coverage.seen[ref.AskID] {
 			t.Fatal("batched lookup duplicated or invented a request")
 		}
-		seen[ref.AskID] = true
-		chatEqual(t, "every ref is workspace scoped", ref.Contact, key)
+		coverage.seen[ref.AskID] = true
+		chatEqual(t, "every ref is workspace scoped", ref.Contact, coverage.contact)
 	}
 }
 

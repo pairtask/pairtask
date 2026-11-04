@@ -71,8 +71,8 @@ func noticeRefusal(ctx context.Context, tx *sql.Tx, a AskOut, end askEnd) error 
 
 // settleRefusedAsk ends a request the contact refused for good and tells
 // the agent that sent it, summarising at once when it is past the bound.
-func settleRefusedAsk(ctx context.Context, tx *sql.Tx, contact, askID, reason string) error {
-	now := time.Now()
+func settleRefusedAsk(ctx context.Context, tx *sql.Tx, contact string, refused messaging.Refused) error {
+	askID, reason, now := refused.ID, refused.Refusal.Reason, time.Now()
 	a, _, found, err := loadAsk(ctx, tx, contact, askID)
 	if err != nil || !found {
 		return err // a message that was no review request

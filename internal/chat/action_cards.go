@@ -129,10 +129,15 @@ func (c *actionCard) see(page *protocol.ContactMessagePage, now time.Time) {
 		c.replaced = &now
 		return
 	}
-	if c.ackAt == nil && page.SharedAckDigest == c.digest && page.SharedAckAt != nil {
+	if c.ackAt == nil && c.answeredIn(page) {
 		at := *page.SharedAckAt
 		c.ackAt, c.already = &at, at.Before(c.at)
 	}
+}
+
+// answeredIn: the page has their answer to this action's set.
+func (c *actionCard) answeredIn(page *protocol.ContactMessagePage) bool {
+	return page.SharedAckDigest == c.digest && page.SharedAckAt != nil
 }
 
 // cardLines are a conversation's cards, at most cardsDrawn, drawn steady
