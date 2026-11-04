@@ -374,7 +374,7 @@ func acceptOutcomeIn(ctx context.Context, tx *sql.Tx, in inboundOutcome) (messag
 			return messaging.OutcomeAnswer{}, err
 		}
 	}
-	if verdict, err = keepFindings(ctx, tx, a, o, verdict); err != nil {
+	if verdict, err = keepFindings(ctx, tx, judgedOutcome{a, o, verdict}); err != nil {
 		return messaging.OutcomeAnswer{}, err
 	}
 	if answer, judged := judgedAnswers[verdict]; judged {

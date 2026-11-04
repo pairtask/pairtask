@@ -131,7 +131,7 @@ func TestFindingsWireAcceptanceProjectionClipsOnRuneBoundary(t *testing.T) {
 			t.Fatal("projection lost a small finding")
 		}
 		item := got.Items[0]
-		if !utf8.ValidString(item.Summary) || len(item.Summary) > 512 || !strings.HasPrefix(summary, item.Summary) {
+		if !findingsSummaryPrefix(item.Summary, summary) {
 			t.Fatal("summary cut was not a UTF-8 prefix within 512 bytes")
 		}
 		if item.Truncated != (len(summary) > 512) {
@@ -144,6 +144,16 @@ func TestFindingsWireAcceptanceProjectionClipsOnRuneBoundary(t *testing.T) {
 			t.Fatal("projection mutated source verdict")
 		}
 	}
+}
+
+func findingsSummaryPrefix(got, full string) bool {
+	if !utf8.ValidString(got) {
+		return false
+	}
+	if len(got) > 512 {
+		return false
+	}
+	return strings.HasPrefix(full, got)
 }
 
 func findingsCanonical(t *testing.T, envelope messaging.FindingsEnvelope) []byte {
@@ -238,6 +248,13 @@ func TestFindingsWireAcceptanceEncoderAndDecoderEnforceBounds(t *testing.T) {
 }
 
 func TestFindingsWireAcceptanceInvalidUTF8AndEnvelopeBudget(t *testing.T) {
+	findingsCheckUTF8Fields(t)
+	findingsCheckUTF8JSON(t)
+	findingsCheckEnvelopeBudget(t)
+}
+
+func findingsCheckUTF8Fields(t *testing.T) {
+	t.Helper()
 	for _, field := range []string{"path", "summary"} {
 		e := messaging.FindingsEnvelope{Total: 1, Items: []messaging.Finding{{Path: "x.go", Summary: "note"}}}
 		if field == "path" {
@@ -249,16 +266,21 @@ func TestFindingsWireAcceptanceInvalidUTF8AndEnvelopeBudget(t *testing.T) {
 			t.Fatalf("invalid UTF-8 %s encoded: %v", field, err)
 		}
 	}
+}
+
+func findingsCheckUTF8JSON(t *testing.T) {
+	t.Helper()
 	raw := []byte(`{"total":1,"items":[{"path":"x.go","line":0,"summary":"`)
 	raw = append(raw, 0xff)
 	raw = append(raw, []byte(`","truncated":false}]}`)...)
 	if _, err := messaging.DecodeFindings(raw); !errors.Is(err, messaging.ErrProtocol) {
 		t.Fatal("decoder accepted invalid UTF-8 JSON")
 	}
-	e := messaging.FindingsEnvelope{Total: 24, Items: make([]messaging.Finding, 24)}
-	for i := range e.Items {
-		e.Items[i] = messaging.Finding{Path: strings.Repeat("p", 512), Summary: strings.Repeat("\x01", 512)}
-	}
+}
+
+func findingsCheckEnvelopeBudget(t *testing.T) {
+	t.Helper()
+	e := findingsOversizeEnvelope()
 	if len(findingsCanonical(t, e)) <= 16<<10 {
 		t.Fatal("fixture did not exceed envelope budget")
 	}
@@ -268,6 +290,14 @@ func TestFindingsWireAcceptanceInvalidUTF8AndEnvelopeBudget(t *testing.T) {
 	if _, err := messaging.DecodeFindings(findingsCanonical(t, e)); !errors.Is(err, messaging.ErrProtocol) {
 		t.Fatal("decoder accepted oversized envelope")
 	}
+}
+
+func findingsOversizeEnvelope() messaging.FindingsEnvelope {
+	e := messaging.FindingsEnvelope{Total: 24, Items: make([]messaging.Finding, 24)}
+	for i := range e.Items {
+		e.Items[i] = messaging.Finding{Path: strings.Repeat("p", 512), Summary: strings.Repeat("\x01", 512)}
+	}
+	return e
 }
 
 func TestFindingsWireAcceptanceProjectionLimitsItemCountAndPreservesFullTotal(t *testing.T) {

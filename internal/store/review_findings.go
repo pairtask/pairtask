@@ -48,7 +48,8 @@ func (s findingsSnapshot) sameAttempt(attempt uint32) bool {
 // as judged: an applied outcome may replace or clear it, the same outcome
 // again may only add what it lacked. Findings that contradict the ones
 // the same outcome brought make it a conflict.
-func keepFindings(ctx context.Context, tx *sql.Tx, a AskOut, o messaging.ReviewOutcome, verdict outcomeVerdict) (outcomeVerdict, error) {
+func keepFindings(ctx context.Context, tx *sql.Tx, j judgedOutcome) (outcomeVerdict, error) {
+	a, o, verdict := j.a, j.o, j.verdict
 	if !bringsFindings(verdict, a, o) {
 		return verdict, nil // older, invalid or conflicting: never findings
 	}
@@ -67,6 +68,14 @@ func keepFindings(ctx context.Context, tx *sql.Tx, a AskOut, o messaging.ReviewO
 		return verdict, s.enrich(ctx, tx, findingsWrite{a, o, envelope})
 	}
 	return verdict, s.advance(ctx, tx, findingsWrite{a, o, envelope})
+}
+
+// judgedOutcome is an outcome, its request as it stood, and how it was
+// judged against it.
+type judgedOutcome struct {
+	a       AskOut
+	o       messaging.ReviewOutcome
+	verdict outcomeVerdict
 }
 
 // bringsFindings: an outcome that may change its request's findings, a
