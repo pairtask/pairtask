@@ -107,6 +107,27 @@ type ReviewAskedItem struct {
 	Settled   bool      `json:"settled"`
 	ReviewID  string    `json:"review_id,omitempty"` // the reviewer's side's ID for the review, "" while not reported (#259)
 	Reason    string    `json:"reason,omitempty"`    // why it was refused, declined or ended (#305)
+	// Findings are the newest verdict's findings the reviewer's side sent
+	// (#303), nil while none are known: their words, data.
+	Findings *AskFindings `json:"findings,omitempty"`
+}
+
+// AskFindings are a request's findings as received: the first of the
+// verdict's, how many it has in all, and the outcome that brought them.
+type AskFindings struct {
+	Total   int          `json:"total"`
+	Items   []AskFinding `json:"items"`
+	Seq     uint64       `json:"seq"`
+	Attempt uint32       `json:"attempt"`
+}
+
+// AskFinding is one received finding; Truncated says its summary was cut
+// to travel.
+type AskFinding struct {
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Summary   string `json:"summary"`
+	Truncated bool   `json:"truncated"`
 }
 
 // ReviewAwaitingPage and ReviewAskedPage are one page each: the items, how
@@ -368,4 +389,7 @@ type ReviewOutcomeView struct {
 	// ReviewID is the reviewer's side's own ID for the review, once an
 	// outcome named it (#259); "" while not reported.
 	ReviewID string `json:"review_id,omitempty"`
+	// Findings are the newest verdict's findings received (#303), nil
+	// while none are known: the reviewer's side's words, data.
+	Findings *AskFindings `json:"findings,omitempty"`
 }

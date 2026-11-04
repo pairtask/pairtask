@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = ContactShareSyncVersion
+	Version                 = ReviewFindingsVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -54,6 +54,7 @@ const (
 	ReviewCountsVersion     = 18 // the operator snapshot counts pending reviews; operator_review pages them (#286)
 	ReviewFailuresVersion   = 19 // review_counts count failures and active asks; operator_review pages the failures (#298)
 	ContactShareSyncVersion = 20 // a contact page says whether the contact has what this side shares (#305)
+	ReviewFindingsVersion   = 21 // asked requests carry the findings their verdict sent (#303)
 	StageAccepted           = "accepted"
 	StageAdapterReceived    = "adapter_received"
 	StageAgentAcknowledged  = "agent_acknowledged"

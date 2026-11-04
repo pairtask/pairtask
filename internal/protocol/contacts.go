@@ -221,6 +221,10 @@ const CapabilityContactShareSync = "contact_share_sync"
 // by contact and ask ID (#305).
 const CapabilityReviewAskRefs = "review_ask_refs"
 
+// CapabilityAskFindings: asked requests carry the findings their verdict
+// sent (#303).
+const CapabilityAskFindings = "ask_findings"
+
 // ReviewAskRef names one of this side's requests to a paired workspace.
 type ReviewAskRef struct {
 	Contact string `json:"contact"`

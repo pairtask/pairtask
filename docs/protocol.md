@@ -636,6 +636,43 @@ outcome sent at v5 and again at v6 is not a conflict. `review_id` on
 `review_outcome`, `reviews_asked` and the operator's asked page is absent
 until reported: unknown, which says nothing of why.
 
+From message protocol v7, an outcome with a verdict also carries the
+verdict's findings, as one more field (#303). Frames are exactly 10 fields at
+v5, 11 at v6 and 12 at v7.
+- **Field contents:** the field is empty when there are none to send (no
+  verdict). Otherwise it holds canonical JSON
+  `{"total":N,"items":[{"path","line","summary","truncated"}]}`: Go's encoding
+  without HTML escaping or a trailing newline. A receiver rejects any other
+  encoding, unknown keys or anything out of bounds. `{"total":0,"items":[]}`
+  is a verdict known to have none.
+- **Bounds:**
+  - at most 24 items, taken in the verdict's order while the encoded
+    envelope stays within 16 KiB;
+  - paths are sent whole (at most 512 bytes);
+  - a summary over 512 bytes is cut on a character boundary, with
+    `truncated: true`;
+  - `total` counts all of the verdict's findings (at most 100), so `total`
+    above the items says how many stayed on the reviewer's side.
+- **Projection:** the reviewer's side projects them once, when it makes the
+  outcome, and resends exactly that.
+- **Identity:** like the review ID, findings aren't part of an outcome's
+  identity.
+- **Requester's snapshot:** the requester keeps one per request, bound to
+  the outcome that brought it.
+  - A newer outcome with findings replaces it.
+  - A newer one without findings keeps it when it is the same attempt (a
+    publication step), and clears it when another attempt.
+  - The same outcome again may add findings once, while none are known. With
+    other findings than those known, it is refused as a conflict.
+  - Unsharing or removing the reviewer keeps the findings, for as long as
+    the request is kept.
+- **Readers:** `findings: {total, items, seq, attempt}` on `review_outcome`
+  and `reviews_asked` (absent while none are known), and on the operator's
+  asked page with capability `ask_findings` (v21).
+- **Notice:** the outcome notice lists the first 3. It then says how many
+  more were received (in `reviews_asked`), apart from how many weren't
+  transferred.
+
 ## State
 
 SQLite retains `agents` (session lifecycle and harness/model) and `messages`

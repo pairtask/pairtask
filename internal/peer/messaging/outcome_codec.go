@@ -40,6 +40,10 @@ type ReviewOutcome struct {
 	// version is the same outcome; read as it is sent, never stored with
 	// the outcome.
 	ReviewID string `json:"-"`
+	// Findings are what the outcome carries of its verdict's findings from
+	// FindingsVersion (#303), nil for none: projected once when the outcome
+	// is made and sent as kept. Like ReviewID, not part of Digest.
+	Findings *FindingsEnvelope `json:"findings,omitempty"`
 }
 
 // Bounds of an outcome's text.
@@ -76,6 +80,7 @@ type OutcomeAnswer struct {
 var (
 	outcomeShape        = shape{FrameReviewOutcome, 10}
 	outcomeIDShape      = shape{FrameReviewOutcome, 11}
+	outcomeFindingShape = shape{FrameReviewOutcome, 12}
 	outcomeStoredShape  = shape{FrameOutcomeStored, 2}
 	outcomeRefusedShape = shape{FrameOutcomeRefused, 3}
 )
@@ -97,7 +102,15 @@ func EncodeOutcomeFor(o ReviewOutcome, version byte) ([]byte, error) {
 	if badReviewID(o.ReviewID) {
 		return nil, fmt.Errorf("%w: outcome review ID", ErrProtocol)
 	}
-	return encode(FrameReviewOutcome, append(outcomeFields(o), []byte(o.ReviewID))...)
+	fields := append(outcomeFields(o), []byte(o.ReviewID))
+	if version >= FindingsVersion {
+		findings, err := EncodeFindings(o.Findings)
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, findings)
+	}
+	return encode(FrameReviewOutcome, fields...)
 }
 
 // ReviewIDBytes bounds a review ID.
@@ -135,7 +148,11 @@ func DecodeOutcomeFor(frame []byte, version byte) (ReviewOutcome, error) {
 	if version < ReviewIDVersion {
 		return DecodeOutcome(frame)
 	}
-	o, err := decodeOutcome(frame, outcomeIDShape)
+	want := outcomeIDShape
+	if version >= FindingsVersion {
+		want = outcomeFindingShape
+	}
+	o, err := decodeOutcome(frame, want)
 	if err != nil {
 		return ReviewOutcome{}, err
 	}
@@ -158,6 +175,11 @@ func decodeOutcome(frame []byte, want shape) (ReviewOutcome, error) {
 		Verdict: string(f[6]), Summary: string(f[7]), URL: string(f[8]), Reason: string(f[9])}
 	if len(f) > 10 {
 		o.ReviewID = string(f[10])
+	}
+	if len(f) > 11 {
+		if o.Findings, err = DecodeFindings(f[11]); err != nil {
+			return ReviewOutcome{}, err
+		}
 	}
 	return o, nil
 }

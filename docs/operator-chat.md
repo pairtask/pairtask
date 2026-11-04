@@ -169,7 +169,10 @@ have it all).
   A read that fails says `status unknown`; only a read that worked can say
   the request is `no longer kept here`. A review here shows its state,
   verdict and publication. A paired request's card is also drawn in that
-  workspace's `⇄` tab. An older broker says `status: see /reviews`.
+  workspace's `⇄` tab. An older broker says `status: see /reviews`. When the
+  verdict's findings came back (#303), the card lists the first three as
+  `path:line: summary`, then how many more arrived (`/reviews` counts them on
+  the request's row) and how many stayed on their side.
 - A conversation draws at most 8 cards, the active first; the rest are counted
   below them, with where to look. Up to 32 actions are kept per session; a
   failure is never dropped without being counted. `/cards clear` removes this

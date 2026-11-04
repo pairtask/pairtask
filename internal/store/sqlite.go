@@ -123,6 +123,11 @@ var addedColumns = []struct{ table, column, decl string }{
 	// (#259), once an outcome names it; NULL until then. Set once, never
 	// changed.
 	{"review_asks_out", "review_id", "TEXT"},
+	{"review_asks_out", "findings", "TEXT"},
+	{"review_asks_out", "findings_seq", "INTEGER"},
+	{"review_asks_out", "findings_attempt", "INTEGER"},
+	{"review_asks_out", "findings_intent", "INTEGER"},
+	{"review_asks_out", "findings_digest", "BLOB"},
 	// The digest of the directory a contact last answered (#305), and when;
 	// NULL until it answers one.
 	{"peer_contacts", "directory_ack", "TEXT"},
