@@ -178,6 +178,7 @@ func (m *Model) reviewsCommand(arg argument) tea.Cmd {
 		return m.reviewsSubcommand(fields)
 	}
 	m.reviews.loaded, m.reviews.selected, m.reviews.detail = true, "", nil
+	m.sections.detail = nil
 	m.panel = &panel{kind: panelReviews}
 	list := m.request(kindReview, protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpList}, protocol.ReviewOpList)
 	return tea.Batch(list, m.refreshPendingSections())
@@ -190,6 +191,7 @@ func (m *Model) reviewStatus(ref string) tea.Cmd {
 		return nil
 	}
 	m.reviews.loaded, m.reviews.selected, m.reviews.detail = true, id, nil
+	m.sections.detail = nil
 	m.panel = &panel{kind: panelReviews}
 	return m.request(kindReview, protocol.Message{Type: protocol.TypeOperatorReview, ReviewOp: protocol.ReviewOpStatus, ReviewID: id}, protocol.ReviewOpStatus)
 }

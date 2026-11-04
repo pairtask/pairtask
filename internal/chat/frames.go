@@ -162,6 +162,7 @@ var responseHandlers = map[string]responseHandler{
 	kindContactAddress: (*Model).contactAddressResult,
 	kindContactAsk:     (*Model).contactAskResult,
 	kindCardAsks:       (*Model).cardAsksResult,
+	kindAskedDetail:    (*Model).askedDetailResult,
 	kindRemoteReview:   (*Model).remoteReviewResult,
 }
 

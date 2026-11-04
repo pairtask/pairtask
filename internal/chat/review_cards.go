@@ -279,7 +279,7 @@ func (m *Model) remoteStateSteps(c *actionCard) []string {
 	case r.item == nil:
 		return nil
 	}
-	steps := append(append([]string{m.theirStep(c)}, refusalSteps(c)...), m.findingsSteps(c.review.item.Findings)...)
+	steps := append(append([]string{m.theirStep(c)}, refusalSteps(c)...), m.findingsSteps(c.review.item)...)
 	if r.unknown {
 		steps = append(steps, mutedStyle.Render("status unknown (read failed)"))
 	}

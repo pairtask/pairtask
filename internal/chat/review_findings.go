@@ -30,19 +30,22 @@ func (m *Model) findingsCount(f *protocol.AskFindings) string {
 }
 
 // findingsSteps are a card's lines for its findings: the first few, then
-// how many more were received, apart from those kept on their side.
-func (m *Model) findingsSteps(f *protocol.AskFindings) []string {
+// how many more were received and where to read them, apart from those
+// kept on their side.
+func (m *Model) findingsSteps(it *protocol.ReviewAskedItem) []string {
+	f := it.Findings
 	if !m.findingsShown(f) {
 		return nil
 	}
 	steps := []string{fmt.Sprintf("Findings (%d):", f.Total)}
-	for _, it := range f.Items[:min(cardFindings, len(f.Items))] {
-		steps = append(steps, "  "+findingLine(it))
+	for _, item := range f.Items[:min(cardFindings, len(f.Items))] {
+		steps = append(steps, "  "+findingLine(item))
 	}
-	if more := len(f.Items) - cardFindings; more > 0 {
-		steps = append(steps, mutedStyle.Render(fmt.Sprintf("  +%d more · /reviews", more)))
+	if more := f.Received - min(cardFindings, len(f.Items)); more > 0 {
+		ref := m.sections.ref(askedKey(*it)) // the request's own ref: the same whatever the list's paging
+		steps = append(steps, mutedStyle.Render(fmt.Sprintf("  +%d more · /reviews findings %s", more, ref)))
 	}
-	if kept := f.Total - len(f.Items); kept > 0 {
+	if kept := f.Total - f.Received; kept > 0 {
 		steps = append(steps, mutedStyle.Render(fmt.Sprintf("  %d kept on their side", kept)))
 	}
 	return steps

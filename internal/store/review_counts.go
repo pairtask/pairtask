@@ -219,7 +219,7 @@ FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND 
 			&updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt); err != nil {
 			return page, err
 		}
-		item.Findings = f.view()
+		item.Findings = f.view(0) // a list carries counts; one request alone, its findings
 		if item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
 			return page, err
 		}
@@ -245,7 +245,7 @@ func (s *Store) AskedByRefs(ctx context.Context, refs []protocol.ReviewAskRef) (
 			continue
 		}
 		seen[ref] = true
-		item, found, err := askedItem(ctx, tx, ref)
+		item, found, err := askedItem(ctx, tx, ref, protocol.FindingsPreview)
 		if err != nil {
 			return page, err
 		}
@@ -257,8 +257,24 @@ func (s *Store) AskedByRefs(ctx context.Context, refs []protocol.ReviewAskRef) (
 	return page, nil
 }
 
-// askedItem is one request as the asked list shows it.
-func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef) (protocol.ReviewAskedItem, bool, error) {
+// AskedDetail is one asked request with every finding received (#303).
+func (s *Store) AskedDetail(ctx context.Context, ref protocol.ReviewAskRef) (protocol.ReviewAskedPage, error) {
+	page := protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return page, err
+	}
+	defer tx.Rollback()
+	item, found, err := askedItem(ctx, tx, ref, protocol.FindingsAll)
+	if found {
+		page.Items, page.Total = append(page.Items, item), 1
+	}
+	return page, err
+}
+
+// askedItem is one request as the asked list shows it, with at most limit
+// findings.
+func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef, limit int) (protocol.ReviewAskedItem, bool, error) {
 	var item protocol.ReviewAskedItem
 	var updated string
 	var f keptFindings
@@ -273,7 +289,7 @@ WHERE a.contact = ? AND a.ask_id = ?`, ref.Contact, ref.AskID).Scan(&item.Contac
 	if err != nil {
 		return item, false, err
 	}
-	item.Findings = f.view()
+	item.Findings = f.view(limit)
 	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
 	return item, err == nil, err
 }

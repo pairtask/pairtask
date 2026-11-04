@@ -18,6 +18,9 @@ func (m *Model) reviewRows() []string {
 	if p := m.reviews.pending; p != nil && p.id == m.reviews.selected {
 		return append(rows, m.pendingRows(*p)...)
 	}
+	if d := m.sections.detail; d != nil {
+		return append(rows, m.askedDetailRows(d)...)
+	}
 	if m.pendingAvailable() {
 		rows[0] = titleStyle.Render("Reviews") + mutedStyle.Render("  (/reviews open REF · /reviews more needs|asked|failed · Esc closes)")
 		return append(rows, m.sectionRows()...)

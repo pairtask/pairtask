@@ -166,12 +166,9 @@ func findingsCanonical(t *testing.T, envelope messaging.FindingsEnvelope) []byte
 }
 
 func TestFindingsWireAcceptanceEscapingBudgetSelectsDeterministicPrefix(t *testing.T) {
-	full := make([]messaging.Finding, 100)
-	for i := range full {
-		full[i] = messaging.Finding{Path: strings.Repeat(`"`, 512), Line: i, Summary: strings.Repeat("\x01", 512)}
-	}
+	full := findingsEscapingVerdict()
 	got := messaging.ProjectFindings(len(full), full)
-	if got.Total != 100 || len(got.Items) == 0 || len(got.Items) > 24 {
+	if !findingsProjectedCount(got) {
 		t.Fatal("projection lost total or item bounds")
 	}
 	wire, err := messaging.EncodeFindings(got)
@@ -182,13 +179,36 @@ func TestFindingsWireAcceptanceEscapingBudgetSelectsDeterministicPrefix(t *testi
 	if !reflect.DeepEqual(got.Items, full[:len(got.Items)]) {
 		t.Fatal("selection is not verdict-order prefix")
 	}
-	next := messaging.FindingsEnvelope{Total: 100, Items: full[:len(got.Items)+1]}
-	if len(findingsCanonical(t, next)) <= 16<<10 {
-		t.Fatal("projection stopped before next finding exceeded budget")
-	}
+	findingsCheckNextPrefix(t, got, full)
 	again := messaging.ProjectFindings(100, full)
 	if !reflect.DeepEqual(got, again) {
 		t.Fatal("projection is nondeterministic")
+	}
+}
+
+func findingsEscapingVerdict() []messaging.Finding {
+	full := make([]messaging.Finding, 100)
+	for i := range full {
+		full[i] = messaging.Finding{Path: strings.Repeat(`"`, 512), Line: i, Summary: strings.Repeat("\x01", 512)}
+	}
+	return full
+}
+
+func findingsProjectedCount(got *messaging.FindingsEnvelope) bool {
+	if got.Total != 100 {
+		return false
+	}
+	if len(got.Items) == 0 {
+		return false
+	}
+	return len(got.Items) <= 24
+}
+
+func findingsCheckNextPrefix(t *testing.T, got *messaging.FindingsEnvelope, full []messaging.Finding) {
+	t.Helper()
+	next := messaging.FindingsEnvelope{Total: 100, Items: full[:len(got.Items)+1]}
+	if len(findingsCanonical(t, next)) <= 16<<10 {
+		t.Fatal("projection stopped before next finding exceeded budget")
 	}
 }
 
