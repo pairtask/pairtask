@@ -40,6 +40,15 @@ Their agents show as `AGENT@WORKSPACE` there and in the tab's `@` picker,
 with the workspace named as this side calls it; picking one still inserts
 `@AGENT`.
 
+A `⇄` tab writes to that workspace only, never to your agents here. Above the
+draft it names who gets it: `→ Office's operator`, or `→ reviewer@Office` when
+the draft starts with `@reviewer`, then `your agents here won't get it`. A name
+both sides have is theirs in that tab. Once their tab has said which agents
+they share, a draft that starts with one of your agents they don't share is
+held, the draft kept: `local-only is your agent here; this tab writes to
+Office. Send it in * instead`. A name neither side knows still goes; their side
+refuses it.
+
 ## Commands
 
 `/` on an empty input (or Ctrl+K) opens the command line; it never touches your

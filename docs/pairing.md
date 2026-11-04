@@ -112,6 +112,9 @@ shows in the `⇄` tab, along with which agents acknowledged each message.
 In the tab, their agents show as `AGENT@WORKSPACE`, such as
 `codex-1@Office`, with the workspace named as you call it (`/pair name`), so
 they never read as yours. You still write to them as `@codex-1`.
+Nothing written in a `⇄` tab reaches your own agents; the line above the
+draft says who gets it, and a draft starting with one of your agents they
+don't share is held with where to send it instead.
 
 A shared agent can also write first. Its `workspaces` tool lists the
 workspaces it is shared with, and `send` with `workspace` set to one of them

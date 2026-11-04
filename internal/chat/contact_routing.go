@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -54,6 +55,9 @@ func contactAddress(draft string) address {
 
 // addressProblem is why an addressed draft can't be sent, or "".
 func (m *Model) addressProblem(a address) string {
+	if name := m.localOnly(a); name != "" {
+		return m.localOnlyWords(name)
+	}
 	switch {
 	case len(a.to) == 0:
 		return ""
@@ -97,7 +101,7 @@ func (m *Model) contactShareResult(req pendingRequest, resp protocol.Message) te
 		return nil
 	}
 	t := m.contacts.thread(contact)
-	t.shared, t.directory, t.grants = resp.ContactPage.Shared, resp.ContactPage.Directory, resp.ContactPage.ReviewGrants
+	t.shared, t.directory, t.grants, t.dirKnown = resp.ContactPage.Shared, resp.ContactPage.Directory, resp.ContactPage.ReviewGrants, true
 	m.directoryChanged(contact)
 	t.merge(resp.ContactPage.Messages)
 	m.status = "shared with this workspace: " + agentNames(t.shared, "no agents")
@@ -151,4 +155,49 @@ func theirAgents(agents []string, ws workspaceLabel) string {
 		names[i] = safe(a) + "@" + string(ws)
 	}
 	return strings.Join(names, ", ")
+}
+
+// localOnly is the first agent a draft names that is one of this
+// workspace's and not among those the contact shares, once the contact
+// said what it shares: a ⇄ tab writes only to that workspace, so the draft
+// would never reach it. A name on both sides is theirs here.
+func (m *Model) localOnly(a address) string {
+	t := m.contacts.threads[m.conv.selected.contact]
+	if t == nil || !t.dirKnown {
+		return ""
+	}
+	for _, name := range a.to {
+		if m.isLocalAgent(name) && !slices.Contains(t.directory, name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func (m *Model) isLocalAgent(id string) bool {
+	return slices.ContainsFunc(m.agents.list, func(a protocol.AgentPresence) bool { return a.AgentID == id })
+}
+
+// localOnlyWords say why: whose agent it is, and where to send instead.
+func (m *Model) localOnlyWords(name string) string {
+	return safe(name) + " is your agent here; this tab writes to " + safe(m.contactTitle(m.conv.selected)) + ". Send it in * instead"
+}
+
+// recipientScope is who a ⇄ tab's draft goes to: that workspace's operator,
+// or the agents of theirs it starts with; never the agents here.
+func (m *Model) recipientScope(key viewKey) string {
+	ws := safe(m.contactTitle(key))
+	a := contactAddress(m.compose.editor.Value())
+	if name := m.localOnly(a); name != "" {
+		return "✗ " + m.localOnlyWords(name)
+	}
+	to := ws + "'s operator"
+	if len(a.to) > 0 {
+		named := make([]string, len(a.to))
+		for i, name := range a.to {
+			named[i] = safe(name) + "@" + ws
+		}
+		to = strings.Join(named, ", ")
+	}
+	return "→ " + to + " · your agents here won't get it"
 }
