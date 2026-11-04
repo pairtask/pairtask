@@ -70,12 +70,18 @@ func (m *Model) cancelPinChecks() {
 // and lets go of the check either way.
 func (m *Model) pinsChecked(msg pinCheckedMsg) tea.Cmd {
 	delete(m.cards.pinCancels, msg.id) // numbers never repeat: an answer frees only its own
-	c := msg.card
-	if msg.gen != m.cards.pinGen || !slicesContains(m.cards.list, c) || c.review.pins == nil {
+	if !m.pinAnswerWanted(msg) {
 		return nil
 	}
+	c := msg.card
 	c.review.pinSteps = pinCheckSteps(msg.advice, *c.review.pins)
 	return nil
+}
+
+// pinAnswerWanted: the answer is from the current generation, for a card
+// still kept, that was sent pinned.
+func (m *Model) pinAnswerWanted(msg pinCheckedMsg) bool {
+	return msg.gen == m.cards.pinGen && slicesContains(m.cards.list, msg.card) && msg.card.review.pins != nil
 }
 
 func slicesContains(list []*actionCard, c *actionCard) bool {
