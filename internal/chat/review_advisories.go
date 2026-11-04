@@ -164,14 +164,23 @@ func (m *Model) reviewerNote(command, rest string) string {
 		if !ok {
 			continue
 		}
-		key, problem := m.pairedWorkspace(who.workspace)
-		t := m.contacts.threads[string(key)]
-		if problem != "" || t == nil || !t.dirKnown || slicesHas(t.directory, who.agent) {
+		if !m.knownLeftOut(who) {
 			return ""
 		}
 		return safe(who.agent) + " isn't in what " + safe(string(who.workspace)) + " shares, as last read"
 	}
 	return ""
+}
+
+// knownLeftOut: the agent's workspace has said what it shares, and not
+// this agent.
+func (m *Model) knownLeftOut(who pairedAgent) bool {
+	key, problem := m.pairedWorkspace(who.workspace)
+	if problem != "" {
+		return false
+	}
+	t := m.contacts.threads[string(key)]
+	return t != nil && t.dirKnown && !slicesHas(t.directory, who.agent)
 }
 
 func slicesHas(list []string, s string) bool {
