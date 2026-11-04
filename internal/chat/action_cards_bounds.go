@@ -21,16 +21,22 @@ const cardsDrawn = 8
 // still be told of.
 func (cs *actionCards) drop(i int) {
 	if c := cs.list[i]; failedCard(c) {
-		if cs.failed == nil {
-			cs.failed = map[viewKey]int{}
-		}
-		for _, conv := range c.places() {
-			if !c.cleared[conv] {
-				cs.failed[conv]++
-			}
-		}
+		cs.countFailure(c)
 	}
 	cs.list = slices.Delete(cs.list, i, i+1)
+}
+
+// countFailure counts a dropped failure wherever it is still shown: a
+// place it was cleared from was already told.
+func (cs *actionCards) countFailure(c *actionCard) {
+	if cs.failed == nil {
+		cs.failed = map[viewKey]int{}
+	}
+	for _, conv := range c.places() {
+		if !c.cleared[conv] {
+			cs.failed[conv]++
+		}
+	}
 }
 
 // countUntracked counts an action that runs without a card.
