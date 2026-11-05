@@ -38,7 +38,14 @@ func TestContactRoutingAcceptanceAddressedDraftAndEdits(t *testing.T) {
 func TestContactRoutingAcceptanceInvalidAddressesKeepDraft(t *testing.T) {
 	for _, draft := range []string{"@first", "@first @first question", "@operator question", "@* question"} {
 		t.Run(draft, func(t *testing.T) {
-			h, _ := contactMessagesHarness(t)
+			var h *chatHarness
+			switch draft {
+			case "@first @first question", "@operator question":
+				// These remain invalid without the v23 paired-mention capability.
+				h, _ = pairedMentionsChat(t, false)
+			default:
+				h, _ = contactMessagesHarness(t)
+			}
 			h.await(func() bool { return h.m.State().InFlight == 0 })
 			v2Type(h, draft)
 			h.input(chatKey(tea.KeyEnter, 0))

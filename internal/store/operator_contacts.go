@@ -36,6 +36,12 @@ type ContactSend struct {
 	Review                     *messaging.ReviewAsk // a review request for the one agent in To (#235)
 	AuditID                    int64
 	Now                        time.Time
+	// Here are this side's agents the send tags, and OperatorHere whether it
+	// tags this side's operator (#278); Seq is the order its message here
+	// takes, 0 for the next.
+	Here         []string
+	OperatorHere bool
+	Seq          uint64
 }
 
 // ContactRead is one operator read of messages shown to the operator.
@@ -94,6 +100,9 @@ func (s *Store) contactSend(ctx context.Context, c ContactSend) (messaging.Row, 
 	if ask := reviewAskJSON(c.Review); ask.Valid {
 		parts = append(parts, "review", ask.String)
 	}
+	if here := c.homeTargets(); len(here) > 0 {
+		parts = append(append(parts, "here"), here...)
+	}
 	op := operation{c.OperationID, "send", c.Contact, operationFingerprint("send", c.Contact, parts...), c.AuditID, c.Now}
 	key := messageKey{c.Contact, messaging.DirOut, c.OperationID}
 	var row messaging.Row
@@ -113,8 +122,10 @@ func (s *Store) contactSend(ctx context.Context, c ContactSend) (messaging.Row, 
 		if advice, err = askAdvice(ctx, tx, c.Contact, m); err != nil {
 			return err
 		}
-		row, err = queueIn(ctx, tx, outgoing{key: key, m: m, now: c.Now})
-		return err
+		if row, err = queueIn(ctx, tx, outgoing{key: key, m: m, now: c.Now}); err != nil {
+			return err
+		}
+		return shareHere(ctx, tx, c, m)
 	})
 	if err != nil {
 		return messaging.Row{}, nil, err

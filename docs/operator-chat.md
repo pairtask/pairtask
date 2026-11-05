@@ -49,6 +49,20 @@ held, the draft kept: `local-only is your agent here; this tab writes to
 Office. Send it in * instead`. A name neither side knows still goes; their side
 refuses it.
 
+To bring your own agents in (#278), tag them `@AGENT@here`; the `@` picker
+offers them once you type a letter. The message still goes to that workspace
+as before, and each tagged agent here gets it too, with the conversation named
+and its reply assigned to it, as a tag in the Square does. The line above the
+draft shows both sides: `→ Office's operator · reviewer@here`. A tagged agent's
+reply comes back to this tab and goes on to the same people there, even if you
+haven't shared that agent with them. Once its reply is released or done,
+sharing decides again, and a paused or removed workspace gets nothing new.
+`@operator` (or `@operator@here`), alone or next to `@AGENT@here`, also puts the
+message in your own Waiting for you. `@operator@Office` is their operator, the
+default. A name tagged twice, in any spelling, counts once on its side. A tag
+naming another workspace, or an agent not here, holds the draft. An older broker can't carry
+these tags, and the draft is held with that explanation.
+
 ## Commands
 
 `/` on an empty input (or Ctrl+K) opens the command line; it never touches your

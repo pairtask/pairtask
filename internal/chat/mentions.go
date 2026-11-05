@@ -84,7 +84,7 @@ func (m *Model) eligibleMembers() ([]string, bool) {
 func (m *Model) mentionCandidates(fragment string) []string {
 	key := m.conv.selected
 	if key.isContact() {
-		return m.unnamed(m.sharedByContact(key.contact), fragment)
+		return append(m.unnamed(m.sharedByContact(key.contact), fragment), m.scopedMentions(key.contact, fragment)...)
 	}
 	if !key.isGroup() && !key.isRoom() {
 		return m.agentCandidates(fragment)

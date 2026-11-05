@@ -109,7 +109,7 @@ func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messagi
 	}
 	defer tx.Rollback()
 	key := messageKey{o.Contact, messaging.DirOut, o.ID}
-	row, err := queueIn(ctx, tx, outgoing{key, m, o.Now, o.LocalID})
+	row, err := queueIn(ctx, tx, outgoing{key: key, m: m, now: o.Now, localID: o.LocalID})
 	if err != nil {
 		return messaging.Row{}, err
 	}
@@ -139,6 +139,10 @@ type outgoing struct {
 	m       messaging.Message
 	now     time.Time
 	localID string
+	// assigned: an agent's reply its operator assigned it in a shared
+	// conversation (#278), which the caller found it holds; it speaks
+	// there without being shared.
+	assigned bool
 }
 
 // queueIn is Queue inside its transaction: the existing row for a replay,
@@ -156,7 +160,7 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	if err := requireActive(ctx, tx, key.contact); err != nil {
 		return messaging.Row{}, err
 	}
-	if err := senderShared(ctx, tx, key.contact, o.m.From); err != nil {
+	if err := o.senderMaySpeak(ctx, tx); err != nil {
 		return messaging.Row{}, err
 	}
 	if err := outboxRoom(ctx, tx, o); err != nil {
@@ -182,6 +186,15 @@ func queueNew(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error
 	}
 	row, _, err := messageRow(ctx, tx, o.key)
 	return row.Row, err
+}
+
+// senderMaySpeak: the operator, an agent shared with the contact, or one
+// replying as its operator assigned it.
+func (o outgoing) senderMaySpeak(ctx context.Context, tx *sql.Tx) error {
+	if o.assigned {
+		return nil
+	}
+	return senderShared(ctx, tx, o.key.contact, o.m.From)
 }
 
 // senderShared: the operator, or an agent shared with the contact.

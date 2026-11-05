@@ -350,13 +350,17 @@ func (m *Model) contactSubmit() tea.Cmd {
 // @, or as written to the contact's operator; a problem goes to the status.
 func (m *Model) contactDraft(contact string) (*contactOp, bool) {
 	draft := m.compose.editor.Value()
-	a := contactAddress(draft)
-	if problem := m.addressProblem(a); problem != "" {
+	a := m.resolveAddress(contactAddress(draft))
+	problem := a.problem
+	if problem == "" {
+		problem = m.addressProblem(a)
+	}
+	if problem != "" {
 		m.status = problem
 		return nil, false
 	}
 	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend, ContactKey: contact,
-		MessageID: uuid.NewString(), ContactText: a.text, ContactTo: a.to}
+		MessageID: uuid.NewString(), ContactText: a.text, ContactTo: a.to, ContactHere: a.here, ContactOperatorHere: a.operatorHere}
 	return &contactOp{msg: msg, draft: draft}, true
 }
 

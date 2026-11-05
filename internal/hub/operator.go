@@ -22,12 +22,15 @@ const (
 )
 
 type operatorRequest struct {
-	ctx   context.Context
-	uid   int
-	msg   protocol.Message
-	reply chan protocol.Message
-	kind  operatorRequestKind
-	sess  *OperatorSession
+	// clients are the agents connected when it is served, for a ⇄ send that
+	// tags some here (#278).
+	clients map[string]*Client
+	ctx     context.Context
+	uid     int
+	msg     protocol.Message
+	reply   chan protocol.Message
+	kind    operatorRequestKind
+	sess    *OperatorSession
 	// finish is a reqFinish's step; its answer goes to the request it
 	// carries the reply and session of.
 	finish func(context.Context) protocol.Message

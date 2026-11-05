@@ -257,7 +257,10 @@ func readPending(ctx context.Context, tx *sql.Tx, id string, shows replayable) (
 	if len(messages) > MaxPendingMessages {
 		return nil, ErrInboxFull
 	}
-	return messages, shows.withAssignments(ctx, tx, messages, id)
+	if err := shows.withAssignments(ctx, tx, messages, id); err != nil {
+		return nil, err
+	}
+	return messages, withConversations(ctx, tx, messages)
 }
 
 // withAssignments gives each replayed operator message the agent's

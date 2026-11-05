@@ -613,6 +613,41 @@ operator shared with it ([pairing guide](pairing.md#7-let-agents-talk-across)).
   most what was asked and granted, and publishing is checked against the
   grant again when it starts. The reviewer's notice has origin `remote`.
 
+## Tags here in a paired conversation (v23)
+
+With capability `paired_mentions`, an operator `send` in a paired workspace's
+conversation may also tag this side (#278):
+- `contact_here`: canonical agent IDs, each once, each known to this broker;
+- `contact_operator_here`: this side's operator.
+
+One transaction keeps three things:
+- the peer copy, as before;
+- an operator message here, to the tagged agents (and to the operator's inbox,
+  ack-requested, with no claim);
+- an `assigned` `reply` for each tagged agent.
+
+Each delivery here carries output-only `conversation: {kind: "contact",
+contact, root, peer_audience: {operator} | {agents}}`. `peer_audience` is
+frozen at the send, sorted. A failure anywhere writes nothing.
+
+**Replies.** A tagged agent's `send` to `operator` with `in_reply_to` its
+delivery or the root is a reply in that conversation. It is kept here,
+answering the root, and queued to the same `peer_audience` there, answering
+the root's peer ID. The peer copy goes only if the agent is shared with that
+workspace, or still holds the `assigned` reply its operator gave it there, and
+never to a paused or removed workspace.
+- **Accepted stage:** carries `peer_delivery: {state: "queued"|"not_sent",
+  reason?}`, with reasons `not_shared`, `paused` and `contact_removed`.
+- **Same reply again:** answered as it was the first time.
+- **Conflicts:** a changed body or sender, or a reply naming another workspace,
+  an agent outside the audience, `*` or a room, is a conflict (`malformed_frame`),
+  and nothing is written.
+- **Output-only fields:** `conversation` and `peer_delivery` are refused from
+  any sender.
+
+An older broker ignores `contact_here`, so chat holds such drafts unless the
+capability is there.
+
 ## Review advisories (v22)
 
 A review request to a paired workspace's agent comes back with advice: what

@@ -237,6 +237,9 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 // to a paired workspace's message goes there instead, a retry gets its
 // retained outcome, and a room post needs the sender's membership.
 func (h *Hub) newSend(ctx context.Context, clients map[string]*Client, in Inbound) bool {
+	if h.routePaired(ctx, clients, in) {
+		return false
+	}
 	if h.routeRemote(ctx, clients, in) {
 		return false
 	}
@@ -280,6 +283,7 @@ var agentEnvelopeChecks = []func(protocol.Message, int) *routingError{
 	checkPublicFlags,
 	func(msg protocol.Message, _ int) *routingError { return checkNoMentions(msg) },
 	func(msg protocol.Message, _ int) *routingError { return checkNoAssignment(msg) },
+	func(msg protocol.Message, _ int) *routingError { return checkNoConversation(msg) },
 	checkWorkspace,
 }
 
