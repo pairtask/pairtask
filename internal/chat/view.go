@@ -34,6 +34,10 @@ var (
 	bandWarn      = bandStyle.Foreground(lipgloss.Color("214")).Bold(true)
 	everyoneStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)
 	ruleStyle     = lipgloss.NewStyle().Faint(true)
+	// A paired workspace's tab is a slate band, apart from the local tabs
+	// and from the selection.
+	pairedTab   = bandStyle
+	pairedBadge = bandWarn
 )
 
 const (
@@ -471,11 +475,14 @@ func (m *Model) partialNote() string {
 // colour, a blocking reason in the error colour. Boxed, it is the top edge:
 // "╭─ to codex-1 ────╮".
 func (m *Model) audienceDivider(boxed bool) string {
-	text := m.hintText()
+	segs := m.hintSegments()
+	text := plainSegments(segs)
+	limit := ansi.StringWidth(text)
 	if boxed {
-		text = ansi.Truncate(text, max(0, m.width-6), "…")
+		limit = min(limit, max(0, m.width-6))
+		text = ansi.Truncate(text, limit, "…")
 	}
-	label := m.audienceStyle(text).Render(text)
+	label := renderSegments(segs, limit)
 	if !boxed {
 		fill := max(0, m.width-ansi.StringWidth(text)-4)
 		return ruleStyle.Render(rule+rule+" ") + label + ruleStyle.Render(" "+strings.Repeat(rule, fill))
