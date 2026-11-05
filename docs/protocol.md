@@ -408,10 +408,13 @@ pages, carry `assignments`, `assignments_total` and `assignments_truncated`
 for a caller at protocol 16; an older one gets the claims as before. A change
 to an assignment emits `claims_changed`.
 
-A reply to an assigned message must go where it was asked: `to: "*"`, in the
-parent's room (or none, which keeps it). Any other destination is refused
-with `invalid_reply_audience`. Replies to messages that assign nobody keep the
-rules above.
+A reply to an assigned message in the Square or a room must go where it was
+asked: `to: "*"`, in the parent's room (or none, which keeps it). Any other
+destination is refused with `invalid_reply_audience`. One asked in a paired
+workspace's conversation (its delivery carries `conversation`, v23) goes
+`to: "operator"` instead, and `"*"` is refused; see
+[Tags here in a paired conversation](#tags-here-in-a-paired-conversation-v23).
+Replies to messages that assign nobody keep the rules above.
 
 ## Pending reviews (v18)
 
