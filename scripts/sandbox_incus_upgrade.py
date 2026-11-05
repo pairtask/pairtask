@@ -432,18 +432,23 @@ def apply(runner: Runner, manifest: object, yes: bool) -> List[Step]:
     deletes on its own."""
     if not yes:
         raise UpgradeError("apply changes the VM's Incus; review the plan, then pass --yes")
-    planned = validate_manifest(manifest)
-    run = Upgrade(runner, planned)
+    run = Upgrade(runner, validate_manifest(manifest))
     try:
         run.prepare()
         run.upgrade()
-    except UpgradeError as err:
-        raise UpgradeError(str(err), run.steps) from err
-    except (subprocess.SubprocessError, OSError) as err:
-        raise UpgradeError(f"{type(err).__name__}: {err}", run.steps) from err
-    except KeyboardInterrupt as err:
-        raise UpgradeInterrupted("interrupted; cleanup ran", run.steps) from err
+    except (UpgradeError, subprocess.SubprocessError, OSError, KeyboardInterrupt) as err:
+        raise with_steps(err, run.steps) from err
     return run.steps
+
+
+def with_steps(err: BaseException, steps: List[Step]) -> UpgradeError:
+    """The failure as apply reports it: its message and every step so far;
+    an interruption stays an interruption."""
+    if isinstance(err, KeyboardInterrupt):
+        return UpgradeInterrupted("interrupted; cleanup ran", steps)
+    if isinstance(err, UpgradeError):
+        return UpgradeError(str(err), steps)
+    return UpgradeError(f"{type(err).__name__}: {err}", steps)
 
 
 def supported_text(found: Optional[str]) -> bool:
