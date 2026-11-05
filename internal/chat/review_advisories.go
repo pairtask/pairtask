@@ -70,12 +70,18 @@ func (m *Model) cancelPinChecks() {
 // and lets go of the check either way.
 func (m *Model) pinsChecked(msg pinCheckedMsg) tea.Cmd {
 	delete(m.cards.pinCancels, msg.id) // numbers never repeat: an answer frees only its own
-	c := msg.card
-	if msg.gen != m.cards.pinGen || !slicesContains(m.cards.list, c) || c.review.pins == nil {
+	if !m.pinAnswerWanted(msg) {
 		return nil
 	}
+	c := msg.card
 	c.review.pinSteps = pinCheckSteps(msg.advice, *c.review.pins)
 	return nil
+}
+
+// pinAnswerWanted: the answer is from the current generation, for a card
+// still kept, that was sent pinned.
+func (m *Model) pinAnswerWanted(msg pinCheckedMsg) bool {
+	return msg.gen == m.cards.pinGen && slicesContains(m.cards.list, msg.card) && msg.card.review.pins != nil
 }
 
 func slicesContains(list []*actionCard, c *actionCard) bool {
@@ -158,14 +164,23 @@ func (m *Model) reviewerNote(command, rest string) string {
 		if !ok {
 			continue
 		}
-		key, problem := m.pairedWorkspace(who.workspace)
-		t := m.contacts.threads[string(key)]
-		if problem != "" || t == nil || !t.dirKnown || slicesHas(t.directory, who.agent) {
+		if !m.knownLeftOut(who) {
 			return ""
 		}
 		return safe(who.agent) + " isn't in what " + safe(string(who.workspace)) + " shares, as last read"
 	}
 	return ""
+}
+
+// knownLeftOut: the agent's workspace has said what it shares, and not
+// this agent.
+func (m *Model) knownLeftOut(who pairedAgent) bool {
+	key, problem := m.pairedWorkspace(who.workspace)
+	if problem != "" {
+		return false
+	}
+	t := m.contacts.threads[string(key)]
+	return t != nil && t.dirKnown && !slicesHas(t.directory, who.agent)
 }
 
 func slicesHas(list []string, s string) bool {

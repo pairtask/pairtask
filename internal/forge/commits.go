@@ -76,13 +76,18 @@ func missing(checks []PinCheck, code string) bool {
 	return false
 }
 
+// timedOut: the check's own time ran out, or the error says it did.
+func timedOut(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
 // notChecked is a check that got no answer, with its class: timeout when
 // the check's own time ran out, whatever the adapter made of it.
 func notChecked(ctx context.Context, err error) PinCheck {
 	class := ClassUnavailable
 	var fe *Error
 	switch {
-	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+	case timedOut(ctx, err):
 		class = "timeout"
 	case errors.As(err, &fe):
 		class = fe.Class
