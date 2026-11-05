@@ -48,14 +48,20 @@ func TestChannelWireAndClosedHost(t *testing.T) {
 	}
 }
 
+// discoveryDeadline bounds the MCP discovery handshake and calls, not the
+// broker setup before them: CI's image builder runs the suite far slower.
+const discoveryDeadline = 10 * time.Second
+
 func TestChannelDiscoveryDoesNotOwnInbox(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	life, stop := context.WithCancel(context.Background())
+	defer stop()
 	path, _ := startBroker(t)
 	owner := connectAgent(t, path, "worker")
 	channel := &ChannelTransport{}
-	l := NewListener(ctx, lazyAgent(t, path, "worker"), channel)
+	l := NewListener(life, lazyAgent(t, path, "worker"), channel)
 	defer l.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), discoveryDeadline)
+	defer cancel()
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := NewHostMCP(l, true).Connect(ctx, st, nil)
 	requireNoError(t, err)

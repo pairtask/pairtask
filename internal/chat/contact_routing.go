@@ -37,6 +37,13 @@ func (f pairWords) sharesAgents() bool { return f[0] == pairShare || f[0] == pai
 type address struct {
 	to   []string
 	text string
+	// here and operatorHere are this side's agents and operator the draft
+	// tags (#278), theirOperator that it names their operator; problem is
+	// why it is held, once resolved.
+	here          []string
+	operatorHere  bool
+	theirOperator bool
+	problem       string
 }
 
 func contactAddress(draft string) address {
@@ -50,7 +57,7 @@ func contactAddress(draft string) address {
 	if len(to) == 0 {
 		return address{text: draft}
 	}
-	return address{to, rest}
+	return address{to: to, text: rest}
 }
 
 // addressProblem is why an addressed draft can't be sent, or "".
@@ -59,6 +66,8 @@ func (m *Model) addressProblem(a address) string {
 		return problem
 	}
 	switch {
+	case a.onlyHomeTags():
+		return "write the message after the @tags"
 	case len(a.to) == 0:
 		return ""
 	case !m.routingAvailable():
@@ -196,7 +205,10 @@ func (m *Model) localOnlyProblem(a address) string {
 // or the agents of theirs it starts with; never the agents here.
 func (m *Model) recipientScope(key viewKey) string {
 	ws := safe(m.contactTitle(key))
-	a := contactAddress(m.compose.editor.Value())
+	a := m.resolveAddress(contactAddress(m.compose.editor.Value()))
+	if a.problem != "" {
+		return "✗ " + a.problem
+	}
 	if problem := m.localOnlyProblem(a); problem != "" {
 		return "✗ " + problem
 	}
@@ -207,6 +219,9 @@ func (m *Model) recipientScope(key viewKey) string {
 			named[i] = safe(name) + "@" + ws
 		}
 		to = strings.Join(named, ", ")
+	}
+	if a.homeTagged() {
+		return "→ " + to + " · " + homeScope(a)
 	}
 	return "→ " + to + " · your agents here won't get it"
 }

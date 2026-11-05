@@ -206,6 +206,9 @@ type SendResult struct {
 	// the other side, and what a check of its pins found. Advice only.
 	Advisories []protocol.ReviewAdvisory `json:"advisories,omitempty"`
 	PinChecks  []protocol.ReviewAdvisory `json:"pin_checks,omitempty"`
+	// PeerDelivery is whether a reply in a shared conversation also went
+	// to the other workspace (#278); the broker's answer, as it gave it.
+	PeerDelivery *protocol.PeerDelivery `json:"peer_delivery,omitempty"`
 }
 
 // SendMessage assigns an ID before writing. Acceptance and receipt events arrive
@@ -231,10 +234,13 @@ func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResu
 		return SendResult{}, err
 	}
 	out := SendResult{Status: "written", MessageID: msg.MessageID, To: msg.To, DurableRequested: msg.Durable}
+	reply := c.watchReply(msg)
+	defer reply.stop()
 	if err := c.writeFrame(ctx, msg); err != nil {
 		out.Status = "unconfirmed"
 		return out, fmt.Errorf("message %s: %w; broker acceptance is unconfirmed", msg.MessageID, err)
 	}
+	out.PeerDelivery = reply.delivery(ctx)
 	return out, nil
 }
 

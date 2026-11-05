@@ -83,6 +83,52 @@ func (c *Client) seeAccepted(msg protocol.Message) {
 	}
 }
 
+// replyWatch watches a reply's accepted stage, from a broker that says what
+// became of a shared conversation's peer copy (#278); it watches nothing
+// otherwise.
+type replyWatch struct {
+	c        *Client
+	id       string
+	accepted chan protocol.Message
+}
+
+func (c *Client) watchReply(msg protocol.Message) replyWatch {
+	if !c.mayShareConversation(msg) {
+		return replyWatch{}
+	}
+	return replyWatch{c, msg.MessageID, c.watchAccepted(msg.MessageID)}
+}
+
+func (w replyWatch) stop() {
+	if w.c != nil {
+		w.c.unwatchAccepted(w.id)
+	}
+}
+
+// mayShareConversation: an acknowledged reply, to a broker that tells a
+// shared conversation's peer copy.
+func (c *Client) mayShareConversation(msg protocol.Message) bool {
+	if c.protocolVersion < protocol.PairedMentionsVersion {
+		return false
+	}
+	return msg.InReplyTo != "" && msg.AckRequested
+}
+
+// delivery is what the reply's accepted stage says of its peer copy, if it
+// comes in time; nil when nothing is watched.
+func (w replyWatch) delivery(ctx context.Context) *protocol.PeerDelivery {
+	if w.accepted == nil {
+		return nil
+	}
+	select {
+	case ack := <-w.accepted:
+		return ack.PeerDelivery
+	case <-time.After(acceptedWait):
+	case <-ctx.Done():
+	}
+	return nil
+}
+
 // brokerAdvice is the advice on the request's accepted stage, if it comes
 // in time.
 func brokerAdvice(ctx context.Context, accepted <-chan protocol.Message) []protocol.ReviewAdvisory {
