@@ -192,17 +192,33 @@ def package_heading(line: str) -> bool:
 
 def policy_line(package: Package, words: List[str], version: Optional[str]) -> Optional[str]:
     """Reads one line into package; the version-table entry it sits under."""
-    field = {"Installed:": "installed", "Candidate:": "candidate"}.get(words[0] if words else "")
-    if field:
-        setattr(package, field, words[1] if len(words) > 1 and words[1] != "(none)" else None)
+    if policy_field(package, words):
         return None
+    entry = table_entry(words)
+    if entry is not None:
+        return entry
+    if candidate_source(package, words, version):
+        package.origin = package.origin or words[1].split("://", 1)[1].rstrip("/")
+    return version
+
+
+def policy_field(package: Package, words: List[str]) -> bool:
+    """An Installed: or Candidate: line, read into package."""
+    field = {"Installed:": "installed", "Candidate:": "candidate"}.get(words[0] if words else "")
+    if not field:
+        return False
+    value = words[1] if len(words) > 1 else None
+    setattr(package, field, None if value == "(none)" else value)
+    return True
+
+
+def table_entry(words: List[str]) -> Optional[str]:
+    """The version a version-table entry line names (`*** V P` or `V P`), or None."""
     if len(words) >= 2 and words[0] == "***":
         return words[1]
     if len(words) == 2 and not words[0].isdigit():
         return words[0]
-    if candidate_source(package, words, version):
-        package.origin = package.origin or words[1].split("://", 1)[1].rstrip("/")
-    return version
+    return None
 
 
 def candidate_source(package: Package, words: List[str], version: Optional[str]) -> bool:
