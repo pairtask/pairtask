@@ -27,9 +27,8 @@ func runOperatorChat(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintln(stderr, "pairtask operator chat requires an interactive terminal; use pairtask operator send, receive, ack or history instead")
 		return 2
 	}
-	opts := chat.Options{Dial: chat.SocketDialer(socket, timeout), Bounds: chat.Bounds{ResolveChange: changeLookup(forge.Registry{
-		"github": github.New(github.Production()),
-	})}}
+	forges := forge.Registry{"github": github.New(github.Production())}
+	opts := chat.Options{Dial: chat.SocketDialer(socket, timeout), Bounds: chat.Bounds{ResolveChange: changeLookup(forges), CheckPins: pinCheck(forges)}}
 	m, err := chat.Run(ctx, opts, os.Stdin, output)
 	if err != nil {
 		fmt.Fprintln(stderr, "operator chat:", err)
@@ -47,6 +46,22 @@ func changeLookup(forges forge.Registry) chat.ResolveFunc {
 			return protocol.Revisions{}, forge.Errorf(forge.ClassUnsupported, "no %s adapter here", t.Forge)
 		}
 		return f.Resolve(ctx, t)
+	}
+}
+
+// pinCheck checks explicit pins with this operator's own code host
+// access, after the request is sent (#304); advice only.
+func pinCheck(forges forge.Registry) chat.PinCheckFunc {
+	return func(ctx context.Context, t protocol.ReviewTarget, pins protocol.Revisions) []protocol.ReviewAdvisory {
+		f, ok := forges[t.Forge]
+		if !ok {
+			return []protocol.ReviewAdvisory{{Code: protocol.AdvisoryNotChecked, Class: forge.ClassUnsupported}}
+		}
+		var out []protocol.ReviewAdvisory
+		for _, c := range forge.CheckPins(ctx, f, t, pins) {
+			out = append(out, protocol.ReviewAdvisory{Code: c.Code, Current: c.Current, Class: c.Class})
+		}
+		return out
 	}
 }
 

@@ -37,6 +37,8 @@ type reviewProgress struct {
 	item      *protocol.ReviewAskedItem // the request as last read
 	readSeq   uint64                    // the newest read applied to it
 	seen      *protocol.ReviewView      // a review here as last seen
+	advice    []protocol.ReviewAdvisory // what the broker knew when it queued it (#304)
+	pinSteps  []string                  // what the check of its pins found, once it answered
 	gone      bool                      // a read that worked no longer has it
 	unknown   bool                      // the last read failed
 	readDue   bool                      // something changed before it was queued
@@ -258,7 +260,8 @@ func (m *Model) reviewSteps(c *actionCard) []string {
 	case r.askID == "":
 		return []string{green("Sending…")}
 	}
-	return append([]string{"✓ Queued here · pinned " + pinsShort(*r.pins) + " · " + r.policy}, m.remoteStateSteps(c)...)
+	steps := append([]string{"✓ Queued here · pinned " + pinsShort(*r.pins) + " · " + r.policy}, m.adviceSteps(c)...)
+	return append(append(steps, r.pinSteps...), m.remoteStateSteps(c)...)
 }
 
 func pinsShort(p protocol.Revisions) string {

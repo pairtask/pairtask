@@ -26,7 +26,15 @@ type Bounds struct {
 	// operator's machine, for a review asked of a paired workspace's agent
 	// (#297); nil when this chat can't, and --pin is needed.
 	ResolveChange ResolveFunc
+	// CheckPins checks explicit pins against the change, after the request
+	// is sent (#304): advice for its card, never a reason not to send; nil
+	// when this chat can't.
+	CheckPins PinCheckFunc
 }
+
+// PinCheckFunc is what a check of pinned revisions found, nothing when all
+// is as pinned.
+type PinCheckFunc func(ctx context.Context, target protocol.ReviewTarget, pins protocol.Revisions) []protocol.ReviewAdvisory
 
 // ResolveFunc is a change's current base and head, as full commit IDs.
 type ResolveFunc func(ctx context.Context, target protocol.ReviewTarget) (protocol.Revisions, error)
@@ -167,9 +175,9 @@ type pendingRequest struct {
 // New builds a chat model; it connects when the program starts.
 func New(opts Options) *Model {
 	if !opts.Bounds.sized() {
-		resolve := opts.Bounds.ResolveChange
+		resolve, check := opts.Bounds.ResolveChange, opts.Bounds.CheckPins
 		opts.Bounds = DefaultBounds()
-		opts.Bounds.ResolveChange = resolve
+		opts.Bounds.ResolveChange, opts.Bounds.CheckPins = resolve, check
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -325,6 +333,8 @@ func (m *Model) tickUpdate(msg tea.Msg) (tea.Cmd, bool) {
 		return m.onReviewBlink(), true
 	case remoteLookupMsg:
 		return m.lookupDone(msg), true
+	case pinCheckedMsg:
+		return m.pinsChecked(msg), true
 	}
 	return nil, false
 }
@@ -403,6 +413,7 @@ func (m *Model) closed(gen uint64, err error) tea.Cmd {
 	closeTransport(m.transport)
 	m.cancelLookup()  // what it was for may be gone when the link is back
 	m.cards.readGen++ // reads in flight are lost; the next baseline reads again
+	m.cancelPinChecks()
 	m.askedDetailLost()
 	m.transport, m.baseline = nil, false
 	m.pending, m.outbox = map[string]pendingRequest{}, nil

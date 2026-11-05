@@ -228,13 +228,23 @@ func (p *PeerMessages) ReplacePeerDirectory(ctx context.Context, contact string,
 	}
 	var changed bool
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		if err := directorySeen(ctx, tx, contact, at); err != nil {
+			return err
+		}
 		changed, err = directoryDiffers(ctx, tx, contact, agents)
 		if err != nil || !changed {
-			return err // the same agents: nothing to write
+			return err // the same agents: nothing more to write
 		}
 		return writeDirectory(ctx, tx, peerDirectory{contact, agents, at})
 	})
 	return changed && err == nil, err
+}
+
+// directorySeen records when the contact's directory was last received,
+// so an empty one is told from none (#304).
+func directorySeen(ctx context.Context, tx *sql.Tx, contact string, at time.Time) error {
+	_, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET directory_at = ? WHERE identity_key = ?`, msgStamp(at), contact)
+	return err
 }
 
 // directoryDiffers: the agents listed aren't the ones stored.

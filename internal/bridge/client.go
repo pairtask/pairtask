@@ -44,6 +44,7 @@ type Client struct {
 	sessionID       string
 	protocolVersion int
 	pending         map[string]chan protocol.Message // status requests by request_id
+	accepted        map[string]chan protocol.Message // review requests waiting for their accepted stage (#304)
 	lastActivity    time.Time                        // last agent_activity written
 	forges          forge.Registry                   // review adapters on this side (#201); none means reviews are refused before any forge work
 }
@@ -115,6 +116,7 @@ func (c *Client) readLoop(r *bufio.Reader) {
 		if c.routeResponse(msg) {
 			continue
 		}
+		c.seeAccepted(msg)
 		if err := c.bufferMessage(protocol.WithDisplayOrigin(msg)); err != nil {
 			c.fail(err)
 			return
@@ -200,6 +202,10 @@ type SendResult struct {
 	To                string `json:"to"`
 	DeliveryConfirmed bool   `json:"delivery_confirmed"`
 	DurableRequested  bool   `json:"durable_requested"`
+	// A review request's advice (#304): the broker's, from what it knows of
+	// the other side, and what a check of its pins found. Advice only.
+	Advisories []protocol.ReviewAdvisory `json:"advisories,omitempty"`
+	PinChecks  []protocol.ReviewAdvisory `json:"pin_checks,omitempty"`
 }
 
 // SendMessage assigns an ID before writing. Acceptance and receipt events arrive

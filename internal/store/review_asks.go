@@ -328,8 +328,8 @@ func applyOutcome(ctx context.Context, tx *sql.Tx, t takenOutcome) error {
 		settled = msgStamp(at)
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE review_asks_out SET state = ?, seq = ?, digest = ?, attempt = ?, intent = ?, verdict = ?, summary = ?,
-    url = ?, reason = ?, updated_at = ?, settled_at = COALESCE(?, settled_at) WHERE contact = ? AND ask_id = ?`,
-		o.State, o.Seq, sum[:], o.Attempt, o.Intent, o.Verdict, o.Summary, o.URL, o.Reason, msgStamp(at), settled, a.Contact, a.AskID)
+    url = ?, reason = ?, updated_at = ?, outcome_at = ?, settled_at = COALESCE(?, settled_at) WHERE contact = ? AND ask_id = ?`,
+		o.State, o.Seq, sum[:], o.Attempt, o.Intent, o.Verdict, o.Summary, o.URL, o.Reason, msgStamp(at), msgStamp(at), settled, a.Contact, a.AskID)
 	return err
 }
 

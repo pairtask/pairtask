@@ -309,6 +309,9 @@ var statusRules = []struct {
 }
 
 func statusError(c call, a answer) error {
+	if commitNotFound(c, a) {
+		return forge.Errorf(forge.ClassNotFound, "GitHub has no such commit (422)") // only a commit's own lookup says so
+	}
 	for _, rule := range statusRules {
 		if rule.match(a) {
 			return forge.Errorf(rule.class, "%s", rule.text)
@@ -319,6 +322,22 @@ func statusError(c call, a answer) error {
 
 func rateLimited(h http.Header) bool {
 	return h.Get("X-RateLimit-Remaining") == "0" || h.Get("Retry-After") != ""
+}
+
+// commitNotFound: a read of one commit that GitHub answered with no such
+// commit (#304); a 422 anywhere else says nothing of absence.
+func commitNotFound(c call, a answer) bool {
+	return commitLookup(c) && a.status == http.StatusUnprocessableEntity && noCommit(a.body)
+}
+
+// commitLookup: a read of one commit.
+func commitLookup(c call) bool {
+	return c.method == http.MethodGet && strings.Contains(c.path, "/commits/")
+}
+
+// noCommit: GitHub's answer that a commit ID names no commit.
+func noCommit(body []byte) bool {
+	return strings.Contains(strings.ToLower(string(body)), "no commit found")
 }
 
 func ownPullRequest(body []byte) bool {

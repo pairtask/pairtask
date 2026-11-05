@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = ReviewFindingsVersion
+	Version                 = ReviewAdvisoriesVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -55,6 +55,7 @@ const (
 	ReviewFailuresVersion   = 19 // review_counts count failures and active asks; operator_review pages the failures (#298)
 	ContactShareSyncVersion = 20 // a contact page says whether the contact has what this side shares (#305)
 	ReviewFindingsVersion   = 21 // asked requests carry the findings their verdict sent (#303)
+	ReviewAdvisoriesVersion = 22 // a review request queued comes back with advisories (#304)
 	StageAccepted           = "accepted"
 	StageAdapterReceived    = "adapter_received"
 	StageAgentAcknowledged  = "agent_acknowledged"
@@ -234,6 +235,7 @@ type Message struct {
 	ReviewPage         *ReviewPage         `json:"review_page,omitempty"`          // review_result, operator_review_result: a list of reviews
 	ReviewBefore       string              `json:"review_before,omitempty"`        // operator_review awaiting, asked: the page after this cursor
 	ReviewAskRefs      []ReviewAskRef      `json:"review_ask_refs,omitempty"`      // operator_review asked: exactly these requests (v20)
+	ReviewAdvisories   []ReviewAdvisory    `json:"review_advisories,omitempty"`    // operator_contact_result, request_review answer: advice on a review request queued (#304)
 	ReviewAwaiting     *ReviewAwaitingPage `json:"review_awaiting,omitempty"`      // operator_review_result for awaiting
 	ReviewAsked        *ReviewAskedPage    `json:"review_asked,omitempty"`         // operator_review_result for asked
 	ReviewCounts       *ReviewCounts       `json:"review_counts,omitempty"`        // operator_review_result for counts

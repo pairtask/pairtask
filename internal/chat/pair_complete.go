@@ -187,6 +187,9 @@ func (m *Model) commandHint() string {
 	if c.name == "pair" {
 		usage = pairWordUsage(rest, usage)
 	}
+	if note := m.reviewerNote(c.name, rest); note != "" {
+		return "/" + c.name + " · " + note + " · " + usage + " · " + keys // first, so a narrow line keeps it
+	}
 	return "/" + c.name + " " + usage + " · " + keys
 }
 

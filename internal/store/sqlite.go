@@ -132,6 +132,12 @@ var addedColumns = []struct{ table, column, decl string }{
 	// NULL until it answers one.
 	{"peer_contacts", "directory_ack", "TEXT"},
 	{"peer_contacts", "directory_ack_at", "TEXT"},
+	// When this side last received a contact's directory (#304), the same
+	// list or not, empty or not; NULL while it never has.
+	{"peer_contacts", "directory_at", "TEXT"},
+	// When the contact's last outcome of a request was applied here (#304):
+	// remote evidence only, never moved by settling a request here.
+	{"review_asks_out", "outcome_at", "TEXT"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the
