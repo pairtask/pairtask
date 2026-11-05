@@ -17,7 +17,7 @@ func TestConsentTombstoneCapAcceptanceSharesInboundBoundAndNeverEvictsDedup(t *t
 			f, m := consentRetentionRequest(t, review)
 			ctx := context.Background()
 			anchor := messageWire("cap-anchor", 1)
-			_, err := consentAccept(t, f.db, f.key, 8, anchor, messageAt)
+			_, err := f.consentAccept(t, 8, anchor, messageAt)
 			pairOK(t, err)
 			_, err = f.db.PeerMessages().MarkRead(ctx, f.key, []string{anchor.ID}, messageAt)
 			pairOK(t, err)
@@ -40,20 +40,20 @@ func TestConsentTombstoneCapAcceptanceSharesInboundBoundAndNeverEvictsDedup(t *t
 			next := m
 			next.ID = "past-shared-tombstone-cap"
 			next.N++
-			a, err := consentAccept(t, f.db, f.key, 8, next, messageAt)
+			a, err := f.consentAccept(t, 8, next, messageAt)
 			pairOK(t, err)
 			pairEqual(t, a.Held, false)
 			pairEqual(t, a.Reason, messaging.ReasonInboxFull)
 			pairEqual(t, reviewIDTable(t, f, "SELECT * FROM consent_rate ORDER BY contact"), rate)
 			ordinary := messageWire("ordinary-past-shared-tombstone-cap", m.N+1)
-			a, err = consentAccept(t, f.db, f.key, 8, ordinary, messageAt)
+			a, err = f.consentAccept(t, 8, ordinary, messageAt)
 			pairOK(t, err)
 			pairEqual(t, a.Stored, false)
 			pairEqual(t, a.Reason, messaging.ReasonInboxFull)
 			var count int
 			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM consent_requests WHERE id=? AND digest=?`, v.ID, v.Digest).Scan(&count))
 			pairEqual(t, count, 1)
-			a, err = consentAccept(t, f.db, f.key, 8, m, messageAt)
+			a, err = f.consentAccept(t, 8, m, messageAt)
 			pairOK(t, err)
 			pairEqual(t, a.Held, false)
 		})

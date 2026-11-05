@@ -232,8 +232,20 @@ func askState(g ReviewGrant) string {
 
 // asksFull: the requests not yet dispatched or decided, held ones
 // included (#293), are at a bound: for this agent from this contact, from
-// this contact, or in all.
-func asksFull(ctx context.Context, tx *sql.Tx, contact, agent string) (bool, error) {
+// this contact, or in all; or one more of this request's size would pass
+// the shared byte bounds, for the contact or in all.
+func asksFull(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+	full, err := askCountsFull(ctx, tx, contact, m.To[0])
+	if full || err != nil {
+		return full, err
+	}
+	use, err := readHeldUse(ctx, tx, contact)
+	return !use.bytesWithin(heldSize(m)), err
+}
+
+// askCountsFull: the requests not yet dispatched or decided are at a count
+// bound.
+func askCountsFull(ctx context.Context, tx *sql.Tx, contact, agent string) (bool, error) {
 	var mine, theirs, total int
 	err := tx.QueryRowContext(ctx, heldNow+`SELECT
     COALESCE(SUM(contact = ?1 AND EXISTS (SELECT 1 FROM json_each(held.recipients) j WHERE j.value = ?2)), 0),

@@ -65,8 +65,9 @@ type consentBridgeLegacyAccept interface {
 	Accept(context.Context, string, messaging.Message, time.Time) (messaging.Answer, error)
 }
 
-func consentBridgeAccept(t *testing.T, db *store.Store, key string, m messaging.Message, now time.Time) messaging.Answer {
+func consentBridgeAccept(t *testing.T, db *store.Store, key string, m messaging.Message) messaging.Answer {
 	t.Helper()
+	now := m.CreatedAt
 	var a messaging.Answer
 	var err error
 	if s, ok := any(db.PeerMessages()).(consentBridgeVersionAccept); ok {
@@ -103,7 +104,7 @@ func newConsentPublicationFixture(t *testing.T, kind string) *consentPublication
 	}
 	target, pins := reviewBridgeTarget(), reviewBridgePins()
 	m := messaging.Message{ID: "publication-consent", N: 1, CreatedAt: now, From: "remote-sender", To: []string{"reviewer"}, Text: "review exact pins", Review: &messaging.ReviewAsk{Forge: target.Forge, Repository: target.Repository, Change: target.Change, Base: pins.Base, Head: pins.Head, Publish: true, Formal: true}}
-	answer := consentBridgeAccept(t, db, key, m, now)
+	answer := consentBridgeAccept(t, db, key, m)
 	if !answer.Held {
 		t.Fatalf("review wasn't held: %+v", answer)
 	}

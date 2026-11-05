@@ -23,13 +23,16 @@ func TestConsentSessionAcceptanceGenerationChangesOnReconnect(t *testing.T) {
 	go h.Run(ctx)
 	old := NewOperatorSession(1)
 	first := consentSessionOpen(t, h, ctx, old)
-	if first.Epoch == "" || first.Gen == 0 || !slices.Contains(first.Capabilities, protocol.CapabilityConsentPrompts) {
+	identityMissing := first.Epoch == "" || first.Gen == 0
+	capabilityMissing := !slices.Contains(first.Capabilities, protocol.CapabilityConsentPrompts)
+	if identityMissing || capabilityMissing {
 		t.Fatalf("operator session lacks consent identity: %+v", first)
 	}
 	h.CloseOperatorSession(old)
 	replacement := NewOperatorSession(1)
 	second := consentSessionOpen(t, h, ctx, replacement)
-	if first.Epoch != second.Epoch || first.Gen == second.Gen || first.SessionID == second.SessionID {
+	sameAuthority := first.Gen == second.Gen || first.SessionID == second.SessionID
+	if first.Epoch != second.Epoch || sameAuthority {
 		t.Fatalf("reconnect retained consent authority: old=%+v new=%+v", first, second)
 	}
 	h.CloseOperatorSession(old)

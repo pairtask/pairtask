@@ -21,7 +21,7 @@ func consentRetentionRequest(t *testing.T, review bool) (workspaceStoreFixture, 
 	}
 	return consentFixture(t, "alpha"), consentMessage("retained-message", 2, "alpha")
 }
-func consentRetainedPayload(t *testing.T, f workspaceStoreFixture, id string, keep bool, review bool) {
+func (f workspaceStoreFixture) consentRetainedPayload(t *testing.T, id string, keep bool, review bool) {
 	t.Helper()
 	var text, ask, targets sql.NullString
 	pairOK(t, f.raw.QueryRow(`SELECT text,review_ask,targets FROM consent_requests WHERE id=?`, id).Scan(&text, &ask, &targets))
@@ -45,13 +45,13 @@ func TestConsentRetentionAcceptanceUnansweredOutcomeAndPayloadSurviveCompaction(
 			now := messageAt.Add(messaging.TombstoneAge + time.Hour)
 			pairOK(t, f.db.PeerMessages().Collect(context.Background(), now))
 			f = consentStoreReopen(t, f)
-			consentRetainedPayload(t, f, v.ID, true, review)
+			f.consentRetainedPayload(t, v.ID, true, review)
 			outcomes, err := consentQueuedOutcomes(t, f).PendingConsentOutcomes(context.Background(), f.key, 20)
 			pairOK(t, err)
 			pairEqual(t, len(outcomes), 1)
 			pairEqual(t, outcomes[0].ID, m.ID)
 			pairEqual(t, outcomes[0].State, "declined")
-			a, err := consentAccept(t, f.db, f.key, 8, m, now)
+			a, err := f.consentAccept(t, 8, m, now)
 			pairOK(t, err)
 			pairEqual(t, a.Held, false)
 		})
@@ -68,7 +68,7 @@ func TestConsentRetentionAcceptancePayloadThenTombstonePruneOnlyBehindSafeFloor(
 			f, m := consentRetentionRequest(t, review)
 			ctx := context.Background()
 			anchor := messageWire("unread-floor-anchor", 1)
-			a, err := consentAccept(t, f.db, f.key, 8, anchor, messageAt)
+			a, err := f.consentAccept(t, 8, anchor, messageAt)
 			pairOK(t, err)
 			pairEqual(t, a.Stored, true)
 			v := consentHeld(t, f, m, messageAt)
@@ -79,21 +79,16 @@ func TestConsentRetentionAcceptancePayloadThenTombstonePruneOnlyBehindSafeFloor(
 			now := messageAt.Add(messaging.TombstoneAge + time.Hour)
 			pairOK(t, f.db.PeerMessages().Collect(ctx, now))
 			f = consentStoreReopen(t, f)
-			consentRetainedPayload(t, f, v.ID, false, review)
+			f.consentRetainedPayload(t, v.ID, false, review)
 			var digest string
 			var n uint64
 			pairOK(t, f.raw.QueryRow(`SELECT digest,n FROM consent_requests WHERE id=?`, v.ID).Scan(&digest, &n))
 			pairEqual(t, digest, v.Digest)
 			pairEqual(t, n, m.N)
-			a, err = consentAccept(t, f.db, f.key, 8, m, now)
+			a, err = f.consentAccept(t, 8, m, now)
 			pairOK(t, err)
 			pairEqual(t, a.Held, false)
-			changed := m
-			changed.Text = "replacement after compaction"
-			a, err = consentAccept(t, f.db, f.key, 8, changed, now)
-			if !errors.Is(err, store.ErrConsentConflict) && !errors.Is(err, messaging.ErrConflict) && a.Reason != messaging.ReasonConflict {
-				t.Fatalf("compacted immutable payload no longer conflicts: %+v", a)
-			}
+			consentAssertCompactedConflict(t, f, m, now)
 			_, err = f.db.PeerMessages().MarkRead(ctx, f.key, []string{anchor.ID}, now)
 			pairOK(t, err)
 			pairOK(t, f.db.PeerMessages().ReadConfirmed(ctx, f.key, anchor.ID))
@@ -104,10 +99,21 @@ func TestConsentRetentionAcceptancePayloadThenTombstonePruneOnlyBehindSafeFloor(
 			var count int
 			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM consent_requests WHERE id=?`, v.ID).Scan(&count))
 			pairEqual(t, count, 0)
-			a, err = consentAccept(t, f.db, f.key, 8, m, now)
+			a, err = f.consentAccept(t, 8, m, now)
 			pairOK(t, err)
 			pairEqual(t, a.Held, false)
 			pairEqual(t, a.Reason, messaging.ReasonTooOld)
 		})
+	}
+}
+
+func consentAssertCompactedConflict(t *testing.T, f workspaceStoreFixture, m messaging.Message, now time.Time) {
+	t.Helper()
+	changed := m
+	changed.Text = "replacement after compaction"
+	a, err := f.consentAccept(t, 8, changed, now)
+	conflict := errors.Is(err, store.ErrConsentConflict) || errors.Is(err, messaging.ErrConflict)
+	if !conflict && a.Reason != messaging.ReasonConflict {
+		t.Fatalf("compacted immutable payload no longer conflicts: %+v", a)
 	}
 }

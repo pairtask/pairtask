@@ -217,6 +217,7 @@ var panelBuilders = map[string]func(*Model) []string{
 	panelPairing: (*Model).pairingRows,
 	panelReviews: (*Model).reviewRows,
 	panelConsent: (*Model).consentRows,
+	panelHeld:    func(m *Model) []string { return m.held.rows },
 }
 
 func (m *Model) panelRows(height int) []string {

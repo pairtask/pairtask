@@ -55,28 +55,42 @@ func (m *Model) needsResync(ev *protocol.SessionEvent) bool {
 	return ev.Watermark.Epoch != m.epoch || ev.Watermark.Revision != m.revision+1
 }
 
+// applyEvent applies one event by its kind; a kind that only says
+// something changed reads it again.
 func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
-	switch ev.Kind {
-	case protocol.EventConversationChanged:
-		return m.conversationChanged(ev)
-	case protocol.EventInboxChanged:
-		return m.inboxChanged(ev)
-	case protocol.EventStageChanged:
-		m.stageChanged(ev)
-	case protocol.EventPresenceChanged:
-		m.agents.apply(ev)
-		m.statuses.presence(ev)
-	case protocol.EventSendRefused:
-		return m.sendRefused(ev)
-	case protocol.EventContactMessagesChanged:
-		return tea.Batch(m.contactsChanged(ev.ContactKey), m.reviewsMoved(), m.cardAsksChanged())
-	case protocol.EventConsentChanged:
-		return m.consentChanged()
+	if apply := eventAppliers[ev.Kind]; apply != nil {
+		return apply(m, ev)
 	}
 	if refresh := refreshEvents[ev.Kind]; refresh != nil {
 		return refresh(m)
 	}
 	return nil
+}
+
+// eventAppliers apply the events that carry something to apply.
+var eventAppliers = map[string]func(*Model, *protocol.SessionEvent) tea.Cmd{
+	protocol.EventConversationChanged:    (*Model).conversationChanged,
+	protocol.EventInboxChanged:           (*Model).inboxChanged,
+	protocol.EventStageChanged:           (*Model).stageEvent,
+	protocol.EventPresenceChanged:        (*Model).presenceChanged,
+	protocol.EventSendRefused:            (*Model).sendRefused,
+	protocol.EventContactMessagesChanged: (*Model).contactMessagesChanged,
+	protocol.EventConsentChanged:         func(m *Model, _ *protocol.SessionEvent) tea.Cmd { return m.consentChanged() },
+}
+
+func (m *Model) stageEvent(ev *protocol.SessionEvent) tea.Cmd {
+	m.stageChanged(ev)
+	return nil
+}
+
+func (m *Model) presenceChanged(ev *protocol.SessionEvent) tea.Cmd {
+	m.agents.apply(ev)
+	m.statuses.presence(ev)
+	return nil
+}
+
+func (m *Model) contactMessagesChanged(ev *protocol.SessionEvent) tea.Cmd {
+	return tea.Batch(m.contactsChanged(ev.ContactKey), m.reviewsMoved(), m.cardAsksChanged())
 }
 
 // refreshEvents read again what changed; they carry nothing to apply.
@@ -168,6 +182,9 @@ var responseHandlers = map[string]responseHandler{
 	kindRemoteReview:   (*Model).remoteReviewResult,
 	kindConsentList:    (*Model).consentListResult,
 	kindConsentDecide:  (*Model).consentDecideResult,
+	kindConsentCount:   (*Model).heldCountResult,
+	kindConsentOpt:     (*Model).consentOptResult,
+	kindConsentReset:   (*Model).consentResetResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {
@@ -215,6 +232,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 		m.newEpoch(snap.Watermark.Epoch)
 	}
 	m.revision, m.baseline = snap.Watermark.Revision, true
+	m.invalidateConsent()
 	m.agents = agentView{list: snap.Agents, total: snap.AgentsTotal, partial: snap.AgentsTruncated}
 	m.statuses.set(snap)
 	m.claims.set(snap)

@@ -26,26 +26,12 @@ func TestConsentReviewAcceptanceFullPinsAndPolicyAreImmutable(t *testing.T) {
 			f := consentReviewFixture(t)
 			m := remoteAsk("frozen-review")
 			v := consentHeld(t, f, m, messageAt)
-			if v.Review == nil || v.Review.Base != m.Review.Base || v.Review.Head != m.Review.Head || !v.Review.Publish || !v.Review.Formal {
-				t.Fatalf("review preview lost pins or policy ceiling: %+v", v.Review)
-			}
+			consentAssertReviewPreview(t, v, m)
 			before := consentSnapshot(t, f)
-			switch field {
-			case "base":
-				m.Review.Base = "replacement"
-			case "head":
-				m.Review.Head = "replacement"
-			case "scope":
-				m.Review.Scope = "replacement"
-			case "publish":
-				m.Review.Publish = false
-			case "formal":
-				m.Review.Formal = false
-			case "repository":
-				m.Review.Repository = "other/repository"
-			}
-			a, err := consentAccept(t, f.db, f.key, 8, m, messageAt.Add(time.Minute))
-			if !errors.Is(err, store.ErrConsentConflict) && !errors.Is(err, messaging.ErrConflict) && a.Reason != messaging.ReasonConflict {
+			consentMutateReview(m.Review, field)
+			a, err := f.consentAccept(t, 8, m, messageAt.Add(time.Minute))
+			conflict := errors.Is(err, store.ErrConsentConflict) || errors.Is(err, messaging.ErrConflict)
+			if !conflict && a.Reason != messaging.ReasonConflict {
 				t.Fatalf("changed pins or policy replaced pending review: %+v %v", a, err)
 			}
 			consentUnchanged(t, f, before)
@@ -59,15 +45,41 @@ func TestConsentReviewAcceptanceExistingAskModeSharesAgentQuota(t *testing.T) {
 	for i := 0; i < store.ConsentPerAgent-1; i++ {
 		m := remoteAsk(fmt.Sprintf("legacy-ask-%d", i))
 		m.N = uint64(i + 1)
-		a, err := consentAccept(t, f.db, f.key, 7, m, messageAt.Add(time.Duration(i)*time.Minute))
+		a, err := f.consentAccept(t, 7, m, messageAt.Add(time.Duration(i)*time.Minute))
 		pairOK(t, err)
 		pairEqual(t, a.Stored, true)
 	}
 	consentHeld(t, f, consentMessage("shared-final-slot", 20, "reviewer"), messageAt.Add(20*time.Minute))
 	before := consentSnapshot(t, f)
-	a, err := consentAccept(t, f.db, f.key, 8, consentMessage("shared-overflow", 21, "reviewer"), messageAt.Add(21*time.Minute))
+	a, err := f.consentAccept(t, 8, consentMessage("shared-overflow", 21, "reviewer"), messageAt.Add(21*time.Minute))
 	if err == nil && a.Held {
 		t.Fatal("new consent ignored 15 existing ask-mode holds")
 	}
 	consentUnchanged(t, f, before)
+}
+
+func consentMutateReview(ask *messaging.ReviewAsk, field string) {
+	switch field {
+	case "base":
+		ask.Base = "replacement"
+	case "head":
+		ask.Head = "replacement"
+	case "scope":
+		ask.Scope = "replacement"
+	case "publish":
+		ask.Publish = false
+	case "formal":
+		ask.Formal = false
+	case "repository":
+		ask.Repository = "other/repository"
+	}
+}
+
+func consentAssertReviewPreview(t *testing.T, v protocol.ConsentView, m messaging.Message) {
+	t.Helper()
+	pinsMatch := v.Review != nil && v.Review.Base == m.Review.Base && v.Review.Head == m.Review.Head
+	policyMatches := v.Review != nil && v.Review.Publish && v.Review.Formal
+	if !pinsMatch || !policyMatches {
+		t.Fatalf("review preview lost pins or policy ceiling: %+v", v.Review)
+	}
 }

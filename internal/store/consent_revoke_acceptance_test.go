@@ -36,7 +36,7 @@ func TestConsentRevokeAcceptanceUnshareIsTargetScopedAndAtomicForGroup(t *testin
 			pairOK(t, err)
 			pairEqual(t, len(y), 1)
 			pairEqual(t, y[0].MessageID, solo.Msg.MessageID)
-			a, err := consentAccept(t, f.db, f.key, 8, consentMessage("new-X-after-reregister", 3, "X"), messageAt.Add(2*time.Minute))
+			a, err := f.consentAccept(t, 8, consentMessage("new-X-after-reregister", 3, "X"), messageAt.Add(2*time.Minute))
 			pairOK(t, err)
 			if a.Held || a.Stored {
 				t.Fatalf("re-registering X erased explicit denial: %+v", a)

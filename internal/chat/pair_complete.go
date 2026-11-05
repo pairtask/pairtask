@@ -21,8 +21,7 @@ var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairReview,
 
 // pairVerbsHere are the /pair words that act in the open tab.
 func (m *Model) pairVerbsHere() []string {
-	// /pair consent takes a held request's ID from Needs you, so it isn't
-	// offered on its own.
+	// /pair consent is offered by Needs you and /pair status, not here.
 	if m.conv.selected.isContact() && m.routingAvailable() {
 		return append(slices.Clone(pairVerbs), contactPairVerbs...)
 	}
@@ -47,7 +46,7 @@ var pairUsages = map[string]string{
 	"name":    "name NAME|--clear: in a ⇄ tab, what this side calls that workspace",
 	"pause":   "pause: in a ⇄ tab, block new traffic with that workspace, both ways, until resume",
 	"resume":  "resume: in a ⇄ tab, let queued messages flow with that workspace again",
-	"consent": "consent ID: preview a held request from a paired workspace, then decide it",
+	"consent": "consent [ID | contact:NAME | on NAME | off NAME | reset NAME AGENT OPERATION]: what paired workspaces wait for you to decide",
 }
 
 func decidesRequest(word string) bool {
@@ -97,6 +96,7 @@ var pairWordChoices = map[string]func(*Model, argLine) []string{
 	pairName:                 (*Model).nameChoices,
 	protocol.PairingOpStatus: (*Model).operationChoices,
 	protocol.PairingOpSettle: (*Model).operationChoices,
+	pairConsent:              (*Model).consentCompletions,
 }
 
 // pendingRequestKeys are the keys of the listed requests that wait for a

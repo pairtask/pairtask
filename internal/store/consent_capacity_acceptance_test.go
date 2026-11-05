@@ -17,7 +17,7 @@ func TestConsentCapacityAcceptancePerContactBoundDoesNotChargeRejectedRequest(t 
 		consentHeld(t, f, consentMessage(fmt.Sprintf("contact-%d", i), uint64(i+1), agents[i/16]), messageAt.Add(time.Duration(i)*time.Minute))
 	}
 	before := consentSnapshot(t, f)
-	a, err := consentAccept(t, f.db, f.key, 8, consentMessage("contact-overflow", 65, "e"), messageAt.Add(65*time.Minute))
+	a, err := f.consentAccept(t, 8, consentMessage("contact-overflow", 65, "e"), messageAt.Add(65*time.Minute))
 	if err == nil && a.Held {
 		t.Fatal("contact count bound admitted 65th hold")
 	}
@@ -32,7 +32,7 @@ func TestConsentCapacityAcceptancePerContactBytesUsesUTF8Bytes(t *testing.T) {
 		consentHeld(t, f, m, messageAt.Add(time.Duration(i)*time.Minute))
 	}
 	before := consentSnapshot(t, f)
-	a, err := consentAccept(t, f.db, f.key, 8, consentMessage("bytes-overflow", 17, "b"), messageAt.Add(17*time.Minute))
+	a, err := f.consentAccept(t, 8, consentMessage("bytes-overflow", 17, "b"), messageAt.Add(17*time.Minute))
 	if err == nil && a.Held {
 		t.Fatal("contact byte bound counted runes instead of UTF-8 bytes")
 	}
@@ -52,7 +52,7 @@ func TestConsentCapacityAcceptanceGlobalCountBoundAcrossContacts(t *testing.T) {
 		}
 	}
 	before := consentSnapshot(t, f)
-	a, err := consentAccept(t, f.db, f.key, 8, consentMessage("global-overflow", 1, "reserve"), messageAt.Add(70*time.Minute))
+	a, err := f.consentAccept(t, 8, consentMessage("global-overflow", 1, "reserve"), messageAt.Add(70*time.Minute))
 	if err == nil && a.Held {
 		t.Fatal("global count bound admitted 257th hold")
 	}
@@ -71,7 +71,7 @@ func TestConsentCapacityAcceptanceGlobalBytesAcrossContacts(t *testing.T) {
 		}
 	}
 	before := consentSnapshot(t, f)
-	a, err := consentAccept(t, f.db, f.key, 8, consentMessage("global-byte-overflow", 1, "reserve"), messageAt.Add(20*time.Minute))
+	a, err := f.consentAccept(t, 8, consentMessage("global-byte-overflow", 1, "reserve"), messageAt.Add(20*time.Minute))
 	if err == nil && a.Held {
 		t.Fatal("global byte bound admitted content past 2MiB")
 	}

@@ -53,7 +53,7 @@ func (h *Hub) background(ctx context.Context, clients map[string]*Client) {
 	if h.importDue.Swap(false) {
 		h.drainImports(ctx, clients)
 	}
-	if h.consentCheck.Swap(false) {
+	if h.consent.check.Swap(false) {
 		h.noteConsent(ctx)
 	}
 	h.announceConflicts()

@@ -94,6 +94,7 @@ func (m *Model) waitingForYou() []string {
 	if s.RequestsTruncated {
 		rows = append(rows, fmt.Sprintf("  (requests list is partial: %d more not shown; pending requests list first, so deciding these brings the rest into view)", s.RequestsTotal-len(s.Requests)))
 	}
+	rows = append(rows, m.heldWaiting()...)
 	rows = append(rows, reviewsWaiting(s)...)
 	return section("Waiting for you", rows)
 }

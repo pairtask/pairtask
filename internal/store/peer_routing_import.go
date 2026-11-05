@@ -291,8 +291,12 @@ type importSlot struct {
 	ts  time.Time
 }
 
-// importIn settles a pending import inside its transaction.
+// importIn settles a pending import inside its transaction; one allowed
+// from a hold whose scope was explicitly denied since is withheld (#293).
 func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
+	if result, withheld, err := dispatchDenied(ctx, tx, imp, at); withheld || err != nil {
+		return result, err
+	}
 	switch imp.Kind {
 	case importReview:
 		return dispatchReview(ctx, tx, imp, at)

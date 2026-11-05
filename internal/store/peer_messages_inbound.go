@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 var stored = messaging.Answer{Stored: true}
@@ -31,7 +32,7 @@ func (p *PeerMessages) AcceptVersion(ctx context.Context, contact string, versio
 	var answer messaging.Answer
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
 		row := newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m, now: now}
-		a, inserted, err := acceptIn(ctx, tx, inboundRow{row, version})
+		a, inserted, err := acceptIn(ctx, tx, inboundRow{row, version, p.gate})
 		answer = a
 		if err == nil && !inserted {
 			return errNothingStored // answered without a row: roll back
@@ -57,6 +58,7 @@ var errNothingStored = errors.New("nothing stored")
 type inboundRow struct {
 	newRow
 	version int
+	gate    *consentGate // whether session grants may admit now (#293)
 }
 
 // acceptIn is Accept inside its transaction; inserted reports a new row to
@@ -83,13 +85,65 @@ func acceptIn(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer,
 // answerInbound acts on a new message's answer: stored, held for the
 // operator, recorded as refused, or only refused.
 func answerInbound(ctx context.Context, tx *sql.Tx, in inboundRow, answer messaging.Answer) (messaging.Answer, bool, error) {
+	answer, err := publicationConsent(ctx, tx, in, answer)
+	if err != nil {
+		return messaging.Answer{}, false, err
+	}
 	switch {
 	case answer.Stored:
 		return insertAccepted(ctx, tx, in.newRow)
 	case answer.Reason == messaging.ReasonNotShared && consentVersion(in.version):
-		return holdOrRefuse(ctx, tx, in.newRow, answer)
+		return holdOrRefuse(ctx, tx, in, answer)
 	}
 	return refuseNotShared(ctx, tx, in.newRow, answer)
+}
+
+// publicationConsent is the answer to a review request its agent's grant
+// allows but whose asked publication it doesn't (#293): not shared when
+// that publication was explicitly denied, or when it may be held or
+// admitted for consent; else stored as before, published at most as the
+// grant allows. A lower grant never silently grants publication.
+func publicationConsent(ctx context.Context, tx *sql.Tx, in inboundRow, answer messaging.Answer) (messaging.Answer, error) {
+	if !answer.Stored {
+		return answer, nil
+	}
+	wider, err := widerPublication(ctx, tx, in.key.contact, in.m)
+	if err != nil || !wider {
+		return answer, err
+	}
+	reroute, err := publicationRerouted(ctx, tx, in)
+	if err != nil || !reroute {
+		return answer, err
+	}
+	return refused(messaging.ReasonNotShared), nil
+}
+
+// widerPublication: a review request asks to publish past what its
+// agent's grant allows.
+func widerPublication(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+	if m.Review == nil || !m.Review.Publish {
+		return false, nil
+	}
+	g, granted, err := reviewGrant(ctx, tx, contact, m.To[0])
+	if err != nil || !granted {
+		return false, err
+	}
+	return !g.allows(protocol.ReviewPolicy{Publish: true, Formal: m.Review.Formal}), nil
+}
+
+// publicationRerouted: the publication was explicitly denied, or a session
+// that may be asked can hold or admit it.
+func publicationRerouted(ctx context.Context, tx *sql.Tx, in inboundRow) (bool, error) {
+	sc := consentScope{in.key.contact, in.m.To[0], protocol.ConsentPublish}
+	denied, err := explicitlyDenied(ctx, tx, sc, in.m.Review)
+	if err != nil || denied {
+		return denied, err
+	}
+	if !consentVersion(in.version) {
+		return false, nil
+	}
+	a, err := admissionOf(ctx, tx, in)
+	return a.kind != admitNone, err
 }
 
 // insertAccepted stores an accepted message and stages it for this side's
@@ -149,7 +203,7 @@ var inboundChecks = []inboundCheck{
 		if full, err := outcomesFull(ctx, tx, contact); full || err != nil {
 			return full, err
 		}
-		return asksFull(ctx, tx, contact, m.To[0])
+		return asksFull(ctx, tx, contact, m)
 	}},
 }
 

@@ -63,19 +63,12 @@ func consentInputPage() protocol.Message {
 func consentInputOpen(t *testing.T, h *chatHarness, pages ...protocol.Message) {
 	t.Helper()
 	v2Command(h, "/pair consent "+consentFixtureID)
+	response := consentInputPage()
+	if len(pages) > 0 {
+		response = pages[0]
+	}
 	h.await(func() bool {
-		for i := 0; i < len(h.requests); i++ {
-			r := h.requests[i]
-			if r.Type == protocol.TypeOperatorContact && r.ContactOp == "consent_list" {
-				h.requests = append(h.requests[:i], h.requests[i+1:]...)
-				response := consentInputPage()
-				if len(pages) > 0 {
-					response = pages[0]
-				}
-				h.reply(r, response)
-				i--
-			}
-		}
+		consentInputReplyPages(h, response)
 		return h.m.State().InFlight == 0
 	})
 	frame := ansi.Strip(h.m.View().Content)
@@ -86,16 +79,7 @@ func consentInputOpen(t *testing.T, h *chatHarness, pages ...protocol.Message) {
 	if len(pages) > 0 {
 		expected = pages[0]
 	}
-	values := []string{consentFixtureID, "authenticated-key-293", "untrusted-sender"}
-	for _, target := range expected.ConsentPage.Items[0].Targets {
-		values = append(values, target.Agent)
-		values = append(values, target.Operations...)
-	}
-	for _, s := range values {
-		if !strings.Contains(frame, s) {
-			t.Errorf("consent preview omitted %q", s)
-		}
-	}
+	consentAssertPreviewTargets(t, frame, expected)
 }
 
 func consentInputNoWrites(t *testing.T, h *chatHarness) {
@@ -160,30 +144,7 @@ func TestConsentInputAcceptanceEachChoiceRequiresExplicitConfirmation(t *testing
 			consentInputNoWrites(t, h)
 			h.input(chatKey('y', tea.ModCtrl))
 			req := h.take(protocol.TypeOperatorContact)
-			if req.ContactKey != "authenticated-key-293" {
-				t.Fatalf("confirmation trusted label or claimed sender: %q", req.ContactKey)
-			}
-			if req.ContactOp != "consent_decide" {
-				t.Fatalf("confirmation wrote %q", req.ContactOp)
-			}
-			data, _ := json.Marshal(req)
-			var decoded struct {
-				Decision *struct {
-					ID       string `json:"consent_id"`
-					Digest   string
-					Revision int64
-					Choice   string
-					Epoch    string
-					Gen      uint64
-				} `json:"consent_decide"`
-			}
-			if err := json.Unmarshal(data, &decoded); err != nil {
-				t.Fatal(err)
-			}
-			d := decoded.Decision
-			if d == nil || d.ID != consentFixtureID || d.Digest != "canonical-digest-293" || d.Revision != 3 || d.Choice != choice || d.Epoch != "epoch" || d.Gen != 7 {
-				t.Fatalf("confirmation lost immutable identity or operator generation: %s", data)
-			}
+			consentAssertConfirmation(t, req, choice)
 		})
 	}
 }
@@ -201,4 +162,68 @@ func TestConsentInputAcceptanceGlobalShortcutsAreConsumed(t *testing.T) {
 	if !strings.Contains(ansi.Strip(h.m.View().Content), consentFixtureText) {
 		t.Fatal("global shortcut dismissed consent overlay")
 	}
+}
+
+func consentAssertConfirmation(t *testing.T, req protocol.Message, choice string) {
+	t.Helper()
+	if req.ContactKey != "authenticated-key-293" {
+		t.Fatalf("confirmation trusted label or claimed sender: %q", req.ContactKey)
+	}
+	if req.ContactOp != "consent_decide" {
+		t.Fatalf("confirmation wrote %q", req.ContactOp)
+	}
+	data, _ := json.Marshal(req)
+	var decoded struct {
+		Decision *consentConfirmation `json:"consent_decide"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	valid := consentConfirmationValid(decoded.Decision, choice)
+	if !valid {
+		t.Fatalf("confirmation lost immutable identity or operator generation: %s", data)
+	}
+}
+func consentInputReplyPages(h *chatHarness, response protocol.Message) {
+	for i := 0; i < len(h.requests); i++ {
+		r := h.requests[i]
+		if r.Type == protocol.TypeOperatorContact && r.ContactOp == "consent_list" {
+			h.requests = append(h.requests[:i], h.requests[i+1:]...)
+			h.reply(r, response)
+			i--
+		}
+	}
+}
+
+func consentAssertPreviewTargets(t *testing.T, frame string, expected protocol.Message) {
+	t.Helper()
+	values := []string{consentFixtureID, "authenticated-key-293", "untrusted-sender"}
+	for _, target := range expected.ConsentPage.Items[0].Targets {
+		values = append(values, target.Agent)
+		values = append(values, target.Operations...)
+	}
+	for _, s := range values {
+		if !strings.Contains(frame, s) {
+			t.Errorf("consent preview omitted %q", s)
+		}
+	}
+}
+
+type consentConfirmation struct {
+	ID       string `json:"consent_id"`
+	Digest   string
+	Revision int64
+	Choice   string
+	Epoch    string
+	Gen      uint64
+}
+
+func consentConfirmationValid(d *consentConfirmation, choice string) bool {
+	if d == nil {
+		return false
+	}
+	identity := d.ID == consentFixtureID && d.Digest == "canonical-digest-293"
+	decision := d.Revision == 3 && d.Choice == choice
+	owner := d.Epoch == "epoch" && d.Gen == 7
+	return identity && decision && owner
 }

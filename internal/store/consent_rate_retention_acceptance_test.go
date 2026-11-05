@@ -33,7 +33,7 @@ func TestConsentRateRetentionAcceptancePartialRefillCannotResetBucket(t *testing
 	for i := 0; i < store.ConsentBurst-1; i++ {
 		consentHeld(t, f, consentMessage(fmt.Sprintf("refill-%d", i), uint64(20+i), agents[i%3]), now)
 	}
-	a, err := consentAccept(t, f.db, f.key, 8, consentMessage("no-reset-extra", 40, "a"), now)
+	a, err := f.consentAccept(t, 8, consentMessage("no-reset-extra", 40, "a"), now)
 	if err == nil && a.Held {
 		t.Fatal("compaction or reopen reset partially refilled bucket")
 	}

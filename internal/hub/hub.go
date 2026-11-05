@@ -47,18 +47,14 @@ type Hub struct {
 	importAt   int64       // where the next import pass goes on; owned by Run
 	rescan     atomic.Bool // an import pass was asked for since the scan began
 	importDue  atomic.Bool // an import pass is due; signalled on pair.changed (#222)
-	// consentCheck: held requests may have moved; signalled on pair.changed
-	// (#293). consentMark is where they stood when last told; owned by Run.
-	consentCheck atomic.Bool
-	consentMark  store.ConsentMark
-	conflicts    consentConflicts // outcomes a contact contradicted, to tell the operator (#293)
-	store        *store.Store
-	seq          uint64
-	log          *slog.Logger
-	done         chan struct{}
-	status       chan statusRequest
-	operator     chan operatorRequest
-	startedAt    time.Time
+	consent    hubConsent  // held requests and session authority (#293)
+	store      *store.Store
+	seq        uint64
+	log        *slog.Logger
+	done       chan struct{}
+	status     chan statusRequest
+	operator   chan operatorRequest
+	startedAt  time.Time
 	// Live operator session state, owned by the Run goroutine.
 	owner       *OperatorSession
 	epoch       string
@@ -149,7 +145,6 @@ func (h *Hub) Run(ctx context.Context) {
 	defer h.disconnectAll(clients)
 	h.beginPairing(ctx)
 	h.drainImports(ctx, clients) // what was staged before a restart
-	h.noteConsent(ctx)
 
 	for {
 		select {

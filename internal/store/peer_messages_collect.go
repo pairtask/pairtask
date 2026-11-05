@@ -31,10 +31,12 @@ func (p *PeerMessages) Collect(ctx context.Context, now time.Time) error {
 }
 
 func messageContacts(ctx context.Context, db *sql.DB) ([]string, error) {
-	// Routing's tables outlive a contact's last message row until pruned.
+	// Routing's tables outlive a contact's last message row until pruned;
+	// held requests in any state and arrival buckets do too (#293), so a
+	// contact whose only rows are settled holds is still collected.
 	rows, err := db.QueryContext(ctx, `SELECT contact FROM peer_messages UNION SELECT contact FROM remote_imports
 UNION SELECT contact FROM peer_agent_reads UNION SELECT contact FROM review_asks_out
-UNION SELECT contact FROM consent_requests WHERE state = 'pending' ORDER BY contact`)
+UNION SELECT contact FROM consent_requests UNION SELECT contact FROM consent_rate ORDER BY contact`)
 	if err != nil {
 		return nil, err
 	}

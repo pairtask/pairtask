@@ -2,6 +2,8 @@ package chat
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,7 +41,8 @@ var consentChoiceLabels = map[string]string{
 }
 
 // consentPrompt is the open preview: the request exactly as shown, and the
-// choice selected so far.
+// choice selected so far. Opened for a contact, it lists that contact's
+// held requests first, and a row is previewed only when picked.
 type consentPrompt struct {
 	view     protocol.ConsentView
 	selected int
@@ -47,84 +50,226 @@ type consentPrompt struct {
 	// refreshing: the request changed and is being read again; until it is,
 	// nothing can be selected or confirmed on what is shown.
 	refreshing bool
+	// stale: the connection was refreshed since this was read; nothing can
+	// be selected or confirmed on it until it is read again.
+	stale bool
+	list  *consentList
 }
 
-// consentCommand is /pair consent ID: read that held request, then preview it.
+// consentList is one contact's held requests, as last read, and the row
+// highlighted; previewing while one of them is shown with its choices.
+type consentList struct {
+	contact    string
+	items      []protocol.ConsentView
+	row        int
+	previewing bool
+}
+
+// consentRead is one held-request read for the preview: the request it
+// looks for, or every request of a contact, under the opening token.
+type consentRead struct {
+	id, token, contact string
+	before             int64
+}
+
+func (r consentRead) ids() []string {
+	return []string{r.id, r.token, r.contact, strconv.FormatInt(r.before, 10)}
+}
+
+func consentReadOf(req pendingRequest) consentRead {
+	before, _ := strconv.ParseInt(req.ids[3], 10, 64)
+	return consentRead{id: req.ids[0], token: req.ids[1], contact: req.ids[2], before: before}
+}
+
+// consentUnsupported: a broker without consent prompts is never sent one.
+const consentUnsupported = "consent prompts need a newer broker"
+
+const consentUsage = "/pair consent [ID | contact:NAME | on NAME | off NAME | reset NAME [AGENT [OPERATION]]]"
+
+// consentVerbs are /pair consent's reserved first words.
+var consentVerbs = map[string]func(*Model, pairWords) tea.Cmd{
+	consentOn:    (*Model).consentOptCommand,
+	consentOff:   (*Model).consentOptCommand,
+	consentReset: (*Model).consentResetCommand,
+}
+
+// consentCommand is /pair consent: what is held, one contact's held
+// requests, one request by ID, or the contact's opt-in and scopes.
 func (m *Model) consentCommand(fields pairWords) tea.Cmd {
-	switch {
-	case !m.session.HasCapability(protocol.CapabilityConsentPrompts):
-		m.status = "this broker doesn't hold requests for your decision; upgrade it"
-		return nil
-	case len(fields) != 2:
-		m.status = "/pair consent ID: the held request to decide (see Needs you)"
+	if !m.session.HasCapability(protocol.CapabilityConsentPrompts) {
+		m.status = consentUnsupported
 		return nil
 	}
+	if len(fields) == 1 {
+		return m.heldSummaryCommand()
+	}
+	if verb := consentVerbs[fields[1]]; verb != nil {
+		return verb(m, fields)
+	}
+	if len(fields) != 2 {
+		m.status = consentUsage
+		return nil
+	}
+	if name, ok := strings.CutPrefix(fields[1], consentContactPrefix); ok {
+		return m.consentContactCommand(name)
+	}
 	m.status = "reading held request… (Esc cancels)"
-	m.consentOpening = uuid.NewString()
-	return m.request(kindConsentList, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpConsentList,
-		MessageID: m.consentOpening}, fields[1], m.consentOpening)
+	return m.readConsent(consentRead{id: fields[1], token: uuid.NewString()})
 }
 
-// consentChanged: a held request arrived, was decided or expired. An open
-// preview drops its selection at once and reads its request again, so a
-// choice made on what was shown before can never be confirmed; nothing
-// opens on its own.
+// consentContactCommand is /pair consent contact:NAME: that contact's
+// held requests, none of them previewed or chosen yet.
+func (m *Model) consentContactCommand(name string) tea.Cmd {
+	key, problem := m.resolveConsentContact(name)
+	if problem != "" {
+		m.status = problem
+		return nil
+	}
+	m.status = "reading held requests from " + safe(m.contactTitle(contactKey(key))) + "… (Esc cancels)"
+	return m.readConsent(consentRead{contact: key, token: uuid.NewString()})
+}
+
+// readConsent starts a preview read under a new opening token.
+func (m *Model) readConsent(r consentRead) tea.Cmd {
+	m.consentOpening, m.consentGather = r.token, nil
+	return m.readConsentPage(r)
+}
+
+// readConsentPage reads one page of held requests under the read's
+// opening token, so Esc still stops it.
+func (m *Model) readConsentPage(r consentRead) tea.Cmd {
+	return m.request(kindConsentList, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpConsentList,
+		MessageID: uuid.NewString(), ContactKey: r.contact, ContactConsentBefore: r.before}, r.ids()...)
+}
+
+// consentChanged: a held request arrived, was decided or expired. The
+// counts are read again; an open preview drops its selection at once and
+// reads its request again, so a choice made on what was shown before can
+// never be confirmed. Nothing opens on its own.
 func (m *Model) consentChanged() tea.Cmd {
 	c := m.consent
 	if c == nil {
-		return nil
+		return m.readHeld()
 	}
 	c.selected, c.sending, c.refreshing = consentNoSelection, false, true
-	m.consentOpening = uuid.NewString()
-	return m.request(kindConsentList, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpConsentList,
-		MessageID: m.consentOpening}, c.view.ID, m.consentOpening)
+	if l := c.list; l != nil && !l.previewing {
+		return m.readConsent(consentRead{contact: l.contact, token: uuid.NewString()})
+	}
+	return m.readConsent(consentRead{id: c.view.ID, token: uuid.NewString()})
 }
 
-// readConsentPage reads the page before cursor while looking for id, under
-// the same opening token, so Esc still stops it.
-func (m *Model) readConsentPage(id string, before int64) tea.Cmd {
-	return m.request(kindConsentList, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpConsentList,
-		MessageID: uuid.NewString(), ContactConsentBefore: before}, id, m.consentOpening)
+// invalidateConsent: the connection was refreshed. A read for the preview
+// is dropped however late it answers, and what is shown can be neither
+// chosen nor confirmed until it is read again.
+func (m *Model) invalidateConsent() {
+	if m.consentOpening != "" {
+		m.consentOpening, m.consentGather = "", nil
+		m.status = "held request not opened: the connection was refreshed; open it again"
+	}
+	if c := m.consent; c != nil {
+		c.selected, c.refreshing, c.stale = consentNoSelection, false, true
+	}
 }
 
 // cancelConsentOpening: Esc while a preview is being read means it never
 // opens, however late the answer comes.
 func (m *Model) cancelConsentOpening() {
-	m.consentOpening = ""
+	m.consentOpening, m.consentGather = "", nil
 	m.status = "held request not opened"
 }
 
-// consentListResult opens the preview of the request asked for, if the
-// broker still holds it.
+// consentListResult opens the preview of the request asked for, or the
+// contact's list, if the broker still holds them.
 func (m *Model) consentListResult(req pendingRequest, resp protocol.Message) tea.Cmd {
-	if req.ids[1] != m.consentOpening {
-		return nil // dismissed, or superseded by a later /pair consent
+	r := consentReadOf(req)
+	if r.token != m.consentOpening {
+		return nil // dismissed, refreshed, or superseded by a later /pair consent
 	}
-	if resp.ConsentPage == nil {
+	page := resp.ConsentPage
+	if page == nil {
 		m.closeConsent()
 		m.status = "held request unavailable: " + refusalReason(resp)
 		return nil
 	}
-	for _, v := range resp.ConsentPage.Items {
-		if v.ID == req.ids[0] {
-			m.consentOpening = ""
-			m.consent = &consentPrompt{view: v, selected: consentNoSelection}
-			m.panel = &panel{kind: panelConsent}
-			m.status = "choose 1–5, then Ctrl+Y to confirm; Esc closes without deciding"
+	m.heldFromPage(r, page)
+	if r.id == "" {
+		return m.gatherContact(r, page)
+	}
+	return m.findConsent(r, page)
+}
+
+// findConsent shows the request looked for, or reads older pages for it.
+func (m *Model) findConsent(r consentRead, page *protocol.ConsentPage) tea.Cmd {
+	for _, v := range page.Items {
+		if v.ID == r.id {
+			m.showConsentView(v)
 			return nil
 		}
 	}
-	if page := resp.ConsentPage; page.More && page.Next > 0 {
-		return m.readConsentPage(req.ids[0], page.Next) // older: keep looking
+	if page.More && page.Next > 0 {
+		r.before = page.Next
+		return m.readConsentPage(r) // older: keep looking
 	}
 	m.closeConsent() // gone: a preview of it would be stale
-	m.status = "no held request " + safe(req.ids[0]) + " (decided or expired)"
+	m.status = "no held request " + safe(r.id) + " (decided or expired)"
 	return nil
+}
+
+// gatherContact collects a contact's held requests, every page, then lists
+// them.
+func (m *Model) gatherContact(r consentRead, page *protocol.ConsentPage) tea.Cmd {
+	m.consentGather = append(m.consentGather, page.Items...)
+	if page.More && page.Next > 0 {
+		r.before = page.Next
+		return m.readConsentPage(r)
+	}
+	items := m.consentGather
+	m.consentOpening, m.consentGather = "", nil
+	m.held.setContact(r.contact, items)
+	if len(items) == 0 {
+		m.closeConsent()
+		m.status = "no requests from " + safe(m.contactTitle(contactKey(r.contact))) + " are held for your decision"
+		return nil
+	}
+	m.showConsentList(r.contact, items)
+	return nil
+}
+
+// showConsentView previews one request with no choice selected.
+func (m *Model) showConsentView(v protocol.ConsentView) {
+	m.consentOpening = ""
+	c := m.consent
+	if c == nil || c.list == nil {
+		c = &consentPrompt{}
+		m.consent = c
+	}
+	c.view, c.selected, c.sending, c.refreshing, c.stale = v, consentNoSelection, false, false, false
+	if c.list != nil {
+		c.list.previewing = true
+	}
+	m.panel = &panel{kind: panelConsent}
+	m.status = "choose 1–5, then Ctrl+Y to confirm; Esc closes without deciding"
+}
+
+// showConsentList lists a contact's held requests; a refresh keeps the
+// highlighted request where it still is.
+func (m *Model) showConsentList(contact string, items []protocol.ConsentView) {
+	row := 0
+	if c := m.consent; c != nil && c.list != nil && c.list.row < len(c.list.items) {
+		row = max(0, slices.IndexFunc(items, func(v protocol.ConsentView) bool { return v.ID == c.list.items[c.list.row].ID }))
+	}
+	m.consent = &consentPrompt{selected: consentNoSelection, list: &consentList{contact: contact, items: items, row: row}}
+	m.panel = &panel{kind: panelConsent}
+	m.status = "↑/↓ highlight a held request · Enter previews it · Esc closes; nothing is decided here"
 }
 
 // consentKey is every key while the preview is open: nothing reaches the
 // composer, the command line or a global shortcut.
 func (m *Model) consentKey(msg tea.KeyPressMsg) tea.Cmd {
+	if l := m.consent.list; l != nil && !l.previewing {
+		m.consentListKey(msg.String())
+		return nil
+	}
 	key := msg.String()
 	if direction, ok := consentScrollKeys[key]; ok {
 		m.scrollConsent(direction)
@@ -132,7 +277,7 @@ func (m *Model) consentKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch {
 	case key == "esc":
-		m.closeConsent()
+		m.backFromPreview()
 	case key == "ctrl+y":
 		return m.confirmConsent()
 	case consentChoiceKey(key):
@@ -150,7 +295,7 @@ func consentChoiceKey(key string) bool { return len(key) == 1 && key >= "1" && k
 // selectConsent selects a choice, unless what is shown is being replaced.
 func (m *Model) selectConsent(i int) {
 	c := m.consent
-	if c.sending || c.refreshing {
+	if c.sending || c.refreshing || c.stale {
 		return
 	}
 	c.selected = i
@@ -173,6 +318,10 @@ func (m *Model) scrollConsent(step int) {
 // with this connection's epoch and generation as a stale guard.
 func (m *Model) confirmConsent() tea.Cmd {
 	c := m.consent
+	if c.stale {
+		m.status = consentStaleNote
+		return nil
+	}
 	if c.refreshing {
 		m.status = "the request changed; wait for it to be shown again, then choose"
 		return nil
@@ -229,6 +378,9 @@ func (m *Model) consentRows() []string {
 	if c == nil {
 		return nil
 	}
+	if c.list != nil && !c.list.previewing {
+		return m.consentListRows()
+	}
 	v := c.view
 	rows := []string{titleStyle.Render("Held request "+safe(v.ID)) + mutedStyle.Render("  (Esc closes without deciding)"),
 		"  from workspace " + safe(v.WorkspaceKey) + labelNote(v.Label),
@@ -245,6 +397,7 @@ func (m *Model) consentRows() []string {
 	}
 	rows = append(rows, mutedStyle.Render(fmt.Sprintf("  received %s · expires %s · revision %d", v.ReceivedAt.Format(time.RFC3339),
 		v.ExpiresAt.Format(time.RFC3339), v.Revision)), "")
+	rows = append(rows, m.consentNoteRows()...)
 	return append(rows, m.consentChoiceRows()...)
 }
 

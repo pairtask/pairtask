@@ -75,14 +75,16 @@ var heldReasons = map[string]string{ImportWithheld: "unshared", ImportAwaiting: 
 
 // heldAsk is the grant a request is dispatched under, or where it goes
 // instead: withheld without a grant, back to waiting in ask mode without
-// the operator's approval.
+// the operator's approval. One the operator allowed from a hold goes under
+// that decision, at the ceiling it showed, even past a lower grant (#293).
 func heldAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport) (ReviewGrant, string, error) {
+	if imp.Consent.authorizes() {
+		return consentGrant(imp), "", nil
+	}
 	g, granted, err := reviewGrant(ctx, tx, imp.Contact, imp.Recipients[0])
 	switch {
 	case err != nil:
 		return g, "", err
-	case !granted && imp.Consent.authorizes():
-		return consentGrant(imp), "", nil
 	case !granted:
 		return g, ImportWithheld, nil
 	case g.Mode == ReviewAsk && !imp.Approved:
@@ -212,21 +214,20 @@ func remotePolicyText(p *protocol.ReviewPolicy) string {
 // publicationAllowed refuses a new write intent on a review a paired
 // workspace asked for, unless the grant that holds now still allows its
 // policy: revoking or narrowing the grant stops what isn't written yet.
-// Without a grant, the consent its request was allowed under decides
-// (#293). A write already reserved is never refused its result.
+// Past what a grant allows, or without one, the consent its request was
+// allowed under decides, within the ceiling it showed (#293). A write
+// already reserved is never refused its result.
 func publicationAllowed(ctx context.Context, tx *sql.Tx, before, after review.Record, owner LiveOwner) error {
 	v := after.View
 	if v.Remote == nil || v.Publication.Intent <= before.View.Publication.Intent {
 		return nil
 	}
 	g, granted, err := reviewGrant(ctx, tx, v.Remote.Contact, v.Spec.Reviewer)
-	switch {
-	case err != nil:
+	if err != nil {
 		return err
-	case granted && g.allows(*v.Spec.Policy):
+	}
+	if granted && g.allows(*v.Spec.Policy) {
 		return nil
-	case granted:
-		return review.ErrDenied
 	}
 	return consentPublication(ctx, tx, v, owner)
 }

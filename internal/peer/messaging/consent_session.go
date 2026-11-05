@@ -77,17 +77,25 @@ func (s Session) sendConsentOutcomes(ctx context.Context, r *Result) error {
 		return err
 	}
 	for _, o := range pending {
-		if err := s.sendConsentOutcome(ctx, cs, o, r); err != nil {
+		if err := s.sendConsentOutcome(ctx, consentSent{cs, o, r}); err != nil {
 			return err
 		}
 	}
 	return s.send(EncodeEnd())
 }
 
+// consentSent is one outcome sent, the store that settles it, and the
+// session's result that counts it.
+type consentSent struct {
+	cs ConsentStore
+	o  ConsentOutcome
+	r  *Result
+}
+
 // sendConsentOutcome sends one outcome and settles it by the answer:
-// stored, or refused by the requester.
-func (s Session) sendConsentOutcome(ctx context.Context, cs ConsentStore, o ConsentOutcome, r *Result) error {
-	if err := s.send(EncodeConsentOutcome(o)); err != nil {
+// stored, or refused by the requester. Each is counted once settled.
+func (s Session) sendConsentOutcome(ctx context.Context, c consentSent) error {
+	if err := s.send(EncodeConsentOutcome(c.o)); err != nil {
 		return err
 	}
 	frame, err := s.Frames.Recv()
@@ -95,32 +103,38 @@ func (s Session) sendConsentOutcome(ctx context.Context, cs ConsentStore, o Cons
 		return err
 	}
 	if kind, _ := Kind(frame); kind == FrameConsentOutcomeRefused {
-		return s.recordConsentRefusal(ctx, cs, o, frame, r)
+		return s.recordConsentRefusal(ctx, c, frame)
 	}
 	ack, err := DecodeConsentOutcomeStored(frame)
 	if err != nil {
 		return err
 	}
-	if ack.ID != o.ID {
+	if ack.ID != c.o.ID {
 		return fmt.Errorf("%w: answer for another consent outcome", ErrProtocol)
 	}
-	r.ConsentOutcomesSent++
-	return cs.ConsentOutcomeAnswered(ctx, s.Contact, ack)
+	if err := c.cs.ConsentOutcomeAnswered(ctx, s.Contact, ack); err != nil {
+		return err
+	}
+	c.r.ConsentOutcomesSent++
+	return nil
 }
 
 // recordConsentRefusal settles an outcome the requester refused. A
 // refusal naming another request settles nothing and the session goes on:
 // the outcome stays pending for the next.
-func (s Session) recordConsentRefusal(ctx context.Context, cs ConsentStore, o ConsentOutcome, frame []byte, r *Result) error {
+func (s Session) recordConsentRefusal(ctx context.Context, c consentSent, frame []byte) error {
 	refusal, err := DecodeConsentOutcomeRefused(frame)
 	if err != nil {
 		return err
 	}
-	if refusal.ID != o.ID {
+	if refusal.ID != c.o.ID {
 		return nil // a refusal of another request settles nothing; this one stays pending
 	}
-	r.ConsentOutcomesRefused++
-	return cs.ConsentOutcomeRefused(ctx, s.Contact, refusal)
+	if err := c.cs.ConsentOutcomeRefused(ctx, s.Contact, refusal); err != nil {
+		return err
+	}
+	c.r.ConsentOutcomesRefused++
+	return nil
 }
 
 // receiveConsentOutcomes takes the peer's consent outcomes, answering

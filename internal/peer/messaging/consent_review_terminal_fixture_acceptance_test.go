@@ -54,7 +54,7 @@ func newConsentReviewTerminalPair(t *testing.T) consentReviewTerminalPair {
 		sessionOK(t, right.ResetConsentScope(ctx, sessionContact, "reviewer", op, 0, sessionAt))
 	}
 	p := consentReviewTerminalPair{left: left, right: right, leftPath: lp, rightPath: rp, id: "correlated-terminal-review"}
-	consentQueueReview(t, left, sessionContact, p.id, sessionAt)
+	consentQueueReview(t, left, consentReviewOutgoing(sessionContact, p.id, sessionAt))
 	consentReviewExchangeAt(t, left.PeerMessages(), right.PeerMessages(), sessionAt)
 	page, err := right.ConsentPage(ctx, sessionContact, 0, 20)
 	sessionOK(t, err)
@@ -62,18 +62,18 @@ func newConsentReviewTerminalPair(t *testing.T) consentReviewTerminalPair {
 	p.view = page.Items[0]
 	return p
 }
-func consentQueueReview(t *testing.T, db *store.Store, contact, id string, now time.Time) {
+func consentQueueReview(t *testing.T, db *store.Store, out messaging.Outgoing) {
 	t.Helper()
-	_, err := db.PeerMessages().Queue(context.Background(), messaging.Outgoing{Contact: contact, ID: id, Text: "one immutable review", To: []string{"reviewer"}, Review: &messaging.ReviewAsk{Forge: "github", Repository: "pairtask/pairtask", Change: "293", Base: "base", Head: "head", Publish: true}, Now: now})
+	_, err := db.PeerMessages().Queue(context.Background(), out)
 	sessionOK(t, err)
 }
 func consentReviewTerminalUnrelated(t *testing.T, p consentReviewTerminalPair) map[string]protocol.ReviewAskedItem {
 	t.Helper()
 	now := sessionAt.Add(6 * 24 * time.Hour)
-	consentQueueReview(t, p.left, sessionContact, "unrelated-same-contact", now)
+	consentQueueReview(t, p.left, consentReviewOutgoing(sessionContact, "unrelated-same-contact", now))
 	sessionOK(t, p.left.PeerMessages().Delivered(context.Background(), sessionContact, "unrelated-same-contact", now))
 	other := consentRefusalOtherContact(t, p.left)
-	consentQueueReview(t, p.left, other, p.id, now)
+	consentQueueReview(t, p.left, consentReviewOutgoing(other, p.id, now))
 	page, err := p.left.AskedReviews(context.Background(), "")
 	sessionOK(t, err)
 	items := map[string]protocol.ReviewAskedItem{}
@@ -84,4 +84,8 @@ func consentReviewTerminalUnrelated(t *testing.T, p consentReviewTerminalPair) m
 	}
 	sessionEqual(t, len(items), 2)
 	return items
+}
+
+func consentReviewOutgoing(contact, id string, now time.Time) messaging.Outgoing {
+	return messaging.Outgoing{Contact: contact, ID: id, Text: "one immutable review", To: []string{"reviewer"}, Review: &messaging.ReviewAsk{Forge: "github", Repository: "pairtask/pairtask", Change: "293", Base: "base", Head: "head", Publish: true}, Now: now}
 }

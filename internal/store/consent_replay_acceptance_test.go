@@ -15,7 +15,9 @@ func TestConsentReplayAcceptancePreviewIsReadOnlyAndIsolated(t *testing.T) {
 	f := consentFixture(t, "alpha", "beta")
 	m := consentMessage("private", 1, "alpha", "beta")
 	v := consentHeld(t, f, m, messageAt)
-	if v.Contact != f.key || v.Digest == "" || v.Revision <= 0 || v.Text != m.Text || len(v.Targets) != 2 {
+	identityMissing := v.Contact != f.key || v.Digest == "" || v.Revision <= 0
+	payloadMissing := v.Text != m.Text || len(v.Targets) != 2
+	if identityMissing || payloadMissing {
 		t.Fatalf("incomplete immutable preview: %+v", v)
 	}
 	pairEqual(t, v.ExpiresAt.Equal(messageAt.Add(7*24*time.Hour)), true)
@@ -35,7 +37,7 @@ func TestConsentReplayAcceptanceDuplicatesDoNotChargeOrExtend(t *testing.T) {
 	m := consentMessage("duplicate", 1, "alpha")
 	v := consentHeld(t, f, m, messageAt)
 	before := consentSnapshot(t, f)
-	a, err := consentAccept(t, f.db, f.key, 8, m, messageAt.Add(time.Hour))
+	a, err := f.consentAccept(t, 8, m, messageAt.Add(time.Hour))
 	pairOK(t, err)
 	pairEqual(t, a.HeldID, v.ID)
 	consentUnchanged(t, f, before)
@@ -56,8 +58,9 @@ func TestConsentReplayAcceptanceChangedPayloadCannotReplaceSnapshot(t *testing.T
 			case "recipient":
 				m.To = []string{"beta"}
 			}
-			a, err := consentAccept(t, f.db, f.key, 8, m, messageAt.Add(time.Minute))
-			if !errors.Is(err, store.ErrConsentConflict) && !errors.Is(err, messaging.ErrConflict) && a.Reason != messaging.ReasonConflict {
+			a, err := f.consentAccept(t, 8, m, messageAt.Add(time.Minute))
+			conflict := errors.Is(err, store.ErrConsentConflict) || errors.Is(err, messaging.ErrConflict)
+			if !conflict && a.Reason != messaging.ReasonConflict {
 				t.Fatalf("changed immutable payload accepted: answer=%+v err=%v", a, err)
 			}
 			consentUnchanged(t, f, before)
@@ -77,7 +80,7 @@ func TestConsentReplayAcceptanceConcurrentSameRequestHasOneHold(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			a, e := consentAccept(t, f.db, f.key, 8, m, messageAt)
+			a, e := f.consentAccept(t, 8, m, messageAt)
 			answers <- a
 			errs <- e
 		}()
@@ -106,7 +109,7 @@ func TestConsentReplayAcceptanceConcurrentSameRequestHasOneHold(t *testing.T) {
 
 func TestConsentReplayAcceptanceV7CannotReceiveHeldOutcome(t *testing.T) {
 	f := consentFixture(t, "alpha")
-	a, err := consentAccept(t, f.db, f.key, 7, consentMessage("old-peer", 1, "alpha"), messageAt)
+	a, err := f.consentAccept(t, 7, consentMessage("old-peer", 1, "alpha"), messageAt)
 	pairOK(t, err)
 	pairEqual(t, a.Held, false)
 	pairEqual(t, a.Reason, messaging.ReasonNotShared)

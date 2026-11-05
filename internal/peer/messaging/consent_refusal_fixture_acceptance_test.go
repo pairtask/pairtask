@@ -92,12 +92,25 @@ func consentRefusalDiagnosis(t *testing.T, path, id string) {
 	if !rows.Next() {
 		t.Fatal("refused outcome was collected instead of diagnosed")
 	}
+	values := consentScanDiagnosis(t, rows, columns)
+	refused, reason := consentRefusalColumns(columns, values)
+	if !refused || !reason {
+		t.Fatalf("refusal and reason not persisted: columns=%v values=%v", columns, values)
+	}
+}
+
+func consentScanDiagnosis(t *testing.T, rows *sql.Rows, columns []string) []any {
+	t.Helper()
 	values := make([]any, len(columns))
 	pointers := make([]any, len(columns))
 	for i := range values {
 		pointers[i] = &values[i]
 	}
 	sessionOK(t, rows.Scan(pointers...))
+	return values
+}
+
+func consentRefusalColumns(columns []string, values []any) (bool, bool) {
 	refused, reason := false, false
 	for i, name := range columns {
 		if name == "outcome" && values[i] == "refused" {
@@ -107,7 +120,5 @@ func consentRefusalDiagnosis(t *testing.T, path, id string) {
 			reason = true
 		}
 	}
-	if !refused || !reason {
-		t.Fatalf("refusal and reason not persisted: columns=%v values=%v", columns, values)
-	}
+	return refused, reason
 }

@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS agents_recent ON agents(connected_at DESC, agent_id, 
 type Store struct {
 	db   *sql.DB
 	path string
+	gate *consentGate // session admission, shared by every PeerMessages (#293)
 }
 
 // Open opens (creating if necessary) the database at path and applies the schema.
@@ -69,7 +70,7 @@ func Open(path string) (*Store, error) {
 	// serialized write pattern; a reader outside the broker still holds the
 	// file a moment, so a commit waits for it rather than failing at once.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema + pairedSchema + consentSchema + consentHeldOutSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema + pairedSchema + consentSchema + consentHeldOutSchema + consentOwnerSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -77,7 +78,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
-	return &Store{db: db, path: path}, nil
+	if err := clearConsentOwner(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("clear session consent: %w", err)
+	}
+	return &Store{db: db, path: path, gate: &consentGate{}}, nil
 }
 
 // Existing tables don't gain columns from CREATE TABLE IF NOT EXISTS. Added

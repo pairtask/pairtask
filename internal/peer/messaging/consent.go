@@ -60,42 +60,72 @@ var (
 // consentStates are the outcomes a held request can end in.
 var consentStates = map[string]bool{"allowed": true, "declined": true, "expired": true, "withheld": true}
 
-func EncodeHeld(h Held) ([]byte, error) {
-	if !ValidID(h.ID) || !ValidID(h.HeldID) {
-		return nil, fmt.Errorf("%w: held needs both IDs", ErrProtocol)
-	}
-	return encode(FrameHeld, []byte(h.ID), []byte(h.HeldID))
+// fieldCodec is a version 8 frame of string fields: its shape, what an
+// invalid one is called, a value's fields in order, the value they make,
+// and what makes one valid. Encoding and decoding both check it.
+type fieldCodec[T any] struct {
+	shape  shape
+	what   string
+	fields func(T) []string
+	build  func([]string) T
+	valid  func(T) bool
 }
 
-func DecodeHeld(frame []byte) (Held, error) {
-	f, err := decode(frame, heldShape)
+func (c fieldCodec[T]) encode(v T) ([]byte, error) {
+	if !c.valid(v) {
+		return nil, fmt.Errorf("%w: %s", ErrProtocol, c.what)
+	}
+	var fields [][]byte
+	for _, f := range c.fields(v) {
+		fields = append(fields, []byte(f))
+	}
+	return encode(c.shape.kind, fields...)
+}
+
+func (c fieldCodec[T]) decode(frame []byte) (T, error) {
+	var zero T
+	f, err := decode(frame, c.shape)
 	if err != nil {
-		return Held{}, err
+		return zero, err
 	}
-	h := Held{ID: string(f[0]), HeldID: string(f[1])}
-	if !ValidID(h.ID) || !ValidID(h.HeldID) {
-		return Held{}, fmt.Errorf("%w: held needs both IDs", ErrProtocol)
+	fields := make([]string, len(f))
+	for i, field := range f {
+		fields[i] = string(field)
 	}
-	return h, nil
+	v := c.build(fields)
+	if !c.valid(v) {
+		return zero, fmt.Errorf("%w: %s", ErrProtocol, c.what)
+	}
+	return v, nil
 }
 
-func EncodeConsentOutcome(o ConsentOutcome) ([]byte, error) {
-	if !validOutcome(o) {
-		return nil, fmt.Errorf("%w: consent outcome", ErrProtocol)
-	}
-	return encode(FrameConsentOutcome, []byte(o.ID), []byte(o.State), []byte(o.Reason))
-}
+var (
+	heldCodec = fieldCodec[Held]{heldShape, "held needs both IDs",
+		func(h Held) []string { return []string{h.ID, h.HeldID} },
+		func(f []string) Held { return Held{ID: f[0], HeldID: f[1]} },
+		func(h Held) bool { return ValidID(h.ID) && ValidID(h.HeldID) }}
+	consentOutcomeCodec = fieldCodec[ConsentOutcome]{consentOutcomeShape, "consent outcome",
+		func(o ConsentOutcome) []string { return []string{o.ID, o.State, o.Reason} },
+		func(f []string) ConsentOutcome { return ConsentOutcome{ID: f[0], State: f[1], Reason: f[2]} },
+		validOutcome}
+	consentStoredCodec = fieldCodec[ConsentOutcomeStored]{consentOutcomeStoredShape, "consent outcome answer needs its ID",
+		func(s ConsentOutcomeStored) []string { return []string{s.ID} },
+		func(f []string) ConsentOutcomeStored { return ConsentOutcomeStored{ID: f[0]} },
+		func(s ConsentOutcomeStored) bool { return ValidID(s.ID) }}
+	consentRefusedCodec = fieldCodec[ConsentOutcomeRefused]{consentRefusedShape, "consent outcome refusal",
+		func(r ConsentOutcomeRefused) []string { return []string{r.ID, r.Reason} },
+		func(f []string) ConsentOutcomeRefused { return ConsentOutcomeRefused{ID: f[0], Reason: f[1]} },
+		validConsentRefusal}
+)
+
+func EncodeHeld(h Held) ([]byte, error) { return heldCodec.encode(h) }
+
+func DecodeHeld(frame []byte) (Held, error) { return heldCodec.decode(frame) }
+
+func EncodeConsentOutcome(o ConsentOutcome) ([]byte, error) { return consentOutcomeCodec.encode(o) }
 
 func DecodeConsentOutcome(frame []byte) (ConsentOutcome, error) {
-	f, err := decode(frame, consentOutcomeShape)
-	if err != nil {
-		return ConsentOutcome{}, err
-	}
-	o := ConsentOutcome{ID: string(f[0]), State: string(f[1]), Reason: string(f[2])}
-	if !validOutcome(o) {
-		return ConsentOutcome{}, fmt.Errorf("%w: consent outcome", ErrProtocol)
-	}
-	return o, nil
+	return consentOutcomeCodec.decode(frame)
 }
 
 // validOutcome: a request ID and one of the outcomes a hold can end in.
@@ -104,37 +134,19 @@ func validOutcome(o ConsentOutcome) bool {
 }
 
 func EncodeConsentOutcomeStored(s ConsentOutcomeStored) ([]byte, error) {
-	if !ValidID(s.ID) {
-		return nil, fmt.Errorf("%w: consent outcome answer needs its ID", ErrProtocol)
-	}
-	return encode(FrameConsentOutcomeStored, []byte(s.ID))
+	return consentStoredCodec.encode(s)
 }
 
 func DecodeConsentOutcomeStored(frame []byte) (ConsentOutcomeStored, error) {
-	id, err := decodeID(frame, consentOutcomeStoredShape)
-	if err == nil && !ValidID(id) {
-		err = fmt.Errorf("%w: consent outcome answer needs its ID", ErrProtocol)
-	}
-	return ConsentOutcomeStored{ID: id}, err
+	return consentStoredCodec.decode(frame)
 }
 
 func EncodeConsentOutcomeRefused(r ConsentOutcomeRefused) ([]byte, error) {
-	if !validConsentRefusal(r) {
-		return nil, fmt.Errorf("%w: consent outcome refusal", ErrProtocol)
-	}
-	return encode(FrameConsentOutcomeRefused, []byte(r.ID), []byte(r.Reason))
+	return consentRefusedCodec.encode(r)
 }
 
 func DecodeConsentOutcomeRefused(frame []byte) (ConsentOutcomeRefused, error) {
-	f, err := decode(frame, consentRefusedShape)
-	if err != nil {
-		return ConsentOutcomeRefused{}, err
-	}
-	r := ConsentOutcomeRefused{ID: string(f[0]), Reason: string(f[1])}
-	if !validConsentRefusal(r) {
-		return ConsentOutcomeRefused{}, fmt.Errorf("%w: consent outcome refusal", ErrProtocol)
-	}
-	return r, nil
+	return consentRefusedCodec.decode(frame)
 }
 
 // validConsentRefusal: a request ID and a reason.

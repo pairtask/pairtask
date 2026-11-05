@@ -93,12 +93,18 @@ func forgetTombstone(ctx context.Context, tx *sql.Tx, t tombstone) error {
 // full again: a partial one stays, so dropping it never refills it.
 func reclaimConsentRate(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
 	b, found, err := readRateBucket(ctx, tx, contact)
-	if err != nil || !found || b.refilled(now).tokens < ConsentBurst {
+	if err != nil || !found {
 		return err
+	}
+	if !b.fullAt(now) {
+		return nil
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM consent_rate WHERE contact = ?`, contact)
 	return err
 }
+
+// fullAt: the bucket would be full again at now.
+func (b rateBucket) fullAt(now time.Time) bool { return b.refilled(now).tokens >= ConsentBurst }
 
 // rememberedIdentities is how many of the contact's inbound identities
 // this side still remembers: its rows, and its held requests that have no

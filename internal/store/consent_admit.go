@@ -34,23 +34,28 @@ var consentChecks = slices.DeleteFunc(slices.Clone(inboundChecks), func(c inboun
 })
 
 // holdOrRefuse holds a request refused only as not shared when its
-// contact may be asked, else refuses it as before. One below the replay
+// contact may be asked, admits it when a live session grant already
+// covers what it needs, else refuses it as before. One below the replay
 // floor is too old first: a forgotten hold's sequence is never a new ask.
-func holdOrRefuse(ctx context.Context, tx *sql.Tx, r newRow, answer messaging.Answer) (messaging.Answer, bool, error) {
+func holdOrRefuse(ctx context.Context, tx *sql.Tx, in inboundRow, answer messaging.Answer) (messaging.Answer, bool, error) {
+	r := in.newRow
 	if old, err := belowFloor(ctx, tx, r.key.contact, r.m.N); old || err != nil {
 		return refused(messaging.ReasonTooOld), false, err
 	}
-	targets, ok, err := heldTargets(ctx, tx, r)
+	a, err := admissionOf(ctx, tx, in)
 	if err != nil {
 		return messaging.Answer{}, false, err
 	}
-	if !ok {
+	if a.kind == admitNone {
 		return refuseNotShared(ctx, tx, r, answer)
 	}
 	if answer, err := runChecks(ctx, tx, consentChecks, r); !answer.Stored || err != nil {
 		return answer, false, err
 	}
-	return holdRequest(ctx, tx, heldRow{r, targets})
+	if a.kind == admitSession {
+		return admitUnderSession(ctx, tx, heldRow{r, a.targets}, a.owner)
+	}
+	return holdRequest(ctx, tx, heldRow{r, a.targets})
 }
 
 // refuseNotShared is today's not_shared answer: recorded for a review
@@ -72,20 +77,52 @@ func runChecks(ctx context.Context, tx *sql.Tx, checks []inboundCheck, r newRow)
 	return stored, nil
 }
 
-// heldTargets are the request's targets when it may be held: the contact
-// opted in and active, its recipients local agents, and its scopes
-// holdable.
-func heldTargets(ctx context.Context, tx *sql.Tx, r newRow) ([]protocol.ConsentTarget, bool, error) {
-	ok, err := consentOpen(ctx, tx, r.key.contact)
+// What may become of a request refused only as not shared.
+const (
+	admitNone    = ""        // refused as before
+	admitHold    = "hold"    // held for the operator
+	admitSession = "session" // admitted under a live session grant
+)
+
+// admission is a request's canonical targets, what may become of it, and
+// the live owner a session admission is evidenced by.
+type admission struct {
+	targets []protocol.ConsentTarget
+	kind    string
+	owner   LiveOwner
+}
+
+// admissionOf is what may become of a request: nothing unless the contact
+// opted in and is active and its recipients are local agents; then held
+// when a scope is undecided and none denied, or admitted when live session
+// grants cover every scope no persistent grant does.
+func admissionOf(ctx context.Context, tx *sql.Tx, in inboundRow) (admission, error) {
+	ok, err := consentOpen(ctx, tx, in.key.contact)
 	if err == nil && ok {
-		ok, err = localAgents(ctx, tx, r.m.To)
+		ok, err = localAgents(ctx, tx, in.m.To)
 	}
 	if err != nil || !ok {
-		return nil, false, err
+		return admission{}, err
 	}
-	targets := requestTargets(r.m)
-	states, err := scopeStates(ctx, tx, targetScopes(r.key.contact, targets), r.m.Review)
-	return targets, err == nil && holdable(states), err
+	owner, err := sessionOwner(ctx, tx, in.gate)
+	if err != nil {
+		return admission{}, err
+	}
+	a := admission{targets: requestTargets(in.m), owner: owner}
+	states, err := scopeStates(ctx, tx, targetScopes(in.key.contact, a.targets), scopeQuery{in.m.Review, owner})
+	a.kind = admitKind(states)
+	return a, err
+}
+
+// admitKind is what scopes in these states let become of their request.
+func admitKind(states []string) string {
+	switch {
+	case holdable(states):
+		return admitHold
+	case sessionAdmits(states):
+		return admitSession
+	}
+	return admitNone
 }
 
 // consentOpen: the contact opted in and isn't paused.
@@ -119,8 +156,12 @@ type heldRow struct {
 
 // size is what a held request charges: its text and its review request,
 // in bytes as stored.
-func (h heldRow) size() int {
-	return len(h.r.m.Text) + len(reviewAskJSON(h.r.m.Review).String)
+func (h heldRow) size() int { return heldSize(h.r.m) }
+
+// heldSize is what a request charges the shared byte bounds: its text and
+// its review request, in bytes as stored.
+func heldSize(m messaging.Message) int {
+	return len(m.Text) + len(reviewAskJSON(m.Review).String)
 }
 
 // holdRequest charges the bounds and the rate, and holds the request.
@@ -138,6 +179,30 @@ func holdRequest(ctx context.Context, tx *sql.Tx, h heldRow) (messaging.Answer, 
 		return messaging.Answer{}, false, err
 	}
 	return heldAnswer(id), true, nil
+}
+
+// admitUnderSession stores a request a live session grant covers as
+// already allowed under that session's evidence, and stages it as an
+// allowed hold is: the hub's dispatch fence still ends it if the session
+// does first. The requester hears held, then the dispatch's outcome. No
+// prompt, so no arrival token.
+func admitUnderSession(ctx context.Context, tx *sql.Tx, h heldRow, owner LiveOwner) (messaging.Answer, bool, error) {
+	id := consentID(h.r.key.contact, h.r.m.ID)
+	if err := insertConsent(ctx, tx, h, id); err != nil {
+		return messaging.Answer{}, false, err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE consent_requests SET state = 'allowed', revision = revision + 1, decided_at = ?,
+    choice = 'session', evidence_kind = 'session', evidence_epoch = ?, evidence_gen = ? WHERE id = ?`,
+		msgStamp(h.r.now), owner.Epoch, int64(owner.Gen), id)
+	if err != nil {
+		return messaging.Answer{}, false, err
+	}
+	r := h.r
+	r.consented = true
+	if err := insertMessage(ctx, tx, r); err != nil {
+		return messaging.Answer{}, false, err
+	}
+	return heldAnswer(id), true, stageImport(ctx, tx, r)
 }
 
 func heldAnswer(id string) messaging.Answer {
@@ -165,6 +230,11 @@ func (u heldUse) within(size int) bool {
 	if u.contact >= ConsentPerContact || u.total >= ConsentTotal {
 		return false
 	}
+	return u.bytesWithin(size)
+}
+
+// bytesWithin: one more request of size fits the byte bounds.
+func (u heldUse) bytesWithin(size int) bool {
 	return u.contactBytes+size <= ConsentContactSize && u.totalBytes+size <= ConsentTotalSize
 }
 

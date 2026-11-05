@@ -155,6 +155,8 @@ type Model struct {
 	// consentOpening is the read a /pair consent is waiting for; Esc clears
 	// it, so a late answer opens nothing.
 	consentOpening string
+	consentGather  []protocol.ConsentView // a contact's held requests read so far for its list
+	held           consentHeld            // held requests by contact, for Needs you and /pair status
 	view           viewport
 	cutoff         uint64 // /clear: rows with seq <= cutoff are hidden
 	find           string // the last /find query
@@ -497,6 +499,7 @@ func (m *Model) resetSequenceState() {
 // resync installs a new baseline: snapshot first, then inbox and history.
 func (m *Model) resync() tea.Cmd {
 	m.baseline = false
+	m.invalidateConsent() // a choice never outlives the view it was made on
 	return m.request(kindSnapshot, protocol.Message{Type: protocol.TypeOperatorSnapshot})
 }
 

@@ -16,8 +16,9 @@ type consentDispatchLegacyAcceptor interface {
 	Accept(context.Context, string, messaging.Message, time.Time) (messaging.Answer, error)
 }
 
-func consentDispatchAccept(t *testing.T, h *Hub, key string, m messaging.Message, now time.Time) messaging.Answer {
+func consentDispatchAccept(t *testing.T, h *Hub, key string, m messaging.Message) messaging.Answer {
 	t.Helper()
+	now := m.CreatedAt
 	var answer messaging.Answer
 	var err error
 	if s, ok := any(h.store.PeerMessages()).(consentDispatchVersionAcceptor); ok {
@@ -44,7 +45,7 @@ func consentDispatchFixture(t *testing.T, kind, ownerState string, isReview bool
 	if isReview {
 		m.Review = &messaging.ReviewAsk{Forge: "github", Repository: "pairtask/pairtask", Change: "293", Base: "base-293", Head: "head-293", Publish: true, Formal: true}
 	}
-	a := consentDispatchAccept(t, h, key, m, now)
+	a := consentDispatchAccept(t, h, key, m)
 	if !a.Held {
 		t.Fatalf("request was not held: %+v", a)
 	}

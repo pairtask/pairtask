@@ -18,12 +18,13 @@ func TestConsentLimitsAcceptanceDuplicateAtRateLimitStillReplays(t *testing.T) {
 		}
 	}
 	before := consentSnapshot(t, f)
-	a, err := consentAccept(t, f.db, f.key, 8, consentMessage("burst-0", 1, "alpha"), messageAt)
+	a, err := f.consentAccept(t, 8, consentMessage("burst-0", 1, "alpha"), messageAt)
 	pairOK(t, err)
 	pairEqual(t, a.HeldID, firstID)
 	consentUnchanged(t, f, before)
-	a, err = consentAccept(t, f.db, f.key, 8, consentMessage("over-burst", 11, "alpha"), messageAt)
-	if err == nil && (a.Held || a.Stored) {
+	a, err = f.consentAccept(t, 8, consentMessage("over-burst", 11, "alpha"), messageAt)
+	accepted := a.Held || a.Stored
+	if err == nil && accepted {
 		t.Fatalf("rate bound admitted extra request: %+v", a)
 	}
 	consentUnchanged(t, f, before)
@@ -41,7 +42,7 @@ func TestConsentLimitsAcceptanceConcurrentLastAgentSlotIsAtomic(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func(i int) {
 			<-start
-			a, err := consentAccept(t, f.db, f.key, 8, consentMessage(fmt.Sprintf("last-%d", i), uint64(30+i), "alpha", "beta"), now)
+			a, err := f.consentAccept(t, 8, consentMessage(fmt.Sprintf("last-%d", i), uint64(30+i), "alpha", "beta"), now)
 			results <- err == nil && a.Held
 		}(i)
 	}

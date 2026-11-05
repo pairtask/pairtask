@@ -2,15 +2,16 @@ package store_test
 
 import (
 	"context"
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
 	"testing"
 	"time"
 )
 
-func consentStageImport(t *testing.T, f workspaceStoreFixture, id, kind string, targets ...string) store.RemoteImport {
+func consentStageImport(t *testing.T, f workspaceStoreFixture, m messaging.Message, kind string) store.RemoteImport {
 	t.Helper()
-	v := consentHeld(t, f, consentMessage(id, 1, targets...), messageAt)
+	v := consentHeld(t, f, m, messageAt)
 	d := consentDecision(v, kind, messageAt)
 	d.AuditID = consentAudit(t, f, "consent_decide")
 	_, err := f.db.DecideConsent(context.Background(), d)
@@ -18,7 +19,7 @@ func consentStageImport(t *testing.T, f workspaceStoreFixture, id, kind string, 
 	pending, err := f.db.PendingImports(context.Background(), 20)
 	pairOK(t, err)
 	for _, imp := range pending {
-		if imp.RemoteID == id {
+		if imp.RemoteID == m.ID {
 			return imp
 		}
 	}
@@ -30,7 +31,7 @@ func TestConsentReasonAcceptanceExactWithheldReasonSurvivesImportPruneAndRestart
 	for _, reason := range []string{"session_ended", "paused", "revoked"} {
 		t.Run(reason, func(t *testing.T) {
 			f := consentFixture(t, "alpha")
-			imp := consentStageImport(t, f, "withheld-original", protocol.ConsentSession, "alpha")
+			imp := consentStageImport(t, f, consentMessage("withheld-original", 1, "alpha"), protocol.ConsentSession)
 			out, err := f.db.WithholdConsent(context.Background(), imp, reason, messageAt.Add(time.Minute))
 			pairOK(t, err)
 			pairEqual(t, out.State, store.ImportWithheld)
@@ -49,7 +50,7 @@ func TestConsentReasonAcceptanceExactWithheldReasonSurvivesImportPruneAndRestart
 
 func TestConsentReasonAcceptanceReasonAndWithholdingCommitAtomically(t *testing.T) {
 	f := consentFixture(t, "alpha")
-	imp := consentStageImport(t, f, "atomic-reason", protocol.ConsentSession, "alpha")
+	imp := consentStageImport(t, f, consentMessage("atomic-reason", 1, "alpha"), protocol.ConsentSession)
 	_, err := f.raw.Exec(`CREATE TRIGGER fail_reason BEFORE UPDATE ON consent_requests BEGIN SELECT RAISE(ABORT,'injected reason failure'); END`)
 	pairOK(t, err)
 	before := consentSnapshot(t, f)

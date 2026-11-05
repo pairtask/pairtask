@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -17,6 +18,72 @@ import (
 // connection that decided owns this broker incarnation: the loop checks it
 // at each protected boundary, dispatch and the publication reservation,
 // so a disconnect, a replacement or a restart stops what hasn't crossed.
+
+// hubConsent is the hub's consent state. check: held requests may have
+// moved, signalled on pair.changed; mark is where they stood when last
+// told, owned by Run; conflicts are outcomes a contact contradicted, to
+// tell the operator; unended is an owner whose session authority the
+// store failed to end, retried at the next owner change, owned by Run.
+type hubConsent struct {
+	check     atomic.Bool
+	mark      store.ConsentMark
+	conflicts consentConflicts
+	unended   *store.LiveOwner
+}
+
+// consentOwned records the connection that now owns the broker as the one
+// session grants may admit under. A failure leaves the store's session
+// admission suspended, so no stale grant admits; the dispatch fence holds
+// either way.
+func (h *Hub) consentOwned(ctx context.Context, sess *OperatorSession) {
+	h.retryConsentEnd(ctx)
+	if err := h.store.PeerMessages().SetConsentOwner(ctx, h.epoch, sess.gen); err != nil {
+		h.log.Error("session consent owner not recorded; session grants admit nothing", "error", err)
+	}
+}
+
+// consentReleased ends a closing owner's session authority in the store.
+// A failure leaves session admission suspended and is retried at the next
+// owner change.
+func (h *Hub) consentReleased(ctx context.Context, sess *OperatorSession) {
+	owner := store.LiveOwner{Epoch: h.epoch, Gen: sess.gen}
+	if err := h.store.PeerMessages().EndConsentOwner(ctx, owner.Epoch, owner.Gen); err != nil {
+		h.log.Error("session consent owner not ended; session grants admit nothing", "error", err)
+		h.consent.unended = &owner
+	}
+}
+
+// retryConsentEnd ends, again, an owner whose end failed before.
+func (h *Hub) retryConsentEnd(ctx context.Context) {
+	o := h.consent.unended
+	if o == nil {
+		return
+	}
+	if err := h.store.PeerMessages().EndConsentOwner(ctx, o.Epoch, o.Gen); err != nil {
+		h.log.Error("session consent owner still not ended", "error", err)
+		return
+	}
+	h.consent.unended = nil
+}
+
+// consentBaseline tells the owner, right after its snapshot, that requests
+// are held already, so a view opened with some waiting shows them; with
+// none held it says nothing. Events reach a session only after its
+// snapshot, so this is where a connect first can hear it.
+func (h *Hub) consentBaseline(ctx context.Context, sess *OperatorSession) {
+	if h.owner != sess {
+		return
+	}
+	mark, err := h.store.ConsentMark(ctx)
+	if err != nil {
+		h.log.Warn("held requests unreadable", "err", err)
+		return
+	}
+	h.consent.mark = mark
+	if mark.Pending > 0 {
+		h.emit(protocol.SessionEvent{Kind: protocol.EventConsentChanged})
+	}
+}
 
 // consentOps are the consent operations of operator_contact.
 var consentOps = map[string]bool{
@@ -264,7 +331,7 @@ func (h *Hub) contactConsentReset(ctx context.Context, req operatorRequest, audi
 // consentDue asks the loop to look at held requests, after something that
 // may have held or expired one. Safe from any goroutine; it never blocks.
 func (h *Hub) consentDue() {
-	h.consentCheck.Store(true)
+	h.consent.check.Store(true)
 	select {
 	case h.pair.changed <- struct{}{}:
 	default: // one is due already
@@ -282,10 +349,10 @@ func (h *Hub) noteConsent(ctx context.Context) {
 		h.log.Warn("held requests unreadable", "err", err)
 		return
 	}
-	if mark == h.consentMark {
+	if mark == h.consent.mark {
 		return
 	}
-	h.consentMark = mark
+	h.consent.mark = mark
 	h.emit(protocol.SessionEvent{Kind: protocol.EventConsentChanged})
 }
 
@@ -303,7 +370,7 @@ func (h *Hub) ConsentConflicts(contact string, ids []string) {
 	if len(ids) == 0 {
 		return
 	}
-	c := &h.conflicts
+	c := &h.consent.conflicts
 	c.mu.Lock()
 	for _, id := range ids {
 		h.log.Warn("paired workspace contradicted a held request's outcome; refused", "contact", contact, "request", id)
@@ -319,7 +386,7 @@ func (h *Hub) ConsentConflicts(contact string, ids []string) {
 // announceConflicts emits the reported conflicts; it runs on the Run
 // goroutine.
 func (h *Hub) announceConflicts() {
-	c := &h.conflicts
+	c := &h.consent.conflicts
 	c.mu.Lock()
 	events := c.pending
 	c.pending = nil

@@ -286,35 +286,48 @@ func (s Session) offer(ctx context.Context) ([]Row, error) {
 	return s.Store.Offer(ctx, s.Contact, s.Now(), l)
 }
 
+// sendMessage sends one message and records the peer's answer: stored,
+// held there for its operator, or refused.
 func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
-	encode := EncodeMessage
-	switch {
-	case m.Review != nil:
-		encode = EncodeReviewAsk
-	case m.Routed():
-		encode = EncodeRouted
-	}
-	if err := s.send(encode(m)); err != nil {
+	if err := s.send(encoderOf(m)(m)); err != nil {
 		return false, err
 	}
 	frame, err := s.Frames.Recv()
 	if err != nil {
 		return false, err
 	}
+	return s.recordAnswer(ctx, m.ID, frame)
+}
+
+// encoderOf is the frame a message goes as: a review request, a message
+// routed to agents, or a message to the operator.
+func encoderOf(m Message) func(Message) ([]byte, error) {
+	switch {
+	case m.Review != nil:
+		return EncodeReviewAsk
+	case m.Routed():
+		return EncodeRouted
+	}
+	return EncodeMessage
+}
+
+// recordAnswer records the peer's answer to message id; stored is false
+// for a refusal.
+func (s Session) recordAnswer(ctx context.Context, id string, frame []byte) (bool, error) {
 	switch kind, _ := Kind(frame); kind {
 	case FrameRefused:
-		return false, s.recordRefusal(ctx, m.ID, frame)
+		return false, s.recordRefusal(ctx, id, frame)
 	case FrameHeld:
-		return true, s.recordHeld(ctx, m.ID, frame) // stored there: never offered again
+		return true, s.recordHeld(ctx, id, frame) // stored there: never offered again
 	}
 	ack, err := DecodeStored(frame)
 	if err != nil {
 		return false, err
 	}
-	if ack.ID != m.ID {
+	if ack.ID != id {
 		return false, fmt.Errorf("%w: answer for another message", ErrProtocol)
 	}
-	return true, s.Store.Delivered(ctx, s.Contact, m.ID, s.Now())
+	return true, s.Store.Delivered(ctx, s.Contact, id, s.Now())
 }
 
 func (s Session) recordRefusal(ctx context.Context, id string, frame []byte) error {

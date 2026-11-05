@@ -21,6 +21,7 @@ const (
 	scopeAllowed   = "allowed"
 	scopeUndecided = "undecided"
 	scopeDenied    = "denied"
+	scopeSession   = "session" // a live session grant covers it; never stored
 )
 
 // consentOperations are the operations a scope may name.
@@ -60,18 +61,23 @@ func targetScopes(contact string, targets []protocol.ConsentTarget) []consentSco
 	return out
 }
 
+// scopeQuery is what a scope's state reads besides the scope: the review
+// request it is for, and the live owner whose session grants count; none
+// for a decision, which never reads a session grant as decided.
+type scopeQuery struct {
+	ask   *messaging.ReviewAsk
+	owner LiveOwner
+}
+
 // scopeStates are the state of each scope now, in order.
-func scopeStates(ctx context.Context, tx *sql.Tx, scopes []consentScope, ask *messaging.ReviewAsk) ([]string, error) {
-	var legacy bool
-	if len(scopes) > 0 {
-		err := tx.QueryRowContext(ctx, `SELECT consent_legacy FROM peer_contacts WHERE identity_key = ?`, scopes[0].contact).Scan(&legacy)
-		if err != nil {
-			return nil, err
-		}
+func scopeStates(ctx context.Context, tx *sql.Tx, scopes []consentScope, q scopeQuery) ([]string, error) {
+	legacy, err := scopesLegacy(ctx, tx, scopes)
+	if err != nil {
+		return nil, err
 	}
 	states := make([]string, 0, len(scopes))
 	for _, sc := range scopes {
-		state, err := scopeState(ctx, tx, sc, scopeContext{ask, legacy})
+		state, err := scopeState(ctx, tx, sc, scopeContext{q, legacy})
 		if err != nil {
 			return nil, err
 		}
@@ -80,30 +86,74 @@ func scopeStates(ctx context.Context, tx *sql.Tx, scopes []consentScope, ask *me
 	return states, nil
 }
 
-// scopeContext is what a scope's state reads besides the scope: the
-// review request it is for, and whether the contact is legacy.
+// scopesLegacy: the scopes' contact was paired before consent existed.
+func scopesLegacy(ctx context.Context, tx *sql.Tx, scopes []consentScope) (bool, error) {
+	if len(scopes) == 0 {
+		return false, nil
+	}
+	var legacy bool
+	err := tx.QueryRowContext(ctx, `SELECT consent_legacy FROM peer_contacts WHERE identity_key = ?`, scopes[0].contact).Scan(&legacy)
+	return legacy, err
+}
+
+// scopeContext is a scope's query, and whether its contact is legacy.
 type scopeContext struct {
-	ask    *messaging.ReviewAsk
+	scopeQuery
 	legacy bool
 }
 
-// scopeState is a scope's state: the grant first, then a decision, then
-// the contact's default.
+// scopeState is a scope's state: the grant first, then an explicit
+// denial, then a live session grant, then a decision or the contact's
+// default. A session never outranks a denial.
 func scopeState(ctx context.Context, tx *sql.Tx, sc consentScope, c scopeContext) (string, error) {
 	allowed, err := scopeGranted(ctx, tx, sc, c.ask)
 	if err != nil || allowed {
 		return scopeAllowed, err
 	}
-	var state string
-	err = tx.QueryRowContext(ctx, `SELECT state FROM consent_decisions WHERE contact = ? AND agent = ? AND operation = ?`,
-		sc.contact, sc.agent, sc.operation).Scan(&state)
-	switch {
-	case errors.Is(err, sql.ErrNoRows) && c.legacy:
-		return scopeDenied, nil
-	case errors.Is(err, sql.ErrNoRows):
-		return scopeUndecided, nil
+	decided, err := decidedState(ctx, tx, sc, c.legacy)
+	if err != nil || decided == scopeDenied {
+		return decided, err
 	}
-	return state, err
+	session, err := sessionCovers(ctx, tx, sc, c.scopeQuery)
+	if err != nil || !session {
+		return decided, err
+	}
+	return scopeSession, nil
+}
+
+// decidedState is a scope's explicit decision, or with none the contact's
+// default: denied for a legacy contact, else undecided.
+func decidedState(ctx context.Context, tx *sql.Tx, sc consentScope, legacy bool) (string, error) {
+	state, found, err := explicitState(ctx, tx, sc)
+	switch {
+	case err != nil || found:
+		return state, err
+	case legacy:
+		return scopeDenied, nil
+	}
+	return scopeUndecided, nil
+}
+
+// explicitState is a scope's explicit decision row, if any.
+func explicitState(ctx context.Context, tx *sql.Tx, sc consentScope) (string, bool, error) {
+	var state string
+	err := tx.QueryRowContext(ctx, `SELECT state FROM consent_decisions WHERE contact = ? AND agent = ? AND operation = ?`,
+		sc.contact, sc.agent, sc.operation).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return state, err == nil, err
+}
+
+// explicitlyDenied: the scope has no grant now and the operator denied it
+// explicitly; a legacy default is not a denial here.
+func explicitlyDenied(ctx context.Context, tx *sql.Tx, sc consentScope, ask *messaging.ReviewAsk) (bool, error) {
+	allowed, err := scopeGranted(ctx, tx, sc, ask)
+	if err != nil || allowed {
+		return false, err
+	}
+	state, _, err := explicitState(ctx, tx, sc)
+	return state == scopeDenied, err
 }
 
 // scopeGranted: the grant that holds now allows the scope; publication
@@ -113,15 +163,25 @@ func scopeGranted(ctx context.Context, tx *sql.Tx, sc consentScope, ask *messagi
 		return allGranted(ctx, tx, sc.contact, []string{sc.agent})
 	}
 	g, granted, err := reviewGrant(ctx, tx, sc.contact, sc.agent)
-	if err != nil || !granted || sc.operation == protocol.ConsentReview {
-		return granted, err
+	if err != nil || !granted {
+		return false, err
 	}
-	return g.allows(protocol.ReviewPolicy{Publish: true, Formal: ask != nil && ask.Formal}), nil
+	if sc.operation == protocol.ConsentReview {
+		return true, nil
+	}
+	return g.allows(protocol.ReviewPolicy{Publish: true, Formal: askedFormal(sc, ask)}), nil
 }
 
 // holdable: nothing is explicitly denied and something needs a decision.
 func holdable(states []string) bool {
 	return !slices.Contains(states, scopeDenied) && slices.Contains(states, scopeUndecided)
+}
+
+// sessionAdmits: nothing needs a decision, and a live session grant
+// covers something no persistent grant does.
+func sessionAdmits(states []string) bool {
+	return !slices.ContainsFunc(states, func(s string) bool { return s != scopeAllowed && s != scopeSession }) &&
+		slices.Contains(states, scopeSession)
 }
 
 // scopeDecision is one scope's explicit state, by which audit and when.
@@ -134,6 +194,11 @@ type scopeDecision struct {
 
 // decideScope records a scope's explicit state.
 func decideScope(ctx context.Context, tx *sql.Tx, d scopeDecision) error {
+	if d.state == scopeDenied {
+		if err := endSessions(ctx, tx, d.scope); err != nil { // a denial ends the scope's session too
+			return err
+		}
+	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO consent_decisions (contact, agent, operation, state, decided_at, audit_id)
 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (contact, agent, operation) DO UPDATE SET
     state = excluded.state, decided_at = excluded.decided_at, audit_id = excluded.audit_id`,

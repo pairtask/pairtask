@@ -51,15 +51,7 @@ func TestConsentOrderingAcceptanceTerminalSurvivesReconnectAndOldHeld(t *testing
 			cs := consentOutcomeDurableStore(t, db.PeerMessages())
 			held := messaging.Held{ID: "immutable-request", HeldID: "original-hold"}
 			sessionOK(t, cs.HeldBy(ctx, sessionContact, held, sessionAt))
-			reason := ""
-			switch state {
-			case "declined":
-				reason = "denied"
-			case "expired":
-				reason = "expired"
-			case "withheld":
-				reason = "session_ended"
-			}
+			reason := consentTerminalReason(state)
 			outcome := messaging.ConsentOutcome{ID: held.ID, State: state, Reason: reason}
 			sessionOK(t, cs.AcceptConsentOutcome(ctx, sessionContact, outcome, sessionAt))
 			before := consentOrderingSnapshot(t, path)
@@ -75,14 +67,7 @@ func TestConsentOrderingAcceptanceTerminalSurvivesReconnectAndOldHeld(t *testing
 			for table, want := range before {
 				sessionEqual(t, after[table], want)
 			}
-			conflicting := outcome
-			if state == "allowed" {
-				conflicting.State = "declined"
-				conflicting.Reason = "denied"
-			} else {
-				conflicting.State = "allowed"
-				conflicting.Reason = ""
-			}
+			conflicting := consentConflictingOutcome(outcome)
 			err = cs.AcceptConsentOutcome(ctx, sessionContact, conflicting, sessionAt.Add(2*time.Hour))
 			if !errors.Is(err, messaging.ErrConsentTerminalConflict) {
 				t.Fatalf("conflicting terminal outcome not rejected: %v", err)
@@ -96,4 +81,29 @@ func TestConsentOrderingAcceptanceTerminalSurvivesReconnectAndOldHeld(t *testing
 			sessionEqual(t, len(offers), 0)
 		})
 	}
+}
+
+func consentTerminalReason(state string) string {
+	reason := ""
+	switch state {
+	case "declined":
+		reason = "denied"
+	case "expired":
+		reason = "expired"
+	case "withheld":
+		reason = "session_ended"
+	}
+	return reason
+}
+
+func consentConflictingOutcome(outcome messaging.ConsentOutcome) messaging.ConsentOutcome {
+	conflicting := outcome
+	if outcome.State == "allowed" {
+		conflicting.State = "declined"
+		conflicting.Reason = "denied"
+	} else {
+		conflicting.State = "allowed"
+		conflicting.Reason = ""
+	}
+	return conflicting
 }

@@ -16,14 +16,14 @@ type consentLegacyAcceptor interface {
 	Accept(context.Context, string, messaging.Message, time.Time) (messaging.Answer, error)
 }
 
-func consentAccept(t *testing.T, db *store.Store, key string, version int, m messaging.Message, now time.Time) (messaging.Answer, error) {
+func (f workspaceStoreFixture) consentAccept(t *testing.T, version int, m messaging.Message, now time.Time) (messaging.Answer, error) {
 	t.Helper()
-	a := any(db.PeerMessages())
+	a := any(f.db.PeerMessages())
 	if s, ok := a.(consentVersionAcceptor); ok {
-		return s.AcceptVersion(context.Background(), key, version, m, now)
+		return s.AcceptVersion(context.Background(), f.key, version, m, now)
 	}
 	if s, ok := a.(consentLegacyAcceptor); ok {
-		return s.Accept(context.Background(), key, m, now)
+		return s.Accept(context.Background(), f.key, m, now)
 	}
 	t.Fatal("missing inbound acceptance seam")
 	return messaging.Answer{}, nil
@@ -38,10 +38,7 @@ func consentFixture(t *testing.T, agents ...string) workspaceStoreFixture {
 	t.Helper()
 	f := workspaceStore(t)
 	routingRegister(t, f.db, agents...)
-	pairOK(t, f.db.SetConsentOptIn(context.Background(), f.key, true, consentAudit(t, f, "consent_opt"), messageAt))
-	for _, agent := range agents {
-		pairOK(t, f.db.ResetConsentScope(context.Background(), f.key, agent, protocol.ConsentMessage, consentAudit(t, f, "consent_reset"), messageAt))
-	}
+	consentOptAndResetMessages(t, f, agents)
 	return f
 }
 func consentMessage(id string, n uint64, agents ...string) messaging.Message {
@@ -52,9 +49,10 @@ func consentMessage(id string, n uint64, agents ...string) messaging.Message {
 }
 func consentHeld(t *testing.T, f workspaceStoreFixture, m messaging.Message, now time.Time) protocol.ConsentView {
 	t.Helper()
-	a, err := consentAccept(t, f.db, f.key, 8, m, now)
+	a, err := f.consentAccept(t, 8, m, now)
 	pairOK(t, err)
-	if !a.Held || a.HeldID == "" || !a.Stored {
+	storedHold := a.Held && a.Stored
+	if !storedHold || a.HeldID == "" {
 		t.Fatalf("request escaped or was refused instead of held: %+v", a)
 	}
 	page, err := f.db.ConsentPage(context.Background(), f.key, 0, 100)
@@ -89,10 +87,17 @@ func consentUnchanged(t *testing.T, f workspaceStoreFixture, before map[string]s
 func consentAnotherContact(t *testing.T, f workspaceStoreFixture, n int, agents ...string) workspaceStoreFixture {
 	t.Helper()
 	f.key = messageContact(t, f.db, n)
-	pairOK(t, f.db.SetConsentOptIn(context.Background(), f.key, true, consentAudit(t, f, "consent_opt"), messageAt))
 	for _, agent := range agents {
 		routingRegister(t, f.db, agent)
+	}
+	consentOptAndResetMessages(t, f, agents)
+	return f
+}
+
+func consentOptAndResetMessages(t *testing.T, f workspaceStoreFixture, agents []string) {
+	t.Helper()
+	pairOK(t, f.db.SetConsentOptIn(context.Background(), f.key, true, consentAudit(t, f, "consent_opt"), messageAt))
+	for _, agent := range agents {
 		pairOK(t, f.db.ResetConsentScope(context.Background(), f.key, agent, protocol.ConsentMessage, consentAudit(t, f, "consent_reset"), messageAt))
 	}
-	return f
 }

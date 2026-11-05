@@ -36,7 +36,9 @@ func TestConsentLifecycleAcceptanceMouseCannotSelectOrChangeDraft(t *testing.T) 
 	h.input(chatKey('y', tea.ModCtrl))
 	consentInputNoWrites(t, h)
 	after := h.m.State()
-	if before.Draft != after.Draft || before.Pasted != after.Pasted || before.Selected != after.Selected || before.ScrollOffset != after.ScrollOffset {
+	editorChanged := before.Draft != after.Draft || before.Pasted != after.Pasted
+	conversationChanged := before.Selected != after.Selected || before.ScrollOffset != after.ScrollOffset
+	if editorChanged || conversationChanged {
 		t.Fatal("mouse escaped consent surface and changed editor or conversation")
 	}
 }
@@ -45,14 +47,7 @@ func TestConsentLifecycleAcceptanceViewingDoesNotCreateReceiptOrAutoOpen(t *test
 	h := consentInputHarness(t)
 	h.wire.in <- protocol.Message{Type: protocol.TypeEvent, Event: &protocol.SessionEvent{Kind: "consent_changed", Watermark: protocol.Watermark{Epoch: "epoch", Revision: 2}}}
 	h.await(func() bool {
-		for i := 0; i < len(h.requests); i++ {
-			r := h.requests[i]
-			if r.Type == protocol.TypeOperatorContact && r.ContactOp == "consent_list" {
-				h.requests = append(h.requests[:i], h.requests[i+1:]...)
-				h.reply(r, consentInputPage())
-				i--
-			}
-		}
+		consentInputReplyPages(h, consentInputPage())
 		return h.m.State().Revision >= 2 && h.m.State().InFlight == 0
 	})
 	if strings.Contains(ansi.Strip(h.m.View().Content), consentFixtureText) {
@@ -73,14 +68,7 @@ func TestConsentLifecycleAcceptanceRefreshInvalidatesSelectedChoice(t *testing.T
 	h.input(chatKey('3', 0))
 	h.wire.in <- protocol.Message{Type: protocol.TypeEvent, Event: &protocol.SessionEvent{Kind: "consent_changed", Watermark: protocol.Watermark{Epoch: "epoch", Revision: 2}}}
 	h.await(func() bool {
-		for i := 0; i < len(h.requests); i++ {
-			r := h.requests[i]
-			if r.Type == protocol.TypeOperatorContact && r.ContactOp == "consent_list" {
-				h.requests = append(h.requests[:i], h.requests[i+1:]...)
-				h.reply(r, consentInputPage())
-				i--
-			}
-		}
+		consentInputReplyPages(h, consentInputPage())
 		return h.m.State().Revision >= 2 && h.m.State().InFlight == 0
 	})
 	h.input(chatKey('y', tea.ModCtrl))

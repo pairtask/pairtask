@@ -50,18 +50,13 @@ func (s *Store) DecideConsent(ctx context.Context, d ConsentDecision) (ConsentOu
 // decideIn is DecideConsent inside its transaction.
 func decideIn(ctx context.Context, tx *sql.Tx, d ConsentDecision) (ConsentOutcome, error) {
 	held, found, err := consentByID(ctx, tx, d.ID)
-	switch {
-	case err != nil:
+	if err != nil {
 		return ConsentOutcome{}, err
-	case found && held.decidedBy(d):
+	}
+	if found && held.decidedBy(d) {
 		return held.outcome(), nil
-	case !found || !held.current(d):
-		return ConsentOutcome{}, ErrConsentStale
 	}
-	if err := requireContact(ctx, tx, contactKey(held.Contact)); err != nil {
-		return ConsentOutcome{}, err
-	}
-	if err := requireActive(ctx, tx, held.Contact); err != nil {
+	if err := requireDecidable(ctx, tx, held, d); err != nil {
 		return ConsentOutcome{}, err
 	}
 	if held.ExpiresAt <= msgStamp(d.Now) {
@@ -72,6 +67,18 @@ func decideIn(ctx context.Context, tx *sql.Tx, d ConsentDecision) (ConsentOutcom
 		return ConsentOutcome{}, err
 	}
 	return out, finishConsentAudit(ctx, tx, d.AuditID, "consent "+d.Choice)
+}
+
+// requireDecidable: the decision names the request as it still is, and its
+// contact is confirmed and active; a request not found is never current.
+func requireDecidable(ctx context.Context, tx *sql.Tx, held consentRow, d ConsentDecision) error {
+	if !held.current(d) {
+		return ErrConsentStale
+	}
+	if err := requireContact(ctx, tx, contactKey(held.Contact)); err != nil {
+		return err
+	}
+	return requireActive(ctx, tx, held.Contact)
 }
 
 // current: the decision names the request as it still is, pending.
@@ -119,7 +126,7 @@ func applyChoice(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, er
 		return ConsentOutcome{ID: c.held.ID, State: consentLater, Revision: c.held.Revision}, nil
 	}
 	scopes := targetScopes(c.held.Contact, c.held.Targets)
-	states, err := scopeStates(ctx, tx, scopes, c.held.Review)
+	states, err := scopeStates(ctx, tx, scopes, scopeQuery{ask: c.held.Review})
 	if err != nil {
 		return ConsentOutcome{}, err
 	}
@@ -145,6 +152,11 @@ func declineHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, er
 			return ConsentOutcome{}, err
 		}
 	}
+	// Work allowed once or for a session and not yet dispatched never
+	// passes the denial just recorded.
+	if err := withholdDenied(ctx, tx, c.held.Contact, c.d.Now); err != nil {
+		return ConsentOutcome{}, err
+	}
 	return settleHeld(ctx, tx, c, consentDeclined)
 }
 
@@ -152,10 +164,8 @@ func declineHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, er
 // asks for, and stages its delivery or review as an arrival under a grant
 // would have been.
 func allowHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, error) {
-	if c.d.Choice == protocol.ConsentAlways {
-		if err := installGrants(ctx, tx, c); err != nil {
-			return ConsentOutcome{}, err
-		}
+	if err := grantChoice(ctx, tx, c); err != nil {
+		return ConsentOutcome{}, err
 	}
 	out, err := settleHeld(ctx, tx, c, consentAllowed)
 	if err != nil {
@@ -171,6 +181,18 @@ func allowHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, erro
 	}
 	out.Dispatched = true
 	return out, stageImport(ctx, tx, r)
+}
+
+// grantChoice leaves what a choice grants beyond this request: the
+// persistent grants always installs, or the session grants of a session.
+func grantChoice(ctx context.Context, tx *sql.Tx, c decided) error {
+	switch c.d.Choice {
+	case protocol.ConsentAlways:
+		return installGrants(ctx, tx, c)
+	case protocol.ConsentSession:
+		return grantSession(ctx, tx, c)
+	}
+	return nil
 }
 
 // settleHeld moves the pending request to state, with the decision's
@@ -211,8 +233,9 @@ func evidenceOf(d ConsentDecision) (sql.NullString, sql.NullString, sql.NullInt6
 }
 
 // installGrants installs, for always, the existing grants for exactly the
-// scopes shown undecided: a message share per agent; a review grant whose
-// publication is at most what the request asked, and only when shown.
+// scopes shown undecided: a message share per agent; a review grant, and
+// publication raised to the asked ceiling only when it was shown. An
+// existing grant is never lowered.
 func installGrants(ctx context.Context, tx *sql.Tx, c decided) error {
 	for _, sc := range c.undecided {
 		if err := installGrant(ctx, tx, c, sc); err != nil {
@@ -226,19 +249,19 @@ func installGrants(ctx context.Context, tx *sql.Tx, c decided) error {
 	return err
 }
 
+// grantStatements install each operation's grant: a share, a review grant
+// without publication, or an existing review grant's publication raised.
+var grantStatements = map[string]string{
+	protocol.ConsentMessage: `INSERT INTO peer_grants (contact, agent, granted_at) VALUES (?1, ?2, ?3) ON CONFLICT DO NOTHING`,
+	protocol.ConsentReview: `INSERT INTO peer_review_grants (contact, agent, mode, publish, formal, granted_at)
+VALUES (?1, ?2, 'auto', 0, 0, ?3) ON CONFLICT DO NOTHING`,
+	protocol.ConsentPublish: `UPDATE peer_review_grants SET publish = 1, formal = formal OR ?4, granted_at = ?3
+WHERE contact = ?1 AND agent = ?2`,
+}
+
+// installGrant installs one scope's grant. Publication follows its
+// review's: shown undecided alone, it raises the grant there is.
 func installGrant(ctx context.Context, tx *sql.Tx, c decided, sc consentScope) error {
-	at := msgStamp(c.d.Now)
-	switch sc.operation {
-	case protocol.ConsentMessage:
-		_, err := tx.ExecContext(ctx, `INSERT INTO peer_grants (contact, agent, granted_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-			sc.contact, sc.agent, at)
-		return err
-	case protocol.ConsentReview:
-		publish := slices.Contains(c.undecided, consentScope{sc.contact, sc.agent, protocol.ConsentPublish})
-		formal := publish && c.held.Review != nil && c.held.Review.Formal
-		_, err := tx.ExecContext(ctx, `INSERT INTO peer_review_grants (contact, agent, mode, publish, formal, granted_at)
-VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, sc.contact, sc.agent, ReviewAuto, publish, formal, at)
-		return err
-	}
-	return nil // publication goes with its review's grant, never alone
+	_, err := tx.ExecContext(ctx, grantStatements[sc.operation], sc.contact, sc.agent, msgStamp(c.d.Now), askedFormal(sc, c.held.Review))
+	return err
 }

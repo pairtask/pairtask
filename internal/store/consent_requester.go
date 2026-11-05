@@ -64,7 +64,7 @@ func (p *PeerMessages) HeldBy(ctx context.Context, contact string, h messaging.H
 		if err := requireOffered(ctx, tx, contact, h.ID); err != nil {
 			return err
 		}
-		return recordHold(ctx, tx, contact, h, at)
+		return recordHold(ctx, tx, heldReport{contact, h, at})
 	})
 }
 
@@ -94,15 +94,22 @@ WHERE contact = ? AND direction = 'out' AND message_id = ?`, contact, id).Scan(&
 	return nil
 }
 
+// heldReport is a contact's Held for a message this side sent, and when.
+type heldReport struct {
+	contact string
+	h       messaging.Held
+	at      time.Time
+}
+
 // recordHold keeps the hold and delivers the message, as a Stored would.
-func recordHold(ctx context.Context, tx *sql.Tx, contact string, h messaging.Held, at time.Time) error {
+func recordHold(ctx context.Context, tx *sql.Tx, b heldReport) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO consent_held_out (contact, message_id, held_id, held_at)
-VALUES (?, ?, ?, ?)`, contact, h.ID, h.HeldID, msgStamp(at)); err != nil {
+VALUES (?, ?, ?, ?)`, b.contact, b.h.ID, b.h.HeldID, msgStamp(b.at)); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'delivered',
     delivered_at = COALESCE(delivered_at, ?), class = '', reason = ''
-WHERE contact = ? AND direction = 'out' AND message_id = ?`, msgStamp(at), contact, h.ID)
+WHERE contact = ? AND direction = 'out' AND message_id = ?`, msgStamp(b.at), b.contact, b.h.ID)
 	return err
 }
 

@@ -75,7 +75,9 @@ func TestConsentServerAcceptanceSessionGenerationIsOnAuthenticatedWire(t *testin
 	owner, opened := sessionConnect(f)
 	defer owner.Close()
 	first := sessionDecode[protocol.SessionInfo](t, opened, "session")
-	if first.Epoch == "" || first.Gen == 0 || !slices.Contains(first.Capabilities, "consent_prompts") {
+	identityMissing := first.Epoch == "" || first.Gen == 0
+	capabilityMissing := !slices.Contains(first.Capabilities, "consent_prompts")
+	if identityMissing || capabilityMissing {
 		t.Fatalf("authenticated session omitted consent identity/capability: %s", sessionJSON(opened))
 	}
 }

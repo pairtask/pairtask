@@ -43,7 +43,7 @@ func TestConsentDecisionAcceptanceExpiryIsDurableAndTerminal(t *testing.T) {
 	if err == nil && out.Dispatched {
 		t.Fatal("expired request dispatched")
 	}
-	a, err := consentAccept(t, f.db, f.key, 8, m, v.ExpiresAt.Add(2*time.Hour))
+	a, err := f.consentAccept(t, 8, m, v.ExpiresAt.Add(2*time.Hour))
 	pairOK(t, err)
 	if a.Held {
 		t.Fatalf("terminal expiry reopened: %+v", a)

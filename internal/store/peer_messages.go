@@ -57,13 +57,14 @@ const messagePageLimit = 64
 // PeerMessages is the store's messages between paired workspaces.
 type PeerMessages struct {
 	db    *sql.DB
-	fence *linkFence // nil for the root store; set by Admit (#276)
+	fence *linkFence   // nil for the root store; set by Admit (#276)
+	gate  *consentGate // the store's session admission gate (#293)
 }
 
 var _ messaging.Store = (*PeerMessages)(nil)
 
 // PeerMessages is the messaging store over this database.
-func (s *Store) PeerMessages() *PeerMessages { return &PeerMessages{db: s.db} }
+func (s *Store) PeerMessages() *PeerMessages { return &PeerMessages{db: s.db, gate: s.gate} }
 
 // confirmedContact: a contact row and a confirmed decision, as the inviter
 // (a delivered acceptance) or as the joiner (a confirmed contact join). A
