@@ -55,7 +55,8 @@ connect any MCP client [by hand](docs/mcp.md).
    ```
 
    Run it again later to upgrade. Upgrades end running sessions and keep your
-   projects.
+   projects. If it stops on the Incus server version, see
+   [upgrades](docs/sandbox.md#upgrades).
 
 3. **Sign in** inside the workspace:
 
