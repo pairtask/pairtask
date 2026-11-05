@@ -12,6 +12,10 @@ const wheelLines = 3
 // the same anchoring as PgUp/PgDn. The wheel at the top loads older history like PgUp; the
 // wheel at the bottom resumes following.
 func (m *Model) wheel(msg tea.MouseWheelMsg) tea.Cmd {
+	if m.consent != nil { // the wheel scrolls the preview, never what's under it
+		m.scrollConsent(wheelStep(msg))
+		return nil
+	}
 	direction := 0
 	switch msg.Button {
 	case tea.MouseWheelUp:

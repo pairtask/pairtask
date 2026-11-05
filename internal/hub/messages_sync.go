@@ -119,6 +119,7 @@ func (h *Hub) collectMessages(ctx context.Context, last time.Time) time.Time {
 		h.log.Warn("message collect failed", "err", err)
 		return last
 	}
+	h.consentDue() // it may have expired held requests (#293)
 	return now
 }
 
@@ -135,6 +136,7 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 	}
 	result, live, err := h.dialSession(ctx, c)
 	end(result.Moved())
+	h.ConsentConflicts(contact, result.ConsentConflicts)
 	if err != nil {
 		h.log.Info("message sync failed", "class", classifySync(err))
 		if h.recordDial(contact, syncOutcome{token: token, failure: classifySync(err)}) {

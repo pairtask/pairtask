@@ -206,6 +206,9 @@ func (m *Model) afterEdit() {
 // paste inserts pasted text as one insertion; it never sends, runs a
 // command or picks anything.
 func (m *Model) paste(msg tea.PasteMsg) tea.Cmd {
+	if m.consent != nil { // never a choice, never the draft underneath
+		return nil
+	}
 	c := &m.compose
 	if c.cmd != nil {
 		c.picker = nil // a paste completes nothing
@@ -457,6 +460,13 @@ func (m *Model) runPicked() tea.Cmd {
 // key routes a key press: global keys, then the help panel, then the
 // command line, then the draft.
 func (m *Model) key(msg tea.KeyPressMsg) tea.Cmd {
+	if m.consent != nil { // the held-request preview takes every key first (#293)
+		return m.consentKey(msg)
+	}
+	if m.consentOpening != "" && msg.String() == "esc" {
+		m.cancelConsentOpening()
+		return nil
+	}
 	if cmd, handled := m.globalKey(msg); handled {
 		return cmd
 	}

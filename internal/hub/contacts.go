@@ -37,6 +37,10 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	protocol.ContactOpResume: (*Hub).contactPause,
 	// The operator's acknowledgment (#287).
 	protocol.ContactOpAck: (*Hub).contactAck,
+	// Pending consent (#293).
+	protocol.ContactOpConsentDecide: (*Hub).contactConsentDecide,
+	protocol.ContactOpConsentOpt:    (*Hub).contactConsentOpt,
+	protocol.ContactOpConsentReset:  (*Hub).contactConsentReset,
 }
 
 // operatorContact serves operator_contact.
@@ -48,6 +52,9 @@ func (h *Hub) operatorContact(ctx context.Context, clients map[string]*Client, r
 	}
 	if rerr := checkNoConversation(msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
+	}
+	if consentOps[msg.ContactOp] {
+		return h.operatorConsent(ctx, req)
 	}
 	if _, err := h.homeRecipients(ctx, clients, msg.ContactHere); err != nil {
 		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)

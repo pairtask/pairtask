@@ -70,6 +70,8 @@ func (m *Model) applyEvent(ev *protocol.SessionEvent) tea.Cmd {
 		return m.sendRefused(ev)
 	case protocol.EventContactMessagesChanged:
 		return tea.Batch(m.contactsChanged(ev.ContactKey), m.reviewsMoved(), m.cardAsksChanged())
+	case protocol.EventConsentChanged:
+		return m.consentChanged()
 	}
 	if refresh := refreshEvents[ev.Kind]; refresh != nil {
 		return refresh(m)
@@ -164,6 +166,8 @@ var responseHandlers = map[string]responseHandler{
 	kindCardAsks:       (*Model).cardAsksResult,
 	kindAskedDetail:    (*Model).askedDetailResult,
 	kindRemoteReview:   (*Model).remoteReviewResult,
+	kindConsentList:    (*Model).consentListResult,
+	kindConsentDecide:  (*Model).consentDecideResult,
 }
 
 func (m *Model) handle(req pendingRequest, resp protocol.Message) tea.Cmd {

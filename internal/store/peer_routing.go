@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // peerRoutingSchema keeps what messages to and from agents need (#222):
@@ -106,6 +107,10 @@ func (p *PeerMessages) Unshare(ctx context.Context, contact string, agents []str
 				return err
 			}
 		}
+		// A revoke is an explicit decision: it never reads as undecided (#293).
+		if err := denyScopes(ctx, tx, denial{contact, named, []string{protocol.ConsentMessage}, now}); err != nil {
+			return err
+		}
 		if err := withholdUngranted(ctx, tx, contact, now); err != nil {
 			return err
 		}
@@ -162,9 +167,16 @@ func namedAgents(ctx context.Context, tx *sql.Tx, agents []string, all everyAgen
 }
 
 // ungranted is an import from contact ?2 whose group holds an agent no
-// longer shared with it.
+// longer shared with it. One the operator allowed from a hold (#293) needs
+// no share: only an agent's explicit denial since withholds it.
 const ungranted = `remote_imports.contact = ?2 AND COALESCE(remote_imports.kind, 'message') = 'message' AND EXISTS (SELECT 1 FROM json_each(remote_imports.recipients) j
-    WHERE j.value NOT IN (SELECT agent FROM peer_grants WHERE contact = ?2))`
+    WHERE j.value NOT IN (SELECT agent FROM peer_grants WHERE contact = ?2) AND (NOT ` + consentAllowedImport + ` OR j.value IN (
+        SELECT agent FROM consent_decisions WHERE contact = ?2 AND operation = 'message' AND state = 'denied')))`
+
+// consentAllowedImport: the import was staged by the operator allowing
+// its hold once or for a session (#293).
+const consentAllowedImport = `EXISTS (SELECT 1 FROM consent_requests cr WHERE cr.contact = remote_imports.contact
+    AND cr.message_id = remote_imports.remote_id AND cr.evidence_kind IN ('once', 'session'))`
 
 // withholdUngranted withholds, for the whole group, every message from
 // contact to a group holding an agent no longer shared with it: staged ones
@@ -178,7 +190,10 @@ WHERE state = 'pending' AND `+ungranted, msgStamp(now), contact)
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM durable_inbox WHERE acknowledged_at IS NULL AND message_id IN (
     SELECT local_id FROM remote_imports WHERE state = 'imported' AND `+ungranted+`)`, msgStamp(now), contact)
-	return err
+	if err != nil {
+		return err
+	}
+	return settleConsentOutcomes(ctx, tx, contact) // an allowed hold withheld is told so (#293)
 }
 
 // SharedAgents is the agents shared with contact, sorted.

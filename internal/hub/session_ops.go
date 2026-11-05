@@ -78,7 +78,7 @@ func (h *Hub) openSession(ctx context.Context, req operatorRequest) protocol.Mes
 	req.sess.gen = h.gen
 	h.owner = req.sess
 	return protocol.Message{Type: protocol.TypeOperatorSession, RequestID: req.msg.RequestID, Session: &protocol.SessionInfo{
-		SessionID: req.sess.ID, Epoch: h.epoch, Capabilities: protocol.SessionCapabilities, OpenedAt: req.sess.OpenedAt}}
+		SessionID: req.sess.ID, Epoch: h.epoch, Gen: req.sess.gen, Capabilities: protocol.SessionCapabilities, OpenedAt: req.sess.OpenedAt}}
 }
 
 // closeSession releases only the matching generation, never a newer owner.

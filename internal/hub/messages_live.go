@@ -162,6 +162,7 @@ func (h *Hub) link(open func(context.Context) messaging.Frames, l *liveLink, fir
 			}
 			return func(r messaging.Result, err error) {
 				end(r.Moved())
+				h.ConsentConflicts(contact, r.ConsentConflicts)
 				if err == nil {
 					h.recordRound(l) // LastSuccess is a completed round
 				}

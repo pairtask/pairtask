@@ -30,6 +30,13 @@ type Result struct {
 	ReadsSent, ReadsStored int // read receipts confirmed and received
 	// Review outcomes settled by the peer's answer, and taken from it.
 	OutcomesSent, OutcomesStored int
+	// Consent outcomes (#293) settled by the peer's answer, and taken from it.
+	ConsentOutcomesSent, ConsentOutcomesStored int
+	// ConsentOutcomesRefused counts this side's outcomes the contact refused;
+	// ConsentConflicts are the request IDs this side refused as
+	// terminal_conflict (#293), reported, never stored.
+	ConsentOutcomesRefused int
+	ConsentConflicts       []string
 	// DirectoryChanged: what the peer shares changed (#296);
 	// DirectoryAcked: the peer answered a directory other than the one it
 	// last answered (#305).
@@ -39,7 +46,19 @@ type Result struct {
 // Moved reports durable progress: anything stored, refused or confirmed,
 // even in a session that then failed.
 func (r Result) Moved() bool {
-	return r.DirectoryChanged || r.DirectoryAcked || r.Sent+r.Received+r.Refused+r.RefusalsRecorded+r.ReadsSent+r.ReadsStored+r.OutcomesSent+r.OutcomesStored > 0
+	return r.DirectoryChanged || r.DirectoryAcked || r.counted() > 0
+}
+
+// counted is every step the session counts.
+func (r Result) counted() int {
+	messages := r.Sent + r.Received + r.Refused + r.RefusalsRecorded
+	receipts := r.ReadsSent + r.ReadsStored
+	return messages + receipts + r.OutcomesSent + r.OutcomesStored + r.consentCounted()
+}
+
+// consentCounted is the consent outcomes settled either way.
+func (r Result) consentCounted() int {
+	return r.ConsentOutcomesSent + r.ConsentOutcomesStored + r.ConsentOutcomesRefused
 }
 
 // Session is one side of one session with one contact. Version is the one
@@ -54,12 +73,15 @@ type Session struct {
 }
 
 // maxVersion is the highest version this side speaks with its store: a
-// store without outcomes stops at review requests, one without routing at
-// the live version.
+// store without consent stops at findings, one without outcomes at review
+// requests, one without routing at the live version.
 func (s Session) maxVersion() byte {
+	if consentCapable(s.Store) {
+		return MaxVersion
+	}
 	switch s.Store.(type) {
 	case OutcomeStore:
-		return MaxVersion
+		return FindingsVersion
 	case RoutingStore:
 		return ReviewVersion
 	}
@@ -169,6 +191,9 @@ func (s Session) steps(dialer bool) []phase {
 	if _, ok := s.outcomes(); ok {
 		pairs = append(pairs, [2]phase{s.sendOutcomes, s.receiveOutcomes})
 	}
+	if _, ok := s.consent(); ok {
+		pairs = append(pairs, [2]phase{s.sendConsentOutcomes, s.receiveConsentOutcomes})
+	}
 	steps := make([]phase, 0, 2*len(pairs))
 	for _, pair := range pairs {
 		if !dialer {
@@ -276,8 +301,11 @@ func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if kind, _ := Kind(frame); kind == FrameRefused {
+	switch kind, _ := Kind(frame); kind {
+	case FrameRefused:
 		return false, s.recordRefusal(ctx, m.ID, frame)
+	case FrameHeld:
+		return true, s.recordHeld(ctx, m.ID, frame) // stored there: never offered again
 	}
 	ack, err := DecodeStored(frame)
 	if err != nil {
@@ -347,7 +375,7 @@ var frameDecoders = map[byte]struct {
 // answerMessage stores, then answers; a store failure ends the session
 // without an answer, so the peer offers the message again.
 func (s Session) answerMessage(ctx context.Context, m Message, r *Result) error {
-	answer, err := s.Store.Accept(ctx, s.Contact, m, s.Now())
+	answer, err := acceptAt(ctx, s.Store, s.Version, acceptCall{s.Contact, m, s.Now()})
 	if err != nil {
 		return err
 	}
@@ -358,6 +386,9 @@ func (s Session) answerMessage(ctx context.Context, m Message, r *Result) error 
 		return s.send(EncodeRefused(Refused{ID: m.ID, Refusal: answer.Refusal}))
 	}
 	r.Received++
+	if answer.Held {
+		return s.answerHeld(m.ID, answer)
+	}
 	return s.send(EncodeStored(Stored{ID: m.ID}))
 }
 

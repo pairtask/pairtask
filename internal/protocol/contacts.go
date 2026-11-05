@@ -302,9 +302,17 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpPause:        {key: true, id: true},
 	ContactOpResume:       {key: true, id: true},
 	ContactOpAck:          {key: true, id: true, ack: true},
+	// Pending consent (#293): the list spans every contact without a key.
+	ContactOpConsentList:   {anyKey: true, consentBefore: true},
+	ContactOpConsentDecide: {key: true, id: true, decide: true},
+	ContactOpConsentOpt:    {key: true, id: true, consentOn: true},
+	ContactOpConsentReset:  {key: true, id: true, scope: true},
 }
 
-type contactFieldSet struct{ key, text, note, read, before, id, to, agents, grant, ask, approve, ack bool }
+type contactFieldSet struct {
+	key, text, note, read, before, id, to, agents, grant, ask, approve, ack bool
+	anyKey, consentBefore, decide, consentOn, scope                         bool
+}
 
 // ValidateContactRequest checks an operator_contact frame before anything
 // is looked up, audited or changed: a known operation with exactly its
@@ -312,14 +320,15 @@ type contactFieldSet struct{ key, text, note, read, before, id, to, agents, gran
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume or ack")
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, " +
+			"consent_list, consent_decide, consent_opt or consent_reset")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err
 	}
-	return errors.Join(validContactKey(msg.ContactKey), validContactID(msg, allowed), validContactText(msg, allowed),
+	return errors.Join(validKeyFor(msg, allowed), validContactID(msg, allowed), validContactText(msg, allowed),
 		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
-		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed))
+		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed), validConsent(msg, allowed))
 }
 
 // validContactAddress requires an address change's HOST:PORT: a host and
@@ -358,6 +367,13 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"contact_ack_upto", msg.ContactAckUpto != 0, allowed.ack},
 		{"contact_acked", msg.ContactAcked != nil, false},
 		{"contact_acks", msg.ContactAcks != nil, false},
+		{"contact_consent_before", msg.ContactConsentBefore != 0, allowed.consentBefore},
+		{"consent_decide", msg.ConsentDecide != nil, allowed.decide},
+		{"consent_on", msg.ConsentOn != nil, allowed.consentOn},
+		{"consent_agent", msg.ConsentAgent != "", allowed.scope},
+		{"consent_operation", msg.ConsentOperation != "", allowed.scope},
+		{"consent_page", msg.ConsentPage != nil, false},
+		{"consent_result", msg.ConsentResult != nil, false},
 	} {
 		if f.present && !f.allowed {
 			return fmt.Errorf("%s is not taken by contact_op %s", f.name, msg.ContactOp)

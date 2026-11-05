@@ -53,6 +53,10 @@ func (h *Hub) background(ctx context.Context, clients map[string]*Client) {
 	if h.importDue.Swap(false) {
 		h.drainImports(ctx, clients)
 	}
+	if h.consentCheck.Swap(false) {
+		h.noteConsent(ctx)
+	}
+	h.announceConflicts()
 }
 
 // flushRefusalSummaries stages the summaries of refusals counted past an
@@ -107,8 +111,13 @@ func (h *Hub) importPage(ctx context.Context, clients map[string]*Client) bool {
 }
 
 // importOne imports one staged message at the next sequence, which only an
-// import uses, and hands it to its recipients connected now.
+// import uses, and hands it to its recipients connected now. One allowed
+// for a session that no longer owns the broker is withheld instead (#293).
 func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp store.RemoteImport) {
+	if h.consentFenced(imp) {
+		h.withholdConsent(ctx, imp)
+		return
+	}
 	imp.Sessions = remoteSessions(clients, imp.Recipients)
 	result, err := h.store.ImportRemote(ctx, imp, h.seq+1, time.Now())
 	if err != nil {

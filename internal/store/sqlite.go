@@ -69,7 +69,7 @@ func Open(path string) (*Store, error) {
 	// serialized write pattern; a reader outside the broker still holds the
 	// file a moment, so a commit waits for it rather than failing at once.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema + pairedSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema + pairedSchema + consentSchema + consentHeldOutSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -139,13 +139,21 @@ var addedColumns = []struct{ table, column, decl string }{
 	// When the contact's last outcome of a request was applied here (#304):
 	// remote evidence only, never moved by settling a request here.
 	{"review_asks_out", "outcome_at", "TEXT"},
+	// Pending consent (#293): when the operator let a contact's undecided
+	// requests wait for a decision, NULL while off; and a contact paired
+	// before consent existed, whose absent grants can't prove undecided.
+	{"peer_contacts", "consent_since", "TEXT"},
+	{"peer_contacts", "consent_legacy", "INTEGER NOT NULL DEFAULT 0"},
+	// Why the requester refused a held request's outcome; '' unless refused.
+	{"consent_requests", "outcome_reason", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the
 // new column needs from the rows already there. A failure adds neither, so
 // the next open tries both again.
 var columnAdded = map[string]func(*sql.Tx) error{
-	"peer_messages.acked_at": seedAckFloors,
+	"peer_messages.acked_at":       seedAckFloors,
+	"peer_contacts.consent_legacy": markConsentLegacy,
 }
 
 func migrate(db *sql.DB) error {

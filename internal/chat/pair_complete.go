@@ -21,6 +21,8 @@ var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairReview,
 
 // pairVerbsHere are the /pair words that act in the open tab.
 func (m *Model) pairVerbsHere() []string {
+	// /pair consent takes a held request's ID from Needs you, so it isn't
+	// offered on its own.
 	if m.conv.selected.isContact() && m.routingAvailable() {
 		return append(slices.Clone(pairVerbs), contactPairVerbs...)
 	}
@@ -45,6 +47,7 @@ var pairUsages = map[string]string{
 	"name":    "name NAME|--clear: in a ⇄ tab, what this side calls that workspace",
 	"pause":   "pause: in a ⇄ tab, block new traffic with that workspace, both ways, until resume",
 	"resume":  "resume: in a ⇄ tab, let queued messages flow with that workspace again",
+	"consent": "consent ID: preview a held request from a paired workspace, then decide it",
 }
 
 func decidesRequest(word string) bool {

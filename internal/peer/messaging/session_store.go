@@ -40,6 +40,11 @@ func (s sessionStore) Accept(ctx context.Context, contact string, m Message, now
 	return answer, storeErr(err)
 }
 
+func (s sessionStore) AcceptVersion(ctx context.Context, contact string, version int, m Message, now time.Time) (Answer, error) {
+	answer, err := acceptAt(ctx, s.Store, byte(version), acceptCall{contact, m, now})
+	return answer, storeErr(err)
+}
+
 func (s sessionStore) PendingReads(ctx context.Context, contact string, max int) ([]string, error) {
 	ids, err := s.Store.PendingReads(ctx, contact, max)
 	return ids, storeErr(err)

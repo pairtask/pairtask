@@ -153,6 +153,7 @@ func (h *Hub) beginMessages(contact string) (end func(moved bool), ok bool) {
 		if moved {
 			h.MessagesChanged(contact)
 			h.importsDue() // it may have staged messages for agents
+			h.consentDue() // or held one for the operator (#293)
 		}
 	}, true
 }

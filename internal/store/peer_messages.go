@@ -299,6 +299,9 @@ type newRow struct {
 	m       messaging.Message
 	now     time.Time
 	localID string
+	// consented: this side's operator allowed the request it was held as
+	// (#293); a review request it stages is approved.
+	consented bool
 }
 
 // state is a new row's: inbound for this side's agents is routed, never a

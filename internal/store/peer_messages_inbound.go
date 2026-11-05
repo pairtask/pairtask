@@ -18,11 +18,20 @@ func refused(reason string) messaging.Answer {
 
 // Accept decides one inbound message in one transaction: a replay is
 // answered first, even with the inbox full; then the replay floor; then
-// validity and quota; only then is it stored.
+// validity and quota; only then is it stored. It speaks the newest
+// session version.
 func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.Message, now time.Time) (messaging.Answer, error) {
+	return p.AcceptVersion(ctx, contact, 0, m, now)
+}
+
+// AcceptVersion is Accept for a session at version, 0 the newest: from
+// messaging.ConsentPeerVersion on, a request refused only as not shared
+// may be held for this side's operator instead (#293).
+func (p *PeerMessages) AcceptVersion(ctx context.Context, contact string, version int, m messaging.Message, now time.Time) (messaging.Answer, error) {
 	var answer messaging.Answer
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		a, inserted, err := acceptIn(ctx, tx, newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m, now: now})
+		row := newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m, now: now}
+		a, inserted, err := acceptIn(ctx, tx, inboundRow{row, version})
 		answer = a
 		if err == nil && !inserted {
 			return errNothingStored // answered without a row: roll back
@@ -44,26 +53,43 @@ func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.M
 // errNothingStored ends a transaction that answered without storing.
 var errNothingStored = errors.New("nothing stored")
 
+// inboundRow is an inbound message and the version of its session.
+type inboundRow struct {
+	newRow
+	version int
+}
+
 // acceptIn is Accept inside its transaction; inserted reports a new row to
-// commit. A replay is answered as before and stores nothing.
-func acceptIn(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool, error) {
-	contact, m := r.key.contact, r.m
-	if err := requireContact(ctx, tx, contactKey(contact)); err != nil {
+// commit. A replay, of a stored or a held message, is answered as before
+// and stores nothing.
+func acceptIn(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer, bool, error) {
+	r := in.newRow
+	if err := requireContact(ctx, tx, contactKey(r.key.contact)); err != nil {
 		return messaging.Answer{}, false, err
 	}
-	if answer, known, err := replay(ctx, tx, contact, m); known || err != nil {
+	if answer, known, err := replay(ctx, tx, r.key.contact, r.m); known || err != nil {
 		return answer, false, err
 	}
-	answer, err := decideInbound(ctx, tx, contact, m)
-	switch {
-	case err != nil:
-		return messaging.Answer{}, false, err
-	case recordable(m, answer):
-		return recordRefusal(ctx, tx, r)
-	case !answer.Stored:
-		return answer, false, nil
+	if answer, known, err := consentReplay(ctx, tx, r); known || err != nil {
+		return answer, false, err
 	}
-	return insertAccepted(ctx, tx, r)
+	answer, err := decideInbound(ctx, tx, r.key.contact, r.m)
+	if err != nil {
+		return messaging.Answer{}, false, err
+	}
+	return answerInbound(ctx, tx, in, answer)
+}
+
+// answerInbound acts on a new message's answer: stored, held for the
+// operator, recorded as refused, or only refused.
+func answerInbound(ctx context.Context, tx *sql.Tx, in inboundRow, answer messaging.Answer) (messaging.Answer, bool, error) {
+	switch {
+	case answer.Stored:
+		return insertAccepted(ctx, tx, in.newRow)
+	case answer.Reason == messaging.ReasonNotShared && consentVersion(in.version):
+		return holdOrRefuse(ctx, tx, in.newRow, answer)
+	}
+	return refuseNotShared(ctx, tx, in.newRow, answer)
 }
 
 // insertAccepted stores an accepted message and stages it for this side's
@@ -140,12 +166,7 @@ func recipientsGranted(ctx context.Context, tx *sql.Tx, contact string, m messag
 // decideInbound is the answer to a message that is not a replay; Stored
 // means it may be inserted.
 func decideInbound(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (messaging.Answer, error) {
-	for _, check := range inboundChecks {
-		if refuses, err := check.refuses(ctx, tx, contact, m); refuses || err != nil {
-			return refused(check.reason), err
-		}
-	}
-	return stored, nil
+	return runChecks(ctx, tx, inboundChecks, newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m})
 }
 
 // validSequence: from 1, within what the store can hold.

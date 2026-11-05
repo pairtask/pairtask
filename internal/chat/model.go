@@ -147,22 +147,26 @@ type Model struct {
 	reviews   reviewState         // review requests (#201): the last list and a request in flight
 	contacts  contactState        // messages with paired workspaces (#210)
 
-	compose    composer
-	conv       conversations
-	recalling  *recall // Up in an empty draft walks sent messages back in
-	panel      *panel
-	view       viewport
-	cutoff     uint64 // /clear: rows with seq <= cutoff are hidden
-	find       string // the last /find query
-	found      uint64 // seq of the last /find match
-	keyboard   bool
-	status     string
-	bulk       *bulkAck              // a running /ack all or /ack from
-	bulkSeq    int                   // numbers bulk runs for their request tokens
-	usageDirty bool                  // an inbox change since the last usage read
-	usage      *protocol.InboxStatus // the last inbox status read, for the header
-	width      int
-	height     int
+	compose   composer
+	conv      conversations
+	recalling *recall // Up in an empty draft walks sent messages back in
+	panel     *panel
+	consent   *consentPrompt // the held-request preview, while open (#293)
+	// consentOpening is the read a /pair consent is waiting for; Esc clears
+	// it, so a late answer opens nothing.
+	consentOpening string
+	view           viewport
+	cutoff         uint64 // /clear: rows with seq <= cutoff are hidden
+	find           string // the last /find query
+	found          uint64 // seq of the last /find match
+	keyboard       bool
+	status         string
+	bulk           *bulkAck              // a running /ack all or /ack from
+	bulkSeq        int                   // numbers bulk runs for their request tokens
+	usageDirty     bool                  // an inbox change since the last usage read
+	usage          *protocol.InboxStatus // the last inbox status read, for the header
+	width          int
+	height         int
 }
 
 type pendingRequest struct {
@@ -369,6 +373,7 @@ func (m *Model) dialed(msg DialedMsg) tea.Cmd {
 		return m.dialFailed(msg.Err)
 	}
 	m.transport, m.session, m.conn = msg.transport, msg.Session, Connected
+	m.closeConsent() // a request shown on another connection is stale here
 	m.healthyAt = m.opts.Now()
 	if msg.Session.Epoch != m.epoch {
 		m.newEpoch(msg.Session.Epoch)
