@@ -105,13 +105,18 @@ func TestPairedMentionsStoreAcceptanceBindingAndAliasReplaySurviveRestart(t *tes
 	}
 }
 
-func (f *pairedStoreFixture) conflictRequest(t *testing.T, mutation string) store.PairedReply {
+func (f *pairedStoreFixture) prepareConflictReplay(t *testing.T, mutation string, request store.PairedReply) {
 	t.Helper()
-	request := f.reply("answer", f.notice.MessageID)
 	if mutation == "body-replay" || mutation == "sender-replay" {
 		_, err := f.db.PairedReply(context.Background(), request)
 		pairOK(t, err)
 	}
+}
+
+func (f *pairedStoreFixture) conflictRequest(t *testing.T, mutation string) store.PairedReply {
+	t.Helper()
+	request := f.reply("answer", f.notice.MessageID)
+	f.prepareConflictReplay(t, mutation, request)
 	switch mutation {
 	case "workspace":
 		request.Msg.Workspace = messageContact(t, f.db, 2)
