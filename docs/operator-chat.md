@@ -127,7 +127,10 @@ Reviews show in a panel, not in the transcript.
 sections, five with failures:
 - **Failed** (v19, only while something failed): reviews here whose publication
   failed or is uncertain, and your requests that failed, as `f1`, `f2`…
-  `/reviews open f1` shows the review here, or the request's `⇄` tab.
+  `/reviews open f1` shows the review here, or the request's `⇄` tab. A
+  request they refused not_shared shows the fix under it, here and in Asked
+  by you, as its card does: their operator can allow it with
+  `/pair reviews AGENT ask`, then you send a new request.
 - **Needs you:** requests from paired workspaces waiting for your decision, as `n1`, `n2`…
 - **Running here.**
 - **Asked by you:** your requests to paired workspaces, as `a1`…, with their review ID
