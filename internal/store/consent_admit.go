@@ -34,8 +34,12 @@ var consentChecks = slices.DeleteFunc(slices.Clone(inboundChecks), func(c inboun
 })
 
 // holdOrRefuse holds a request refused only as not shared when its
-// contact may be asked, else refuses it as before.
+// contact may be asked, else refuses it as before. One below the replay
+// floor is too old first: a forgotten hold's sequence is never a new ask.
 func holdOrRefuse(ctx context.Context, tx *sql.Tx, r newRow, answer messaging.Answer) (messaging.Answer, bool, error) {
+	if old, err := belowFloor(ctx, tx, r.key.contact, r.m.N); old || err != nil {
+		return refused(messaging.ReasonTooOld), false, err
+	}
 	targets, ok, err := heldTargets(ctx, tx, r)
 	if err != nil {
 		return messaging.Answer{}, false, err
@@ -198,17 +202,12 @@ func consentRoom(ctx context.Context, tx *sql.Tx, h heldRow) (bool, error) {
 // takeConsentToken spends one of the contact's arrival tokens: ConsentBurst
 // at most, one more each ConsentRefill.
 func takeConsentToken(ctx context.Context, tx *sql.Tx, contact string, now time.Time) (bool, error) {
-	b := rateBucket{tokens: ConsentBurst, at: now}
-	var at string
-	err := tx.QueryRowContext(ctx, `SELECT tokens, refreshed_at FROM consent_rate WHERE contact = ?`, contact).Scan(&b.tokens, &at)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-	case err != nil:
+	b, found, err := readRateBucket(ctx, tx, contact)
+	if err != nil {
 		return false, err
-	default:
-		if b.at, err = time.Parse(time.RFC3339Nano, at); err != nil {
-			return false, err
-		}
+	}
+	if !found {
+		b = rateBucket{tokens: ConsentBurst, at: now}
 	}
 	b = b.refilled(now)
 	if b.tokens < 1 {
@@ -217,6 +216,22 @@ func takeConsentToken(ctx context.Context, tx *sql.Tx, contact string, now time.
 	_, err = tx.ExecContext(ctx, `INSERT INTO consent_rate (contact, tokens, refreshed_at) VALUES (?, ?, ?)
 ON CONFLICT (contact) DO UPDATE SET tokens = excluded.tokens, refreshed_at = excluded.refreshed_at`, contact, b.tokens-1, msgStamp(b.at))
 	return true, err
+}
+
+// readRateBucket is the contact's bucket as stored; found is false for
+// none, a full one.
+func readRateBucket(ctx context.Context, q rowQuerier, contact string) (rateBucket, bool, error) {
+	var b rateBucket
+	var at string
+	err := q.QueryRowContext(ctx, `SELECT tokens, refreshed_at FROM consent_rate WHERE contact = ?`, contact).Scan(&b.tokens, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return rateBucket{}, false, nil
+	}
+	if err != nil {
+		return rateBucket{}, false, err
+	}
+	b.at, err = time.Parse(time.RFC3339Nano, at)
+	return b, err == nil, err
 }
 
 // rateBucket is a contact's tokens as of a time.

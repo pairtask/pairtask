@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
@@ -90,7 +91,7 @@ func TestConsentRetentionAcceptancePayloadThenTombstonePruneOnlyBehindSafeFloor(
 			changed := m
 			changed.Text = "replacement after compaction"
 			a, err = consentAccept(t, f.db, f.key, 8, changed, now)
-			if err == nil && a.Reason != messaging.ReasonConflict {
+			if !errors.Is(err, store.ErrConsentConflict) && !errors.Is(err, messaging.ErrConflict) && a.Reason != messaging.ReasonConflict {
 				t.Fatalf("compacted immutable payload no longer conflicts: %+v", a)
 			}
 			_, err = f.db.PeerMessages().MarkRead(ctx, f.key, []string{anchor.ID}, now)

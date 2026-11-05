@@ -144,8 +144,10 @@ var addedColumns = []struct{ table, column, decl string }{
 	// before consent existed, whose absent grants can't prove undecided.
 	{"peer_contacts", "consent_since", "TEXT"},
 	{"peer_contacts", "consent_legacy", "INTEGER NOT NULL DEFAULT 0"},
-	// Why the requester refused a held request's outcome; '' unless refused.
+	// Why a held request ended, written as it settles and sent as is; and
+	// why the requester refused its outcome, '' unless it did.
 	{"consent_requests", "outcome_reason", "TEXT NOT NULL DEFAULT ''"},
+	{"consent_requests", "refused_reason", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the

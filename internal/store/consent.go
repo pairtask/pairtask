@@ -40,7 +40,9 @@ const (
 )
 
 // consentSchema keeps held requests, explicit per-scope decisions and each
-// contact's arrival budget.
+// contact's arrival budget. A settled request's text, review request and
+// targets go NULL once its outcome is answered and it has aged out; its
+// identity, sequence, hash and digest stay until the replay floor passes it.
 const consentSchema = `
 CREATE TABLE IF NOT EXISTS consent_requests (
     cursor         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,10 +55,10 @@ CREATE TABLE IF NOT EXISTS consent_requests (
     recipients     TEXT NOT NULL,
     reply_id       TEXT NOT NULL,
     reply_author   INTEGER NOT NULL,
-    text           TEXT NOT NULL,
+    text           TEXT,
     review_ask     TEXT,
     hash           BLOB NOT NULL,
-    targets        TEXT NOT NULL,
+    targets        TEXT,
     digest         TEXT NOT NULL,
     bytes          INTEGER NOT NULL,
     state          TEXT NOT NULL,
@@ -70,6 +72,8 @@ CREATE TABLE IF NOT EXISTS consent_requests (
     evidence_gen   INTEGER,
     audit_id       INTEGER,
     outcome        TEXT NOT NULL DEFAULT '',
+    outcome_reason TEXT NOT NULL DEFAULT '',
+    refused_reason TEXT NOT NULL DEFAULT '',
     UNIQUE (contact, message_id)
 );
 CREATE INDEX IF NOT EXISTS consent_requests_state ON consent_requests (state, contact);
@@ -221,7 +225,7 @@ func (s *Store) ExpireConsent(ctx context.Context, now time.Time) (int, error) {
 // expireConsentQuery settles pending requests past expires_at (?1); a
 // caller may narrow it with one more condition on ?2.
 const expireConsentQuery = `UPDATE consent_requests SET state = 'expired', decided_at = ?1, revision = revision + 1,
-    outcome = 'pending' WHERE state = 'pending' AND expires_at <= ?1`
+    outcome = 'pending', outcome_reason = 'expired' WHERE state = 'pending' AND expires_at <= ?1`
 
 // expireConsentFor is ExpireConsent for one contact, in its collect pass.
 func expireConsentFor(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {

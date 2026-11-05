@@ -54,6 +54,20 @@ func (h *Hub) withholdConsent(ctx context.Context, imp store.RemoteImport) {
 	}
 }
 
+// consentView adds to a message this side sent where the contact's hold of
+// it stands, when it held it for its operator: one line on the message's
+// own row, whatever else the request became.
+func (h *Hub) consentView(ctx context.Context, view *protocol.ContactMessageView, r messaging.Row) error {
+	if r.Direction != messaging.DirOut {
+		return nil
+	}
+	held, found, err := h.store.PeerMessages().HeldStatus(ctx, r.Contact, r.ID)
+	if found {
+		view.Consent, view.ConsentReason = held.State, held.Reason
+	}
+	return err
+}
+
 // operatorConsent serves the consent operations: the list reads only;
 // the others are audited changes.
 func (h *Hub) operatorConsent(ctx context.Context, req operatorRequest) protocol.Message {

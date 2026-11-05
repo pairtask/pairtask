@@ -183,7 +183,7 @@ const consentAllowedImport = `EXISTS (SELECT 1 FROM consent_requests cr WHERE cr
 // are settled as withheld, and imported ones no recipient acknowledged yet
 // leave the inboxes that still hold them, so no replay delivers them.
 func withholdUngranted(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', settled_at = ?1
+	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', reason = 'revoked', settled_at = ?1
 WHERE state = 'pending' AND `+ungranted, msgStamp(now), contact)
 	if err != nil {
 		return err

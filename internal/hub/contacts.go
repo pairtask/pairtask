@@ -324,6 +324,9 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 		if err := h.reviewView(ctx, &view, r); err != nil {
 			return err
 		}
+		if err := h.consentView(ctx, &view, r); err != nil {
+			return err
+		}
 		page.Messages = append(page.Messages, view)
 	}
 	var err error

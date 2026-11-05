@@ -17,7 +17,8 @@ const consentColumns = `cursor, id, contact, message_id, n, created_at, sender, 
     COALESCE(choice, ''), COALESCE(audit_id, 0)`
 
 // consentRow is one held request as stored; times stay as stored text,
-// which compares in time order.
+// which compares in time order. A pruned request has no text, review or
+// targets left: only what a replay is told apart by.
 type consentRow struct {
 	Cursor                 int64
 	ID, Contact, MessageID string
@@ -38,23 +39,32 @@ type consentRow struct {
 
 func scanConsent(row rowScanner) (consentRow, error) {
 	var c consentRow
-	var recipients, targets string
-	var ask sql.NullString
+	var recipients string
+	var text, ask, targets sql.NullString
 	err := row.Scan(&c.Cursor, &c.ID, &c.Contact, &c.MessageID, &c.N, &c.CreatedAt, &c.Sender, &recipients, &c.ReplyTo.ID, &c.ReplyTo.Author,
-		&c.Text, &ask, &c.hash, &targets, &c.Digest, &c.State, &c.Revision, &c.ReceivedAt, &c.ExpiresAt, &c.Choice, &c.AuditID)
+		&text, &ask, &c.hash, &targets, &c.Digest, &c.State, &c.Revision, &c.ReceivedAt, &c.ExpiresAt, &c.Choice, &c.AuditID)
 	if err != nil {
 		return c, err
 	}
+	c.Text = text.String
 	if c.Review, err = scanReviewAsk(ask); err != nil {
 		return c, err
 	}
 	if err := json.Unmarshal([]byte(recipients), &c.Recipients); err != nil {
 		return c, fmt.Errorf("consent recipients: %w", err)
 	}
-	if err := json.Unmarshal([]byte(targets), &c.Targets); err != nil {
-		return c, fmt.Errorf("consent targets: %w", err)
+	return c, scanTargets(targets, &c.Targets)
+}
+
+// scanTargets reads a request's targets as stored, none once pruned.
+func scanTargets(targets sql.NullString, out *[]protocol.ConsentTarget) error {
+	if !targets.Valid {
+		return nil
 	}
-	return c, nil
+	if err := json.Unmarshal([]byte(targets.String), out); err != nil {
+		return fmt.Errorf("consent targets: %w", err)
+	}
+	return nil
 }
 
 func queryConsent(ctx context.Context, q rowsQuerier, where string, args ...any) ([]consentRow, error) {

@@ -13,7 +13,10 @@ import (
 // The requester's half of pending consent (#293): a message the contact
 // holds for its operator is stored there, so it is delivered here and never
 // offered again; its one outcome comes later. An outcome ends the hold for
-// good: the same one again changes nothing, another is refused.
+// good: the same one again changes nothing, another is refused. A review
+// request's hold ending otherwise than allowed settles its ask in the same
+// transaction, as the request can't be run there; allowed leaves the ask
+// to the review's own outcomes.
 
 // consentHeldOutSchema keeps this side's messages a contact holds, one row
 // each, by the message's own ID.
@@ -139,13 +142,27 @@ func replayedOutcome(hold heldOutRow, o messaging.ConsentOutcome) error {
 func endHold(ctx context.Context, tx *sql.Tx, contact string, o messaging.ConsentOutcome, at time.Time) error {
 	_, err := tx.ExecContext(ctx, `UPDATE consent_held_out SET state = ?, reason = ?, decided_at = ?
 WHERE contact = ? AND message_id = ? AND state = 'held'`, o.State, o.Reason, msgStamp(at), contact, o.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	return settleHeldAsk(ctx, tx, contact, o, at)
+}
+
+// settleHeldAsk settles the review request a held message was, once its
+// hold ended otherwise than allowed: as the hold did, for its reason, with
+// no verdict or review; one settled already stays as it is. No other ask
+// is touched, and allowed changes none.
+func settleHeldAsk(ctx context.Context, tx *sql.Tx, contact string, o messaging.ConsentOutcome, at time.Time) error {
+	if o.State == consentAllowed {
+		return nil
+	}
+	return settleAsks(ctx, tx, askEnd{o.State, o.Reason, at}, oneAsk(contact, o.ID))
 }
 
 // heldOutFor is the hold of this side's message id, if the contact held it.
-func heldOutFor(ctx context.Context, tx *sql.Tx, contact, id string) (heldOutRow, bool, error) {
+func heldOutFor(ctx context.Context, q rowQuerier, contact, id string) (heldOutRow, bool, error) {
 	var h heldOutRow
-	err := tx.QueryRowContext(ctx, `SELECT held_id, state, reason FROM consent_held_out
+	err := q.QueryRowContext(ctx, `SELECT held_id, state, reason FROM consent_held_out
 WHERE contact = ? AND message_id = ?`, contact, id).Scan(&h.heldID, &h.state, &h.reason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return heldOutRow{}, false, nil
@@ -153,11 +170,23 @@ WHERE contact = ? AND message_id = ?`, contact, id).Scan(&h.heldID, &h.state, &h
 	return h, err == nil, err
 }
 
+// HeldStatus is where a message the contact held stands: its state, and
+// why it ended.
+type HeldStatus struct {
+	State, Reason string
+}
+
+// HeldStatus is the hold of this side's message id, if the contact held it.
+func (p *PeerMessages) HeldStatus(ctx context.Context, contact, id string) (HeldStatus, bool, error) {
+	h, found, err := heldOutFor(ctx, p.db, contact, id)
+	return HeldStatus{State: h.state, Reason: h.reason}, found, err
+}
+
 // ConsentOutcomeRefused records the contact's refusal of an outcome this
 // side sent (#293): the pending outcome of that request settles as refused,
 // with the reason kept, and is never sent again. One not pending, or
 // another contact's, changes nothing.
 func (p *PeerMessages) ConsentOutcomeRefused(ctx context.Context, contact string, r messaging.ConsentOutcomeRefused) error {
-	return p.exec(ctx, contact, `UPDATE consent_requests SET outcome = 'refused', outcome_reason = ?
+	return p.exec(ctx, contact, `UPDATE consent_requests SET outcome = 'refused', refused_reason = ?
 WHERE contact = ? AND message_id = ? AND outcome = 'pending'`, r.Reason, contact, r.ID)
 }

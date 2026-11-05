@@ -14,44 +14,40 @@ import (
 // requester answers it. An allowed request's outcome is its dispatch's, not
 // the decision's: allowed when the import it staged is imported, withheld
 // when that import is withheld instead, queued in that same transaction.
-// Either is its last: a review's later lifecycle never rewrites it.
+// Either is its last: a review's later lifecycle never rewrites it. Why it
+// ended is written with it and sent as written, whatever is pruned later.
 
 // settledOutcome is whether settling a request in a state queues its
 // outcome: pending to send, or "" for none.
 var settledOutcome = map[string]string{consentDeclined: "pending"}
 
-// outcomeReasons are why a request ended, by its state.
-var outcomeReasons = map[string]string{consentDeclined: protocol.ConsentDenied, consentExpired: protocol.ConsentExpired}
+// settledReasons are why a decision ended a request, by its state.
+var settledReasons = map[string]string{consentDeclined: protocol.ConsentDenied}
 
 // consentWithheld is an allowed request whose import was withheld before
 // dispatch: its session ended, or a grant or scope it needed was revoked.
 const consentWithheld = "withheld"
 
-// outcomeReason is why a request ended: by its state, or for one withheld,
-// by why its import was.
-func outcomeReason(state, withheld string) string {
-	if state != consentWithheld {
-		return outcomeReasons[state]
-	}
-	if withheld == protocol.ConsentSessionEnded {
-		return withheld
-	}
-	return protocol.ConsentRevoked
-}
-
 // settleConsentOutcomes queues the outcome of each of contact's allowed
 // requests whose import settled in this transaction: allowed when it was
-// imported, withheld when it was withheld. Each is queued once.
+// imported, withheld when it was withheld, with the import's reason as the
+// request's own. Each is queued once.
 func settleConsentOutcomes(ctx context.Context, tx *sql.Tx, contact string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE consent_requests SET outcome = 'pending',
-    state = CASE WHEN (`+settledImport+`) = 'withheld' THEN 'withheld' ELSE state END
+    state = CASE WHEN (`+settledImport+`) = 'withheld' THEN 'withheld' ELSE state END,
+    outcome_reason = CASE WHEN (`+settledImport+`) = 'withheld' THEN (`+withheldReason+`) ELSE '' END
 WHERE contact = ?1 AND state = 'allowed' AND outcome = '' AND (`+settledImport+`) IN ('imported', 'withheld')`, contact)
 	return err
 }
 
-// settledImport is the state of the import an allowed request staged.
-const settledImport = `SELECT ri.state FROM remote_imports ri
+// settledImport is the state of the import an allowed request staged;
+// withheldReason is why it was withheld.
+const (
+	settledImport = `SELECT ri.state FROM remote_imports ri
     WHERE ri.contact = consent_requests.contact AND ri.remote_id = consent_requests.message_id`
+	withheldReason = `SELECT COALESCE(ri.reason, '') FROM remote_imports ri
+    WHERE ri.contact = consent_requests.contact AND ri.remote_id = consent_requests.message_id`
+)
 
 // WithholdConsent settles, for good, an import staged under session
 // evidence the hub found ended: nothing is delivered or dispatched, and
@@ -101,24 +97,21 @@ func (s *Store) ConsentMark(ctx context.Context) (ConsentMark, error) {
 }
 
 // PendingConsentOutcomes is the oldest outcomes of the contact's held
-// requests its requester hasn't answered yet.
+// requests its requester hasn't answered yet, each as it was settled.
 func (p *PeerMessages) PendingConsentOutcomes(ctx context.Context, contact string, max int) ([]messaging.ConsentOutcome, error) {
 	var out []messaging.ConsentOutcome
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT cr.message_id, cr.state, COALESCE(ri.reason, '') FROM consent_requests cr
-    LEFT JOIN remote_imports ri ON ri.contact = cr.contact AND ri.remote_id = cr.message_id
-WHERE cr.contact = ? AND cr.outcome = 'pending' ORDER BY cr.decided_at, cr.cursor LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
+		rows, err := tx.QueryContext(ctx, `SELECT message_id, state, outcome_reason FROM consent_requests
+WHERE contact = ? AND outcome = 'pending' ORDER BY decided_at, cursor LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var o messaging.ConsentOutcome
-			var withheld string
-			if err := rows.Scan(&o.ID, &o.State, &withheld); err != nil {
+			if err := rows.Scan(&o.ID, &o.State, &o.Reason); err != nil {
 				return err
 			}
-			o.Reason = outcomeReason(o.State, withheld)
 			out = append(out, o)
 		}
 		return rows.Err()

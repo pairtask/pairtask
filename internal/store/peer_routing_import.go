@@ -138,19 +138,16 @@ func importedBefore(ctx context.Context, tx *sql.Tx, contact string, m messaging
 }
 
 // importBacklogFull: the contact's messages staged and not yet imported are
-// at their bound, or the remembered ones are.
+// at their bound, or the remembered identities are.
 func importBacklogFull(ctx context.Context, tx *sql.Tx, contact string, size int) (bool, error) {
-	var staged, stagedBytes, held int
+	var staged, stagedBytes int
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(text_bytes), 0) FROM peer_messages
 WHERE contact = ? AND direction = 'in' AND `+pendingImport, contact).Scan(&staged, &stagedBytes)
-	if err != nil {
-		return false, err
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&held); err != nil {
-		return false, err
-	}
 	backlog := budget{messaging.ImportBacklog, messaging.UnreadBytes}
-	return !backlog.holds(budget{staged, stagedBytes + size}) || held >= messaging.Tombstones, nil
+	if err != nil || !backlog.holds(budget{staged, stagedBytes + size}) {
+		return true, err
+	}
+	return identitiesFull(ctx, tx, contact)
 }
 
 // localIDBase is an import's local ID: derived from the contact and the

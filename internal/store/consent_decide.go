@@ -178,9 +178,10 @@ func allowHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, erro
 func settleHeld(ctx context.Context, tx *sql.Tx, c decided, state string) (ConsentOutcome, error) {
 	kind, epoch, gen := evidenceOf(c.d)
 	res, err := tx.ExecContext(ctx, `UPDATE consent_requests SET state = ?, revision = revision + 1, decided_at = ?, choice = ?,
-    evidence_kind = ?, evidence_epoch = ?, evidence_gen = ?, audit_id = ?, outcome = ?
+    evidence_kind = ?, evidence_epoch = ?, evidence_gen = ?, audit_id = ?, outcome = ?, outcome_reason = ?
 WHERE id = ? AND state = 'pending' AND revision = ?`,
-		state, msgStamp(c.d.Now), c.d.Choice, kind, epoch, gen, nullAudit(c.d.AuditID), settledOutcome[state], c.held.ID, c.held.Revision)
+		state, msgStamp(c.d.Now), c.d.Choice, kind, epoch, gen, nullAudit(c.d.AuditID), settledOutcome[state], settledReasons[state],
+		c.held.ID, c.held.Revision)
 	if err != nil {
 		return ConsentOutcome{}, err
 	}

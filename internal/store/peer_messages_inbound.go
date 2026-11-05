@@ -224,16 +224,17 @@ func replayFloor(ctx context.Context, q rowQuerier, contact string) (int64, erro
 	return floor, err
 }
 
-// peerInboxFull: the unread messages or the remembered ones are at their bounds.
+// peerInboxFull: the unread messages or the remembered identities are at
+// their bounds.
 func peerInboxFull(ctx context.Context, tx *sql.Tx, contact string, size int) (bool, error) {
-	var unread, unreadBytes, held int
+	var unread, unreadBytes int
 	err := tx.QueryRowContext(ctx, `SELECT
-    COALESCE(SUM(state = 'received'), 0), COALESCE(SUM(CASE WHEN state = 'received' THEN text_bytes END), 0), COUNT(*)
-FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unread, &unreadBytes, &held)
-	if err != nil {
-		return false, err
+    COALESCE(SUM(state = 'received'), 0), COALESCE(SUM(CASE WHEN state = 'received' THEN text_bytes END), 0)
+FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unread, &unreadBytes)
+	if err != nil || !unreadBudget.holds(budget{unread, unreadBytes + size}) {
+		return true, err
 	}
-	return !unreadBudget.holds(budget{unread, unreadBytes + size}) || held >= messaging.Tombstones, nil
+	return identitiesFull(ctx, tx, contact)
 }
 
 // MarkRead marks inbound messages read as shown here, and queues a receipt

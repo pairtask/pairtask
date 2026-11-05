@@ -11,8 +11,9 @@ import (
 // Collect keeps every contact's messages within their bounds, one contact
 // per transaction: queued messages expire, old pending receipts drop, text
 // beyond the retention bounds is collected (never an unread message's, a
-// queued one's or one staged for agents), the replay floor rises past old
-// tombstones, and what routing kept for forgotten messages goes.
+// queued one's or one staged for agents), settled held requests lose their
+// payload, the replay floor rises past old tombstones (held requests' too),
+// and what routing kept for forgotten messages goes.
 func (p *PeerMessages) Collect(ctx context.Context, now time.Time) error {
 	if err := p.localOnly(); err != nil {
 		return err
@@ -56,7 +57,8 @@ func (p *PeerMessages) collectContact(ctx context.Context, contact string, now t
 	}
 	defer tx.Rollback()
 	for _, step := range []func(context.Context, *sql.Tx, string, time.Time) error{
-		expireQueued, expireReceipts, expireAsks, expireConsentFor, collectText, raiseFloor, pruneRouting, collectAsks, pruneOutcomes,
+		expireQueued, expireReceipts, expireAsks, expireConsentFor, collectText, pruneConsentPayloads, raiseFloor, pruneRouting,
+		collectAsks, pruneOutcomes, reclaimConsentRate,
 	} {
 		if err := step(ctx, tx, contact, now); err != nil {
 			return err
@@ -137,52 +139,24 @@ func beyondRetention(texts []heldText) []int64 {
 
 // raiseFloor forgets the oldest inbound tombstones, lowest sequence first,
 // while each is past TombstoneAge, read (a recorded refusal too) and without
-// a pending receipt; the
-// floor then sits just above the last one forgotten, so their sequences are
-// refused as too old rather than taken as new. It stops at the first row
-// that must stay, so it never passes a retained message.
+// a pending receipt, and the settled held requests among them whose
+// outcome is answered (#293); the floor then sits just above the last one
+// forgotten, so their sequences are refused as too old rather than taken
+// as new. It stops at the first that must stay, so it never passes a
+// retained message or an undecided request.
 func raiseFloor(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
-	forget, last, err := forgettable(ctx, tx, contact, now)
-	if err != nil || len(forget) == 0 {
+	run, err := forgettableRun(ctx, tx, contact, now)
+	if err != nil || len(run) == 0 {
 		return err // an incomplete read forgets nothing
 	}
-	for _, cursor := range forget {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_messages WHERE cursor = ?`, cursor); err != nil {
+	for _, t := range run {
+		if err := forgetTombstone(ctx, tx, t); err != nil {
 			return err
 		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_floors (contact, floor) VALUES (?, ?)
-ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact, last+1)
+ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact, run[len(run)-1].n+1)
 	return err
-}
-
-// forgettable is the leading run of inbound rows, by sequence, that may be
-// forgotten, and the last one's sequence.
-func forgettable(ctx context.Context, tx *sql.Tx, contact string, now time.Time) ([]int64, int64, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT cursor, n, stored_at < ? AND (state = 'read' AND receipt != 'pending'
-    OR state = 'routed' AND NOT `+pendingImport+` OR state = 'refused' AND read_at IS NOT NULL) AND NOT (`+needsAck+`)
-FROM peer_messages WHERE contact = ? AND direction = 'in' ORDER BY n`, msgStamp(now.Add(-messaging.TombstoneAge)), contact)
-	if err != nil {
-		return nil, 0, err
-	}
-	var forget []int64
-	var last int64
-	for rows.Next() {
-		var cursor, n int64
-		var old bool
-		if err := rows.Scan(&cursor, &n, &old); err != nil {
-			rows.Close()
-			return nil, 0, err
-		}
-		if !old {
-			break
-		}
-		forget, last = append(forget, cursor), n
-	}
-	if err := closeRows(rows); err != nil {
-		return nil, 0, err
-	}
-	return forget, last, nil
 }
 
 // closeRows ends a read, reporting an iteration error before a close one.

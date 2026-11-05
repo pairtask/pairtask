@@ -161,6 +161,11 @@ type ContactMessageView struct {
 	// or agent-routed one. Only a broker serving contact_acks sets it.
 	AckState string     `json:"ack_state,omitempty"`
 	AckedAt  *time.Time `json:"acked_at,omitempty"`
+	// Consent is where a message the contact held for its operator stands
+	// (#293): held, allowed, declined, expired, withheld or refused, with
+	// why it ended; "" for one never held. One line per request.
+	Consent       string `json:"consent,omitempty"`
+	ConsentReason string `json:"consent_reason,omitempty"`
 }
 
 // ContactHeldForUpgrade is the refusal_reason of a queued message to or

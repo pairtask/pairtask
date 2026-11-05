@@ -186,6 +186,17 @@ const (
     OR a.updated_at = :t AND (a.contact > :c OR a.contact = :c AND a.ask_id > :i)))`
 )
 
+// askedColumns are a request as the asked list shows it, with its message's
+// cursor and, when the contact held it for its operator (#293), where that
+// hold stands; askedFrom joins them.
+const (
+	askedColumns = `a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
+    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt,
+    COALESCE(ch.state, ''), COALESCE(ch.reason, '')`
+	askedFrom = `review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
+    LEFT JOIN consent_held_out ch ON ch.contact = a.contact AND ch.message_id = a.ask_id`
+)
+
 // AskedReviews is one page of this side's requests to paired workspaces,
 // after the cursor.
 func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.ReviewAskedPage, error) {
@@ -202,10 +213,7 @@ func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.Revie
 		where = afterAsked
 		args = append(args, sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
-    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt
-FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
-`+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+` `+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
 		return page, err
 	}
@@ -216,7 +224,7 @@ FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND 
 		var updated string
 		var f keptFindings
 		if err := rows.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
-			&updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt); err != nil {
+			&updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt, &item.Consent, &item.ConsentReason); err != nil {
 			return page, err
 		}
 		item.Findings = f.view(0) // a list carries counts; one request alone, its findings
@@ -278,11 +286,9 @@ func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef, limit
 	var item protocol.ReviewAskedItem
 	var updated string
 	var f keptFindings
-	err := tx.QueryRowContext(ctx, `SELECT a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
-    a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt
-FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
-WHERE a.contact = ? AND a.ask_id = ?`, ref.Contact, ref.AskID).Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer,
-		&item.State, &item.Verdict, &item.URL, &updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt)
+	err := tx.QueryRowContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+` WHERE a.contact = ? AND a.ask_id = ?`,
+		ref.Contact, ref.AskID).Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
+		&updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt, &item.Consent, &item.ConsentReason)
 	if err == sql.ErrNoRows {
 		return item, false, nil
 	}

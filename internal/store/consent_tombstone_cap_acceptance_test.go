@@ -45,6 +45,11 @@ func TestConsentTombstoneCapAcceptanceSharesInboundBoundAndNeverEvictsDedup(t *t
 			pairEqual(t, a.Held, false)
 			pairEqual(t, a.Reason, messaging.ReasonInboxFull)
 			pairEqual(t, reviewIDTable(t, f, "SELECT * FROM consent_rate ORDER BY contact"), rate)
+			ordinary := messageWire("ordinary-past-shared-tombstone-cap", m.N+1)
+			a, err = consentAccept(t, f.db, f.key, 8, ordinary, messageAt)
+			pairOK(t, err)
+			pairEqual(t, a.Stored, false)
+			pairEqual(t, a.Reason, messaging.ReasonInboxFull)
 			var count int
 			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM consent_requests WHERE id=? AND digest=?`, v.ID, v.Digest).Scan(&count))
 			pairEqual(t, count, 1)
