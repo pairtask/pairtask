@@ -95,6 +95,11 @@ func renderTab(c ConversationView) barTab {
 		badge = " •" + strconv.Itoa(c.Unread)
 	}
 	text := " " + style.Render(label) + everyoneStyle.Render(badge) + " "
+	if c.Contact != "" {
+		// A paired workspace's tab sits on the slate band (#313), its badge
+		// in the band's warning colour.
+		text = pairedTab.Render(" "+label) + pairedBadge.Render(badge+" ")
+	}
 	if c.Selected {
 		// The selected tab is the selection band with explicit colours, the
 		// badge bold inside it; never reverse video.

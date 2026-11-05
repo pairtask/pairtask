@@ -201,16 +201,14 @@ func (m *Model) localOnlyProblem(a address) string {
 	return ""
 }
 
-// recipientScope is who a ⇄ tab's draft goes to: that workspace's operator,
-// or the agents of theirs it starts with; never the agents here.
-func (m *Model) recipientScope(key viewKey) string {
+// recipientSegments is who a ⇄ tab's draft goes to: that workspace's
+// operator, or the agents of theirs it starts with, and any tagged here; or
+// why it is held. Never the agents here untagged.
+func (m *Model) recipientSegments(key viewKey) []hintSegment {
 	ws := safe(m.contactTitle(key))
 	a := m.resolveAddress(contactAddress(m.compose.editor.Value()))
-	if a.problem != "" {
-		return "✗ " + a.problem
-	}
-	if problem := m.localOnlyProblem(a); problem != "" {
-		return "✗ " + problem
+	if problem := m.heldProblem(a); problem != "" {
+		return []hintSegment{{"✗ " + problem, errStyle}}
 	}
 	to := ws + "'s operator"
 	if len(a.to) > 0 {
@@ -220,8 +218,17 @@ func (m *Model) recipientScope(key viewKey) string {
 		}
 		to = strings.Join(named, ", ")
 	}
+	segs := []hintSegment{{"→ " + to, everyoneStyle}}
 	if a.homeTagged() {
-		return "→ " + to + " · " + homeScope(a)
+		return append(segs, hintSegment{" · ", mutedStyle}, hintSegment{homeScope(a), everyoneStyle})
 	}
-	return "→ " + to + " · your agents here won't get it"
+	return append(segs, hintSegment{" · your agents here won't get it", mutedStyle})
+}
+
+// heldProblem is why the resolved draft is held, or "".
+func (m *Model) heldProblem(a address) string {
+	if a.problem != "" {
+		return a.problem
+	}
+	return m.localOnlyProblem(a)
 }

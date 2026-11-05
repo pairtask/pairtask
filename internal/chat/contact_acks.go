@@ -228,10 +228,10 @@ func (m *Model) contactAckChoices(l argLine) []string {
 // ackMark is a received message's acknowledgment in its head.
 func ackMark(v protocol.ContactMessageView) string {
 	switch v.AckState {
-	case protocol.AckNeeded:
-		return mutedStyle.Render(fmt.Sprintf(" #%d", v.Cursor)) + " ○ needs ack"
+	case protocol.AckNeeded: // as a local message waiting for you shows it (#313)
+		return mutedStyle.Render(fmt.Sprintf(" #%d ", v.Cursor)) + needStyle.Render(ackMarkWarn+AckNeeded)
 	case protocol.AckDone:
-		return mutedStyle.Render(fmt.Sprintf(" #%d ● acknowledged", v.Cursor))
+		return mutedStyle.Render(fmt.Sprintf(" #%d ", v.Cursor)) + doneStyle.Render(ackMarkDone+AckDone)
 	case protocol.AckExpired:
 		return mutedStyle.Render(fmt.Sprintf(" #%d expired unacknowledged", v.Cursor))
 	}

@@ -121,11 +121,17 @@ func (m *Model) contactNotice(key viewKey) string {
 }
 
 // contactHint is the composer's line in a contact tab.
-func (m *Model) contactHint(key viewKey) string {
+func (m *Model) contactHint(key viewKey) string { return plainSegments(m.contactSegments(key)) }
+
+// contactSegments is that line in parts: the tab, who the draft goes to,
+// and when it leaves.
+func (m *Model) contactSegments(key viewKey) []hintSegment {
 	if notice := m.contactNotice(key); notice != "" {
-		return "✗ " + notice
+		return []hintSegment{{"✗ " + notice, errStyle}}
 	}
-	return "to ⇄ " + safe(m.contactTitle(key)) + " · " + m.recipientScope(key) + " · " + m.departureNote(key)
+	segs := []hintSegment{{"to ⇄ " + safe(m.contactTitle(key)) + " · ", titleStyle}}
+	segs = append(segs, m.recipientSegments(key)...)
+	return append(segs, hintSegment{" · " + m.departureNote(key), mutedStyle})
 }
 
 // refreshContacts quietly reads the pairing state after a baseline, so
