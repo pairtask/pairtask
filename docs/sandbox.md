@@ -1,7 +1,8 @@
 # Set up an Incus sandbox
 
-**Install → SSH → sign in.** Run every command below in a host terminal, from
-any directory, with the installed `pairtask` command (`pk` for short; use
+**Install → SSH → sign in.** Setup and maintenance commands run in a host
+terminal, from any directory, unless a section says they run inside the
+workspace; with the installed `pairtask` command (`pk` for short; use
 `pairtask` if the installer skipped `pk` because another one exists).
 Already provisioned? Use the [daily quick start](../README.md#set-up-a-sandbox).
 Working from a clone of this repository? See
@@ -45,6 +46,7 @@ Or step by step, previewing the VM first:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh -s -- --no-provision
+# open a new terminal so `pk` is on your PATH
 pk vm plan       # macOS: preview the VM, read-only
 pk vm apply      # macOS: create and start it; starting the VM doesn't create the workspace
 pk install       # starts the VM if needed, installs the workspace, lists the containers
@@ -118,7 +120,7 @@ session.
 
 ## Upgrades
 
-Three different things can be upgraded, each with its own command:
+Four different things can be upgraded, each with its own command:
 
 | To upgrade | Run | What changes |
 | --- | --- | --- |
@@ -173,17 +175,19 @@ with a read-only plan first and then an apply.
 
 **Check your storage pool first.** Automatic apply supports only a `dir` pool
 stored under `/var/lib/incus`. Colima's Incus runtime creates a ZFS pool named
-`default`, and pairtask uses it, so **on a default setup the plan stops with
-the storage blocker**. Check yours:
+`default`, and pairtask uses it, so **on a default setup the automatic upgrade
+is not available: the plan stops with the storage blocker**. Check yours:
 
 ```sh
 incus storage list colima-pairtask:     # the DRIVER column
 ```
 
-If it isn't `dir`, upgrade by hand: open the VM shell with
-`colima ssh -p pairtask`, back up the server and its pools following the Incus
-[backup guide](https://linuxcontainers.org/incus/docs/main/backup/), then
-upgrade the held `incus*` packages yourself, and finish with step 8 below.
+If it isn't `dir`, there is no validated upgrade path in these docs yet; a
+tested procedure for the default ZFS pool is tracked as a follow-up. Until
+then, don't upgrade the packages by hand from this guide: the Incus
+[backup guide](https://linuxcontainers.org/incus/docs/main/backup/) explains
+what a manual upgrade has to protect, and you can still run steps 1–6 to see
+exactly what blocks it.
 
 Using a `pairtask` from before `pk vm incus-plan` existed? Update the command
 first without touching the containers, run the steps, then upgrade the
@@ -209,7 +213,8 @@ In a host terminal:
    the VM is already stopped, `pk vm apply` starts it; on an old server it
    then reports the version error, which is expected here, and the VM stays up.
 4. **List every instance:** `incus list colima-pairtask: --all-projects`.
-   Any instance in any project that isn't `STOPPED` blocks the plan. With
+   Any instance in any project that isn't `STOPPED` blocks the plan. Note
+   which ones are running now: you start exactly those again in step 8. With
    pairing on, stop `connector` too:
    `incus --project pairtask stop colima-pairtask:connector`. Stop anything
    else by hand only if you own it and are sure:
@@ -224,9 +229,12 @@ In a host terminal:
 7. **Apply that exact manifest:**
    `pk vm incus-apply --manifest ~/incus-upgrade.json --yes`. Incus is stopped
    while it runs.
-8. **Start and check:** `pk start`, then `pk status`, then
-   `incus version colima-pairtask:` for the new server version, then the
-   [idmap overlap check](#incus-server-version).
+8. **Start and check:** `pk start` (it starts `secured` and `workspace`). If
+   `connector` was running in step 4, start it again with
+   `incus --project pairtask start colima-pairtask:connector` and check
+   `pk pairing status`. Start any other instance you stopped, and only those.
+   Then `pk status`, `incus version colima-pairtask:` for the new server
+   version, and the [idmap overlap check](#incus-server-version).
 
 The plan reads the server version, every instance in every project, the
 storage pools, the Incus packages (installed, candidate and origin), the
