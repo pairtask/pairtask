@@ -10,7 +10,7 @@ import tempfile
 
 from sandbox_operator_config import (ROOT, OPERATOR_HOME, file_sha, image_selection, plan_identity,
                                      provisioning_files, state_project)
-from sandbox_operator_plan import validate_plan
+from sandbox_operator_plan import deletion_only, validate_plan
 from sandbox_base_image import DEFAULT_REPO
 from sandbox_operator_runtime import Operator
 from sandbox_operator_prepared import store_from_env
@@ -21,6 +21,8 @@ from sandbox_operator_tunnel import state_connection
 PLAN = "operator.tfplan"
 IDENTITY = "operator-plan.json"
 PENDING = "operator-pending.json"
+# PLAN_FACTS are what plan records about the saved plan itself, not inputs.
+PLAN_FACTS = ("plan_sha256", "deletion_only")
 
 
 def write_json(path, value):
@@ -60,11 +62,25 @@ def require_saved_plan(directory, identity):
     previous = json.loads((directory / IDENTITY).read_text())
     for flag in ("replace", "destroy"):
         identity["options"][flag] = previous["options"].get(flag, False)
-    expected = {key: value for key, value in previous.items() if key != "plan_sha256"}
+    expected = {key: value for key, value in previous.items() if key not in PLAN_FACTS}
     if identity != expected:
         raise ValueError("Provisioning inputs or server changed; run plan again")
     if file_sha(directory / PLAN) != previous["plan_sha256"]:
         raise ValueError("Saved plan changed; run plan again")
+
+
+def saved_deletion(directory):
+    """The saved plan is a --destroy plan that only deletes, unchanged since."""
+    try:
+        previous = json.loads((directory / IDENTITY).read_text())
+        current = file_sha(directory / PLAN)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(previous, dict) or previous.get("deletion_only") is not True:
+        return False
+    options = previous.get("options")
+    destroy = isinstance(options, dict) and options.get("destroy") is True
+    return destroy and current == previous.get("plan_sha256")
 
 
 def prepare(args, directory, server):
@@ -161,7 +177,9 @@ def complete_operation(operator, temporary, prepared):
         return
     rendered = operator.execute("/operator/bin/tofu", "-chdir=/operator/config", "show", "-json",
                                 "/operator/approved.tfplan", capture_output=True, text=True)
-    validate_plan(json.loads(rendered.stdout), directory, OPERATOR_HOME, args.destroy)
+    shown = json.loads(rendered.stdout)
+    validate_plan(shown, directory, OPERATOR_HOME, args.destroy)
+    prepared.identity["deletion_only"] = deletion_only(shown)
     plan = temporary / PLAN
     operator.run("file", "pull", operator.target + "/operator/approved.tfplan", str(plan))
     private_write(directory / PLAN, plan.read_bytes())

@@ -2,6 +2,8 @@
 
 import ast
 import contextlib
+import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -17,6 +19,8 @@ from unittest.mock import Mock, patch
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import sandbox_incus_version as policy
+import sandbox_operator_plan as plan_policy
+import sandbox_operator_workflow as workflow
 
 
 def load_script(name, filename):
@@ -80,7 +84,8 @@ class VersionPolicyTests(unittest.TestCase):
 
     def test_docs_and_python39_syntax_match_the_contract(self):
         self.assertIn(policy.REQUIREMENT, (SCRIPTS.parent / "docs/sandbox.md").read_text())
-        for filename in ("sandbox_incus_version.py", "sandbox-host.py", "sandbox-provision.py"):
+        for filename in ("sandbox_incus_version.py", "sandbox-host.py", "sandbox-provision.py",
+                         "sandbox_operator_plan.py", "sandbox_operator_workflow.py"):
             with self.subTest(filename=filename):
                 ast.parse((SCRIPTS / filename).read_text(), feature_version=(3, 9))
 
@@ -168,12 +173,11 @@ class ProvisionVersionTests(unittest.TestCase):
                 stack.enter_context(patch.object(PROVISION, name, operation))
             yield args, query, directory, operation
 
-    def test_mutating_actions_refuse_unsupported_server_before_state_or_operations(self):
+    def test_mutating_actions_refuse_unsupported_server_before_operations(self):
         for action in ("apply", "rollout", "pairing-on", "pairing-off", "tools-retry"):
             with self.subTest(action=action), self.invocation(action, metadata("7.1")) as (_, _, directory, operation):
                 with self.assertRaisesRegex(ValueError, "unsupported"):
                     PROVISION.main()
-                directory.assert_not_called()
                 operation.assert_not_called()
 
     def test_mutating_actions_accept_supported_server(self):
@@ -187,7 +191,6 @@ class ProvisionVersionTests(unittest.TestCase):
         with self.invocation("apply", metadata("unknown")) as (_, _, directory, operation):
             with self.assertRaisesRegex(ValueError, "unverified"):
                 PROVISION.main()
-            directory.assert_not_called()
             operation.assert_not_called()
 
     def test_plan_recovery_and_destroy_continue_with_a_warning(self):
@@ -220,6 +223,152 @@ class ProvisionVersionTests(unittest.TestCase):
                 PROVISION.main()
             directory.assert_not_called()
             operation.assert_not_called()
+
+
+def resource_plan(*actions):
+    return {"resource_changes": [{"change": {"actions": value}} for value in actions]}
+
+
+class DeletionIntentTests(unittest.TestCase):
+    def test_only_deletions_and_noops_qualify(self):
+        for actions in ((["delete"],), (["no-op"], ["delete"], ["no-op"])):
+            with self.subTest(actions=actions):
+                self.assertTrue(plan_policy.deletion_only(resource_plan(*actions)))
+
+    def test_creation_updates_replacement_reads_and_empty_plans_do_not_qualify(self):
+        invalid = ((), (["no-op"],), (["create"],), (["update"],), (["read"],),
+                   (["delete", "create"],), (["create", "delete"],),
+                   (["delete"], ["create"]), (["delete"], ["update"]))
+        for actions in invalid:
+            with self.subTest(actions=actions):
+                self.assertFalse(plan_policy.deletion_only(resource_plan(*actions)))
+
+    def test_malformed_rendered_plans_do_not_qualify(self):
+        invalid = (None, [], {}, {"resource_changes": None}, {"resource_changes": {}},
+                   {"resource_changes": [None]}, {"resource_changes": [{}]},
+                   {"resource_changes": [{"change": None}]},
+                   {"resource_changes": [{"change": []}]},
+                   {"resource_changes": [{"change": {"actions": "delete"}}]},
+                   resource_plan(["delete"], []))
+        for value in invalid:
+            with self.subTest(value=value):
+                self.assertFalse(plan_policy.deletion_only(value))
+
+
+class SavedDeletionApplyTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.directory = Path(temp.name)
+        self.plan = self.directory / workflow.PLAN
+        self.plan.write_bytes(b"opaque saved tofu plan")
+        self.current = {"files": {"main.tf": "config-hash"}, "server": "server-pin",
+                        "options": {"destroy": False, "replace": False}}
+        self.saved = copy.deepcopy(self.current)
+        self.saved["options"]["destroy"] = True
+        self.saved.update(deletion_only=True, plan_sha256=hashlib.sha256(self.plan.read_bytes()).hexdigest())
+        self.save()
+
+    def save(self):
+        (self.directory / workflow.IDENTITY).write_text(json.dumps(self.saved))
+
+    @contextlib.contextmanager
+    def cli_apply(self):
+        argv = ["sandbox-provision.py", "apply", "--remote", "local", "--state-dir", str(self.directory)]
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(PROVISION.sys, "argv", argv))
+            stack.enter_context(patch.object(PROVISION, "query_server", return_value=metadata("7.1")))
+            stack.enter_context(patch.object(PROVISION, "deployment_directory", return_value=self.directory))
+            stack.enter_context(patch.object(PROVISION, "remember"))
+            operation = stack.enter_context(patch.object(PROVISION, "run_operation"))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            yield operation
+
+    def test_real_cli_apply_uses_verified_saved_deletion_without_destroy_flag(self):
+        with self.cli_apply() as operation:
+            args = PROVISION.arguments()
+            self.assertEqual(args.action, "apply")
+            self.assertFalse(args.destroy)
+            try:
+                PROVISION.main()
+            except policy.IncusVersionError as error:
+                self.fail(f"Verified saved deletion was refused: {error}")
+            operation.assert_called_once()
+        workflow.require_saved_plan(self.directory, copy.deepcopy(self.current))
+
+    def test_creation_or_mixed_saved_intent_cannot_bypass_the_requirement(self):
+        self.saved["deletion_only"] = False
+        self.save()
+        with self.cli_apply() as operation:
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                PROVISION.main()
+            operation.assert_not_called()
+
+    def test_changed_plan_bytes_cannot_bypass_the_requirement(self):
+        self.plan.write_bytes(b"changed plan")
+        with self.cli_apply() as operation:
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                PROVISION.main()
+            operation.assert_not_called()
+
+    def test_saved_intent_requires_strict_boolean_flags(self):
+        for key, value in (("destroy", "true"), ("destroy", 1), ("deletion_only", "true"), ("deletion_only", 1)):
+            with self.subTest(key=key, value=value):
+                saved = self.saved["options"] if key == "destroy" else self.saved
+                saved[key] = value
+                self.save()
+                self.assertFalse(workflow.saved_deletion(self.directory))
+                saved[key] = True
+
+    def test_missing_or_malformed_identity_and_plan_fail_closed(self):
+        identity = self.directory / workflow.IDENTITY
+        for value in ("not json", "null", "[]", "{}", '{"options": []}',
+                      '{"deletion_only": true, "options": ["destroy"]}'):
+            with self.subTest(value=value):
+                identity.write_text(value)
+                self.assertFalse(workflow.saved_deletion(self.directory))
+        identity.unlink()
+        self.assertFalse(workflow.saved_deletion(self.directory))
+        self.save()
+        self.plan.unlink()
+        self.assertFalse(workflow.saved_deletion(self.directory))
+
+    def test_exemption_still_requires_matching_inputs_before_execution(self):
+        executed = Mock()
+        changed = copy.deepcopy(self.current)
+        changed["files"]["main.tf"] = "different-config"
+
+        def execute_checked(*_):
+            workflow.require_saved_plan(self.directory, changed)
+            executed()
+
+        with self.cli_apply() as operation:
+            operation.side_effect = execute_checked
+            with self.assertRaisesRegex(ValueError, "inputs or server changed"):
+                PROVISION.main()
+            operation.assert_called_once()
+            executed.assert_not_called()
+
+    def test_planning_records_rendered_deletion_intent_and_actual_plan_digest(self):
+        for actions, expected in ((["delete"], True), (["create"], False), (["delete", "create"], False)):
+            with self.subTest(actions=actions):
+                self.assert_recorded_plan_fact(actions, expected)
+
+    def assert_recorded_plan_fact(self, actions, expected):
+        args = SimpleNamespace(action="plan", destroy=True, project="unit", remote="local",
+                               storage_pool="default", network="default")
+        prepared = SimpleNamespace(args=args, directory=self.directory, identity=copy.deepcopy(self.saved))
+        shown = resource_plan(actions)
+        operator = Mock(target="mock-operator")
+        operator.execute.return_value = SimpleNamespace(stdout=json.dumps(shown))
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(io.StringIO()):
+            temporary = Path(temp)
+            operator.run.side_effect = lambda *_: (temporary / workflow.PLAN).write_bytes(b"new approved plan")
+            workflow.complete_operation(operator, temporary, prepared)
+        saved = json.loads((self.directory / workflow.IDENTITY).read_text())
+        self.assertIs(saved["deletion_only"], expected)
+        self.assertEqual(saved["plan_sha256"], hashlib.sha256(b"new approved plan").hexdigest())
+        self.assertEqual(workflow.saved_deletion(self.directory), expected)
 
 
 if __name__ == "__main__":
