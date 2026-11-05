@@ -59,6 +59,41 @@ func pairedBridgeAssertResult(t *testing.T, result any, want pairedBridgeOutcome
 	assertEqual(t, "exact broker outcome retained", *out.PeerDelivery, want)
 }
 
+// Completing a net.Pipe write means the reader has the bytes, not that its
+// decode/buffer step has finished. Wait on the inbox, bounded by the caller.
+func pairedBridgeRecordID(t *testing.T, seen map[string]int, id string) {
+	t.Helper()
+	if _, expected := seen[id]; !expected {
+		t.Fatalf("unexpected inbox frame %q", id)
+	}
+	seen[id]++
+	if seen[id] != 1 {
+		t.Fatalf("inbox duplicated frame %q", id)
+	}
+}
+
+func pairedBridgeRecordBatch(t *testing.T, seen map[string]int, messages []protocol.Message) int {
+	t.Helper()
+	for _, message := range messages {
+		pairedBridgeRecordID(t, seen, message.MessageID)
+	}
+	return len(messages)
+}
+
+func pairedBridgeReceivedIDs(t *testing.T, c *Client, ctx context.Context) map[string]int {
+	t.Helper()
+	seen := map[string]int{"home-answer": 0, "unrelated-send": 0, "unrelated-inbox": 0}
+	remaining := len(seen)
+	for remaining > 0 {
+		inbox, err := c.Receive(ctx, 10, 50*time.Millisecond)
+		if err != nil {
+			t.Fatalf("inbox did not deliver every frame: seen=%v error=%v", seen, err)
+		}
+		remaining -= pairedBridgeRecordBatch(t, seen, inbox.Messages)
+	}
+	return seen
+}
+
 func TestPairedMentionsBridgeAcceptanceReplyOutcomeDoesNotConsumeAckOrInbox(t *testing.T) {
 	for _, outcome := range []pairedBridgeOutcome{{State: "queued"}, {State: "not_sent", Reason: "not_shared"}, {State: "not_sent", Reason: "paused"}, {State: "not_sent", Reason: "contact_removed"}} {
 		t.Run(outcome.State+"/"+outcome.Reason, func(t *testing.T) {
@@ -73,14 +108,9 @@ func TestPairedMentionsBridgeAcceptanceReplyOutcomeDoesNotConsumeAckOrInbox(t *t
 			assertEqual(t, "binding resolved by broker", request.Workspace, "")
 			assertEqual(t, "delivery alias preserved", request.InReplyTo, "paired-delivery")
 			pairedBridgeAssertResult(t, result, outcome)
-			inbox, err := c.Receive(ctx, 10, 0)
-			requireNoError(t, err)
-			seen := map[string]bool{}
-			for _, message := range inbox.Messages {
-				seen[message.MessageID] = true
-			}
+			seen := pairedBridgeReceivedIDs(t, c, ctx)
 			for _, id := range []string{"home-answer", "unrelated-send", "unrelated-inbox"} {
-				assertEqual(t, "normal inbox retains "+id, seen[id], true)
+				assertEqual(t, "normal inbox retains exactly one "+id, seen[id], 1)
 			}
 		})
 	}

@@ -189,7 +189,7 @@ func pageFor(resp protocol.Message, contact string) bool {
 }
 
 // stateRank orders a message's states so a merge only moves forward.
-var stateRank = map[string]int{"queued": 0, "received": 0, "expired": 1, "refused": 1, "delivered": 2, "read": 3}
+var stateRank = map[string]int{"queued": 0, "received": 0, "expired": 1, "refused": 1, "not_sent": 1, "delivered": 2, "read": 3}
 
 func (t *contactThread) merge(views []protocol.ContactMessageView) {
 	for _, v := range views {

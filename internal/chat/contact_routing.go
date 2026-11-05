@@ -38,10 +38,12 @@ type address struct {
 	to   []string
 	text string
 	// here and operatorHere are this side's agents and operator the draft
-	// tags (#278); problem is why it is held, once resolved.
-	here         []string
-	operatorHere bool
-	problem      string
+	// tags (#278), theirOperator that it names their operator; problem is
+	// why it is held, once resolved.
+	here          []string
+	operatorHere  bool
+	theirOperator bool
+	problem       string
 }
 
 func contactAddress(draft string) address {

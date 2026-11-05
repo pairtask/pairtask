@@ -234,17 +234,13 @@ func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResu
 		return SendResult{}, err
 	}
 	out := SendResult{Status: "written", MessageID: msg.MessageID, To: msg.To, DurableRequested: msg.Durable}
-	accepted := c.watchReply(msg)
-	if accepted != nil {
-		defer c.unwatchAccepted(msg.MessageID)
-	}
+	reply := c.watchReply(msg)
+	defer reply.stop()
 	if err := c.writeFrame(ctx, msg); err != nil {
 		out.Status = "unconfirmed"
 		return out, fmt.Errorf("message %s: %w; broker acceptance is unconfirmed", msg.MessageID, err)
 	}
-	if accepted != nil {
-		out.PeerDelivery = replyDelivery(ctx, accepted)
-	}
+	out.PeerDelivery = reply.delivery(ctx)
 	return out, nil
 }
 

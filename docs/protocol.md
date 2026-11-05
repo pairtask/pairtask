@@ -408,10 +408,13 @@ pages, carry `assignments`, `assignments_total` and `assignments_truncated`
 for a caller at protocol 16; an older one gets the claims as before. A change
 to an assignment emits `claims_changed`.
 
-A reply to an assigned message must go where it was asked: `to: "*"`, in the
-parent's room (or none, which keeps it). Any other destination is refused
-with `invalid_reply_audience`. Replies to messages that assign nobody keep the
-rules above.
+A reply to an assigned message in the Square or a room must go where it was
+asked: `to: "*"`, in the parent's room (or none, which keeps it). Any other
+destination is refused with `invalid_reply_audience`. One asked in a paired
+workspace's conversation (its delivery carries `conversation`, v23) goes
+`to: "operator"` instead, and `"*"` is refused; see
+[Tags here in a paired conversation](#tags-here-in-a-paired-conversation-v23).
+Replies to messages that assign nobody keep the rules above.
 
 ## Pending reviews (v18)
 
@@ -638,7 +641,16 @@ workspace, or still holds the `assigned` reply its operator gave it there, and
 never to a paused or removed workspace.
 - **Accepted stage:** carries `peer_delivery: {state: "queued"|"not_sent",
   reason?}`, with reasons `not_shared`, `paused` and `contact_removed`.
-- **Same reply again:** answered as it was the first time.
+- **Not sent:** the reply still shows in that workspace's history here, as a
+  message with `direction: "out"`, `state: "not_sent"`, `refusal_reason` the
+  reason, `seq: 0`, and `from`, `to` and `reply_id` as its copy would have
+  had. It is never offered there, and it uses none of that workspace's
+  sequence. Once the workspace is removed, `list` still reads its history
+  while this side keeps a conversation with it; anything else is refused as
+  before (#316 makes it reachable in chat).
+- **Same reply again:** answered as it was the first time. The same `send`
+  again is answered as first queued, with nothing delivered or announced here
+  a second time.
 - **Conflicts:** a changed body or sender, or a reply naming another workspace,
   an agent outside the audience, `*` or a room, is a conflict (`malformed_frame`),
   and nothing is written.

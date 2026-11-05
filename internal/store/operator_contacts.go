@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
@@ -84,53 +85,78 @@ func canonicalIDs(ids []string) []string {
 // message as first queued (its ID, sequence and time; collected text stays
 // collected); the operation ID reused for anything else is ErrConflict.
 func (s *Store) OperatorContactSend(ctx context.Context, c ContactSend) (messaging.Row, error) {
-	row, _, err := s.contactSend(ctx, c)
-	return row, err
+	sent, err := s.contactSend(ctx, c)
+	return sent.Row, err
+}
+
+// ContactSent is what a ⇄ send left: its row there, the advisories read
+// before it was queued, and whether it was the same send again, already
+// kept, with nothing new here to deliver or announce (#278).
+type ContactSent struct {
+	Row      messaging.Row
+	Advice   []protocol.ReviewAdvisory
+	Replayed bool
+}
+
+// OperatorContactSent is OperatorContactSend, saying whether it was a replay.
+func (s *Store) OperatorContactSent(ctx context.Context, c ContactSend) (ContactSent, error) {
+	return s.contactSend(ctx, c)
 }
 
 // OperatorReviewAsk is OperatorContactSend for a review request: queued
 // the same, with the advisories read where it was queued, before it was
 // written (#304); none for a replay.
 func (s *Store) OperatorReviewAsk(ctx context.Context, c ContactSend) (messaging.Row, []protocol.ReviewAdvisory, error) {
-	return s.contactSend(ctx, c)
+	sent, err := s.contactSend(ctx, c)
+	return sent.Row, sent.Advice, err
 }
 
-func (s *Store) contactSend(ctx context.Context, c ContactSend) (messaging.Row, []protocol.ReviewAdvisory, error) {
-	parts := append([]string{c.Text}, c.To...)
-	if ask := reviewAskJSON(c.Review); ask.Valid {
-		parts = append(parts, "review", ask.String)
-	}
-	if here := c.homeTargets(); len(here) > 0 {
-		parts = append(append(parts, "here"), here...)
-	}
-	op := operation{c.OperationID, "send", c.Contact, operationFingerprint("send", c.Contact, parts...), c.AuditID, c.Now}
+func (s *Store) contactSend(ctx context.Context, c ContactSend) (ContactSent, error) {
+	op := operation{c.OperationID, "send", c.Contact, c.fingerprint(), c.AuditID, c.Now}
 	key := messageKey{c.Contact, messaging.DirOut, c.OperationID}
-	var row messaging.Row
-	var advice []protocol.ReviewAdvisory
+	var sent ContactSent
 	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
 		var err error
-		if replay {
+		if sent.Replayed = replay; replay {
 			var held storedRow
 			held, _, err = messageRow(ctx, tx, key)
-			row = held.Row
+			sent.Row = held.Row
 			return err
 		}
 		m := messaging.Message{ID: c.OperationID, Text: c.Text, To: c.To, Review: c.Review}
 		if !validOutgoing(m) {
 			return fmt.Errorf("%w: ID, text, routing or review request", messaging.ErrInvalid)
 		}
-		if advice, err = askAdvice(ctx, tx, c.Contact, m); err != nil {
+		if sent.Advice, err = askAdvice(ctx, tx, c.Contact, m); err != nil {
 			return err
 		}
-		if row, err = queueIn(ctx, tx, outgoing{key: key, m: m, now: c.Now}); err != nil {
+		if sent.Row, err = queueIn(ctx, tx, outgoing{key: key, m: m, now: c.Now}); err != nil {
 			return err
 		}
 		return shareHere(ctx, tx, c, m)
 	})
 	if err != nil {
-		return messaging.Row{}, nil, err
+		return ContactSent{}, err
 	}
-	return row, advice, nil
+	return sent, nil
+}
+
+// fingerprint is what the send's operation ID stands for. A send tagging
+// here is fingerprinted apart, its lists counted, so no name can move
+// between them unnoticed; any other send keeps the fingerprint it always had.
+func (c ContactSend) fingerprint() []byte {
+	review := reviewAskJSON(c.Review)
+	here := c.homeTargets()
+	if len(here) == 0 {
+		parts := append([]string{c.Text}, c.To...)
+		if review.Valid {
+			parts = append(parts, "review", review.String)
+		}
+		return operationFingerprint("send", c.Contact, parts...)
+	}
+	parts := append([]string{c.Text, review.String, strconv.Itoa(len(c.To))}, c.To...)
+	parts = append(append(parts, strconv.Itoa(len(here))), here...)
+	return operationFingerprint("send here", c.Contact, parts...)
 }
 
 // askAdvice is a review request's advisories, read before it is queued;

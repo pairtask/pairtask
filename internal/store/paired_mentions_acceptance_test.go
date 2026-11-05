@@ -105,32 +105,42 @@ func TestPairedMentionsStoreAcceptanceBindingAndAliasReplaySurviveRestart(t *tes
 	}
 }
 
+func (f *pairedStoreFixture) prepareConflictReplay(t *testing.T, mutation string, request store.PairedReply) {
+	t.Helper()
+	if mutation == "body-replay" || mutation == "sender-replay" {
+		_, err := f.db.PairedReply(context.Background(), request)
+		pairOK(t, err)
+	}
+}
+
+func (f *pairedStoreFixture) conflictRequest(t *testing.T, mutation string) store.PairedReply {
+	t.Helper()
+	request := f.reply("answer", f.notice.MessageID)
+	f.prepareConflictReplay(t, mutation, request)
+	switch mutation {
+	case "workspace":
+		request.Msg.Workspace = messageContact(t, f.db, 2)
+	case "audience":
+		request.Msg.Workspace, request.Msg.To = f.contact, "remote-outsider"
+	case "broadcast":
+		request.Msg.To = "*"
+	case "room":
+		request.Msg.Room = "unrelated"
+	case "body-replay":
+		request.Msg.Payload = json.RawMessage(`{"text":"changed answer"}`)
+	case "sender-replay":
+		request.Msg.From, request.Session = "other-home", "session-other-home"
+	}
+	return request
+}
+
 func TestPairedMentionsStoreAcceptanceConflictsNeverWriteEitherCopy(t *testing.T) {
 	for _, mutation := range []string{"workspace", "audience", "broadcast", "room", "body-replay", "sender-replay"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := pairedStore(t)
-			ctx := context.Background()
-			request := f.reply("answer", f.notice.MessageID)
-			if mutation == "body-replay" || mutation == "sender-replay" {
-				_, err := f.db.PairedReply(ctx, request)
-				pairOK(t, err)
-			}
-			switch mutation {
-			case "workspace":
-				request.Msg.Workspace = messageContact(t, f.db, 2)
-			case "audience":
-				request.Msg.Workspace, request.Msg.To = f.contact, "remote-outsider"
-			case "broadcast":
-				request.Msg.To = "*"
-			case "room":
-				request.Msg.Room = "unrelated"
-			case "body-replay":
-				request.Msg.Payload = json.RawMessage(`{"text":"changed answer"}`)
-			case "sender-replay":
-				request.Msg.From, request.Session = "other-home", "session-other-home"
-			}
+			request := f.conflictRequest(t, mutation)
 			before := pairedStoreCounts(t, f)
-			_, err := f.db.PairedReply(ctx, request)
+			_, err := f.db.PairedReply(context.Background(), request)
 			if !errors.Is(err, store.ErrConversationConflict) {
 				t.Fatalf("%s conflict was not explicit: %v", mutation, err)
 			}
@@ -141,29 +151,35 @@ func TestPairedMentionsStoreAcceptanceConflictsNeverWriteEitherCopy(t *testing.T
 	}
 }
 
+func (f *pairedStoreFixture) revoke(t *testing.T, name string) {
+	t.Helper()
+	ctx := context.Background()
+	switch name {
+	case "paused":
+		pairedStorePause(t, f)
+	case "contact_removed":
+		// Simulate authoritative pin removal, as in the contact collector fixtures.
+		_, err := f.raw.Exec(`DELETE FROM peer_contacts WHERE identity_key=?`, f.contact)
+		pairOK(t, err)
+	case "released", "self-claimed-other-task":
+		_, err := f.db.ReleaseClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", Role: protocol.RoleOwner, At: f.now.Add(time.Second)})
+		pairOK(t, err)
+		if name == "self-claimed-other-task" {
+			_, err = f.db.SetClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "unrelated-work", Role: protocol.RoleOwner, At: f.now.Add(2 * time.Second)})
+			pairOK(t, err)
+		}
+	case "done":
+		_, err := f.db.FinishClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", At: f.now.Add(time.Second)})
+		pairOK(t, err)
+	}
+}
+
 func TestPairedMentionsStoreAcceptanceRevokedDeliveryIsLocalAndReplayable(t *testing.T) {
 	for _, tc := range []struct{ name, reason string }{{"paused", "paused"}, {"contact_removed", "contact_removed"}, {"released", "not_shared"}, {"done", "not_shared"}, {"self-claimed-other-task", "not_shared"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := pairedStore(t)
 			ctx := context.Background()
-			switch tc.name {
-			case "paused":
-				pairedStorePause(t, f)
-			case "contact_removed":
-				// Simulate authoritative pin removal, as in the contact collector fixtures.
-				_, err := f.raw.Exec(`DELETE FROM peer_contacts WHERE identity_key=?`, f.contact)
-				pairOK(t, err)
-			case "released", "self-claimed-other-task":
-				_, err := f.db.ReleaseClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", Role: protocol.RoleOwner, At: f.now.Add(time.Second)})
-				pairOK(t, err)
-				if tc.name == "self-claimed-other-task" {
-					_, err = f.db.SetClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "unrelated-work", Role: protocol.RoleOwner, At: f.now.Add(2 * time.Second)})
-					pairOK(t, err)
-				}
-			case "done":
-				_, err := f.db.FinishClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", At: f.now.Add(time.Second)})
-				pairOK(t, err)
-			}
+			f.revoke(t, tc.name)
 			request := f.reply("local-only-answer", f.notice.MessageID)
 			first, err := f.db.PairedReply(ctx, request)
 			pairOK(t, err)
@@ -180,7 +196,7 @@ func TestPairedMentionsStoreAcceptanceRevokedDeliveryIsLocalAndReplayable(t *tes
 			pairOK(t, json.Unmarshal([]byte(payload), &text))
 			pairEqual(t, text.Text, "home answer")
 			var peerReplies, outcomes int
-			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM peer_messages WHERE from_agent='home-a'`).Scan(&peerReplies))
+			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM peer_messages WHERE from_agent='home-a' AND direction='out'`).Scan(&peerReplies))
 			pairEqual(t, peerReplies, 0)
 			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM paired_reply_outcomes WHERE message_id=?`, request.Msg.MessageID).Scan(&outcomes))
 			pairEqual(t, outcomes, 1)

@@ -101,7 +101,7 @@ func settledTexts(ctx context.Context, tx *sql.Tx, contact string) ([]heldText, 
 	rows, err := tx.QueryContext(ctx, `SELECT cursor, text_bytes FROM peer_messages
 WHERE contact = ? AND text IS NOT NULL AND (
     (direction = 'in' AND state = 'read') OR (direction = 'in' AND state = 'routed' AND NOT `+pendingImport+`)
-    OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')))
+    OR (direction = 'out' AND state IN ('delivered', 'read', 'expired', 'refused')) OR direction = 'kept')
     AND NOT (`+needsAck+`)
 ORDER BY cursor DESC`, contact)
 	if err != nil {

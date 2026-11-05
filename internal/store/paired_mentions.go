@@ -62,6 +62,14 @@ func (s *Store) PairedThread(ctx context.Context, id string) (PairedBinding, boo
 	return pairedThread(ctx, s.db, id)
 }
 
+// KeepsConversations: this side keeps a shared conversation with contact,
+// whether or not the contact is still there.
+func (s *Store) KeepsConversations(ctx context.Context, contact string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM paired_threads WHERE contact = ?)`, contact).Scan(&ok)
+	return ok, err
+}
+
 func pairedThread(ctx context.Context, q rowQuerier, id string) (PairedBinding, bool, error) {
 	var b PairedBinding
 	var audience string
@@ -269,10 +277,8 @@ func (p pairedReply) keep(ctx context.Context, tx *sql.Tx) (PairedReplyResult, e
 	if err != nil {
 		return PairedReplyResult{}, err
 	}
-	if delivery.State == protocol.PeerQueued {
-		if err := p.queueThere(ctx, tx); err != nil {
-			return PairedReplyResult{}, err
-		}
+	if err := p.keepThere(ctx, tx, delivery); err != nil {
+		return PairedReplyResult{}, err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO paired_reply_outcomes (message_id, contact, root_local_id, sender, body_digest, seq, peer, reason)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, p.Msg.MessageID, p.binding.Contact, p.binding.RootLocalID, p.Msg.From, p.digest, seq, delivery.State, delivery.Reason)
@@ -330,18 +336,58 @@ func (p pairedReply) keepHere(ctx context.Context, tx *sql.Tx) (uint64, error) {
 		peer: p.binding.PeerID, audience: p.binding.Audience})
 }
 
-// queueThere queues the reply to the conversation's audience there,
-// answering the message it went there as.
-func (p pairedReply) queueThere(ctx context.Context, tx *sql.Tx) error {
+// keepThere puts the reply in that workspace's history here: queued to the
+// conversation's audience there when it may go, else kept here only, with
+// why it didn't go.
+func (p pairedReply) keepThere(ctx context.Context, tx *sql.Tx, delivery protocol.PeerDelivery) error {
+	m := p.peerCopy()
+	if !validOutgoing(m) {
+		return messaging.ErrInvalid
+	}
+	if delivery.State == protocol.PeerQueued {
+		_, err := queueIn(ctx, tx, outgoing{key: messageKey{p.binding.Contact, messaging.DirOut, m.ID}, m: m, now: p.Now, localID: m.ID, assigned: true})
+		return err
+	}
+	return keepNotSent(ctx, tx, keptRow{contact: p.binding.Contact, m: m, now: p.Now, reason: delivery.Reason})
+}
+
+// peerCopy is the reply as that workspace would get it, answering the
+// message the root went there as.
+func (p pairedReply) peerCopy() messaging.Message {
 	var text struct {
 		Text string `json:"text"`
 	}
 	_ = json.Unmarshal(p.Msg.Payload, &text) // the hub checked the payload
-	m := messaging.Message{ID: p.Msg.MessageID, Text: text.Text, From: p.Msg.From, To: p.binding.Audience.Agents,
+	return messaging.Message{ID: p.Msg.MessageID, Text: text.Text, From: p.Msg.From, To: p.binding.Audience.Agents,
 		ReplyTo: messaging.ReplyRef{ID: p.binding.PeerID, Author: messaging.ReplyBySender}}
-	if !validOutgoing(m) {
-		return messaging.ErrInvalid
+}
+
+// keptRow is a reply kept in a contact's history here only, and why.
+type keptRow struct {
+	contact string
+	m       messaging.Message
+	now     time.Time
+	reason  string
+}
+
+// keepNotSent stores a reply that didn't go there as a DirKept row: read in
+// the contact's history like any other, never offered to it, and kept even
+// once the contact is gone.
+func keepNotSent(ctx context.Context, tx *sql.Tx, k keptRow) error {
+	var n int64
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(n), 0) + 1 FROM peer_messages WHERE contact = ? AND direction = ?`,
+		k.contact, messaging.DirKept).Scan(&n)
+	if err != nil {
+		return err
 	}
-	_, err := queueIn(ctx, tx, outgoing{key: messageKey{p.binding.Contact, messaging.DirOut, m.ID}, m: m, now: p.Now, localID: m.ID, assigned: true})
+	m := k.m
+	m.N, m.CreatedAt = uint64(n), k.now.UTC()
+	hash := m.Hash()
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_messages
+(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, reason, stored_at,
+    from_agent, to_agents, reply_id, reply_author, local_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		k.contact, messaging.DirKept, m.ID, n, msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
+		messaging.StateNotSent, k.reason, msgStamp(k.now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), replyAuthor(m), m.ID)
 	return err
 }

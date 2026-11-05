@@ -52,7 +52,7 @@ func (h *Hub) operatorContact(ctx context.Context, clients map[string]*Client, r
 	if _, err := h.homeRecipients(ctx, clients, msg.ContactHere); err != nil {
 		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
 	}
-	if rerr := h.confirmedContact(ctx, msg.ContactKey); rerr != nil {
+	if rerr := h.readableContact(ctx, msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}
 	if rerr := h.ackBound(ctx, msg); rerr != nil {
@@ -132,14 +132,16 @@ func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int6
 		return protocol.Message{}, err
 	}
 	send := h.contactSendRow(msg, auditID)
-	row, err := h.store.OperatorContactSend(ctx, send)
+	sent, err := h.store.OperatorContactSent(ctx, send)
 	if err != nil {
 		return protocol.Message{}, err
 	}
-	h.sentHere(ctx, req.clients, homeSend{msg: msg, seq: send.Seq, at: send.Now, recipients: home})
 	h.SyncMessages(msg.ContactKey)
-	h.MessagesChanged(msg.ContactKey)
-	view := contactMessageView(row)
+	if !sent.Replayed { // the same send again changed nothing: delivered and announced the first time
+		h.sentHere(ctx, req.clients, homeSend{msg: msg, seq: send.Seq, at: send.Now, recipients: home})
+		h.MessagesChanged(msg.ContactKey)
+	}
+	view := contactMessageView(sent.Row)
 	return protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactMessage: &view}, nil
 }
@@ -238,10 +240,14 @@ func (h *Hub) contactNow() time.Time {
 }
 
 func contactMessageView(r messaging.Row) protocol.ContactMessageView {
-	return protocol.ContactMessageView{ID: r.ID, Contact: r.Contact, Direction: r.Direction, Seq: r.N, CreatedAt: r.CreatedAt,
+	view := protocol.ContactMessageView{ID: r.ID, Contact: r.Contact, Direction: r.Direction, Seq: r.N, CreatedAt: r.CreatedAt,
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
 		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
 		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt}
+	if r.Direction == messaging.DirKept { // a reply that never went there (#278): this side's, with no sequence there
+		view.Direction, view.Seq = messaging.DirOut, 0
+	}
+	return view
 }
 
 // replySides name a reply's author for the operator.

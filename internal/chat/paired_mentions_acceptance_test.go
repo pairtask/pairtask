@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -257,18 +258,14 @@ func TestPairedMentionsChatAcceptanceExplicitCurrentWorkspaceHumanTargetsPeerOpe
 	pairedMentionsChatAccept(t, h, request)
 }
 
-func TestPairedMentionsChatAcceptancePeerNamedHereUsesCanonicalKeyCompletion(t *testing.T) {
-	h, key := pairedMentionsChatNamed(t, true, "here")
-	v2Type(h, "@home-a@")
+func pairedMentionsPeerCompletion(t *testing.T, h *chatHarness, key string) int {
+	t.Helper()
 	picker := h.m.State().Picker
 	if picker == nil {
 		t.Fatal("same-named agents on both sides have no scoped completion")
 	}
-	local, peer := -1, -1
+	local, peer := slices.Index(picker.Items, "home-a@here"), -1
 	for i, item := range picker.Items {
-		if item == "home-a@here" {
-			local = i
-		}
 		if strings.Contains(item, key) {
 			peer = i
 		}
@@ -279,6 +276,13 @@ func TestPairedMentionsChatAcceptancePeerNamedHereUsesCanonicalKeyCompletion(t *
 	if local == peer {
 		t.Fatalf("peer label here collides with local namespace: %v", picker.Items)
 	}
+	return peer
+}
+
+func TestPairedMentionsChatAcceptancePeerNamedHereUsesCanonicalKeyCompletion(t *testing.T) {
+	h, key := pairedMentionsChatNamed(t, true, "here")
+	v2Type(h, "@home-a@")
+	peer := pairedMentionsPeerCompletion(t, h, key)
 	for range peer {
 		h.input(chatKey(tea.KeyDown, 0))
 	}
@@ -296,4 +300,49 @@ func TestPairedMentionsChatAcceptancePeerNamedHereUsesCanonicalKeyCompletion(t *
 		t.Fatalf("canonical peer completion lost recipient: %q", request.ContactTo)
 	}
 	pairedMentionsChatAccept(t, h, request)
+}
+
+func TestPairedMentionsChatAcceptanceMixedPeerOperatorAndAgentNeverNarrowsAudience(t *testing.T) {
+	for _, draft := range []string{"@operator@Office @remote-a question", "@remote-a @operator@Office question"} {
+		t.Run(draft, func(t *testing.T) {
+			h, _ := pairedMentionsChat(t, true)
+			v2Type(h, draft)
+			h.input(chatKey(tea.KeyEnter, 0))
+			chatEqual(t, "mixed remote operator/agent audience writes nothing", h.m.State().InFlight, 0)
+			chatEqual(t, "mixed audience preserves exact draft", h.m.State().Draft, draft)
+			view := strings.ToLower(ansi.Strip(h.m.View().Content))
+			if !strings.Contains(view, "operator") || !strings.Contains(view, "agent") {
+				t.Fatal("mixed audience has no explicit explanation")
+			}
+		})
+	}
+}
+
+func TestPairedMentionsChatAcceptanceLocallyKeptReplyShowsNotSentReason(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	for _, reason := range []string{"not_shared", "paused"} {
+		t.Run(reason, func(t *testing.T) {
+			h, key := pairedMentionsChat(t, true)
+			revision := h.m.State().Revision + 1
+			h.wire.in <- protocol.Message{Type: protocol.TypeEvent, Event: &protocol.SessionEvent{Kind: protocol.EventContactMessagesChanged, ContactKey: key, Watermark: protocol.Watermark{Epoch: "epoch", Revision: revision}}}
+			request := h.take(protocol.TypeOperatorContact)
+			chatEqual(t, "local-kept event refreshes paired history", request.ContactOp, protocol.ContactOpList)
+			row := protocol.ContactMessageView{ID: "kept-answer", Cursor: 2, Direction: "out", State: "not_sent", RefusalReason: reason, From: "home-a", To: []string{"remote-a"}, ReplyID: "paired-root", ReplySide: protocol.ReplyBySender, Text: "KEPT ANSWER SENTINEL", CreatedAt: time.Now()}
+			h.reply(request, contactMessagesPage(key, row))
+			h.await(func() bool { return h.m.State().InFlight == 0 })
+			view := strings.ReplaceAll(strings.ToLower(ansi.Strip(h.m.View().Content)), "_", " ")
+			v3Contains(t, view, "kept answer sentinel")
+			v3Contains(t, view, "home-a")
+			v3Contains(t, view, "not sent")
+			if reason == "not_shared" {
+				if !strings.Contains(view, "not shared") && !strings.Contains(view, "isn't shared") {
+					t.Fatal("not-sent status does not explain the sharing refusal")
+				}
+			} else {
+				v3Contains(t, view, reason)
+			}
+			chatEqual(t, "read stays in original paired thread", request.ContactKey, key)
+			chatEqual(t, "render never resends local-only answer", h.m.State().InFlight, 0)
+		})
+	}
 }
