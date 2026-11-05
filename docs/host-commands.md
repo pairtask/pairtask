@@ -1,14 +1,12 @@
 # Host commands
 
 Everything you run on your own machine for the sandbox, by task. One command
-does it all: `pairtask`, put on your PATH by the one-line installer below, or
-`python3 scripts/pairtask.py` from a provisioning checkout (`pairtask` below
-stands for either). The installer also writes `pk` as a short alias when no
-other `pk` exists; it never replaces one it did not write. Each `pairtask`
-subcommand runs one of the scripts in `scripts/` with the matching action, or
-an Incus command, and passes your flags through unchanged, so the
-`python3 scripts/sandbox-*.py` forms work too. `pairtask --dry-run <command> …`
-prints what would run.
+does it all: `pairtask`, put on your PATH by the one-line installer below; run
+it from any directory. The installer also writes `pk` as a short alias when no
+other `pk` exists; it never replaces one it did not write.
+`pairtask --dry-run <command> …` prints what would run. Contributors working
+from a clone can run the same commands as scripts; see
+[from a source checkout](sandbox.md#from-a-source-checkout-contributors-and-maintainers).
 
 Where a command runs: **host** is your Mac or Linux machine; **workspace** is
 the dev container you SSH into; **secured** is the offline control container
@@ -19,14 +17,14 @@ shells in the containers are stopped.
 
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
-| `curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh \| sh` | host | The one-line install: checks Python 3.9+, Git, Incus (and Colima on macOS, offering the `brew install` line), fetches the latest release's host tooling into `~/.pairtask/host`, puts `pairtask` on your PATH, then runs `pairtask install --release <that tag>`; run again later to upgrade both. Options after `sh -s --`: `--version TAG`, `--no-provision`, `--no-modify-path`, `--yes`. Never run as root. | yes, if containers exist |
+| `curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh \| sh` | host | The one-line install: checks Python 3.9+, Git, Incus (and Colima on macOS, offering the `brew install` line), fetches the latest release's host tooling into `~/.pairtask/host`, puts `pairtask` on your PATH, then runs `pairtask install --release <that tag>` (`pairtask upgrade` when already installed); run again later to upgrade both. `--no-provision` updates only the `pairtask` command, leaving the VM and containers alone. Options after `sh -s --`: `--version TAG`, `--no-provision`, `--no-modify-path`, `--yes`. Never run as root. | yes, if containers exist |
 | `pairtask install` | host | First install: on macOS starts the Colima VM, then downloads and verifies the latest release, provisions the containers, configures SSH and lists them. Flags go to the rollout (`--release workspace-vX.Y.Z`, `--remote`, `--project`, `--storage-pool`, `--network`, `--tools`). | yes, if containers exist |
-| `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. | yes |
+| `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. It doesn't update `pairtask` itself (the installer does) or the Incus server (`vm incus-plan`). | yes |
 | `pairtask pairing on` / `pairtask pairing off` | host | Turn the experimental pairing route on or off in the deployment's settings, then run the same rollout as upgrade (same flags). `on` also turns on `secured_runtime`; it is refused while `peer_connector_probe` is on. `on` publishes the relay on every host address (LAN and tailnet) on `--host-port N` (1024–65535, or 0 for none), else the saved port, else 7445; `off` keeps the port for the next `on`. `on --name NAME` sets the name this workspace pairs under (at most 64 bytes; `""` clears it; without it the saved name stays), shown to workspaces paired from then on; the rollout keeps the secured broker down until the name it set is in place (a direct `tofu apply` doesn't). Settings are checked before anything is written or stopped. Later upgrades keep the setting. | yes |
 | `pairtask pairing status` | host | Show the pairing route and its host port as configured and as deployed, read-only: `on`, `off`, or which command finishes a change an interrupted rollout left behind. It reports applied forwarding, not whether another machine can reach it. | no |
 | `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). | no |
 | `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. | no |
-| `pairtask vm incus-plan --manifest FILE` / `pairtask vm incus-apply --manifest FILE --yes` | host (macOS) | Plan, read-only, then apply an upgrade of the VM's held Incus packages ([sandbox guide](sandbox.md#upgrade-the-vms-incus)). Apply stops Incus, backs up `/var/lib/incus`, installs exactly the planned versions and restores the holds and units it found. Only self-contained `dir` storage is supported. | no, but it stops Incus while it runs |
+| `pairtask vm incus-plan --manifest FILE` / `pairtask vm incus-apply --manifest FILE --yes` | host (macOS) | Plan, read-only, then apply an upgrade of the VM's held Incus packages ([sandbox guide](sandbox.md#upgrade-the-vms-incus)). Apply stops Incus, backs up `/var/lib/incus`, installs exactly the planned versions and restores the holds and units it found. Only self-contained `dir` storage is supported: on Colima's default ZFS pool the automatic upgrade is not available yet. | no, but it stops Incus while it runs |
 | `pairtask ssh` | host | Create the key-only SSH path into the workspace; the remote defaults to your OS (`colima-pairtask` on macOS, `local` on Linux), `--remote` and `--instance` override. The rollout does this for you. | no |
 
 Prerequisites the installer cannot bundle: Incus (and Colima on macOS), Python
@@ -54,7 +52,7 @@ Step by step: [pair two machines](pairing.md).
 
 | Command | Runs on | What it does | Ends sessions |
 | --- | --- | --- | --- |
-| `pairtask shell` (short: `pairtask sh`, or `pk sh`) | host → workspace | SSH into the workspace as `agent` and restore your terminal afterwards; extra arguments run as a remote command, with a terminal when `--tty` is given. Raw: `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace` (or the checkout's `infra/incus/ssh/config`). | no |
+| `pairtask shell` (short: `pairtask sh`, or `pk sh`) | host → workspace | SSH into the workspace as `agent` and restore your terminal afterwards; extra arguments run as a remote command, with a terminal when `--tty` is given. Raw: `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace`. | no |
 | `pairtask chat` | host → secured | The operator chat (`incus exec -t … pairtask operator chat`), terminal restored afterwards. [Chat guide](operator-chat.md). | no |
 | `incus --project pairtask exec colima-pairtask:secured -- pairtask operator send --to codex-1 "text"` | secured | One-shot operator message, receive or ack without the chat; refused while a chat is open. [Secured runtime](secured-runtime.md#operator-messages). | no |
 | `reset` | host | Repairs a terminal left in mouse-reporting mode by a dropped session. | no |
@@ -76,7 +74,7 @@ Details and the `mounts.json` format: [mounts](sandbox-mounts.md).
 | `pairtask plan` / `pairtask apply` | host | Preview and apply a provisioning change: `pairtask plan --replace` replaces the dev container keeping data; `pairtask plan --destroy` plans deletion (volume guards must be removed first). | yes, when replacing or destroying |
 | `pairtask recover` | host | Repair provisioning state without changing data. | no |
 | `pairtask tools` | host | Retry the pinned agent tools install in running containers. | no |
-| `incus --project pairtask stop colima-pairtask:workspace` then `colima stop pairtask` | host | Full stop on macOS, keeps persistent files. | yes |
+| `pairtask stop --vm` | host | Full stop on macOS: the containers, then the VM; keeps persistent files. | yes |
 
 Back up before upgrading: [storage](sandbox-storage.md#back-up-and-restore).
 Backing up or archiving the operator inbox isn't supported yet.

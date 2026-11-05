@@ -1,7 +1,12 @@
 # Set up an Incus sandbox
 
-**Start Incus → rollout → SSH → sign in.** Run host commands from
-this repository. Already provisioned? Use the [daily quick start](../README.md#set-up-a-sandbox).
+**Install → SSH → sign in.** Setup and maintenance commands run in a host
+terminal, from any directory, unless a section says they run inside the
+workspace; with the installed `pairtask` command (`pk` for short; use
+`pairtask` if the installer skipped `pk` because another one exists).
+Already provisioned? Use the [daily quick start](../README.md#set-up-a-sandbox).
+Working from a clone of this repository? See
+[from a source checkout](#from-a-source-checkout-contributors-and-maintainers).
 
 The image includes collab-ai, Codex, Claude Code, Go, Git, tmux, Starship and RTK.
 Defaults: 2 CPUs, 4 GiB RAM, 10 GiB root disk, 10 GiB projects, 2 GiB agent home.
@@ -13,120 +18,54 @@ Projects and agent home persist; tools live on the replaceable root disk.
 
 ```sh
 brew install colima incus python git
-python3 scripts/sandbox-host.py plan
-python3 scripts/sandbox-host.py apply
 ```
 
-This starts the dedicated `pairtask` Colima VM running Incus. Existing Docker
-profiles stay separate. Starting the VM does **not** create the workspace.
+pairtask runs Incus in its own `pairtask` Colima VM. Existing Docker profiles
+stay separate. Mac requires Colima 0.10.3+.
 
 **Linux** — [install Incus](https://linuxcontainers.org/incus/docs/main/installing/),
 Python 3.9+, Git and OpenSSH. Use an existing
 quota-capable pool (ZFS/Btrfs), a managed network bridge and Incus access.
 Skip Colima; replace `colima-pairtask:` with `local:` throughout.
-Do not reinitialize an existing server. Mac requires Colima 0.10.3+.
+Do not reinitialize an existing server.
 
-### Incus server version
-
-The Incus **server** must be 7.0.x at 7.0.2 or later, or 7.5 or later
-(7.0.x is the LTS track). The macOS bootstrap and provisioning check the
-server's own version and stop on any other, naming it, the requirement and
-the way forward; a provisioning `plan` only warns. Older servers (6.0.x, 7.0.0–7.0.1, 7.1–7.4) can give two containers
-created at the same moment overlapping host UID/GID ranges, which weakens the
-file-permission separation between `secured` and `workspace` (fixed upstream
-in Incus 7.0.2 and 7.5). Check the
-server line, not the client:
-
-```sh
-incus version colima-pairtask:     # Linux: incus version local:
-```
-
-- **Stay on your track.** On 6.0 LTS, move to the fixed 7.0 LTS (7.0.2+). On
-  7.1–7.4, upgrade forward to 7.5+; don't move to 7.0 LTS, because Incus
-  can't downgrade its database.
-- **Colima holds Incus.** Its VM image installs Incus from zabbly `stable` and
-  `apt-mark hold`s the Incus packages, so `apt upgrade` in the VM skips them,
-  and `brew upgrade incus` updates the Mac client, not the VM's server. Upgrade the held `incus*`
-  packages deliberately inside the VM. Stop the sandbox first and back up the
-  Incus database.
-- **Upgrading alone doesn't repair an existing overlap.** After upgrading,
-  check that the existing containers' ranges don't overlap:
-
-  ```sh
-  K=volatile.idmap.current
-  incus --project pairtask config get colima-pairtask:secured $K
-  incus --project pairtask config get colima-pairtask:workspace $K
-  ```
-
-  Each entry maps container IDs to host IDs `[Hostid, Hostid + Maprange)`.
-  The two containers' UID ranges must not overlap, and the same for their GID
-  ranges. If they do overlap, ask before repairing anything.
-
-### Upgrade the VM's Incus
-
-On macOS, pairtask can upgrade the Colima VM's held Incus packages for you, in
-two steps:
-
-```sh
-pairtask vm incus-plan --manifest ~/incus-upgrade.json    # read-only
-pairtask vm incus-apply --manifest ~/incus-upgrade.json --yes
-```
-
-The plan reads the server version, every instance in every project, the
-storage pools, the Incus packages (installed, candidate and origin), the
-exact apt transaction, the holds and the units. It writes them to a new
-manifest file and lists anything that blocks the upgrade:
-
-- an instance in any project that isn't stopped;
-- a pool that isn't a `dir` pool physically inside `/var/lib/incus` (ZFS, LVM
-  and Btrfs pools, Colima's default among them, need their own backup and a
-  manual upgrade);
-- a candidate older than what's installed, or not from zabbly stable;
-- a transaction that removes anything;
-- an existing `/usr/sbin/policy-rc.d`;
-- too little space in `/var/backups`.
-
-Apply re-reads all of it and stops unless it still matches the plan. Then it:
-1. stops Incus;
-2. backs up `/var/lib/incus` (and `/etc/subuid`, `/etc/subgid`) to
-   `incus.tar.gz` in a new directory `/var/backups/pairtask-incus-<random>/`, and
-   checks the archive;
-3. installs exactly the planned versions, with service starts held off;
-4. puts back the holds and the units' states;
-5. checks the server reports the planned version.
-
-It never restores, downgrades or deletes anything itself; on a failure it
-names the step and the backup. To restore that backup, follow the Incus
-[full server backup](https://linuxcontainers.org/incus/docs/main/backup/)
-guide inside the VM (`colima ssh -p pairtask`): stop Incus, replace
-`/var/lib/incus` and the subuid/subgid files from the archive, and start it.
+The Incus **server** must be 7.0.2+ (7.0 LTS) or 7.5+;
+[check it](#incus-server-version).
 
 ## 2. Install or upgrade
 
-Exit agents before upgrading. The one-line installer does everything below
-and puts the `pairtask` command on your PATH (run it again to upgrade):
+Exit agents first. The one-line installer puts `pairtask` and `pk` on your
+PATH (under `~/.pairtask`), starts the macOS VM and installs the workspace.
+Open a new terminal afterwards.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
 ```
 
-From a checkout of this repository on your host instead:
+Or step by step, previewing the VM first:
 
 ```sh
-python3 scripts/pairtask.py install        # later: python3 scripts/pairtask.py upgrade
-python3 scripts/sandbox-provision.py rollout   # legacy form of upgrade: the rollout alone
+curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh -s -- --no-provision
+# open a new terminal so `pk` is on your PATH
+pk vm plan       # macOS: preview the VM, read-only
+pk vm apply      # macOS: create and start it; starting the VM doesn't create the workspace
+pk install       # starts the VM if needed, installs the workspace, lists the containers
 ```
 
-`install` also starts the macOS VM first and lists the containers at the end;
-`upgrade` and the legacy rollout are the same download-and-replace step.
+`--no-provision` only installs or updates the `pairtask` command; it doesn't
+touch the VM or the containers.
 
-Downloads the latest tested release for your server, verifies it, stops existing
-containers, then provisions and configures SSH. No GitHub CLI, browser download,
+To upgrade later, see [upgrades](#upgrades): run the installer again to
+update both `pairtask` and the workspace, or `pk upgrade` for the workspace
+alone.
+
+Install and upgrade download the latest tested release for your server, verify it, stop existing
+containers, then provision and configure SSH. No GitHub CLI, browser download,
 or host Terraform/OpenTofu install. To select a version, add `--release workspace-vX.Y.Z`.
 Projects and agent home persist; active processes end. [Back up before upgrading](sandbox-storage.md#back-up-and-restore).
 
 New deployments include dev and offline control. State and settings stay on the host;
-the script prints and remembers their directory. Existing settings are preserved.
+`pairtask` prints and remembers their directory. Existing settings are preserved.
 Use `--storage-pool` / `--network` for a non-default Incus pool/bridge.
 [Settings, plan preview and recovery](sandbox-operator.md).
 
@@ -135,9 +74,10 @@ Use `--storage-pool` / `--network` for a non-default Incus pool/bridge.
 On the host:
 
 ```sh
-python3 scripts/sandbox-session.py shell     # wraps the command below and restores your terminal after
-ssh -F infra/incus/ssh/config workspace
+pk shell        # restores your terminal after; short: pk sh
 ```
+
+The raw equivalent is `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace`.
 
 You enter as `agent`, without sudo, in `/workspace`. The helper creates a dedicated
 host login key and copies **only its public key**. It never forwards your SSH agent.
@@ -177,6 +117,159 @@ Existing settings are preserved; telemetry is not enabled. To opt out, run
 `rtk init -g --agent pi --uninstall`, then restart agents; setup never
 reinstalls what you removed. For Pi, `RTK_DISABLED=1` turns it off for one
 session.
+
+## Upgrades
+
+Four different things can be upgraded, each with its own command:
+
+| To upgrade | Run | What changes |
+| --- | --- | --- |
+| `pairtask` and the workspace | the [one-line installer](#2-install-or-upgrade) again | Updates the `pairtask` command first, then replaces the containers like `pk upgrade`. Add `--no-provision` to update only the command. |
+| The workspace | `pk upgrade` | Downloads the release and replaces the containers' images and tools, with the `pairtask` you have. Keeps projects and agent home; ends sessions. |
+| The Incus server in the macOS VM | `pk vm incus-plan`, then `pk vm incus-apply` | Only when the server is too old: [upgrade the VM's Incus](#upgrade-the-vms-incus). |
+| The Mac's Incus client | `brew upgrade incus` | The `incus` command on your Mac only, never the server in the VM. |
+
+On Linux the server is your host's Incus: upgrade it from the repository you
+installed it from.
+
+### Incus server version
+
+The Incus **server** must be 7.0.x at 7.0.2 or later, or 7.5 or later
+(7.0.x is the LTS track). `pk install`, `pk start`, `pk vm apply` and
+`pk upgrade` check the server's own version and stop on any other, naming it,
+the requirement and the way forward; `pk plan` only warns. Older servers (6.0.x, 7.0.0–7.0.1, 7.1–7.4) can give two containers
+created at the same moment overlapping host UID/GID ranges, which weakens the
+file-permission separation between `secured` and `workspace` (fixed upstream
+in Incus 7.0.2 and 7.5). Check the
+server line, not the client:
+
+```sh
+incus version colima-pairtask:     # Linux: incus version local:
+```
+
+- **Stay on your track.** On 6.0 LTS, move to the fixed 7.0 LTS (7.0.2+). On
+  7.1–7.4, upgrade forward to 7.5+; don't move to 7.0 LTS, because Incus
+  can't downgrade its database.
+- **Colima holds Incus.** Its VM image installs Incus from zabbly `stable` and
+  `apt-mark hold`s the Incus packages, so `apt upgrade` in the VM skips them,
+  and `brew upgrade incus` updates the Mac client, not the VM's server.
+  [Upgrade the VM's Incus](#upgrade-the-vms-incus) deliberately, with the
+  sandbox stopped and Incus backed up.
+- **Upgrading alone doesn't repair an existing overlap.** After upgrading,
+  check that the existing containers' ranges don't overlap:
+
+  ```sh
+  K=volatile.idmap.current
+  incus --project pairtask config get colima-pairtask:secured $K
+  incus --project pairtask config get colima-pairtask:workspace $K
+  ```
+
+  Each entry maps container IDs to host IDs `[Hostid, Hostid + Maprange)`.
+  The two containers' UID ranges must not overlap, and the same for their GID
+  ranges. If they do overlap, ask before repairing anything.
+
+### Upgrade the VM's Incus
+
+macOS only. pairtask can upgrade the Colima VM's held Incus packages for you,
+with a read-only plan first and then an apply.
+
+**Check your storage pool first.** Automatic apply supports only a `dir` pool
+stored under `/var/lib/incus`. Colima's Incus runtime creates a ZFS pool named
+`default`, and pairtask uses it, so **on a default setup the automatic upgrade
+is not available: the plan stops with the storage blocker**. Check yours:
+
+```sh
+incus storage list colima-pairtask:     # the DRIVER column
+```
+
+If it isn't `dir`, stop here: don't run the steps below, since they stop
+your containers for an upgrade that can't apply. There is no validated
+upgrade path for this pool yet; it is tracked in
+[#326](https://github.com/pairtask/pairtask/issues/326). Don't upgrade the
+packages by hand from this guide.
+
+Using a `pairtask` from before `pk vm incus-plan` existed? Update the command
+first without touching the containers, run the steps, then upgrade the
+workspace:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh -s -- --no-provision
+# steps 1–8 below
+pk upgrade
+```
+
+Running the installer without `--no-provision` is safe too: it updates
+`pairtask` before it provisions, and on an old server the provisioning step
+stops at the version check before it changes anything.
+
+In a host terminal:
+
+1. **Check that you need it.** Run `incus version colima-pairtask:`. If the
+   `Server version` line is 7.0.2–7.0.x or 7.5+, stop here.
+2. **Exit agent sessions**, and close `pk chat` and any `pk shell`.
+3. **Stop the containers, not the VM:** `pk stop`. It stops `workspace` and
+   `secured` only; don't add `--vm`, since the plan reads the running VM. If
+   the VM is already stopped, `pk vm apply` starts it; on an old server it
+   then reports the version error, which is expected here, and the VM stays up.
+4. **List every instance:** `incus list colima-pairtask: --all-projects`.
+   Any instance in any project that isn't `STOPPED` blocks the plan. Note
+   which ones are running now: you start exactly those again in step 8. With
+   pairing on, stop `connector` too:
+   `incus --project pairtask stop colima-pairtask:connector`. Stop anything
+   else by hand only if you own it and are sure:
+   `incus --project PROJECT stop colima-pairtask:NAME`.
+5. **Plan:** `pk vm incus-plan --manifest ~/incus-upgrade.json`. It changes
+   nothing in the VM and writes that manifest file itself; don't create it.
+   It refuses to overwrite an existing file, so remove an old manifest first
+   (`rm ~/incus-upgrade.json`) or pick a new name.
+6. **Read the blockers** it prints after `Blocked:` (listed below). Fix what
+   you can, remove the manifest and plan again: after any change in the VM,
+   only a fresh plan is valid. If you give up here, nothing in the VM has
+   changed: start again exactly what you stopped (`pk start`, plus any
+   instance you stopped in step 4).
+7. **Apply that exact manifest:**
+   `pk vm incus-apply --manifest ~/incus-upgrade.json --yes`. Incus is stopped
+   while it runs. If it fails, it names the step and the backup; follow the
+   recovery guidance below before starting anything.
+8. **Start and check:** `pk start` (it starts `secured` and `workspace`). If
+   `connector` was running in step 4, start it again with
+   `incus --project pairtask start colima-pairtask:connector` and check
+   `pk pairing status`. Start any other instance you stopped, and only those.
+   Then `pk status`, `incus version colima-pairtask:` for the new server
+   version, and the [idmap overlap check](#incus-server-version).
+
+The plan reads the server version, every instance in every project, the
+storage pools, the Incus packages (installed, candidate and origin), the
+exact apt transaction, the holds and the units. It writes them to the
+manifest and lists anything that blocks the upgrade:
+
+- an instance in any project that isn't stopped;
+- a pool that isn't a `dir` pool physically inside `/var/lib/incus` (ZFS, LVM
+  and Btrfs pools, Colima's default among them, need their own backup and a
+  manual upgrade);
+- `/var/lib/incus` that isn't a plain directory;
+- an Incus unit in a state apply couldn't put back;
+- a candidate older than what's installed, not from zabbly stable, or not a
+  supported server version;
+- a transaction that removes anything;
+- an existing `/usr/sbin/policy-rc.d`;
+- too little space in `/var/backups`.
+
+Apply refuses a manifest with blockers, re-reads all of it and stops unless
+it still matches the plan. Then it:
+1. stops Incus;
+2. backs up `/var/lib/incus` (and `/etc/subuid`, `/etc/subgid`) to
+   `incus.tar.gz` in a new directory `/var/backups/pairtask-incus-<random>/`, and
+   checks the archive;
+3. installs exactly the planned versions, with service starts held off;
+4. puts back the holds and the units' states;
+5. checks the server reports the planned version.
+
+It never restores, downgrades or deletes anything itself; on a failure it
+names the step and the backup. To restore that backup, follow the Incus
+[full server backup](https://linuxcontainers.org/incus/docs/main/backup/)
+guide inside the VM (`colima ssh -p pairtask`): stop Incus, replace
+`/var/lib/incus` and the subuid/subgid files from the archive, and start it.
 
 ## Docker and Compose
 
@@ -242,17 +335,17 @@ inside workspace and follow the printed browser instructions. Check with
 `gh auth status`. A GitHub MCP connector login does not authenticate `gh`.
 
 **Dev is online by default; control has no NIC.** To disable dev networking, set
-`dev_network_enabled = false` in the existing deployment variables and repeat
-plan/apply. This interrupts network connections; SSH and the broker still work.
+`dev_network_enabled = false` in the existing deployment variables and run
+`pk plan`, then `pk apply`. This interrupts network connections; SSH and the broker still work.
 Set `true` and apply to restore access. For another project on the same server,
 select a different bridge: instances named `workspace` cannot share its managed DNS.
 
 ## Status and recovery
 
-Run on the host (Linux: `local:`):
+Run on the host:
 
 ```sh
-incus --project pairtask list colima-pairtask:
+pk status        # same as: incus --project pairtask list colima-pairtask: (Linux: local:)
 ```
 
 Expect `workspace` (and optional `secured`) to be `RUNNING`; allow a few seconds
@@ -260,8 +353,8 @@ for the broker. **Keep the colon.** The remote is `colima-pairtask:`, not `pairt
 
 | Problem | Action |
 | --- | --- |
-| Remote missing | Check `colima list`; rerun `sandbox-host.py apply` |
-| Empty list / missing project | Check `incus project list colima-pairtask:`; run step 2 |
+| Remote missing | Check `colima list`; run `pk vm apply` |
+| Empty list / missing project | Check `incus project list colima-pairtask:`; run `pk install` |
 | SSH host key changed | Follow the [replacement procedure](sandbox-storage.md#replace-dev-retain-data) |
 | Need a recovery shell | `incus --project pairtask exec colima-pairtask:workspace -- /bin/sh` (root) |
 
@@ -270,12 +363,12 @@ for the broker. **Keep the colon.** The remote is `colima-pairtask:`, not `pairt
 On the host; these retain data:
 
 ```sh
-incus --project pairtask stop colima-pairtask:workspace
-incus --project pairtask stop colima-pairtask:secured  # only in control mode
-colima stop pairtask                                 # macOS only
+pk stop          # stops workspace, then secured
+pk stop --vm     # macOS: also stops the pairtask VM
 ```
 
-Use the [daily block](../README.md#set-up-a-sandbox) to restart. Containers do not
+`pk start` starts them again (and the VM on macOS); see the
+[daily block](../README.md#set-up-a-sandbox). Containers do not
 autostart with the VM. Set `running = false` in deployment variables to keep them
 stopped across applies; otherwise an apply may start them.
 For deletion, follow [back up and remove](sandbox-storage.md#deliberate-removal).
@@ -290,7 +383,7 @@ incus webui colima-pairtask:  # Linux: incus webui local:
 
 Open the printed URL, select project `pairtask`, and keep the command running.
 The URL contains a temporary login token; keep it private. Ctrl+C closes the UI
-proxy without stopping containers. Use the provisioning helper for managed changes to avoid drift.
+proxy without stopping containers. Use `pk plan` and `pk apply` for managed changes to avoid drift.
 
 If `webui` is unknown, update the Incus client (`brew upgrade incus` on Mac).
 Missing UI assets belong on the **Incus server**, not in the workspace.
@@ -336,15 +429,6 @@ Storage backends may reject disk shrinking. Keep state local, serialize
 applies, and do not use a second empty state for the same project. Project deletion
 does not force-delete resources created outside this state.
 
-Maintainer checks (CI supplies OpenTofu), after provider initialization:
-
-```sh
-python3 -m unittest discover -s scripts/tests -v
-tofu -chdir=infra/incus fmt -check
-tofu -chdir=infra/incus validate
-tofu -chdir=infra/incus test
-```
-
 Live-tested on Apple Silicon with Colima 0.10.3 and Incus server 7.1/client 7.4:
 image build/export, provisioning, unchanged second plan, unprivileged SSH,
 host-key replacement detection, dev network enable/disable with offline control,
@@ -353,3 +437,35 @@ Mock tests pass with OpenTofu 1.12.6 and Terraform 1.15.4. The image workflow al
 exercises provisioning and SSH on AMD64 and ARM64 Ubuntu runners.
 
 </details>
+
+## From a source checkout (contributors and maintainers)
+
+Optional. Customers don't need a clone: the installed `pairtask` runs the
+same scripts. From the root of a checkout, each command above has a script
+form, and flags pass through unchanged. `pk --dry-run COMMAND` prints the
+script a command runs.
+
+| `pairtask` command | From the checkout root |
+| --- | --- |
+| any `pairtask COMMAND` | `python3 scripts/pairtask.py COMMAND` |
+| `pk vm plan` / `pk vm apply` | `python3 scripts/sandbox-host.py plan` / `apply` |
+| `pk vm incus-plan` / `pk vm incus-apply` | `python3 scripts/sandbox-host.py incus-plan` / `incus-apply` (same flags) |
+| `pk install` | macOS: `python3 scripts/sandbox-host.py apply`, then `python3 scripts/sandbox-provision.py rollout` |
+| `pk upgrade` | `python3 scripts/sandbox-provision.py rollout` |
+| `pk plan` / `pk apply` / `pk recover` | `python3 scripts/sandbox-provision.py plan` / `apply` / `recover` |
+| `pk shell` / `pk chat` | `python3 scripts/sandbox-session.py shell` / `chat` |
+| raw SSH | `ssh -F infra/incus/ssh/config workspace` |
+| `pk ssh` | `python3 scripts/sandbox-ssh.py` |
+| `pk download` | `python3 scripts/sandbox-download.py` |
+
+A checkout keeps its own state: SSH keys under `infra/incus/ssh/` and images
+under `dist/`. The installed command keeps them under `~/.pairtask/host`.
+
+Maintainer checks (CI supplies OpenTofu), after provider initialization:
+
+```sh
+python3 -m unittest discover -s scripts/tests -v
+tofu -chdir=infra/incus fmt -check
+tofu -chdir=infra/incus validate
+tofu -chdir=infra/incus test
+```
