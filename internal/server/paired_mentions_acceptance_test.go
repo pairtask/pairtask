@@ -443,127 +443,156 @@ func pairedMentionsNotSentPage(t *testing.T, f *pairedMentionsFixture, reason st
 	operatorEqual(t, "one locally-kept reply appears in actual paired read", count, 1)
 }
 
+type pairedHistoryCursor struct {
+	before int64
+	seen   map[string]int64
+}
+
+func (c *pairedHistoryCursor) record(t *testing.T, rows []protocol.ContactMessageView) int64 {
+	t.Helper()
+	oldest := int64(0)
+	for _, row := range rows {
+		if _, duplicate := c.seen[row.ID]; duplicate {
+			t.Fatalf("mixed pagination duplicated %q", row.ID)
+		}
+		if c.before > 0 && row.Cursor >= c.before {
+			t.Fatalf("mixed pagination crossed cursor boundary: %d >= %d", row.Cursor, c.before)
+		}
+		c.seen[row.ID] = row.Cursor
+		if oldest == 0 || row.Cursor < oldest {
+			oldest = row.Cursor
+		}
+	}
+	return oldest
+}
+
 func pairedMentionsHistoryCursors(t *testing.T, f *pairedMentionsFixture) map[string]int64 {
 	t.Helper()
-	seen := map[string]int64{}
-	before := int64(0)
+	c := pairedHistoryCursor{seen: map[string]int64{}}
 	for range 3 {
-		r, _ := f.owner.request(protocol.TypeOperatorContact, map[string]any{"contact_op": protocol.ContactOpList, "contact_key": f.key, "contact_before": before})
+		r, _ := f.owner.request(protocol.TypeOperatorContact, map[string]any{"contact_op": protocol.ContactOpList, "contact_key": f.key, "contact_before": c.before})
 		operatorEqual(t, "mixed paired history is readable", r.text("type"), protocol.TypeOperatorContactResult)
 		page := sessionDecode[protocol.ContactMessagePage](t, r, "contact_page")
-		oldest := int64(0)
-		for _, row := range page.Messages {
-			if _, duplicate := seen[row.ID]; duplicate {
-				t.Fatalf("mixed pagination duplicated %q", row.ID)
-			}
-			if before > 0 && row.Cursor >= before {
-				t.Fatalf("mixed pagination crossed cursor boundary: %d >= %d", row.Cursor, before)
-			}
-			seen[row.ID] = row.Cursor
-			if oldest == 0 || row.Cursor < oldest {
-				oldest = row.Cursor
-			}
-		}
+		oldest := c.record(t, page.Messages)
 		if !page.More {
-			return seen
+			return c.seen
 		}
 		if oldest <= 0 {
 			t.Fatal("mixed history advertised another page without a cursor")
 		}
-		before = oldest
+		c.before = oldest
 	}
 	t.Fatal("mixed history pagination never finished")
 	return nil
 }
 
+type pairedKeptReadScenario struct {
+	database, reason, contact, root string
+	acceptedSeq                     uint64
+	cursors                         map[string]int64
+}
+
+func (c *pairedKeptReadScenario) before(t *testing.T) {
+	t.Helper()
+	base := newRedeemOperator(t, redeemConfig(), c.database)
+	identity := messageIdentity(t)
+	messageConfirm(base, identity, 1)
+	c.contact = identity.Fingerprint()
+	owner := sessionOpen(base.operatorFixture)
+	owner.snapshot()
+	f := &pairedMentionsFixture{base, owner, c.contact}
+	home := f.peer("home-a", protocol.Version)
+	request := pairedMentionsRequest(c.contact, "kept-root", "home-a")
+	request["contact_to"] = []string{"remote-a"}
+	pairedMentionsSend(t, f, request)
+	notice, conversation := pairedMentionsNotice(t, home, c.contact, pairedMentionsAudience{Agents: []string{"remote-a"}})
+	c.root = conversation.Root
+	for i := 0; i < 63; i++ {
+		_, err := f.st.PeerMessages().Queue(context.Background(), messaging.Outgoing{Contact: c.contact, ID: fmt.Sprintf("padding-%02d", i), Text: "original peer history", Now: time.Now()})
+		operatorNoError(t, err)
+	}
+	c.revoke(t, f)
+	home.write(protocol.Message{Type: protocol.TypeMsg, MessageID: "kept-answer", To: protocol.OperatorID, InReplyTo: notice.MessageID, Payload: json.RawMessage(`{"text":"home answer"}`), Durable: true, AckRequested: true})
+	ack := home.read()
+	operatorEqual(t, "local-only reply accepted", ack.Stage, protocol.StageAccepted)
+	if ack.PeerDelivery == nil {
+		t.Fatal("accepted reply lost peer outcome")
+	}
+	operatorEqual(t, "reply did not leave", ack.PeerDelivery.State, "not_sent")
+	operatorEqual(t, "reply's actual reason", ack.PeerDelivery.Reason, c.reason)
+	c.acceptedSeq = ack.Seq
+	pairedMentionsNotSentPage(t, f, c.reason)
+	pairedMentionsLocalReplyRead(t, f, c.root)
+	c.cursors = pairedMentionsHistoryCursors(t, f)
+	operatorEqual(t, "mixed history retains transport and local-only rows", len(c.cursors), 65)
+	c.checkWire(t, f)
+}
+
+func (c *pairedKeptReadScenario) revoke(t *testing.T, f *pairedMentionsFixture) {
+	t.Helper()
+	switch c.reason {
+	case "not_shared":
+		_, err := f.st.ReleaseClaim(context.Background(), store.ClaimRequest{MessageID: c.root, Agent: "home-a", Task: "reply", Role: protocol.RoleOwner, At: time.Now()})
+		operatorNoError(t, err)
+	case "paused":
+		_, _ = f.owner.request(protocol.TypeOperatorContact, map[string]any{"contact_op": protocol.ContactOpPause, "contact_key": c.contact, "message_id": "pause-for-reply"})
+	case "contact_removed":
+		_, err := f.db.Exec(`DELETE FROM peer_contacts WHERE identity_key=?`, c.contact)
+		operatorNoError(t, err)
+	}
+}
+
+func (c *pairedKeptReadScenario) checkWire(t *testing.T, f *pairedMentionsFixture) {
+	t.Helper()
+	if c.reason == "not_shared" {
+		offer, err := f.st.PeerMessages().Offer(context.Background(), c.contact, time.Now(), messaging.SessionLimit)
+		operatorNoError(t, err)
+		operatorEqual(t, "wire-offer exclusion checked against real transport work", len(offer) > 0, true)
+		for _, row := range offer {
+			if row.ID == "kept-answer" {
+				t.Fatal("local-only projection entered peer wire outbox")
+			}
+		}
+	}
+}
+
+func (c *pairedKeptReadScenario) after(t *testing.T) {
+	t.Helper()
+	base := newRedeemOperator(t, redeemConfig(), c.database)
+	owner := sessionOpen(base.operatorFixture)
+	owner.snapshot()
+	f := &pairedMentionsFixture{base, owner, c.contact}
+	pairedMentionsNotSentPage(t, f, c.reason)
+	if got := pairedMentionsHistoryCursors(t, f); !reflect.DeepEqual(got, c.cursors) {
+		t.Fatalf("restart/replay changed mixed history IDs/cursors: before=%v after=%v", c.cursors, got)
+	}
+	pairedMentionsLocalReplyRead(t, f, c.root)
+	home := f.peer("home-a", protocol.Version)
+	operatorEqual(t, "unacked original notice replays after restart", home.read().Type, protocol.TypeMsg)
+	home.write(protocol.Message{Type: protocol.TypeMsg, MessageID: "kept-answer", To: protocol.OperatorID, InReplyTo: c.root, Payload: json.RawMessage(`{"text":"home answer"}`), Durable: true, AckRequested: true})
+	ack := home.read()
+	operatorEqual(t, "kept reply retry remains accepted", ack.Stage, protocol.StageAccepted)
+	operatorEqual(t, "kept reply retry has stable local sequence", ack.Seq, c.acceptedSeq)
+	operatorEqual(t, "kept reply retry is explicit replay", ack.Repeated, true)
+	pairedMentionsNotSentPage(t, f, c.reason)
+	if got := pairedMentionsHistoryCursors(t, f); !reflect.DeepEqual(got, c.cursors) {
+		t.Fatalf("replay changed mixed history IDs/cursors: before=%v after=%v", c.cursors, got)
+	}
+	if c.reason == "contact_removed" {
+		blocked, _ := f.owner.request(protocol.TypeOperatorContact, pairedMentionsRequest(c.contact, "must-not-send"))
+		operatorEqual(t, "read-only removed history grants no send authority", blocked.text("code"), protocol.ErrContactRefused)
+		_, found, err := f.st.Contact(context.Background(), c.contact)
+		operatorNoError(t, err)
+		operatorEqual(t, "read did not recreate removed contact", found, false)
+	}
+}
+
 func TestPairedMentionsAcceptanceNotSentActualReadsSurviveRestart(t *testing.T) {
 	for _, reason := range []string{"not_shared", "paused", "contact_removed"} {
 		t.Run(reason, func(t *testing.T) {
-			database := filepath.Join(t.TempDir(), "kept-paired.db")
-			var contact, root string
-			var acceptedSeq uint64
-			var cursors map[string]int64
-			t.Run("before", func(t *testing.T) {
-				base := newRedeemOperator(t, redeemConfig(), database)
-				identity := messageIdentity(t)
-				messageConfirm(base, identity, 1)
-				contact = identity.Fingerprint()
-				owner := sessionOpen(base.operatorFixture)
-				owner.snapshot()
-				f := &pairedMentionsFixture{base, owner, contact}
-				home := f.peer("home-a", protocol.Version)
-				request := pairedMentionsRequest(contact, "kept-root", "home-a")
-				request["contact_to"] = []string{"remote-a"}
-				pairedMentionsSend(t, f, request)
-				notice, conversation := pairedMentionsNotice(t, home, contact, pairedMentionsAudience{Agents: []string{"remote-a"}})
-				root = conversation.Root
-				for i := 0; i < 63; i++ {
-					_, err := f.st.PeerMessages().Queue(context.Background(), messaging.Outgoing{Contact: contact, ID: fmt.Sprintf("padding-%02d", i), Text: "original peer history", Now: time.Now()})
-					operatorNoError(t, err)
-				}
-				switch reason {
-				case "not_shared":
-					_, err := f.st.ReleaseClaim(context.Background(), store.ClaimRequest{MessageID: root, Agent: "home-a", Task: "reply", Role: protocol.RoleOwner, At: time.Now()})
-					operatorNoError(t, err)
-				case "paused":
-					_, _ = f.owner.request(protocol.TypeOperatorContact, map[string]any{"contact_op": protocol.ContactOpPause, "contact_key": contact, "message_id": "pause-for-reply"})
-				case "contact_removed":
-					_, err := f.db.Exec(`DELETE FROM peer_contacts WHERE identity_key=?`, contact)
-					operatorNoError(t, err)
-				}
-				home.write(protocol.Message{Type: protocol.TypeMsg, MessageID: "kept-answer", To: protocol.OperatorID, InReplyTo: notice.MessageID, Payload: json.RawMessage(`{"text":"home answer"}`), Durable: true, AckRequested: true})
-				ack := home.read()
-				operatorEqual(t, "local-only reply accepted", ack.Stage, protocol.StageAccepted)
-				if ack.PeerDelivery == nil {
-					t.Fatal("accepted reply lost peer outcome")
-				}
-				operatorEqual(t, "reply did not leave", ack.PeerDelivery.State, "not_sent")
-				operatorEqual(t, "reply's actual reason", ack.PeerDelivery.Reason, reason)
-				acceptedSeq = ack.Seq
-				pairedMentionsNotSentPage(t, f, reason)
-				pairedMentionsLocalReplyRead(t, f, root)
-				cursors = pairedMentionsHistoryCursors(t, f)
-				operatorEqual(t, "mixed history retains transport and local-only rows", len(cursors), 65)
-				if reason == "not_shared" {
-					offer, err := f.st.PeerMessages().Offer(context.Background(), contact, time.Now(), messaging.SessionLimit)
-					operatorNoError(t, err)
-					operatorEqual(t, "wire-offer exclusion checked against real transport work", len(offer) > 0, true)
-					for _, row := range offer {
-						if row.ID == "kept-answer" {
-							t.Fatal("local-only projection entered peer wire outbox")
-						}
-					}
-				}
-			})
-			t.Run("after", func(t *testing.T) {
-				base := newRedeemOperator(t, redeemConfig(), database)
-				owner := sessionOpen(base.operatorFixture)
-				owner.snapshot()
-				f := &pairedMentionsFixture{base, owner, contact}
-				pairedMentionsNotSentPage(t, f, reason)
-				if got := pairedMentionsHistoryCursors(t, f); !reflect.DeepEqual(got, cursors) {
-					t.Fatalf("restart/replay changed mixed history IDs/cursors: before=%v after=%v", cursors, got)
-				}
-				pairedMentionsLocalReplyRead(t, f, root)
-				home := f.peer("home-a", protocol.Version)
-				operatorEqual(t, "unacked original notice replays after restart", home.read().Type, protocol.TypeMsg)
-				home.write(protocol.Message{Type: protocol.TypeMsg, MessageID: "kept-answer", To: protocol.OperatorID, InReplyTo: root, Payload: json.RawMessage(`{"text":"home answer"}`), Durable: true, AckRequested: true})
-				ack := home.read()
-				operatorEqual(t, "kept reply retry remains accepted", ack.Stage, protocol.StageAccepted)
-				operatorEqual(t, "kept reply retry has stable local sequence", ack.Seq, acceptedSeq)
-				operatorEqual(t, "kept reply retry is explicit replay", ack.Repeated, true)
-				pairedMentionsNotSentPage(t, f, reason)
-				if got := pairedMentionsHistoryCursors(t, f); !reflect.DeepEqual(got, cursors) {
-					t.Fatalf("replay changed mixed history IDs/cursors: before=%v after=%v", cursors, got)
-				}
-				if reason == "contact_removed" {
-					blocked, _ := f.owner.request(protocol.TypeOperatorContact, pairedMentionsRequest(contact, "must-not-send"))
-					operatorEqual(t, "read-only removed history grants no send authority", blocked.text("code"), protocol.ErrContactRefused)
-					_, found, err := f.st.Contact(context.Background(), contact)
-					operatorNoError(t, err)
-					operatorEqual(t, "read did not recreate removed contact", found, false)
-				}
-			})
+			c := &pairedKeptReadScenario{database: filepath.Join(t.TempDir(), "kept-paired.db"), reason: reason}
+			t.Run("before", c.before)
+			t.Run("after", c.after)
 		})
 	}
 }

@@ -146,29 +146,35 @@ func TestPairedMentionsStoreAcceptanceConflictsNeverWriteEitherCopy(t *testing.T
 	}
 }
 
+func (f *pairedStoreFixture) revoke(t *testing.T, name string) {
+	t.Helper()
+	ctx := context.Background()
+	switch name {
+	case "paused":
+		pairedStorePause(t, f)
+	case "contact_removed":
+		// Simulate authoritative pin removal, as in the contact collector fixtures.
+		_, err := f.raw.Exec(`DELETE FROM peer_contacts WHERE identity_key=?`, f.contact)
+		pairOK(t, err)
+	case "released", "self-claimed-other-task":
+		_, err := f.db.ReleaseClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", Role: protocol.RoleOwner, At: f.now.Add(time.Second)})
+		pairOK(t, err)
+		if name == "self-claimed-other-task" {
+			_, err = f.db.SetClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "unrelated-work", Role: protocol.RoleOwner, At: f.now.Add(2 * time.Second)})
+			pairOK(t, err)
+		}
+	case "done":
+		_, err := f.db.FinishClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", At: f.now.Add(time.Second)})
+		pairOK(t, err)
+	}
+}
+
 func TestPairedMentionsStoreAcceptanceRevokedDeliveryIsLocalAndReplayable(t *testing.T) {
 	for _, tc := range []struct{ name, reason string }{{"paused", "paused"}, {"contact_removed", "contact_removed"}, {"released", "not_shared"}, {"done", "not_shared"}, {"self-claimed-other-task", "not_shared"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := pairedStore(t)
 			ctx := context.Background()
-			switch tc.name {
-			case "paused":
-				pairedStorePause(t, f)
-			case "contact_removed":
-				// Simulate authoritative pin removal, as in the contact collector fixtures.
-				_, err := f.raw.Exec(`DELETE FROM peer_contacts WHERE identity_key=?`, f.contact)
-				pairOK(t, err)
-			case "released", "self-claimed-other-task":
-				_, err := f.db.ReleaseClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", Role: protocol.RoleOwner, At: f.now.Add(time.Second)})
-				pairOK(t, err)
-				if tc.name == "self-claimed-other-task" {
-					_, err = f.db.SetClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "unrelated-work", Role: protocol.RoleOwner, At: f.now.Add(2 * time.Second)})
-					pairOK(t, err)
-				}
-			case "done":
-				_, err := f.db.FinishClaim(ctx, store.ClaimRequest{MessageID: f.root, Agent: "home-a", Task: "reply", At: f.now.Add(time.Second)})
-				pairOK(t, err)
-			}
+			f.revoke(t, tc.name)
 			request := f.reply("local-only-answer", f.notice.MessageID)
 			first, err := f.db.PairedReply(ctx, request)
 			pairOK(t, err)
