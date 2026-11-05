@@ -28,8 +28,10 @@ Do not reinitialize an existing server. Mac requires Colima 0.10.3+.
 
 ### Incus server version
 
-The Incus **server** must be **7.0.x at 7.0.2 or later** (LTS) or **7.5 or
-later**. Older servers (6.0.x, 7.0.0–7.0.1, 7.1–7.4) can give two containers
+The Incus **server** must be 7.0.x at 7.0.2 or later, or 7.5 or later
+(7.0.x is the LTS track). The macOS bootstrap and provisioning check the
+server's own version and stop on any other, naming it, the requirement and
+the way forward; a provisioning `plan` only warns. Older servers (6.0.x, 7.0.0–7.0.1, 7.1–7.4) can give two containers
 created at the same moment overlapping host UID/GID ranges, which weakens the
 file-permission separation between `secured` and `workspace` (fixed upstream
 in Incus 7.0.2 and 7.5). Check the

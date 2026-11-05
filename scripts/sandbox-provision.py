@@ -2,7 +2,6 @@
 """Provision through disposable pinned OpenTofu; no host Terraform installation."""
 
 import argparse
-import json
 from pathlib import Path
 import re
 import signal
@@ -14,6 +13,7 @@ from sandbox_operator_workflow import run_operation
 from sandbox_operator_recovery import recover
 import sandbox_pairing
 from sandbox_releases import release_tag, repository
+from sandbox_incus_version import IncusVersionError, check as check_server_version, query_server
 from sandbox_remote import REMOTE, colima_profile, default_remote
 from sandbox_rollout import rollout, tools_retry
 
@@ -83,11 +83,28 @@ def main():
         return sandbox_pairing.status(args)
     if args.remote != "local" and colima_profile(args.remote) is None:
         raise ValueError(f"Use Linux local or macOS {REMOTE}")
-    metadata = json.loads(subprocess.check_output(["incus", "query", args.remote + ":/1.0"]))
+    metadata = query_server(args.remote)
+    check_version(args, metadata)
     directory = deployment_directory(args.state_dir, args.project)
     remember(directory, args.project)
     operation = {"recover": recover, "tools-retry": tools_retry, **dict.fromkeys(ROLLOUTS, rollout)}.get(args.action, run_operation)
     operation(args, directory, metadata["environment"])
+
+
+# VERSIONED are the actions that create or change containers, which need a
+# supported server (#312); plan reports, and recover and --destroy go on.
+VERSIONED = {"apply", "rollout", "pairing-on", "pairing-off", "tools-retry"}
+
+
+def check_version(args, metadata):
+    """Refuse a container-changing action on an unsupported server; a plan
+    only says what apply would refuse."""
+    try:
+        check_server_version(metadata, args.remote)
+    except IncusVersionError as err:
+        if args.action in VERSIONED and not args.destroy:
+            raise
+        print(f"Warning: {err}", file=sys.stderr)
 
 
 def interrupted(*_):
