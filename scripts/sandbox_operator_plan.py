@@ -14,6 +14,23 @@ def validate_plan(plan, directory, operator_home, allow_destroy=False):
         require_private_path(Path(source), directory, operator_home)
 
 
+def deletion_only(plan):
+    """Every change the plan makes deletes, and it deletes something: what a
+    saved --destroy plan may still apply on an unsupported Incus (#312)."""
+    changes = plan.get("resource_changes") if isinstance(plan, dict) else None
+    if not isinstance(changes, list):
+        return False
+    actions = [change_actions(change) for change in changes]
+    return ["delete"] in actions and all(a in (["delete"], ["no-op"]) for a in actions)
+
+
+def change_actions(change):
+    """A resource change's actions, or None when it has none readable."""
+    detail = change.get("change") if isinstance(change, dict) else None
+    actions = detail.get("actions") if isinstance(detail, dict) else None
+    return actions if isinstance(actions, list) else None
+
+
 def require_retained_volumes(changes):
     for change in changes:
         if change["type"] != "incus_storage_volume":

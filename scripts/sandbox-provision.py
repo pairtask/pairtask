@@ -2,7 +2,6 @@
 """Provision through disposable pinned OpenTofu; no host Terraform installation."""
 
 import argparse
-import json
 from pathlib import Path
 import re
 import signal
@@ -10,10 +9,11 @@ import subprocess
 import sys
 
 from sandbox_operator_config import deployment_directory, remember
-from sandbox_operator_workflow import run_operation
+from sandbox_operator_workflow import run_operation, saved_deletion
 from sandbox_operator_recovery import recover
 import sandbox_pairing
 from sandbox_releases import release_tag, repository
+from sandbox_incus_version import IncusVersionError, check as check_server_version, query_server
 from sandbox_remote import REMOTE, colima_profile, default_remote
 from sandbox_rollout import rollout, tools_retry
 
@@ -83,11 +83,35 @@ def main():
         return sandbox_pairing.status(args)
     if args.remote != "local" and colima_profile(args.remote) is None:
         raise ValueError(f"Use Linux local or macOS {REMOTE}")
-    metadata = json.loads(subprocess.check_output(["incus", "query", args.remote + ":/1.0"]))
+    metadata = query_server(args.remote)
     directory = deployment_directory(args.state_dir, args.project)
+    check_version(args, metadata, directory)
     remember(directory, args.project)
     operation = {"recover": recover, "tools-retry": tools_retry, **dict.fromkeys(ROLLOUTS, rollout)}.get(args.action, run_operation)
     operation(args, directory, metadata["environment"])
+
+
+# VERSIONED are the actions that create or change containers, which need a
+# supported server (#312); plan and recover report, and applying a saved
+# deletion-only --destroy plan goes on.
+VERSIONED = {"apply", "rollout", "pairing-on", "pairing-off", "tools-retry"}
+
+
+def check_version(args, metadata, directory):
+    """Refuse a container-changing action on an unsupported server; a plan
+    only says what apply would refuse."""
+    try:
+        check_server_version(metadata, args.remote)
+    except IncusVersionError as err:
+        if needs_version(args, directory):
+            raise
+        print(f"Warning: {err}", file=sys.stderr)
+
+
+def needs_version(args, directory):
+    if args.action not in VERSIONED:
+        return False
+    return not (args.action == "apply" and saved_deletion(directory))
 
 
 def interrupted(*_):

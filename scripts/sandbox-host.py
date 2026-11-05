@@ -13,6 +13,7 @@ import sys
 
 from sandbox_mounts import colima_mounts, mount_variables, read_mounts, write_json
 from sandbox_colima_config import check_settings
+from sandbox_incus_version import check as check_server_version, query_server
 from sandbox_remote import PROFILE, REMOTE
 
 
@@ -106,9 +107,8 @@ def start_host(directory, config, command):
     if not socket.is_socket():
         raise ValueError(f"Colima did not expose its Incus socket: {socket}")
     check_remote(socket, required=True)
-    subprocess.run(["incus", "query", f"{REMOTE}:/1.0"],
-                   stdout=subprocess.DEVNULL, check=True, timeout=30)
-    print(f"Incus ready. Set incus_socket = {json.dumps(str(socket))}")
+    version = check_server_version(query_server(REMOTE), REMOTE)
+    print(f"Incus {version} ready. Set incus_socket = {json.dumps(str(socket))}")
 
 
 def require_host_tools():
@@ -133,7 +133,7 @@ def bootstrap(args):
     print(json.dumps(config, indent=2))
     print(shlex.join(command), flush=True)
     if args.action == "plan":
-        print("Preview only: no files written or VM started.")
+        print("Preview only: no files written or VM started. Apply checks the Incus server version once the VM is up.")
         return
     start_host(directory, config, command)
 
