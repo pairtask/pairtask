@@ -2,8 +2,10 @@ package bridge
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -38,28 +40,75 @@ func TestDurableBrokerProcess(t *testing.T) {
 	requireNoError(t, server.New(socket, h, logger).Listen(context.Background()))
 }
 
+// crashBrokerStartup bounds how long the re-executed broker may take to
+// listen; CI's race and image runs start it far slower than here.
+const crashBrokerStartup = 10 * time.Second
+
 func startCrashBroker(t *testing.T, socket string) func() {
 	t.Helper()
 	exe, err := os.Executable()
 	requireNoError(t, err)
 	cmd := exec.Command(exe, "-test.run=^TestDurableBrokerProcess$")
 	cmd.Env = append(os.Environ(), "PAIRTASK_DURABLE_TEST_SOCKET="+socket)
+	output := &lockedBuffer{}
+	cmd.Stdout, cmd.Stderr = output, output
 	requireNoError(t, cmd.Start())
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
 	var once sync.Once
-	stop := func() { once.Do(func() { cmd.Process.Kill(); cmd.Wait(); os.Remove(socket) }) }
+	stop := func() {
+		once.Do(func() {
+			cmd.Process.Kill()
+			<-exited
+			os.Remove(socket)
+		})
+	}
 	t.Cleanup(stop)
-	deadline := time.Now().Add(3 * time.Second)
+	if err := awaitCrashBroker(socket, exited); err != nil {
+		t.Fatalf("test broker did not start: %v\nbroker output:\n%s", err, output.String())
+	}
+	return stop
+}
+
+// awaitCrashBroker waits until the broker listens, it exits, or startup
+// runs out; an early exit is reported as such, not as a missing socket.
+func awaitCrashBroker(socket string, exited chan error) error {
+	deadline := time.Now().Add(crashBrokerStartup)
 	for {
 		conn, err := net.DialTimeout("unix", socket, 100*time.Millisecond)
 		if err == nil {
 			conn.Close()
-			return stop
+			return nil
+		}
+		select {
+		case waitErr := <-exited:
+			exited <- waitErr // stop still waits on it
+			return fmt.Errorf("broker process exited first (%v); last dial: %w", waitErr, err)
+		default:
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("test broker did not start:", err)
+			return fmt.Errorf("not listening after %s: %w", crashBrokerStartup, err)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// lockedBuffer collects a child process's output from both its streams.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func crashSocket(t *testing.T) string {

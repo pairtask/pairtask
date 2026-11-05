@@ -42,7 +42,11 @@ with the workspace named as this side calls it; picking one still inserts
 
 A `⇄` tab writes to that workspace only, never to your agents here. Above the
 draft it names who gets it: `→ Office's operator`, or `→ reviewer@Office` when
-the draft starts with `@reviewer`, then `your agents here won't get it`. A name
+the draft starts with `@reviewer`, then `your agents here won't get it`. Who
+gets it shows in the audience colour, as `to everyone` does in a local tab,
+the notes beside it quieter, and a held draft's reason in the error colour.
+In the bar, a `⇄` tab sits on a slate band, so a paired workspace never
+passes for a local tab; the selected one keeps the selection colours. A name
 both sides have is theirs in that tab. Once their tab has said which agents
 they share, a draft that starts with one of your agents they don't share is
 held, the draft kept: `local-only is your agent here; this tab writes to
