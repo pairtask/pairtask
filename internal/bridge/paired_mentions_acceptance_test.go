@@ -61,6 +61,25 @@ func pairedBridgeAssertResult(t *testing.T, result any, want pairedBridgeOutcome
 
 // Completing a net.Pipe write means the reader has the bytes, not that its
 // decode/buffer step has finished. Wait on the inbox, bounded by the caller.
+func pairedBridgeRecordID(t *testing.T, seen map[string]int, id string) {
+	t.Helper()
+	if _, expected := seen[id]; !expected {
+		t.Fatalf("unexpected inbox frame %q", id)
+	}
+	seen[id]++
+	if seen[id] != 1 {
+		t.Fatalf("inbox duplicated frame %q", id)
+	}
+}
+
+func pairedBridgeRecordBatch(t *testing.T, seen map[string]int, messages []protocol.Message) int {
+	t.Helper()
+	for _, message := range messages {
+		pairedBridgeRecordID(t, seen, message.MessageID)
+	}
+	return len(messages)
+}
+
 func pairedBridgeReceivedIDs(t *testing.T, c *Client, ctx context.Context) map[string]int {
 	t.Helper()
 	seen := map[string]int{"home-answer": 0, "unrelated-send": 0, "unrelated-inbox": 0}
@@ -70,16 +89,7 @@ func pairedBridgeReceivedIDs(t *testing.T, c *Client, ctx context.Context) map[s
 		if err != nil {
 			t.Fatalf("inbox did not deliver every frame: seen=%v error=%v", seen, err)
 		}
-		for _, message := range inbox.Messages {
-			if _, expected := seen[message.MessageID]; !expected {
-				t.Fatalf("unexpected inbox frame %q", message.MessageID)
-			}
-			seen[message.MessageID]++
-			if seen[message.MessageID] != 1 {
-				t.Fatalf("inbox duplicated frame %q", message.MessageID)
-			}
-			remaining--
-		}
+		remaining -= pairedBridgeRecordBatch(t, seen, inbox.Messages)
 	}
 	return seen
 }
