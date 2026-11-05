@@ -104,16 +104,22 @@ class UpgradeApplyTests(UpgradeApplyCase):
         self.assertTrue(steps)
         self.assertTrue(all(step.ok for step in steps))
         commands = [argv for _, argv, _ in runner.calls]
+        self.assert_exact_install(commands)
+        self.assertEqual(runner.holds, set(self.obs.holds))
+        self.assertEqual(runner.units, self.obs.units)
+        self.assert_backup_and_bounds(runner, commands)
+        self.assertIsNone(runner.policy)
+
+    def assert_exact_install(self, commands):
         install = [argv for argv in commands if installs(argv)]
         self.assertEqual(len(install), 1)
         expected = {f"{name}={version}" for name, version in self.manifest["pins"].items()}
         self.assertEqual({arg for arg in install[0] if "=" in arg}, expected)
-        self.assertEqual(runner.holds, set(self.obs.holds))
-        self.assertEqual(runner.units, self.obs.units)
+
+    def assert_backup_and_bounds(self, runner, commands):
         self.assertTrue(all(0 < timeout <= upgrade.TAR for _, _, timeout in runner.calls))
         self.assertTrue(any(argv[:2] == ["tar", "-tzf"] for argv in commands))
         self.assertTrue(any(upgrade.BACKUP_DIR in str(arg) for argv in commands for arg in argv))
-        self.assertIsNone(runner.policy)
 
     def test_tampered_expected_server_cannot_make_old_server_a_success(self):
         self.manifest["expected_server"] = "7.1"

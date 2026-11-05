@@ -305,20 +305,23 @@ def inside_incus(path: object) -> bool:
 
 
 def package_blockers(obs: Observation) -> List[str]:
-    found = []
-    for name in PACKAGES:
-        package = obs.packages.get(name) or Package()
-        if package.installed is None or package.candidate is None:
-            found.append(f"{name} has no installed or candidate version")
-        elif package.origin != ORIGIN:
-            found.append(f"{name} {package.candidate} comes from {package.origin}, not {ORIGIN}")
-        elif obs.upgrades.get(name) is not True:
-            found.append(f"{name} {package.candidate} isn't at least the installed {package.installed}")
-    incus = obs.packages.get("incus")
-    target = parse_version(expected_server(incus.candidate)) if incus and incus.candidate else None
-    if target is None or not supported(target):
+    found = [problem for problem in (package_problem(obs, name) for name in PACKAGES) if problem]
+    incus = obs.packages.get("incus") or Package()
+    if not supported_text(expected_server(incus.candidate or "")):
         found.append("the candidate Incus isn't a supported server version")
     return found
+
+
+def package_problem(obs: Observation, name: str) -> str:
+    """Why one Incus package can't be upgraded as planned, or ""."""
+    package = obs.packages.get(name) or Package()
+    if package.installed is None or package.candidate is None:
+        return f"{name} has no installed or candidate version"
+    if package.origin != ORIGIN:
+        return f"{name} {package.candidate} comes from {package.origin}, not {ORIGIN}"
+    if obs.upgrades.get(name) is not True:
+        return f"{name} {package.candidate} isn't at least the installed {package.installed}"
+    return ""
 
 
 def expected_server(candidate: str) -> str:
