@@ -306,10 +306,28 @@ func refusalSteps(c *actionCard) []string {
 		return nil
 	}
 	steps := []string{"Refused: " + safe(it.Reason)}
-	if it.Reason == "not_shared" {
-		steps = append(steps, "Their operator can allow it with /pair reviews "+safe(c.review.agent)+" ask; then send a new request.")
+	if fix := refusalFix(it.Reason, c.review.agent); fix != "" {
+		steps = append(steps, fix)
 	}
 	return steps
+}
+
+// refusalFix is what fixes a request their side refused, where something
+// does: for not_shared, their operator opening the agent to requests; ""
+// for any other reason (#302).
+func refusalFix(reason, agent string) string {
+	if reason != "not_shared" {
+		return ""
+	}
+	return "Their operator can allow it with /pair reviews " + safe(agent) + " ask; then send a new request."
+}
+
+// fixRows is a refused request's fix as a row under it, if it has one.
+func fixRows(reason, agent string) []string {
+	if fix := refusalFix(reason, agent); fix != "" {
+		return []string{"    " + fix}
+	}
+	return nil
 }
 
 func verdictWords(it protocol.ReviewAskedItem) string {

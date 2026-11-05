@@ -122,6 +122,9 @@ func (m *Model) failedRows() []string {
 			row += "  " + safe(it.Reason)
 		}
 		rows = append(rows, row+"  "+mutedStyle.Render(age(it.UpdatedAt)))
+		if it.Kind == protocol.FailedAsk { // only their side's refusal has their operator's fix
+			rows = append(rows, fixRows(it.Reason, it.Reviewer)...)
+		}
 	}
 	return append(rows, moreRow(s.more, "failed")...)
 }
