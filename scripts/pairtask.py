@@ -35,7 +35,8 @@ SCRIPTED = {
     "chat": ("sandbox-session.py", ["chat"], "the operator chat; restores your terminal after"),
 }
 ACTIONS = {
-    "vm": ("sandbox-host.py", {"plan": "plan", "apply": "apply"}, "the macOS Colima VM: plan | apply"),
+    "vm": ("sandbox-host.py", {"plan": "plan", "apply": "apply", "incus-plan": "incus-plan", "incus-apply": "incus-apply"},
+           "the macOS Colima VM: plan | apply | incus-plan --manifest FILE | incus-apply --manifest FILE --yes"),
     "mounts": ("sandbox-host.py", {"plan": "mounts-plan", "apply": "mounts-apply"}, "host directories in the workspace: plan | apply --mounts-file FILE"),
     "share": ("sandbox-share.py", {"plan": "plan", "setup": "setup", "run": "run"}, "macOS writable sharing: plan | setup | run --mounts-file FILE"),
     "pairing": ("sandbox-provision.py", {"on": "pairing-on", "off": "pairing-off", "status": "pairing-status"},

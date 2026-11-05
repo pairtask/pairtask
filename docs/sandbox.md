@@ -62,6 +62,44 @@ incus version colima-pairtask:     # Linux: incus version local:
   The two containers' UID ranges must not overlap, and the same for their GID
   ranges. If they do overlap, ask before repairing anything.
 
+### Upgrade the VM's Incus
+
+On macOS, pairtask can upgrade the Colima VM's held Incus packages for you, in
+two steps:
+
+```sh
+pairtask vm incus-plan --manifest ~/incus-upgrade.json    # read-only
+pairtask vm incus-apply --manifest ~/incus-upgrade.json --yes
+```
+
+The plan reads the server version, every instance in every project, the
+storage pools, the Incus packages (installed, candidate and origin), the
+exact apt transaction, the holds and the units. It writes them to a new
+manifest file and lists anything that blocks the upgrade:
+
+- a running instance;
+- a pool that isn't a `dir` pool physically inside `/var/lib/incus` (ZFS, LVM
+  and Btrfs pools, Colima's default among them, need their own backup and a
+  manual upgrade);
+- a candidate that isn't newer, or doesn't come from zabbly stable;
+- a transaction that removes anything;
+- an existing `/usr/sbin/policy-rc.d`;
+- too little space in `/var/backups`.
+
+Apply re-reads all of it and stops unless it still matches the plan. Then it:
+1. stops Incus;
+2. backs up `/var/lib/incus` (and `/etc/subuid`, `/etc/subgid`) to
+   `/var/backups/pairtask-incus-<time>.tar.gz` and checks the archive;
+3. installs exactly the planned versions, with service starts held off;
+4. puts back the holds and the units' states;
+5. checks the server reports the planned version.
+
+It never restores, downgrades or deletes anything itself; on a failure it
+names the step and the backup. To restore that backup, follow the Incus
+[full server backup](https://linuxcontainers.org/incus/docs/main/backup/)
+guide inside the VM (`colima ssh -p pairtask`): stop Incus, replace
+`/var/lib/incus` and the subuid/subgid files from the archive, and start it.
+
 ## 2. Install or upgrade
 
 Exit agents before upgrading. The one-line installer does everything below

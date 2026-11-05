@@ -194,11 +194,13 @@ def mount_output(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["plan", "apply", "mounts-plan", "mounts-apply"])
+    parser.add_argument("action", choices=["plan", "apply", "mounts-plan", "mounts-apply", "incus-plan", "incus-apply"])
     parser.add_argument("--mounts-file", type=Path, help="JSON list of project_name/host_path/container_mount_path/container_readonly mount objects")
     parser.add_argument("--output", type=Path, help="Override the discovered deployment mount-variable file")
     parser.add_argument("--project", default="pairtask", help="Deployment project for automatic state discovery")
     parser.add_argument("--share-user", help="Dedicated local Linux sharing account; required for writable mounts")
+    parser.add_argument("--manifest", type=Path, help="incus-plan writes, incus-apply reads, this upgrade manifest")
+    parser.add_argument("--yes", action="store_true", help="incus-apply: change the VM's Incus as the manifest plans")
     return parser.parse_args()
 
 
@@ -206,8 +208,75 @@ def main():
     args = parse_args()
     if args.action.startswith("mounts-"):
         configure_mounts(args)
+    elif args.action.startswith("incus-"):
+        incus_upgrade(args)
     else:
         bootstrap(args)
+
+
+def incus_upgrade(args):
+    """Plan or apply an upgrade of the VM's held Incus packages (#312)."""
+    import sandbox_incus_upgrade as upgrade
+    if platform.system() != "Darwin":
+        raise ValueError("Incus upgrades here are for the macOS Colima VM; on Linux, upgrade the host's Incus "
+                         "from the repository you installed it from (docs/sandbox.md)")
+    if args.manifest is None:
+        raise ValueError(f"{args.action} needs --manifest FILE")
+    require_dedicated_remote()
+    print(UPGRADE_SCOPE, flush=True)
+    if args.action == "incus-plan":
+        plan_upgrade(args, upgrade)
+    else:
+        apply_upgrade(args, upgrade)
+
+
+def require_dedicated_remote():
+    """The remote the upgrade reads must be this profile's own socket, the VM
+    `colima ssh -p pairtask` changes: never another daemon."""
+    socket = host_directory() / "incus.sock"
+    if not socket.is_socket():
+        raise ValueError(f"The pairtask VM isn't running (no {socket}); start it with pairtask vm apply")
+    check_remote(socket, required=True)
+
+
+def plan_upgrade(args, upgrade):
+    manifest = upgrade.plan(upgrade.Runner())
+    upgrade.write_manifest(args.manifest, manifest)
+    print("\n".join(upgrade.describe(manifest)))
+    if manifest["blockers"]:
+        print("Blocked: " + "; ".join(manifest["blockers"]))
+    else:
+        print(f"Preview only: nothing in the VM changed. Wrote {args.manifest}; review it, then incus-apply.")
+
+
+def apply_upgrade(args, upgrade):
+    try:
+        steps = upgrade.apply(upgrade.Runner(), json.loads(args.manifest.read_text()), args.yes)
+    except upgrade.UpgradeError as err:
+        print_steps(err.steps)
+        print_backup(err.steps)
+        if isinstance(err, upgrade.UpgradeInterrupted):
+            raise SystemExit(130) from err
+        raise
+    print_steps(steps)
+
+
+def print_backup(steps):
+    """The verified backup a failed apply kept, and where restore is told."""
+    backups = [step.detail for step in steps if step.ok and step.name == "backup readable"]
+    if backups:
+        print(f"Backup: {backups[-1]} (kept; nothing was restored, downgraded or deleted). "
+              "To restore it, follow docs/sandbox.md, Upgrade the VM's Incus.")
+
+
+def print_steps(steps):
+    for step in steps:
+        print(f"{'ok  ' if step.ok else 'FAIL'} {step.name} {step.detail}".rstrip(), flush=True)
+
+
+UPGRADE_SCOPE = ("Upgrades the held Incus packages of the pairtask Colima VM only, with Incus stopped and "
+                 "/var/lib/incus backed up first. Only self-contained dir storage under /var/lib/incus is "
+                 "supported; any other pool stops the plan for a manual upgrade.")
 
 
 if __name__ == "__main__":
