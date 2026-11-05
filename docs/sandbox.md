@@ -182,12 +182,11 @@ is not available: the plan stops with the storage blocker**. Check yours:
 incus storage list colima-pairtask:     # the DRIVER column
 ```
 
-If it isn't `dir`, there is no validated upgrade path in these docs yet; a
-tested procedure for the default ZFS pool is tracked as a follow-up. Until
-then, don't upgrade the packages by hand from this guide: the Incus
-[backup guide](https://linuxcontainers.org/incus/docs/main/backup/) explains
-what a manual upgrade has to protect, and you can still run steps 1–6 to see
-exactly what blocks it.
+If it isn't `dir`, stop here: don't run the steps below, since they stop
+your containers for an upgrade that can't apply. There is no validated
+upgrade path for this pool yet; it is tracked in
+[#326](https://github.com/pairtask/pairtask/issues/326). Don't upgrade the
+packages by hand from this guide.
 
 Using a `pairtask` from before `pk vm incus-plan` existed? Update the command
 first without touching the containers, run the steps, then upgrade the
@@ -225,10 +224,13 @@ In a host terminal:
    (`rm ~/incus-upgrade.json`) or pick a new name.
 6. **Read the blockers** it prints after `Blocked:` (listed below). Fix what
    you can, remove the manifest and plan again: after any change in the VM,
-   only a fresh plan is valid.
+   only a fresh plan is valid. If you give up here, nothing in the VM has
+   changed: start again exactly what you stopped (`pk start`, plus any
+   instance you stopped in step 4).
 7. **Apply that exact manifest:**
    `pk vm incus-apply --manifest ~/incus-upgrade.json --yes`. Incus is stopped
-   while it runs.
+   while it runs. If it fails, it names the step and the backup; follow the
+   recovery guidance below before starting anything.
 8. **Start and check:** `pk start` (it starts `secured` and `workspace`). If
    `connector` was running in step 4, start it again with
    `incus --project pairtask start colima-pairtask:connector` and check
