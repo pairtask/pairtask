@@ -25,13 +25,16 @@ func (m *Model) resolveAddress(a address) address {
 	raw := a.to
 	a.to = nil
 	for _, word := range raw {
-		a = m.placeWord(a, word)
+		a = m.placeWord(a, parseTag(word))
 		if a.problem != "" {
 			return a
 		}
 	}
-	if a.homeTagged() && !m.pairedMentions() {
+	switch {
+	case a.homeTagged() && !m.pairedMentions():
 		a.problem = "tagging your agents or operator in a ⇄ tab is unsupported by this broker; upgrade it"
+	case a.theirOperator && len(a.to) > 0:
+		a.problem = "a message there goes to their operator or to their agents: drop @operator@" + safe(m.contactTitle(m.conv.selected)) + " or the agents"
 	}
 	return a
 }
@@ -41,65 +44,102 @@ func (m *Model) pairedMentions() bool {
 	return m.session.HasCapability(protocol.CapabilityPairedMentions)
 }
 
-// addTheirs adds one of their agents: once each where the broker takes tags
-// here, else as written, so an older broker's check still sees a repeat.
-func (m *Model) addTheirs(to []string, name string) []string {
-	if m.pairedMentions() {
-		return appendOnce(to, name)
-	}
-	return append(to, name)
+// tagWord is one leading @word of a ⇄ draft: as written, and the name and
+// scope it splits into when it names one. An agent ID with an @ of its own
+// names no scope: it is theirs, as written.
+type tagWord struct {
+	word, name, scope string
+	scoped            bool
 }
 
-// placeWord puts one leading @word where it belongs.
-func (m *Model) placeWord(a address, word string) address {
+func parseTag(word string) tagWord {
 	name, scope, scoped := strings.Cut(word, "@")
-	scoped = scoped && mentionID.MatchString(name) // an agent ID with an @ of its own is theirs, as written
+	return tagWord{word: word, name: name, scope: scope, scoped: scoped && mentionID.MatchString(name)}
+}
+
+// agent is the agent the tag names, on whichever side.
+func (t tagWord) agent() string {
+	if t.scoped {
+		return t.name
+	}
+	return t.word
+}
+
+// qualified: AGENT@SCOPE, as a ⇄ tab writes one.
+func (t tagWord) qualified() bool { return t.scoped && t.scope != "" }
+
+// operator: the tag names an operator, on whichever side.
+func (t tagWord) operator() bool { return t.agent() == protocol.OperatorID }
+
+// placeWord puts one leading @word where it belongs.
+func (m *Model) placeWord(a address, t tagWord) address {
 	switch {
-	case !scoped && word == protocol.OperatorID:
+	case !t.scoped && t.operator():
 		a.operatorHere = true
-	case !scoped:
-		a.to = m.addTheirs(a.to, word)
-	case scope == hereScope:
-		return m.placeHome(a, name)
-	case m.isThisContact(scope):
-		if name != protocol.OperatorID { // @operator@WS is their operator: the default audience
-			a.to = m.addTheirs(a.to, name)
-		}
+	case !t.scoped:
+		return m.addTheirs(a, t)
+	case t.scope == hereScope:
+		return m.placeHome(a, t)
+	case m.isThisContact(t):
+		return m.placeThere(a, t)
 	default:
-		a.problem = "@" + safe(word) + " names another workspace; this tab writes to " + safe(m.contactTitle(m.conv.selected))
+		a.problem = "@" + safe(t.word) + " names another workspace; this tab writes to " + safe(m.contactTitle(m.conv.selected))
+	}
+	return a
+}
+
+// placeThere tags their operator, the default audience, or one of their
+// agents.
+func (m *Model) placeThere(a address, t tagWord) address {
+	if t.operator() {
+		a.theirOperator = true
+		return a
+	}
+	return m.addTheirs(a, t)
+}
+
+// addTheirs adds one of their agents: once each where the broker takes tags
+// here, else as written, so an older broker's check still sees a repeat.
+func (m *Model) addTheirs(a address, t tagWord) address {
+	if m.pairedMentions() {
+		a.to = appendOnce(a.to, t.agent())
+	} else {
+		a.to = append(a.to, t.agent())
 	}
 	return a
 }
 
 // placeHome tags one of this side's agents, or its operator.
-func (m *Model) placeHome(a address, name string) address {
+func (m *Model) placeHome(a address, t tagWord) address {
 	switch {
-	case name == protocol.OperatorID:
+	case t.operator():
 		a.operatorHere = true
-	case m.isLocalAgent(name):
-		a.here = appendOnce(a.here, name)
+	case m.hasAgent(t):
+		a.here = appendOnce(a.here, t.name)
 	default:
-		a.problem = safe(name) + " isn't an agent here"
+		a.problem = safe(t.name) + " isn't an agent here"
 	}
 	return a
 }
 
-// isThisContact: scope names the tab's workspace, by its key or its name.
-func (m *Model) isThisContact(scope string) bool {
+// isThisContact: the tag's scope names the tab's workspace, by its key or
+// its name.
+func (m *Model) isThisContact(t tagWord) bool {
 	key := m.conv.selected
-	return scope == key.contact || scope == m.contactTitle(key)
+	return t.scope == key.contact || t.scope == m.contactTitle(key)
 }
 
-// isLocalAgent: an agent this side knows now.
-func (m *Model) isLocalAgent(id string) bool {
-	return slices.ContainsFunc(m.agents.list, func(a protocol.AgentPresence) bool { return a.AgentID == id })
+// hasAgent: the tag names an agent this side knows now.
+func (m *Model) hasAgent(t tagWord) bool {
+	return slices.ContainsFunc(m.agents.list, func(a protocol.AgentPresence) bool { return a.AgentID == t.name })
 }
 
-func appendOnce(list []string, s string) []string {
-	if slices.Contains(list, s) {
+// appendOnce adds v unless the list holds it already.
+func appendOnce[T comparable](list []T, v T) []T {
+	if slices.Contains(list, v) {
 		return list
 	}
-	return append(list, s)
+	return append(list, v)
 }
 
 // homeScope names who here a draft tags: agent@here, operator@here.
@@ -140,15 +180,12 @@ func (m *Model) scopedMentions(contact, fragment string) []string {
 }
 
 // writableMention: an ID a mention carries, plain or scoped.
-func writableMention(id string) bool { return mentionID.MatchString(id) || scopedMention(id) }
+func writableMention(id string) bool { return mentionID.MatchString(id) || parseTag(id).qualified() }
 
 // onlyHomeTags: the draft tags someone here and says nothing.
 func (a address) onlyHomeTags() bool {
-	return len(a.to) == 0 && a.homeTagged() && strings.TrimSpace(a.text) == ""
-}
-
-// scopedMention: AGENT@SCOPE, as a ⇄ tab writes one.
-func scopedMention(id string) bool {
-	name, scope, ok := strings.Cut(id, "@")
-	return ok && mentionID.MatchString(name) && scope != ""
+	if len(a.to) > 0 || !a.homeTagged() {
+		return false
+	}
+	return strings.TrimSpace(a.text) == ""
 }

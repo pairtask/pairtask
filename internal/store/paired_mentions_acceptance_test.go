@@ -105,32 +105,37 @@ func TestPairedMentionsStoreAcceptanceBindingAndAliasReplaySurviveRestart(t *tes
 	}
 }
 
+func (f *pairedStoreFixture) conflictRequest(t *testing.T, mutation string) store.PairedReply {
+	t.Helper()
+	request := f.reply("answer", f.notice.MessageID)
+	if mutation == "body-replay" || mutation == "sender-replay" {
+		_, err := f.db.PairedReply(context.Background(), request)
+		pairOK(t, err)
+	}
+	switch mutation {
+	case "workspace":
+		request.Msg.Workspace = messageContact(t, f.db, 2)
+	case "audience":
+		request.Msg.Workspace, request.Msg.To = f.contact, "remote-outsider"
+	case "broadcast":
+		request.Msg.To = "*"
+	case "room":
+		request.Msg.Room = "unrelated"
+	case "body-replay":
+		request.Msg.Payload = json.RawMessage(`{"text":"changed answer"}`)
+	case "sender-replay":
+		request.Msg.From, request.Session = "other-home", "session-other-home"
+	}
+	return request
+}
+
 func TestPairedMentionsStoreAcceptanceConflictsNeverWriteEitherCopy(t *testing.T) {
 	for _, mutation := range []string{"workspace", "audience", "broadcast", "room", "body-replay", "sender-replay"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := pairedStore(t)
-			ctx := context.Background()
-			request := f.reply("answer", f.notice.MessageID)
-			if mutation == "body-replay" || mutation == "sender-replay" {
-				_, err := f.db.PairedReply(ctx, request)
-				pairOK(t, err)
-			}
-			switch mutation {
-			case "workspace":
-				request.Msg.Workspace = messageContact(t, f.db, 2)
-			case "audience":
-				request.Msg.Workspace, request.Msg.To = f.contact, "remote-outsider"
-			case "broadcast":
-				request.Msg.To = "*"
-			case "room":
-				request.Msg.Room = "unrelated"
-			case "body-replay":
-				request.Msg.Payload = json.RawMessage(`{"text":"changed answer"}`)
-			case "sender-replay":
-				request.Msg.From, request.Session = "other-home", "session-other-home"
-			}
+			request := f.conflictRequest(t, mutation)
 			before := pairedStoreCounts(t, f)
-			_, err := f.db.PairedReply(ctx, request)
+			_, err := f.db.PairedReply(context.Background(), request)
 			if !errors.Is(err, store.ErrConversationConflict) {
 				t.Fatalf("%s conflict was not explicit: %v", mutation, err)
 			}
@@ -180,7 +185,7 @@ func TestPairedMentionsStoreAcceptanceRevokedDeliveryIsLocalAndReplayable(t *tes
 			pairOK(t, json.Unmarshal([]byte(payload), &text))
 			pairEqual(t, text.Text, "home answer")
 			var peerReplies, outcomes int
-			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM peer_messages WHERE from_agent='home-a'`).Scan(&peerReplies))
+			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM peer_messages WHERE from_agent='home-a' AND direction='out'`).Scan(&peerReplies))
 			pairEqual(t, peerReplies, 0)
 			pairOK(t, f.raw.QueryRow(`SELECT COUNT(*) FROM paired_reply_outcomes WHERE message_id=?`, request.Msg.MessageID).Scan(&outcomes))
 			pairEqual(t, outcomes, 1)

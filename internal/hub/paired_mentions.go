@@ -131,6 +131,20 @@ func homeTargets(msg protocol.Message) []string {
 	return slices.Compact(targets)
 }
 
+// readableContact admits an operation on a confirmed contact, and a list of
+// one no longer there whose shared conversations this side keeps: read
+// only, the contact never recreated.
+func (h *Hub) readableContact(ctx context.Context, msg protocol.Message) *routingError {
+	rerr := h.confirmedContact(ctx, msg.ContactKey)
+	if rerr == nil || msg.ContactOp != protocol.ContactOpList {
+		return rerr
+	}
+	if kept, err := h.store.KeepsConversations(ctx, msg.ContactKey); err == nil && kept {
+		return nil
+	}
+	return rerr
+}
+
 // inSharedConversation: the message replied to belongs to a paired
 // workspace's conversation.
 func (h *Hub) inSharedConversation(ctx context.Context, id string) bool {
@@ -181,8 +195,8 @@ func (h *Hub) pairedReplied(clients map[string]*Client, in Inbound, r store.Pair
 		Durable: true, Repeated: r.Repeated, PeerDelivery: &delivery})
 	if delivery.State == protocol.PeerQueued {
 		h.SyncMessages(r.Binding.Contact)
-		h.MessagesChanged(r.Binding.Contact)
 	}
+	h.MessagesChanged(r.Binding.Contact) // a reply kept here only is in that workspace's history too
 }
 
 // pairedRefusal is what an agent hears of a reply the conversation refused.

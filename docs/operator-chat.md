@@ -56,11 +56,14 @@ and its reply assigned to it, as a tag in the Square does. The line above the
 draft shows both sides: `→ Office's operator · reviewer@here`. A tagged agent's
 reply comes back to this tab and goes on to the same people there, even if you
 haven't shared that agent with them. Once its reply is released or done,
-sharing decides again, and a paused or removed workspace gets nothing new.
+sharing decides again, and a paused or removed workspace gets nothing new; a
+reply that didn't go still shows in the tab as "not sent there, kept here
+only", with the reason.
 `@operator` (or `@operator@here`), alone or next to `@AGENT@here`, also puts the
 message in your own Waiting for you. `@operator@Office` is their operator, the
 default. A name tagged twice, in any spelling, counts once on its side. A tag
-naming another workspace, or an agent not here, holds the draft. An older broker can't carry
+naming another workspace, or an agent not here, holds the draft, and so does
+naming their operator together with their agents. An older broker can't carry
 these tags, and the draft is held with that explanation.
 
 ## Commands

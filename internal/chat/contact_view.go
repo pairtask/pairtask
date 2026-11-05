@@ -22,6 +22,14 @@ var stateLabels = map[string]string{
 	"read":      "read",
 	"refused":   "refused",
 	"expired":   "expired: no longer offered; delivery unconfirmed",
+	"not_sent":  "not sent there, kept here only",
+}
+
+// notSentReasons say why a tagged agent's reply stayed here (#278).
+var notSentReasons = map[string]string{
+	protocol.PeerNotShared:      "the agent isn't shared with them",
+	protocol.PeerPaused:         "the workspace is paused",
+	protocol.PeerContactRemoved: "the workspace was removed",
 }
 
 // contactLayout is a contact tab: its card, which stays on top, and the
@@ -176,10 +184,20 @@ func (m *Model) outboundState(v protocol.ContactMessageView) string {
 	if heldForUpgrade(v) {
 		return "queued: leaves once they upgrade pairtask"
 	}
-	if v.State == "refused" && v.RefusalReason != "" {
-		label += " (" + safe(v.RefusalReason) + ")"
+	return label + refusalNote(v)
+}
+
+// refusalNote is why a message was refused there, or stayed here.
+func refusalNote(v protocol.ContactMessageView) string {
+	switch {
+	case v.RefusalReason == "":
+		return ""
+	case v.State == protocol.PeerNotSent && notSentReasons[v.RefusalReason] != "":
+		return ": " + notSentReasons[v.RefusalReason]
+	case v.State == "refused" || v.State == protocol.PeerNotSent:
+		return " (" + safe(v.RefusalReason) + ")"
 	}
-	return label
+	return ""
 }
 
 // heldForUpgrade: still queued, and held only until the contact upgrades;

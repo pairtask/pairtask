@@ -638,7 +638,16 @@ workspace, or still holds the `assigned` reply its operator gave it there, and
 never to a paused or removed workspace.
 - **Accepted stage:** carries `peer_delivery: {state: "queued"|"not_sent",
   reason?}`, with reasons `not_shared`, `paused` and `contact_removed`.
-- **Same reply again:** answered as it was the first time.
+- **Not sent:** the reply still shows in that workspace's history here, as a
+  message with `direction: "out"`, `state: "not_sent"`, `refusal_reason` the
+  reason, `seq: 0`, and `from`, `to` and `reply_id` as its copy would have
+  had. It is never offered there, and it uses none of that workspace's
+  sequence. Once the workspace is removed, `list` still reads its history
+  while this side keeps a conversation with it; anything else is refused as
+  before (#316 makes it reachable in chat).
+- **Same reply again:** answered as it was the first time. The same `send`
+  again is answered as first queued, with nothing delivered or announced here
+  a second time.
 - **Conflicts:** a changed body or sender, or a reply naming another workspace,
   an agent outside the audience, `*` or a room, is a conflict (`malformed_frame`),
   and nothing is written.
