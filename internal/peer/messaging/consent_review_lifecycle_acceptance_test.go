@@ -15,9 +15,9 @@ func TestConsentReviewLifecycleAcceptanceSessionEndSettlesBothWithoutDuplicateRe
 	ctx := context.Background()
 	_, err := right.ClaimPendingFor(ctx, protocol.Recipient{AgentID: "reviewer", SessionID: "offline"}, 24)
 	sessionOK(t, err)
-	sessionOK(t, right.SetConsentOptIn(ctx, sessionContact, true, 0, sessionAt))
+	sessionOK(t, right.SetConsentOptIn(ctx, store.ConsentOptIn{Contact: sessionContact, On: true, AuditID: 0, Now: sessionAt}))
 	for _, op := range []string{"review", "publish"} {
-		sessionOK(t, right.ResetConsentScope(ctx, sessionContact, "reviewer", op, 0, sessionAt))
+		sessionOK(t, right.ResetConsentScope(ctx, store.ConsentReset{Contact: sessionContact, Agent: "reviewer", Operation: op, AuditID: 0, Now: sessionAt}))
 	}
 	id := "one-correlated-review"
 	_, err = left.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: id, Text: "held exact review", To: []string{"reviewer"}, Review: &messaging.ReviewAsk{Forge: "github", Repository: "pairtask/pairtask", Change: "293", Base: "base", Head: "head", Publish: true}, Now: sessionAt})

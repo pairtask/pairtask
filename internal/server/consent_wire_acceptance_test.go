@@ -17,7 +17,7 @@ type consentServerFixture struct {
 	view protocol.ConsentView
 }
 type consentServerVersionAccept interface {
-	AcceptVersion(context.Context, string, int, messaging.Message, time.Time) (messaging.Answer, error)
+	AcceptVersion(context.Context, string, messaging.Arrival) (messaging.Answer, error)
 }
 type consentServerLegacyAccept interface {
 	Accept(context.Context, string, messaging.Message, time.Time) (messaging.Answer, error)
@@ -36,7 +36,7 @@ func newConsentServerFixture(t *testing.T) *consentServerFixture {
 	m := messaging.Message{ID: "private-wire-hold", N: 1, CreatedAt: now, From: "claimed-sender", To: []string{"recipient"}, Text: "PRIVATE PENDING WIRE BODY"}
 	var answer messaging.Answer
 	if s, ok := any(f.st.PeerMessages()).(consentServerVersionAccept); ok {
-		answer, err = s.AcceptVersion(context.Background(), f.key, 8, m, now)
+		answer, err = s.AcceptVersion(context.Background(), f.key, messaging.Arrival{Version: 8, Message: m, At: now})
 	} else {
 		answer, err = any(f.st.PeerMessages()).(consentServerLegacyAccept).Accept(context.Background(), f.key, m, now)
 	}

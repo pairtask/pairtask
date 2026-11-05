@@ -37,7 +37,7 @@ func (m *Model) consentOptCommand(fields pairWords) tea.Cmd {
 		m.status = "/pair consent " + fields[1] + " NAME: the paired workspace"
 		return nil
 	}
-	key, problem := m.resolveConsentContact(fields[2])
+	key, problem := m.resolveConsentContact(consentName(fields[2]))
 	if problem != "" {
 		m.status = problem
 		return nil
@@ -70,7 +70,7 @@ func (m *Model) consentResetCommand(fields pairWords) tea.Cmd {
 		m.status = "/pair consent reset NAME AGENT OPERATION: OPERATION is message, review or publish"
 		return nil
 	}
-	key, problem := m.resolveConsentContact(fields[2])
+	key, problem := m.resolveConsentContact(consentName(fields[2]))
 	if problem != "" {
 		m.status = problem
 		return nil
@@ -220,7 +220,7 @@ func (m *Model) consentCompletions(l argLine) []string {
 // consentFirstWords are on, off, reset, each held contact and each held
 // request.
 func (m *Model) consentFirstWords(current string) []string {
-	if name, ok := strings.CutPrefix(current, consentContactPrefix); ok && m.namesAny(name) {
+	if name, ok := strings.CutPrefix(current, consentContactPrefix); ok && m.namesAny(consentName(name)) {
 		return nil // Enter runs what is typed; it never picks one of several
 	}
 	words := []string{consentOn, consentOff, consentReset}
@@ -232,7 +232,7 @@ func (m *Model) consentFirstWords(current string) []string {
 
 // consentContactWords are the paired workspaces, after on, off or reset.
 func (m *Model) consentContactWords(l argLine) []string {
-	if _, ok := consentVerbs[l.words[1]]; !ok || m.namesAny(l.current) {
+	if _, ok := consentVerbs[l.words[1]]; !ok || m.namesAny(consentName(l.current)) {
 		return nil // a typed name runs as typed: Enter never picks one of several
 	}
 	var tokens []string

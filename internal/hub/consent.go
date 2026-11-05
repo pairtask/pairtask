@@ -310,7 +310,7 @@ func (h *Hub) consentDecided(ctx context.Context, contact string, out store.Cons
 // contactConsentOpt turns holding a contact's undecided requests on or off.
 func (h *Hub) contactConsentOpt(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
-	if err := h.store.SetConsentOptIn(ctx, msg.ContactKey, *msg.ConsentOn, auditID, h.contactNow()); err != nil {
+	if err := h.store.SetConsentOptIn(ctx, store.ConsentOptIn{Contact: msg.ContactKey, On: *msg.ConsentOn, AuditID: auditID, Now: h.contactNow()}); err != nil {
 		return protocol.Message{}, err
 	}
 	h.MessagesChanged(msg.ContactKey)
@@ -321,7 +321,8 @@ func (h *Hub) contactConsentOpt(ctx context.Context, req operatorRequest, auditI
 // again: an explicit local action, never implied by opting in.
 func (h *Hub) contactConsentReset(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
-	if err := h.store.ResetConsentScope(ctx, msg.ContactKey, msg.ConsentAgent, msg.ConsentOperation, auditID, h.contactNow()); err != nil {
+	if err := h.store.ResetConsentScope(ctx, store.ConsentReset{Contact: msg.ContactKey, Agent: msg.ConsentAgent,
+		Operation: msg.ConsentOperation, AuditID: auditID, Now: h.contactNow()}); err != nil {
 		return protocol.Message{}, err
 	}
 	h.MessagesChanged(msg.ContactKey)

@@ -84,21 +84,40 @@ func TestConsentDiscoveryBareCommandWithNoneSaysSo(t *testing.T) {
 func TestConsentDiscoveryContactOpensListThenPreview(t *testing.T) {
 	h := consentInputHarness(t)
 	discoveryArrival(t, h)
-	v2Command(h, "/pair consent contact:"+discoveryToken)
-	read := h.take(protocol.TypeOperatorContact)
-	if read.ContactOp != protocol.ContactOpConsentList || read.ContactKey != "authenticated-key-293" {
-		t.Fatalf("contact list read %q for %q", read.ContactOp, read.ContactKey)
-	}
-	h.reply(read, consentInputPage())
-	h.await(func() bool { return h.m.State().InFlight == 0 })
-	view := discoveryView(h)
-	if !strings.Contains(view, consentFixtureID) || strings.Contains(view, consentFixtureText) {
-		t.Fatalf("list should name the request without previewing it: %s", view)
-	}
+	discoveryOpenList(t, h)
 	for _, msg := range []tea.Msg{chatKey('1', 0), chatKey('y', tea.ModCtrl), tea.PasteMsg{Content: "x"}} {
 		h.input(msg)
 	}
 	discoveryNoWrites(t, h)
+	discoveryPreviewAndBack(t, h)
+	h.input(chatKey(tea.KeyEnter, 0))
+	h.input(chatKey('4', 0))
+	h.input(chatKey('y', tea.ModCtrl))
+	requireDecision(t, h.take(protocol.TypeOperatorContact), protocol.ConsentDecline)
+}
+
+// discoveryOpenList opens the held contact's list, which names its request
+// without previewing it.
+func discoveryOpenList(t *testing.T, h *chatHarness) {
+	t.Helper()
+	v2Command(h, "/pair consent contact:"+discoveryToken)
+	read := h.take(protocol.TypeOperatorContact)
+	requireContactOp(t, read, protocol.ContactOpConsentList)
+	h.reply(read, consentInputPage())
+	h.await(func() bool { return h.m.State().InFlight == 0 })
+	view := discoveryView(h)
+	if !strings.Contains(view, consentFixtureID) {
+		t.Fatalf("list should name the request: %s", view)
+	}
+	if strings.Contains(view, consentFixtureText) {
+		t.Fatalf("list should not preview the request: %s", view)
+	}
+}
+
+// discoveryPreviewAndBack previews the highlighted request, confirms
+// nothing unselected, and returns to the list with Esc.
+func discoveryPreviewAndBack(t *testing.T, h *chatHarness) {
+	t.Helper()
 	h.input(chatKey(tea.KeyEnter, 0))
 	if !strings.Contains(discoveryView(h), consentFixtureText) {
 		t.Fatal("Enter did not preview the highlighted request")
@@ -106,15 +125,54 @@ func TestConsentDiscoveryContactOpensListThenPreview(t *testing.T) {
 	h.input(chatKey('y', tea.ModCtrl)) // nothing selected: nothing sent
 	discoveryNoWrites(t, h)
 	h.input(chatKey(tea.KeyEscape, 0))
-	if v := discoveryView(h); strings.Contains(v, consentFixtureText) || !strings.Contains(v, "Held requests from") {
+	v := discoveryView(h)
+	if strings.Contains(v, consentFixtureText) {
+		t.Fatal("Esc in the preview still shows the request")
+	}
+	if !strings.Contains(v, "Held requests from") {
 		t.Fatal("Esc in the preview did not return to the list")
 	}
-	h.input(chatKey(tea.KeyEnter, 0))
-	h.input(chatKey('4', 0))
-	h.input(chatKey('y', tea.ModCtrl))
-	decide := h.take(protocol.TypeOperatorContact)
-	if decide.ConsentDecide == nil || decide.ConsentDecide.ConsentID != consentFixtureID || decide.ConsentDecide.Choice != protocol.ConsentDecline {
-		t.Fatalf("decision %+v", decide.ConsentDecide)
+}
+
+// discoveryContact is the fixture contact's key.
+const discoveryContact = "authenticated-key-293"
+
+// requireContactOp fails unless req is op for the fixture's contact.
+func requireContactOp(t *testing.T, req protocol.Message, op string) {
+	t.Helper()
+	if req.ContactOp != op {
+		t.Fatalf("sent %q, want %q: %+v", req.ContactOp, op, req)
+	}
+	if req.ContactKey != discoveryContact {
+		t.Fatalf("%s for %q, want %q", op, req.ContactKey, discoveryContact)
+	}
+}
+
+// requireDecision fails unless req decides the fixture's request as choice.
+func requireDecision(t *testing.T, req protocol.Message, choice string) {
+	t.Helper()
+	d := req.ConsentDecide
+	if d == nil {
+		t.Fatalf("no decision in %+v", req)
+	}
+	if d.ConsentID != consentFixtureID || d.Choice != choice {
+		t.Fatalf("decision %+v", d)
+	}
+}
+
+// requireConsentOn fails unless req turns consent on (or off) as want.
+func requireConsentOn(t *testing.T, req protocol.Message, want bool) {
+	t.Helper()
+	if req.ConsentOn == nil || *req.ConsentOn != want {
+		t.Fatalf("consent on %v, want %v: %+v", req.ConsentOn, want, req)
+	}
+}
+
+// requireResetScope fails unless req resets exactly agent's operation.
+func requireResetScope(t *testing.T, req protocol.Message, agent, operation string) {
+	t.Helper()
+	if req.ConsentAgent != agent || req.ConsentOperation != operation {
+		t.Fatalf("reset sent %+v", req)
 	}
 }
 
@@ -133,9 +191,8 @@ func TestConsentDiscoveryOptInOutSendWireOp(t *testing.T) {
 		discoveryArrival(t, h)
 		v2Command(h, "/pair consent "+word+" "+discoveryToken)
 		req := h.take(protocol.TypeOperatorContact)
-		if req.ContactOp != protocol.ContactOpConsentOpt || req.ContactKey != "authenticated-key-293" || req.ConsentOn == nil || *req.ConsentOn != (word == "on") {
-			t.Fatalf("%s sent %+v", word, req)
-		}
+		requireContactOp(t, req, protocol.ContactOpConsentOpt)
+		requireConsentOn(t, req, word == "on")
 		h.reply(req, protocol.Message{Type: protocol.TypeOperatorContactResult, ContactOp: protocol.ContactOpConsentOpt})
 		h.await(func() bool { return h.m.State().InFlight == 0 })
 		if !strings.HasPrefix(h.m.State().Status, "consent "+word+" for ") {
@@ -161,9 +218,8 @@ func TestConsentDiscoveryResetSendsExactScope(t *testing.T) {
 	discoveryArrival(t, h)
 	v2Command(h, "/pair consent reset "+discoveryToken+" alpha review")
 	req := h.take(protocol.TypeOperatorContact)
-	if req.ContactOp != protocol.ContactOpConsentReset || req.ConsentAgent != "alpha" || req.ConsentOperation != "review" || req.ContactKey != "authenticated-key-293" {
-		t.Fatalf("reset sent %+v", req)
-	}
+	requireContactOp(t, req, protocol.ContactOpConsentReset)
+	requireResetScope(t, req, "alpha", "review")
 	h.reply(req, protocol.Message{Type: protocol.TypeOperatorContactResult, ContactOp: protocol.ContactOpConsentReset})
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	if !strings.Contains(h.m.State().Status, "reset review to alpha from "+discoveryToken+" to undecided") {

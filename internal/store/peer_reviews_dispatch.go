@@ -217,8 +217,8 @@ func remotePolicyText(p *protocol.ReviewPolicy) string {
 // Past what a grant allows, or without one, the consent its request was
 // allowed under decides, within the ceiling it showed (#293). A write
 // already reserved is never refused its result.
-func publicationAllowed(ctx context.Context, tx *sql.Tx, before, after review.Record, owner LiveOwner) error {
-	v := after.View
+func publicationAllowed(ctx context.Context, tx *sql.Tx, before review.Record, c reviewChange) error {
+	v, owner := c.rec.View, c.act.Owner
 	if v.Remote == nil || v.Publication.Intent <= before.View.Publication.Intent {
 		return nil
 	}

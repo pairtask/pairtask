@@ -35,7 +35,7 @@ func (c *consentSessionCase) admitted(t *testing.T, m messaging.Message) {
 	t.Helper()
 	// A new wrapper must share the live owner's fail-closed gate.
 	a := any(c.f.db.PeerMessages()).(consentVersionAcceptor)
-	answer, err := a.AcceptVersion(context.Background(), c.f.key, 8, m, messageAt)
+	answer, err := a.AcceptVersion(context.Background(), c.f.key, messaging.Arrival{Version: 8, Message: m, At: messageAt})
 	pairOK(t, err)
 	pairEqual(t, answer.Stored, true)
 	page, err := c.f.db.ConsentPage(context.Background(), c.f.key, 0, 100)

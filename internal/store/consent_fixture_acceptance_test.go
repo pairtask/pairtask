@@ -10,7 +10,7 @@ import (
 )
 
 type consentVersionAcceptor interface {
-	AcceptVersion(context.Context, string, int, messaging.Message, time.Time) (messaging.Answer, error)
+	AcceptVersion(context.Context, string, messaging.Arrival) (messaging.Answer, error)
 }
 type consentLegacyAcceptor interface {
 	Accept(context.Context, string, messaging.Message, time.Time) (messaging.Answer, error)
@@ -20,7 +20,7 @@ func (f workspaceStoreFixture) consentAccept(t *testing.T, version int, m messag
 	t.Helper()
 	a := any(f.db.PeerMessages())
 	if s, ok := a.(consentVersionAcceptor); ok {
-		return s.AcceptVersion(context.Background(), f.key, version, m, now)
+		return s.AcceptVersion(context.Background(), f.key, messaging.Arrival{Version: version, Message: m, At: now})
 	}
 	if s, ok := a.(consentLegacyAcceptor); ok {
 		return s.Accept(context.Background(), f.key, m, now)
@@ -96,8 +96,8 @@ func consentAnotherContact(t *testing.T, f workspaceStoreFixture, n int, agents 
 
 func consentOptAndResetMessages(t *testing.T, f workspaceStoreFixture, agents []string) {
 	t.Helper()
-	pairOK(t, f.db.SetConsentOptIn(context.Background(), f.key, true, consentAudit(t, f, "consent_opt"), messageAt))
+	pairOK(t, f.db.SetConsentOptIn(context.Background(), store.ConsentOptIn{Contact: f.key, On: true, AuditID: consentAudit(t, f, "consent_opt"), Now: messageAt}))
 	for _, agent := range agents {
-		pairOK(t, f.db.ResetConsentScope(context.Background(), f.key, agent, protocol.ConsentMessage, consentAudit(t, f, "consent_reset"), messageAt))
+		pairOK(t, f.db.ResetConsentScope(context.Background(), store.ConsentReset{Contact: f.key, Agent: agent, Operation: protocol.ConsentMessage, AuditID: consentAudit(t, f, "consent_reset"), Now: messageAt}))
 	}
 }

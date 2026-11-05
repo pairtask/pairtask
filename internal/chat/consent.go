@@ -120,7 +120,7 @@ func (m *Model) consentCommand(fields pairWords) tea.Cmd {
 // consentContactCommand is /pair consent contact:NAME: that contact's
 // held requests, none of them previewed or chosen yet.
 func (m *Model) consentContactCommand(name string) tea.Cmd {
-	key, problem := m.resolveConsentContact(name)
+	key, problem := m.resolveConsentContact(consentName(name))
 	if problem != "" {
 		m.status = problem
 		return nil
@@ -255,12 +255,24 @@ func (m *Model) showConsentView(v protocol.ConsentView) {
 // highlighted request where it still is.
 func (m *Model) showConsentList(contact string, items []protocol.ConsentView) {
 	row := 0
-	if c := m.consent; c != nil && c.list != nil && c.list.row < len(c.list.items) {
-		row = max(0, slices.IndexFunc(items, func(v protocol.ConsentView) bool { return v.ID == c.list.items[c.list.row].ID }))
+	if id, ok := m.consent.highlightedID(); ok {
+		row = max(0, slices.IndexFunc(items, func(v protocol.ConsentView) bool { return v.ID == id }))
 	}
 	m.consent = &consentPrompt{selected: consentNoSelection, list: &consentList{contact: contact, items: items, row: row}}
 	m.panel = &panel{kind: panelConsent}
 	m.status = "↑/↓ highlight a held request · Enter previews it · Esc closes; nothing is decided here"
+}
+
+// highlightedID is the open list's highlighted request, if there is one.
+func (c *consentPrompt) highlightedID() (string, bool) {
+	if c == nil || c.list == nil {
+		return "", false
+	}
+	l := c.list
+	if l.row >= len(l.items) {
+		return "", false
+	}
+	return l.items[l.row].ID, true
 }
 
 // consentKey is every key while the preview is open: nothing reaches the
@@ -295,10 +307,18 @@ func consentChoiceKey(key string) bool { return len(key) == 1 && key >= "1" && k
 // selectConsent selects a choice, unless what is shown is being replaced.
 func (m *Model) selectConsent(i int) {
 	c := m.consent
-	if c.sending || c.refreshing || c.stale {
+	if c.replacing() {
 		return
 	}
 	c.selected = i
+}
+
+// replacing: what is shown is being sent, refreshed or already stale.
+func (c *consentPrompt) replacing() bool {
+	if c.sending {
+		return true
+	}
+	return c.refreshing || c.stale
 }
 
 // scrollConsent moves the preview by a line (±1) or a page (±2); the

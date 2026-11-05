@@ -107,7 +107,7 @@ func (m *Model) heldCountResult(req pendingRequest, resp protocol.Message) tea.C
 	page := resp.ConsentPage
 	if page == nil {
 		h.token, h.acc = "", nil
-		m.heldUnread(refusalReason(resp))
+		m.heldUnread(resp)
 		return nil
 	}
 	h.add(page.Items)
@@ -126,24 +126,27 @@ func (m *Model) heldCountResult(req pendingRequest, resp protocol.Message) tea.C
 	return nil
 }
 
-// heldUnread reports a failed read when /pair consent waited for it.
-func (m *Model) heldUnread(reason string) {
+// heldUnread reports a refused read when /pair consent waited for it.
+func (m *Model) heldUnread(resp protocol.Message) {
 	if m.held.show {
 		m.held.show = false
-		m.status = "held requests not read: " + reason
+		m.status = "held requests not read: " + refusalReason(resp)
 	}
 }
 
 // heldFromPage takes the counts from a preview read that saw every held
 // request at once: the first page across contacts, with nothing more.
 func (m *Model) heldFromPage(r consentRead, page *protocol.ConsentPage) {
-	if r.contact != "" || r.before != 0 || page.More {
+	if !r.acrossContacts() || page.More {
 		return
 	}
 	m.held.acc = nil
 	m.held.add(page.Items)
 	m.held.byContact, m.held.acc = m.held.acc, nil
 }
+
+// acrossContacts: the read is the first page across every contact.
+func (r consentRead) acrossContacts() bool { return r.contact == "" && r.before == 0 }
 
 // heldSummaryCommand is /pair consent alone: read the counts, then one
 // line per contact with held requests.
@@ -234,23 +237,27 @@ func (m *Model) knownContacts() []string {
 	return keys
 }
 
+// consentName is what a command typed to name a paired workspace: its
+// title, its key or a prefix of its digest.
+type consentName string
+
 // resolveConsentContact is the one paired workspace NAME names: by what
 // this side calls it, its key, or at least a short key's worth of its
 // digest. None, or more than one, is refused; the first match is never
 // picked.
-func (m *Model) resolveConsentContact(name string) (string, string) {
+func (m *Model) resolveConsentContact(name consentName) (string, string) {
 	hits := m.contactHits(name)
 	switch len(hits) {
 	case 0:
-		return "", "no paired workspace " + safe(name) + "; /pair status lists them"
+		return "", "no paired workspace " + safe(string(name)) + "; /pair status lists them"
 	case 1:
 		return hits[0], ""
 	}
-	return "", fmt.Sprintf("%s names %d paired workspaces; use more of its key (/pair status shows it)", safe(name), len(hits))
+	return "", fmt.Sprintf("%s names %d paired workspaces; use more of its key (/pair status shows it)", safe(string(name)), len(hits))
 }
 
 // contactHits are the known contacts name names.
-func (m *Model) contactHits(name string) []string {
+func (m *Model) contactHits(name consentName) []string {
 	var hits []string
 	for _, key := range m.knownContacts() {
 		if m.namesContact(key, name) {
@@ -262,30 +269,30 @@ func (m *Model) contactHits(name string) []string {
 
 // namesAny: name already names at least one contact, so completing it to
 // a longer token could pick one of several.
-func (m *Model) namesAny(name string) bool { return len(m.contactHits(name)) > 0 }
+func (m *Model) namesAny(name consentName) bool { return len(m.contactHits(name)) > 0 }
 
 // namesContact: name is the contact's title, key or a long enough digest
 // prefix.
-func (m *Model) namesContact(key, name string) bool {
+func (m *Model) namesContact(key string, name consentName) bool {
 	if name == "" {
 		return false
 	}
-	if key == name || m.contactTitle(contactKey(key)) == name {
+	if key == string(name) || m.contactTitle(contactKey(key)) == string(name) {
 		return true
 	}
-	digest := protocol.KeyDigest(name)
+	digest := protocol.KeyDigest(string(name))
 	return len(digest) >= len(protocol.ShortKey(key)) && strings.HasPrefix(protocol.KeyDigest(key), digest)
 }
 
 // contactToken is how a command names the contact: its title when that is
 // one word naming it alone, else the shortest digest prefix that does.
 func (m *Model) contactToken(key string) string {
-	if title := m.contactTitle(contactKey(key)); m.tokenNames(title, key) {
+	if title := m.contactTitle(contactKey(key)); m.tokenNames(consentName(title), key) {
 		return title
 	}
 	digest := protocol.KeyDigest(key)
 	for n := len(protocol.ShortKey(key)); n < len(digest); n++ {
-		if m.tokenNames(digest[:n], key) {
+		if m.tokenNames(consentName(digest[:n]), key) {
 			return digest[:n]
 		}
 	}
@@ -293,10 +300,18 @@ func (m *Model) contactToken(key string) string {
 }
 
 // tokenNames: token is one plain word that resolves to key alone.
-func (m *Model) tokenNames(token, key string) bool {
-	if token == "" || strings.ContainsFunc(token, isSpace) || safe(token) != token {
+func (m *Model) tokenNames(token consentName, key string) bool {
+	if !token.plainWord() {
 		return false
 	}
 	resolved, problem := m.resolveConsentContact(token)
 	return problem == "" && resolved == key
+}
+
+// plainWord: the name is one non-empty word with nothing to escape.
+func (n consentName) plainWord() bool {
+	if n == "" {
+		return false
+	}
+	return !strings.ContainsFunc(string(n), isSpace) && safe(string(n)) == string(n)
 }

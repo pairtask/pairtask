@@ -196,29 +196,34 @@ func (m *Model) footer() string {
 	if status != "" {
 		parts = append(parts, bandTitle.Render(ansi.Truncate(status, m.width, "…")))
 	}
-	if reminder := m.ackReminder(); reminder != "" {
-		parts = append(parts, reminder)
-	}
-	if reminder := m.contactAckReminder(); reminder != "" {
-		parts = append(parts, reminder)
-	}
-	if reminder := m.reviewReminder(); reminder != "" {
-		parts = append(parts, reminder)
-	}
-	if reminder := m.heldReminder(); reminder != "" {
-		parts = append(parts, reminder)
-	}
+	parts = append(parts, m.reminders()...)
 	parts = append(parts, bandStyle.Render(m.facts()))
 	if summary := m.statusSummary(); summary != "" {
 		parts = append(parts, bandStyle.Render(summary)) // lowest priority: dropped first
 	}
 	left, used := fitParts(parts, m.width)
-	right := ""
-	if gap := m.width - used - ansi.StringWidth(keyReminder); gap >= 2 && status == "" {
-		right = bandStyle.Render(strings.Repeat(" ", gap) + keyReminder)
-		used = m.width
-	}
+	right, used := m.keyHint(status, used)
 	return left + right + bandStyle.Render(strings.Repeat(" ", max(0, m.width-used)))
+}
+
+// reminders are the footer's non-empty reminders, in priority order.
+func (m *Model) reminders() []string {
+	var parts []string
+	for _, reminder := range []string{m.ackReminder(), m.contactAckReminder(), m.reviewReminder(), m.heldReminder()} {
+		if reminder != "" {
+			parts = append(parts, reminder)
+		}
+	}
+	return parts
+}
+
+// keyHint is the key reminder at the band's right edge when no status is
+// shown and it fits, and the cells the band then uses.
+func (m *Model) keyHint(status string, used int) (string, int) {
+	if gap := m.width - used - ansi.StringWidth(keyReminder); gap >= 2 && status == "" {
+		return bandStyle.Render(strings.Repeat(" ", gap) + keyReminder), m.width
+	}
+	return "", used
 }
 
 // fitParts joins the parts that fit in the width with " · ", in order; the

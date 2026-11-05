@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/store"
 	"io"
 	"testing"
 )
@@ -61,8 +62,8 @@ func TestConsentWireAcceptanceV7NeverReceivesNewHeldFrame(t *testing.T) {
 	db, _ := sessionFixture(t)
 	_, err := db.ClaimPendingFor(context.Background(), protocol.Recipient{AgentID: "recipient", SessionID: "offline"}, 24)
 	sessionOK(t, err)
-	sessionOK(t, db.SetConsentOptIn(context.Background(), sessionContact, true, 0, sessionAt))
-	sessionOK(t, db.ResetConsentScope(context.Background(), sessionContact, "recipient", protocol.ConsentMessage, 0, sessionAt))
+	sessionOK(t, db.SetConsentOptIn(context.Background(), store.ConsentOptIn{Contact: sessionContact, On: true, AuditID: 0, Now: sessionAt}))
+	sessionOK(t, db.ResetConsentScope(context.Background(), store.ConsentReset{Contact: sessionContact, Agent: "recipient", Operation: protocol.ConsentMessage, AuditID: 0, Now: sessionAt}))
 	m := messaging.Message{ID: "legacy-inbound", N: 1, From: "sender", To: []string{"recipient"}, CreatedAt: sessionAt, Text: "requires consent"}
 	routed, err := messaging.EncodeRouted(m)
 	sessionOK(t, err)

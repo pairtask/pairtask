@@ -38,7 +38,7 @@ func consentDeclineFixture(t *testing.T, review bool) workspaceStoreFixture {
 	f := consentFixture(t, "X", "Y")
 	if review {
 		for _, agent := range []string{"X", "Y"} {
-			pairOK(t, f.db.ResetConsentScope(context.Background(), f.key, agent, protocol.ConsentReview, 0, messageAt))
+			pairOK(t, f.db.ResetConsentScope(context.Background(), store.ConsentReset{Contact: f.key, Agent: agent, Operation: protocol.ConsentReview, AuditID: 0, Now: messageAt}))
 		}
 	}
 	return f

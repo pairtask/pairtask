@@ -59,7 +59,7 @@ type consentPublicationFixture struct {
 	id    string
 }
 type consentBridgeVersionAccept interface {
-	AcceptVersion(context.Context, string, int, messaging.Message, time.Time) (messaging.Answer, error)
+	AcceptVersion(context.Context, string, messaging.Arrival) (messaging.Answer, error)
 }
 type consentBridgeLegacyAccept interface {
 	Accept(context.Context, string, messaging.Message, time.Time) (messaging.Answer, error)
@@ -71,7 +71,7 @@ func consentBridgeAccept(t *testing.T, db *store.Store, key string, m messaging.
 	var a messaging.Answer
 	var err error
 	if s, ok := any(db.PeerMessages()).(consentBridgeVersionAccept); ok {
-		a, err = s.AcceptVersion(context.Background(), key, 8, m, now)
+		a, err = s.AcceptVersion(context.Background(), key, messaging.Arrival{Version: 8, Message: m, At: now})
 	} else {
 		a, err = any(db.PeerMessages()).(consentBridgeLegacyAccept).Accept(context.Background(), key, m, now)
 	}
@@ -98,9 +98,9 @@ func newConsentPublicationFixture(t *testing.T, kind string) *consentPublication
 	requireNoError(t, err)
 	_, err = db.ClaimPendingFor(ctx, protocol.Recipient{AgentID: "reviewer", SessionID: "offline-fixture"}, 24)
 	requireNoError(t, err)
-	requireNoError(t, db.SetConsentOptIn(ctx, key, true, 0, now))
+	requireNoError(t, db.SetConsentOptIn(ctx, store.ConsentOptIn{Contact: key, On: true, AuditID: 0, Now: now}))
 	for _, op := range []string{protocol.ConsentReview, protocol.ConsentPublish} {
-		requireNoError(t, db.ResetConsentScope(ctx, key, "reviewer", op, 0, now))
+		requireNoError(t, db.ResetConsentScope(ctx, store.ConsentReset{Contact: key, Agent: "reviewer", Operation: op, AuditID: 0, Now: now}))
 	}
 	target, pins := reviewBridgeTarget(), reviewBridgePins()
 	m := messaging.Message{ID: "publication-consent", N: 1, CreatedAt: now, From: "remote-sender", To: []string{"reviewer"}, Text: "review exact pins", Review: &messaging.ReviewAsk{Forge: target.Forge, Repository: target.Repository, Change: target.Change, Base: pins.Base, Head: pins.Head, Publish: true, Formal: true}}

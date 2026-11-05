@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/store"
 	"testing"
 )
 
@@ -32,9 +33,9 @@ func TestConsentTombstoneCapAcceptanceSharesInboundBoundAndNeverEvictsDedup(t *t
 			if review {
 				agent, op = "reviewer", protocol.ConsentReview
 			}
-			pairOK(t, f.db.ResetConsentScope(ctx, f.key, agent, op, 0, messageAt))
+			pairOK(t, f.db.ResetConsentScope(ctx, store.ConsentReset{Contact: f.key, Agent: agent, Operation: op, AuditID: 0, Now: messageAt}))
 			if review {
-				pairOK(t, f.db.ResetConsentScope(ctx, f.key, agent, protocol.ConsentPublish, 0, messageAt))
+				pairOK(t, f.db.ResetConsentScope(ctx, store.ConsentReset{Contact: f.key, Agent: agent, Operation: protocol.ConsentPublish, AuditID: 0, Now: messageAt}))
 			}
 			rate := reviewIDTable(t, f, "SELECT * FROM consent_rate ORDER BY contact")
 			next := m

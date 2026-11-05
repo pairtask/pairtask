@@ -24,7 +24,7 @@ func consentReviewOnlyFixture(t *testing.T, reset bool) workspaceStoreFixture {
 	_, err := f.db.PeerMessages().SetReviewGrant(context.Background(), f.key, store.ReviewGrantChange{Agents: []string{"reviewer"}, Mode: store.ReviewAuto, Now: messageAt})
 	pairOK(t, err)
 	if reset {
-		pairOK(t, f.db.ResetConsentScope(context.Background(), f.key, "reviewer", protocol.ConsentPublish, 0, messageAt))
+		pairOK(t, f.db.ResetConsentScope(context.Background(), store.ConsentReset{Contact: f.key, Agent: "reviewer", Operation: protocol.ConsentPublish, AuditID: 0, Now: messageAt}))
 	}
 	return f
 }

@@ -132,7 +132,7 @@ func (p *PeerMessages) AcceptConsentOutcome(ctx context.Context, contact string,
 		if hold.ended() {
 			return replayedOutcome(hold, o)
 		}
-		return endHold(ctx, tx, contact, o, at)
+		return endHold(ctx, tx, heldEnd{contact: contact, o: o, at: at})
 	})
 }
 
@@ -146,24 +146,31 @@ func replayedOutcome(hold heldOutRow, o messaging.ConsentOutcome) error {
 	return fmt.Errorf("%w: %s %q for %s, already %s %q", messaging.ErrConsentTerminalConflict, o.State, o.Reason, o.ID, hold.state, hold.reason)
 }
 
-func endHold(ctx context.Context, tx *sql.Tx, contact string, o messaging.ConsentOutcome, at time.Time) error {
+// heldEnd is the contact's outcome of a message it held, and when it came.
+type heldEnd struct {
+	contact string
+	o       messaging.ConsentOutcome
+	at      time.Time
+}
+
+func endHold(ctx context.Context, tx *sql.Tx, e heldEnd) error {
 	_, err := tx.ExecContext(ctx, `UPDATE consent_held_out SET state = ?, reason = ?, decided_at = ?
-WHERE contact = ? AND message_id = ? AND state = 'held'`, o.State, o.Reason, msgStamp(at), contact, o.ID)
+WHERE contact = ? AND message_id = ? AND state = 'held'`, e.o.State, e.o.Reason, msgStamp(e.at), e.contact, e.o.ID)
 	if err != nil {
 		return err
 	}
-	return settleHeldAsk(ctx, tx, contact, o, at)
+	return settleHeldAsk(ctx, tx, e)
 }
 
 // settleHeldAsk settles the review request a held message was, once its
 // hold ended otherwise than allowed: as the hold did, for its reason, with
 // no verdict or review; one settled already stays as it is. No other ask
 // is touched, and allowed changes none.
-func settleHeldAsk(ctx context.Context, tx *sql.Tx, contact string, o messaging.ConsentOutcome, at time.Time) error {
-	if o.State == consentAllowed {
+func settleHeldAsk(ctx context.Context, tx *sql.Tx, e heldEnd) error {
+	if e.o.State == consentAllowed {
 		return nil
 	}
-	return settleAsks(ctx, tx, askEnd{o.State, o.Reason, at}, oneAsk(contact, o.ID))
+	return settleAsks(ctx, tx, askEnd{e.o.State, e.o.Reason, e.at}, oneAsk(e.contact, e.o.ID))
 }
 
 // heldOutFor is the hold of this side's message id, if the contact held it.

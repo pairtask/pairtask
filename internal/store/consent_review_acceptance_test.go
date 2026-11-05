@@ -15,7 +15,7 @@ func consentReviewFixture(t *testing.T) workspaceStoreFixture {
 	t.Helper()
 	f := consentFixture(t, "reviewer")
 	for _, op := range []string{protocol.ConsentReview, protocol.ConsentPublish} {
-		pairOK(t, f.db.ResetConsentScope(context.Background(), f.key, "reviewer", op, consentAudit(t, f, "consent_reset"), messageAt))
+		pairOK(t, f.db.ResetConsentScope(context.Background(), store.ConsentReset{Contact: f.key, Agent: "reviewer", Operation: op, AuditID: consentAudit(t, f, "consent_reset"), Now: messageAt}))
 	}
 	return f
 }

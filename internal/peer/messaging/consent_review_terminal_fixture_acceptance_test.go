@@ -49,9 +49,9 @@ func newConsentReviewTerminalPair(t *testing.T) consentReviewTerminalPair {
 	ctx := context.Background()
 	_, err := right.ClaimPendingFor(ctx, protocol.Recipient{AgentID: "reviewer", SessionID: "offline"}, 24)
 	sessionOK(t, err)
-	sessionOK(t, right.SetConsentOptIn(ctx, sessionContact, true, 0, sessionAt))
+	sessionOK(t, right.SetConsentOptIn(ctx, store.ConsentOptIn{Contact: sessionContact, On: true, AuditID: 0, Now: sessionAt}))
 	for _, op := range []string{"review", "publish"} {
-		sessionOK(t, right.ResetConsentScope(ctx, sessionContact, "reviewer", op, 0, sessionAt))
+		sessionOK(t, right.ResetConsentScope(ctx, store.ConsentReset{Contact: sessionContact, Agent: "reviewer", Operation: op, AuditID: 0, Now: sessionAt}))
 	}
 	p := consentReviewTerminalPair{left: left, right: right, leftPath: lp, rightPath: rp, id: "correlated-terminal-review"}
 	consentQueueReview(t, left, consentReviewOutgoing(sessionContact, p.id, sessionAt))

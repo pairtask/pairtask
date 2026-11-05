@@ -190,24 +190,43 @@ func (s *Store) ConsentPage(ctx context.Context, contact string, before int64, l
 	return page, nil
 }
 
+// ConsentOptIn turns holding undecided requests from Contact on or off,
+// under the operator audit row AuditID, at Now.
+type ConsentOptIn struct {
+	Contact string
+	On      bool
+	AuditID int64
+	Now     time.Time
+}
+
 // SetConsentOptIn turns holding undecided requests from contact on or off.
 // Turning it on decides nothing: a legacy contact's scopes stay denied.
-func (s *Store) SetConsentOptIn(ctx context.Context, contact string, on bool, auditID int64, now time.Time) error {
-	detail := map[bool]string{true: "consent on", false: "consent off"}[on]
-	return s.consentTx(ctx, consentChange{contact, auditID, detail}, func(tx *sql.Tx) error {
+func (s *Store) SetConsentOptIn(ctx context.Context, o ConsentOptIn) error {
+	detail := map[bool]string{true: "consent on", false: "consent off"}[o.On]
+	return s.consentTx(ctx, consentChange{o.Contact, o.AuditID, detail}, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET consent_since = CASE WHEN ?1 THEN COALESCE(consent_since, ?2) END
-WHERE identity_key = ?3`, on, msgStamp(now), contact)
+WHERE identity_key = ?3`, o.On, msgStamp(o.Now), o.Contact)
 		return err
 	})
 }
 
+// ConsentReset makes Agent's Operation for Contact undecided again, under
+// the operator audit row AuditID, at Now.
+type ConsentReset struct {
+	Contact   string
+	Agent     string
+	Operation string
+	AuditID   int64
+	Now       time.Time
+}
+
 // ResetConsentScope makes one agent's operation for contact undecided again.
-func (s *Store) ResetConsentScope(ctx context.Context, contact, agent, operation string, auditID int64, now time.Time) error {
-	if !messaging.ValidAgent(agent) || !consentOperations[operation] {
+func (s *Store) ResetConsentScope(ctx context.Context, r ConsentReset) error {
+	if !messaging.ValidAgent(r.Agent) || !consentOperations[r.Operation] {
 		return fmt.Errorf("%w: consent scope", messaging.ErrInvalid)
 	}
-	return s.consentTx(ctx, consentChange{contact, auditID, "consent reset " + operation}, func(tx *sql.Tx) error {
-		return decideScope(ctx, tx, scopeDecision{consentScope{contact, agent, operation}, scopeUndecided, auditID, now})
+	return s.consentTx(ctx, consentChange{r.Contact, r.AuditID, "consent reset " + r.Operation}, func(tx *sql.Tx) error {
+		return decideScope(ctx, tx, scopeDecision{consentScope{r.Contact, r.Agent, r.Operation}, scopeUndecided, r.AuditID, r.Now})
 	})
 }
 

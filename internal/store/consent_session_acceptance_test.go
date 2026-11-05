@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"github.com/pairtask/pairtask/internal/store"
 	"testing"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -22,7 +23,7 @@ func TestConsentSessionAcceptancePublicationCeilingIsBounded(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			c := newConsentSessionCase(t)
-			pairOK(t, c.f.db.ResetConsentScope(context.Background(), c.f.key, "X", protocol.ConsentPublish, 0, messageAt))
+			pairOK(t, c.f.db.ResetConsentScope(context.Background(), store.ConsentReset{Contact: c.f.key, Agent: "X", Operation: protocol.ConsentPublish, AuditID: 0, Now: messageAt}))
 			first := consentPublishAsk("publish-first", formal)
 			first.To = []string{"X"}
 			c.approve(t, first)

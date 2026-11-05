@@ -22,13 +22,14 @@ func refused(reason string) messaging.Answer {
 // validity and quota; only then is it stored. It speaks the newest
 // session version.
 func (p *PeerMessages) Accept(ctx context.Context, contact string, m messaging.Message, now time.Time) (messaging.Answer, error) {
-	return p.AcceptVersion(ctx, contact, 0, m, now)
+	return p.AcceptVersion(ctx, contact, messaging.Arrival{Version: 0, Message: m, At: now})
 }
 
 // AcceptVersion is Accept for a session at version, 0 the newest: from
 // messaging.ConsentPeerVersion on, a request refused only as not shared
 // may be held for this side's operator instead (#293).
-func (p *PeerMessages) AcceptVersion(ctx context.Context, contact string, version int, m messaging.Message, now time.Time) (messaging.Answer, error) {
+func (p *PeerMessages) AcceptVersion(ctx context.Context, contact string, a messaging.Arrival) (messaging.Answer, error) {
+	version, m, now := a.Version, a.Message, a.At
 	var answer messaging.Answer
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
 		row := newRow{key: messageKey{contact, messaging.DirIn, m.ID}, m: m, now: now}

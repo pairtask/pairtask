@@ -207,7 +207,7 @@ func (s *Store) ChangeReview(ctx context.Context, id string, act ReviewAction, s
 // intent only the grants still allow, the review if it changed, and its
 // record.
 func applyChange(ctx context.Context, tx *sql.Tx, before review.Record, c reviewChange) error {
-	if err := publicationAllowed(ctx, tx, before, c.rec, c.act.Owner); err != nil {
+	if err := publicationAllowed(ctx, tx, before, c); err != nil {
 		return err
 	}
 	if c.changed {

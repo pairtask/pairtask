@@ -48,9 +48,9 @@ func consentRefusalPending(t *testing.T, db *store.Store, id string, n uint64) s
 	ctx := context.Background()
 	_, err := db.ClaimPendingFor(ctx, protocol.Recipient{AgentID: "recipient", SessionID: "offline"}, 24)
 	sessionOK(t, err)
-	sessionOK(t, db.SetConsentOptIn(ctx, sessionContact, true, 0, sessionAt))
-	sessionOK(t, db.ResetConsentScope(ctx, sessionContact, "recipient", "message", 0, sessionAt))
-	a, err := db.PeerMessages().AcceptVersion(ctx, sessionContact, 8, messaging.Message{ID: id, N: n, CreatedAt: sessionAt, From: "", To: []string{"recipient"}, Text: "held immutable body"}, sessionAt)
+	sessionOK(t, db.SetConsentOptIn(ctx, store.ConsentOptIn{Contact: sessionContact, On: true, AuditID: 0, Now: sessionAt}))
+	sessionOK(t, db.ResetConsentScope(ctx, store.ConsentReset{Contact: sessionContact, Agent: "recipient", Operation: "message", AuditID: 0, Now: sessionAt}))
+	a, err := db.PeerMessages().AcceptVersion(ctx, sessionContact, messaging.Arrival{Version: 8, Message: messaging.Message{ID: id, N: n, CreatedAt: sessionAt, From: "", To: []string{"recipient"}, Text: "held immutable body"}, At: sessionAt})
 	sessionOK(t, err)
 	if !a.Held {
 		t.Fatalf("request wasn't held: %+v", a)

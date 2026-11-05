@@ -39,8 +39,8 @@ func (s sessionStore) Accept(ctx context.Context, contact string, m Message, now
 	return markedAnswer(s.Store.Accept(ctx, contact, m, now))
 }
 
-func (s sessionStore) AcceptVersion(ctx context.Context, contact string, version int, m Message, now time.Time) (Answer, error) {
-	return markedAnswer(acceptAt(ctx, s.Store, byte(version), acceptCall{contact, m, now}))
+func (s sessionStore) AcceptVersion(ctx context.Context, contact string, a Arrival) (Answer, error) {
+	return markedAnswer(acceptAt(ctx, s.Store, byte(a.Version), acceptCall{contact, a.Message, a.At}))
 }
 
 // markedAnswer is an answer with its store error marked.

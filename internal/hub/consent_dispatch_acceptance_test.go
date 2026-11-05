@@ -10,7 +10,7 @@ import (
 )
 
 type consentDispatchVersionAcceptor interface {
-	AcceptVersion(context.Context, string, int, messaging.Message, time.Time) (messaging.Answer, error)
+	AcceptVersion(context.Context, string, messaging.Arrival) (messaging.Answer, error)
 }
 type consentDispatchLegacyAcceptor interface {
 	Accept(context.Context, string, messaging.Message, time.Time) (messaging.Answer, error)
@@ -22,7 +22,7 @@ func consentDispatchAccept(t *testing.T, h *Hub, key string, m messaging.Message
 	var answer messaging.Answer
 	var err error
 	if s, ok := any(h.store.PeerMessages()).(consentDispatchVersionAcceptor); ok {
-		answer, err = s.AcceptVersion(context.Background(), key, 8, m, now)
+		answer, err = s.AcceptVersion(context.Background(), key, messaging.Arrival{Version: 8, Message: m, At: now})
 	} else {
 		answer, err = any(h.store.PeerMessages()).(consentDispatchLegacyAcceptor).Accept(context.Background(), key, m, now)
 	}
@@ -37,9 +37,9 @@ func consentDispatchFixture(t *testing.T, kind, ownerState string, isReview bool
 	now := time.Now().UTC()
 	h.SetPairing(PairingConfig{Clock: func() time.Time { return now }})
 	c := remoteHubClient(t, h, "recipient", 24)
-	messageWorkerOK(t, h.store.SetConsentOptIn(ctx, key, true, 0, now))
+	messageWorkerOK(t, h.store.SetConsentOptIn(ctx, store.ConsentOptIn{Contact: key, On: true, AuditID: 0, Now: now}))
 	for _, op := range []string{protocol.ConsentMessage, protocol.ConsentReview, protocol.ConsentPublish} {
-		messageWorkerOK(t, h.store.ResetConsentScope(ctx, key, c.ID, op, 0, now))
+		messageWorkerOK(t, h.store.ResetConsentScope(ctx, store.ConsentReset{Contact: key, Agent: c.ID, Operation: op, AuditID: 0, Now: now}))
 	}
 	m := messaging.Message{ID: "queued-consent-dispatch", N: 1, From: "claimed-sender", To: []string{c.ID}, CreatedAt: now, Text: "immutable held body"}
 	if isReview {
