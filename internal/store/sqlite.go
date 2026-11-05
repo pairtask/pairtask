@@ -66,9 +66,10 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	// Single writer keeps things simple and avoids SQLITE_BUSY under the hub's
-	// serialized write pattern.
+	// serialized write pattern; a reader outside the broker still holds the
+	// file a moment, so a commit waits for it rather than failing at once.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema + pairedSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}

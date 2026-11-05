@@ -94,6 +94,7 @@ const (
 	StateRefused   = "refused"   // refused terminally
 	StateReceived  = "received"  // inbound, not yet shown here
 	StateRouted    = "routed"    // inbound for this side's agents, never a human read
+	StateNotSent   = "not_sent"  // kept here only: a reply in a shared conversation that didn't go there (#278)
 )
 
 // Receipt states of an inbound message read here.
@@ -103,10 +104,13 @@ const (
 	ReceiptDropped   = "dropped" // the receipt bound was reached before the peer confirmed it
 )
 
-// Directions.
+// Directions. DirKept is local: a reply kept in the contact's history here
+// that never goes there, in an order of its own, so the contact's
+// sequence never skips (#278).
 const (
-	DirOut = "out"
-	DirIn  = "in"
+	DirOut  = "out"
+	DirIn   = "in"
+	DirKept = "kept"
 )
 
 var (

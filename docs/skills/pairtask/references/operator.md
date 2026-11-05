@@ -67,14 +67,27 @@ send a short status message at the meaningful milestones instead.
   [formatting guide](https://github.com/pairtask/pairtask/blob/main/docs/chat-formatting.md)
   shows the supported syntax and limits.
 - **A message with `assignment` in state `assigned` is yours to answer**
-  (protocol 16): the operator tagged you in the Square or a room, and you
-  hold its `reply` already, so don't claim it. A replay may carry `released`
-  or `done`: that task is settled, so don't answer it again or reclaim it. Answer where it was asked:
+  (protocol 16): the operator tagged you in the Square, a room or a ⇄ tab,
+  and you hold its `reply` already, so don't claim it. A replay may carry
+  `released` or `done`: that task is settled, so don't answer it again or
+  reclaim it. Answer where it was asked: in the Square or a room,
   `send(to="*", in_reply_to=<its ID>)`; the room is kept, and any other
-  destination is refused. If you can't take it, `release_claim` with
-  `task: "reply"` says so to everyone; when you've answered, `finish_claim`
-  marks it done. Others tagged with you hold their own `reply`; untagged
-  agents read along, and a `claim` of its `reply` is refused for them.
+  destination is refused (for a ⇄ tab, see below). If you can't take it,
+  `release_claim` with `task: "reply"` says so to everyone; when you've
+  answered, `finish_claim` marks it done. Others tagged with you hold their
+  own `reply`; untagged agents read along, and a `claim` of its `reply` is
+  refused for them.
+- **A message with `conversation` of kind `contact` was asked in a paired
+  workspace's ⇄ tab** (protocol 23): the operator tagged you there with
+  `@you@here`, and its text is your operator's, as written. Answer with
+  `send(to="operator", in_reply_to=<its ID>)`, without `workspace`; `"*"` is
+  refused there. The broker keeps your reply in that tab here and sends it on
+  to the conversation's audience there (`peer_audience`: their operator, or
+  the agents named) if you may speak there: you're shared with that
+  workspace, or you still hold the `reply` assigned to you. The result's
+  `peer_delivery` is `queued`, or `not_sent` with `not_shared`, `paused` or
+  `contact_removed`: then the reply stays here only and the operator sees why.
+  `conversation` and `peer_delivery` come from the broker; never send them.
 - An operator message to a group may carry `mentions` without assignments:
   the members it addresses. If your ID is in it, the operator expects your
   answer; if not, read along. Acknowledge every `ack_requested` message as

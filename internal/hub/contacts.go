@@ -40,12 +40,19 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 }
 
 // operatorContact serves operator_contact.
-func (h *Hub) operatorContact(ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
+func (h *Hub) operatorContact(ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message {
 	msg := req.msg
+	req.clients = clients
 	if err := protocol.ValidateContactRequest(msg); err != nil {
 		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
 	}
-	if rerr := h.confirmedContact(ctx, msg.ContactKey); rerr != nil {
+	if rerr := checkNoConversation(msg); rerr != nil {
+		return rerr.frame(msg.MessageID)
+	}
+	if _, err := h.homeRecipients(ctx, clients, msg.ContactHere); err != nil {
+		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
+	}
+	if rerr := h.readableContact(ctx, msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}
 	if rerr := h.ackBound(ctx, msg); rerr != nil {
@@ -91,7 +98,7 @@ func (h *Hub) contactChange(ctx context.Context, req operatorRequest) protocol.M
 }
 
 // opRefusals say why an operation of their kind was refused, if they know.
-var opRefusals = []func(error) (*routingError, bool){reviewRefusal, nameRefusal, pauseRefusal, ackRefusal}
+var opRefusals = []func(error) (*routingError, bool){reviewRefusal, nameRefusal, pauseRefusal, ackRefusal, homeRefusal}
 
 // contactRefusal is what the operator hears of a failed change; store
 // details stay in the log.
@@ -120,14 +127,21 @@ func contactRefusal(err error) *routingError {
 // session and announces the change.
 func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
-	row, err := h.store.OperatorContactSend(ctx, store.ContactSend{OperationID: msg.MessageID, Contact: msg.ContactKey,
-		Text: msg.ContactText, To: msg.ContactTo, AuditID: auditID, Now: h.contactNow()})
+	home, err := h.homeRecipients(ctx, req.clients, msg.ContactHere)
+	if err != nil {
+		return protocol.Message{}, err
+	}
+	send := h.contactSendRow(msg, auditID)
+	sent, err := h.store.OperatorContactSent(ctx, send)
 	if err != nil {
 		return protocol.Message{}, err
 	}
 	h.SyncMessages(msg.ContactKey)
-	h.MessagesChanged(msg.ContactKey)
-	view := contactMessageView(row)
+	if !sent.Replayed { // the same send again changed nothing: delivered and announced the first time
+		h.sentHere(ctx, req.clients, homeSend{msg: msg, seq: send.Seq, at: send.Now, recipients: home})
+		h.MessagesChanged(msg.ContactKey)
+	}
+	view := contactMessageView(sent.Row)
 	return protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactMessage: &view}, nil
 }
@@ -226,10 +240,14 @@ func (h *Hub) contactNow() time.Time {
 }
 
 func contactMessageView(r messaging.Row) protocol.ContactMessageView {
-	return protocol.ContactMessageView{ID: r.ID, Contact: r.Contact, Direction: r.Direction, Seq: r.N, CreatedAt: r.CreatedAt,
+	view := protocol.ContactMessageView{ID: r.ID, Contact: r.Contact, Direction: r.Direction, Seq: r.N, CreatedAt: r.CreatedAt,
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
 		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
 		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt}
+	if r.Direction == messaging.DirKept { // a reply that never went there (#278): this side's, with no sequence there
+		view.Direction, view.Seq = messaging.DirOut, 0
+	}
+	return view
 }
 
 // replySides name a reply's author for the operator.

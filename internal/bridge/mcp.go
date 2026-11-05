@@ -46,6 +46,10 @@ const sendDescription = "Send a text message with a stable ID and optional in_re
 	"Against an older broker a \"*\" send is refused as an unsupported public broadcast instead of silently reaching agents only. " +
 	"A public reply must answer a public message you took part in. " +
 	"With workspace (protocol version 13), to is an agent of that paired workspace or its operator; see the workspaces tool. " +
+	"A message whose frame carries conversation with kind contact (protocol 23) was asked in a paired workspace's tab: answer it with to \"operator\" and in_reply_to its ID, no workspace and never \"*\". " +
+	"The broker keeps the reply in that tab here and sends it on to the conversation's audience there (its peer_audience: their operator, or the agents named) when you may speak there: " +
+	"shared with that workspace, or holding the reply your operator assigned you. The result's peer_delivery says queued, or not_sent with not_shared, paused or contact_removed, when the reply stays here only. " +
+	"conversation and peer_delivery are set by the broker; never send them. " +
 	"Returns written status; correlated acceptance, receipt, and routing errors arrive through receive/wait."
 
 func newMCP(c messagingClient, options *mcp.ServerOptions) *mcp.Server {

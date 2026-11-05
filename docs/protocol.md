@@ -408,10 +408,13 @@ pages, carry `assignments`, `assignments_total` and `assignments_truncated`
 for a caller at protocol 16; an older one gets the claims as before. A change
 to an assignment emits `claims_changed`.
 
-A reply to an assigned message must go where it was asked: `to: "*"`, in the
-parent's room (or none, which keeps it). Any other destination is refused
-with `invalid_reply_audience`. Replies to messages that assign nobody keep the
-rules above.
+A reply to an assigned message in the Square or a room must go where it was
+asked: `to: "*"`, in the parent's room (or none, which keeps it). Any other
+destination is refused with `invalid_reply_audience`. One asked in a paired
+workspace's conversation (its delivery carries `conversation`, v23) goes
+`to: "operator"` instead, and `"*"` is refused; see
+[Tags here in a paired conversation](#tags-here-in-a-paired-conversation-v23).
+Replies to messages that assign nobody keep the rules above.
 
 ## Pending reviews (v18)
 
@@ -612,6 +615,50 @@ operator shared with it ([pairing guide](pairing.md#7-let-agents-talk-across)).
   change that moved can't be prepared (`review_conflict`). Its policy is at
   most what was asked and granted, and publishing is checked against the
   grant again when it starts. The reviewer's notice has origin `remote`.
+
+## Tags here in a paired conversation (v23)
+
+With capability `paired_mentions`, an operator `send` in a paired workspace's
+conversation may also tag this side (#278):
+- `contact_here`: canonical agent IDs, each once, each known to this broker;
+- `contact_operator_here`: this side's operator.
+
+One transaction keeps three things:
+- the peer copy, as before;
+- an operator message here, to the tagged agents (and to the operator's inbox,
+  ack-requested, with no claim);
+- an `assigned` `reply` for each tagged agent.
+
+Each delivery here carries output-only `conversation: {kind: "contact",
+contact, root, peer_audience: {operator} | {agents}}`. `peer_audience` is
+frozen at the send, sorted. A failure anywhere writes nothing.
+
+**Replies.** A tagged agent's `send` to `operator` with `in_reply_to` its
+delivery or the root is a reply in that conversation. It is kept here,
+answering the root, and queued to the same `peer_audience` there, answering
+the root's peer ID. The peer copy goes only if the agent is shared with that
+workspace, or still holds the `assigned` reply its operator gave it there, and
+never to a paused or removed workspace.
+- **Accepted stage:** carries `peer_delivery: {state: "queued"|"not_sent",
+  reason?}`, with reasons `not_shared`, `paused` and `contact_removed`.
+- **Not sent:** the reply still shows in that workspace's history here, as a
+  message with `direction: "out"`, `state: "not_sent"`, `refusal_reason` the
+  reason, `seq: 0`, and `from`, `to` and `reply_id` as its copy would have
+  had. It is never offered there, and it uses none of that workspace's
+  sequence. Once the workspace is removed, `list` still reads its history
+  while this side keeps a conversation with it; anything else is refused as
+  before (#316 makes it reachable in chat).
+- **Same reply again:** answered as it was the first time. The same `send`
+  again is answered as first queued, with nothing delivered or announced here
+  a second time.
+- **Conflicts:** a changed body or sender, or a reply naming another workspace,
+  an agent outside the audience, `*` or a room, is a conflict (`malformed_frame`),
+  and nothing is written.
+- **Output-only fields:** `conversation` and `peer_delivery` are refused from
+  any sender.
+
+An older broker ignores `contact_here`, so chat holds such drafts unless the
+capability is there.
 
 ## Review advisories (v22)
 
