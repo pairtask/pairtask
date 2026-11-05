@@ -39,7 +39,9 @@ const claimsMeaning = " A claim coordinates who does what among agents addressed
 
 // assignmentsMeaning says what read_claims' assignments are (#278).
 const assignmentsMeaning = " An assignment is the operator's tag giving an agent the message's reply: assigned, released or done. " +
-	"A message whose frame carries assignment with state assigned is yours to answer, to '*' in its conversation; you hold reply already. " +
+	"A message whose frame carries assignment with state assigned is yours to answer; you hold reply already. " +
+	"Answer it where it was asked: to '*' in its room or the Square, or, when its frame carries conversation with kind contact (a paired workspace's tab, protocol 23), " +
+	"to 'operator' with in_reply_to its ID and no workspace: '*' is refused there, and the broker takes the reply to that conversation's audience in the other workspace. " +
 	"release_claim on task reply releases your assignment when you can't take it, and finish_claim marks it done once answered. " +
 	"A replayed assignment that is released or done asks nothing more: don't answer it again or reclaim it."
 

@@ -17,10 +17,10 @@ export PATH="/usr/local/go/bin:$PATH" GOTOOLCHAIN=local CGO_ENABLED=0
 cd /root/build
 go mod download
 go mod verify
-# Each package gets 600s here: the server suite reached 300s on the image
-# builder's storage; tests keep their own deadlines, so a hang still fails
-# within the budget.
-go test ./... -timeout=600s
+# Each package gets 1200s here, as in the race checks: the server suite
+# reached 575s on the image builder (#242); tests keep their own deadlines,
+# so a hang still fails within the budget.
+go test ./... -timeout=1200s
 # Internal programs live off PATH in /usr/local/lib/pairtask; the CLI is `pairtask` (and `pk`).
 install -d -m 0755 /usr/local/lib/pairtask
 for spec in broker:/usr/local/lib/pairtask/pairtask-broker codex:/usr/local/lib/pairtask/pairtask-codex \

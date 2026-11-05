@@ -229,6 +229,10 @@ const CapabilityAskFindings = "ask_findings"
 // workspace's agent comes back with what suggests it may be refused (#304).
 const CapabilityReviewAdvisories = "review_advisories"
 
+// CapabilityPairedMentions: a ⇄ send may tag this side's agents and
+// operator (#278).
+const CapabilityPairedMentions = "paired_mentions"
+
 // ReviewAskRef names one of this side's requests to a paired workspace.
 type ReviewAskRef struct {
 	Contact string `json:"contact"`
