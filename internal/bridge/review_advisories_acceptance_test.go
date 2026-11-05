@@ -83,6 +83,32 @@ func advisoryBridgeReadResult(t *testing.T, result SendResult) advisoryBridgeRes
 	return out
 }
 
+func advisoryBridgeRecordBatch(t *testing.T, seen map[string]int, messages []protocol.Message) int {
+	t.Helper()
+	for _, message := range messages {
+		count, expected := seen[message.MessageID]
+		if !expected || count != 0 {
+			t.Fatalf("unexpected or duplicate inbox frame %q: seen=%v", message.MessageID, seen)
+		}
+		seen[message.MessageID] = 1
+	}
+	return len(messages)
+}
+
+func advisoryBridgeReceivedIDs(t *testing.T, c *Client, ctx context.Context) map[string]int {
+	t.Helper()
+	seen := map[string]int{advisoryBridgeArgs().MessageID: 0, "unrelated-inbox": 0}
+	remaining := len(seen)
+	// WriteFrame finishing only proves that the client read the bytes. Its
+	// reader may still be scheduling the final frame onto the inbox.
+	for remaining > 0 {
+		inbox, err := c.Receive(ctx, 10, 50*time.Millisecond)
+		requireNoError(t, err)
+		remaining -= advisoryBridgeRecordBatch(t, seen, inbox.Messages)
+	}
+	return seen
+}
+
 func TestReviewAdvisoriesBridgeAcceptanceAgentPreflightFinishesBeforeQueue(t *testing.T) {
 	c, frames, wireDone := advisoryBridgeTransport(t)
 	f := &advisoryBridgeForge{Forge: forge.NewFake(), started: make(chan struct{}), release: make(chan struct{})}
@@ -127,14 +153,9 @@ func TestReviewAdvisoriesBridgeAcceptanceAdvisoriesDoNotConsumeAckOrInbox(t *tes
 	assertEqual(t, "unsupported local check is explicit", len(out.PinChecks), 1)
 	assertEqual(t, "unsupported check code", out.PinChecks[0].Code, "not_checked")
 	assertEqual(t, "unsupported check class", out.PinChecks[0].Class, "unsupported")
-	inbox, err := c.Receive(ctx, 10, 0)
-	requireNoError(t, err)
-	seen := map[string]bool{}
-	for _, message := range inbox.Messages {
-		seen[message.MessageID] = true
-	}
-	assertEqual(t, "accepted stage remains on normal inbox path", seen[advisoryBridgeArgs().MessageID], true)
-	assertEqual(t, "unrelated message remains on normal inbox path", seen["unrelated-inbox"], true)
+	seen := advisoryBridgeReceivedIDs(t, c, ctx)
+	assertEqual(t, "accepted stage remains on normal inbox path", seen[advisoryBridgeArgs().MessageID], 1)
+	assertEqual(t, "unrelated message remains on normal inbox path", seen["unrelated-inbox"], 1)
 }
 
 func TestReviewAdvisoriesBridgeAcceptancePreflightTimeoutStillQueues(t *testing.T) {

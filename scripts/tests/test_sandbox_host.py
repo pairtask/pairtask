@@ -47,9 +47,14 @@ class HostTests(unittest.TestCase):
 
     def test_apply_is_repeatable_and_uses_explicit_endpoint(self):
         remote = {host.REMOTE: {"Addrs": [f"unix://{self.profile}/incus.sock"], "Protocol": "incus"}}
+        server = {"environment": {"server_version": "7.5"}}
+
+        def answer(command, **_):
+            reply = server if command[:2] == ["incus", "query"] else remote
+            return subprocess.CompletedProcess(command, 0, json.dumps(reply))
         with patch.object(host.shutil, "which", return_value="/bin/tool"), \
                 patch.object(host.Path, "is_socket", return_value=True), \
-                patch.object(host.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(remote))) as run:
+                patch.object(host.subprocess, "run", side_effect=answer) as run:
             self.run_action("apply")
             original = (self.profile / "colima.yaml").read_bytes()
             self.run_action("apply")
