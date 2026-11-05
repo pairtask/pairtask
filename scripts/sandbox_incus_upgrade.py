@@ -408,14 +408,19 @@ def valid_transaction(tx: object, pins: Dict[str, str]) -> List[TxLine]:
 
 def transaction_line(line: object, pins: Dict[str, str]) -> TxLine:
     """One manifest transaction line: an Inst or Conf of a pinned version."""
-    if not (isinstance(line, (list, tuple)) and len(line) == 3):
-        raise UpgradeError("the manifest's transaction is malformed")
-    op, name, version = line
-    if not all(isinstance(word, str) for word in line):
-        raise UpgradeError("the manifest's transaction is malformed")
+    op, name, version = line_words(line)
     if op not in ("Inst", "Conf") or pins.get(name) != version:
         raise UpgradeError(f"the manifest's transaction would {op} {name} outside its pins")
     return op, name, version
+
+
+def line_words(line: object) -> TxLine:
+    """A transaction line's three strings, or UpgradeError."""
+    if not isinstance(line, (list, tuple)) or len(line) != 3:
+        raise UpgradeError("the manifest's transaction is malformed")
+    if not all(isinstance(word, str) for word in line):
+        raise UpgradeError("the manifest's transaction is malformed")
+    return line[0], line[1], line[2]
 
 
 def apply(runner: Runner, manifest: object, yes: bool) -> List[Step]:
