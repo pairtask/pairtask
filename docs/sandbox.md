@@ -77,11 +77,11 @@ storage pools, the Incus packages (installed, candidate and origin), the
 exact apt transaction, the holds and the units. It writes them to a new
 manifest file and lists anything that blocks the upgrade:
 
-- a running instance;
+- an instance in any project that isn't stopped;
 - a pool that isn't a `dir` pool physically inside `/var/lib/incus` (ZFS, LVM
   and Btrfs pools, Colima's default among them, need their own backup and a
   manual upgrade);
-- a candidate that isn't newer, or doesn't come from zabbly stable;
+- a candidate older than what's installed, or not from zabbly stable;
 - a transaction that removes anything;
 - an existing `/usr/sbin/policy-rc.d`;
 - too little space in `/var/backups`.
@@ -89,7 +89,8 @@ manifest file and lists anything that blocks the upgrade:
 Apply re-reads all of it and stops unless it still matches the plan. Then it:
 1. stops Incus;
 2. backs up `/var/lib/incus` (and `/etc/subuid`, `/etc/subgid`) to
-   `/var/backups/pairtask-incus-<time>.tar.gz` and checks the archive;
+   `incus.tar.gz` in a new directory `/var/backups/pairtask-incus-<random>/`, and
+   checks the archive;
 3. installs exactly the planned versions, with service starts held off;
 4. puts back the holds and the units' states;
 5. checks the server reports the planned version.
