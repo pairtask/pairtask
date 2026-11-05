@@ -26,6 +26,7 @@ shells in the containers are stopped.
 | `pairtask pairing status` | host | Show the pairing route and its host port as configured and as deployed, read-only: `on`, `off`, or which command finishes a change an interrupted rollout left behind. It reports applied forwarding, not whether another machine can reach it. | no |
 | `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). | no |
 | `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. | no |
+| `pairtask vm incus-plan --manifest FILE` / `pairtask vm incus-apply --manifest FILE --yes` | host (macOS) | Plan, read-only, then apply an upgrade of the VM's held Incus packages ([sandbox guide](sandbox.md#upgrade-the-vms-incus)). Apply stops Incus, backs up `/var/lib/incus`, installs exactly the planned versions and restores the holds and units it found. Only self-contained `dir` storage is supported. | no, but it stops Incus while it runs |
 | `pairtask ssh` | host | Create the key-only SSH path into the workspace; the remote defaults to your OS (`colima-pairtask` on macOS, `local` on Linux), `--remote` and `--instance` override. The rollout does this for you. | no |
 
 Prerequisites the installer cannot bundle: Incus (and Colima on macOS), Python

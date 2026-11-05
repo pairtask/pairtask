@@ -194,11 +194,13 @@ def mount_output(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["plan", "apply", "mounts-plan", "mounts-apply"])
+    parser.add_argument("action", choices=["plan", "apply", "mounts-plan", "mounts-apply", "incus-plan", "incus-apply"])
     parser.add_argument("--mounts-file", type=Path, help="JSON list of project_name/host_path/container_mount_path/container_readonly mount objects")
     parser.add_argument("--output", type=Path, help="Override the discovered deployment mount-variable file")
     parser.add_argument("--project", default="pairtask", help="Deployment project for automatic state discovery")
     parser.add_argument("--share-user", help="Dedicated local Linux sharing account; required for writable mounts")
+    parser.add_argument("--manifest", type=Path, help="incus-plan writes, incus-apply reads, this upgrade manifest")
+    parser.add_argument("--yes", action="store_true", help="incus-apply: change the VM's Incus as the manifest plans")
     return parser.parse_args()
 
 
@@ -206,8 +208,48 @@ def main():
     args = parse_args()
     if args.action.startswith("mounts-"):
         configure_mounts(args)
+    elif args.action.startswith("incus-"):
+        incus_upgrade(args)
     else:
         bootstrap(args)
+
+
+def incus_upgrade(args):
+    """Plan or apply an upgrade of the VM's held Incus packages (#312)."""
+    import sandbox_incus_upgrade as upgrade
+    if platform.system() != "Darwin":
+        raise ValueError("Incus upgrades here are for the macOS Colima VM; on Linux, upgrade the host's Incus "
+                         "from the repository you installed it from (docs/sandbox.md)")
+    if args.manifest is None:
+        raise ValueError(f"{args.action} needs --manifest FILE")
+    print(UPGRADE_SCOPE, flush=True)
+    if args.action == "incus-plan":
+        manifest = upgrade.plan(upgrade.Runner())
+        upgrade.write_manifest(args.manifest, manifest)
+        print(json.dumps(manifest, indent=2))
+        print(f"Preview only: nothing in the VM changed. Wrote {args.manifest}." if not manifest["blockers"]
+              else "Blocked: " + "; ".join(manifest["blockers"]))
+        return
+    try:
+        steps = upgrade.apply(upgrade.Runner(), json.loads(args.manifest.read_text()), args.yes)
+    except upgrade.UpgradeError as err:
+        print_steps(err.steps)
+        backups = [step.detail for step in err.steps if step.ok and step.name == "backup readable"]
+        if backups:
+            print(f"Backup: {backups[-1]} (kept; nothing was restored, downgraded or deleted). "
+                  "To restore it, follow docs/sandbox.md, Upgrade the VM's Incus.")
+        raise
+    print_steps(steps)
+
+
+def print_steps(steps):
+    for step in steps:
+        print(f"{'ok  ' if step.ok else 'FAIL'} {step.name} {step.detail}".rstrip(), flush=True)
+
+
+UPGRADE_SCOPE = ("Upgrades the held Incus packages of the pairtask Colima VM only, with Incus stopped and "
+                 "/var/lib/incus backed up first. Only self-contained dir storage under /var/lib/incus is "
+                 "supported; any other pool stops the plan for a manual upgrade.")
 
 
 if __name__ == "__main__":
