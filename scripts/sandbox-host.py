@@ -222,24 +222,51 @@ def incus_upgrade(args):
                          "from the repository you installed it from (docs/sandbox.md)")
     if args.manifest is None:
         raise ValueError(f"{args.action} needs --manifest FILE")
+    require_dedicated_remote()
     print(UPGRADE_SCOPE, flush=True)
     if args.action == "incus-plan":
-        manifest = upgrade.plan(upgrade.Runner())
-        upgrade.write_manifest(args.manifest, manifest)
-        print(json.dumps(manifest, indent=2))
-        print(f"Preview only: nothing in the VM changed. Wrote {args.manifest}." if not manifest["blockers"]
-              else "Blocked: " + "; ".join(manifest["blockers"]))
-        return
+        plan_upgrade(args, upgrade)
+    else:
+        apply_upgrade(args, upgrade)
+
+
+def require_dedicated_remote():
+    """The remote the upgrade reads must be this profile's own socket, the VM
+    `colima ssh -p pairtask` changes: never another daemon."""
+    socket = host_directory() / "incus.sock"
+    if not socket.is_socket():
+        raise ValueError(f"The pairtask VM isn't running (no {socket}); start it with pairtask vm apply")
+    check_remote(socket, required=True)
+
+
+def plan_upgrade(args, upgrade):
+    manifest = upgrade.plan(upgrade.Runner())
+    upgrade.write_manifest(args.manifest, manifest)
+    print("\n".join(upgrade.describe(manifest)))
+    if manifest["blockers"]:
+        print("Blocked: " + "; ".join(manifest["blockers"]))
+    else:
+        print(f"Preview only: nothing in the VM changed. Wrote {args.manifest}; review it, then incus-apply.")
+
+
+def apply_upgrade(args, upgrade):
     try:
         steps = upgrade.apply(upgrade.Runner(), json.loads(args.manifest.read_text()), args.yes)
     except upgrade.UpgradeError as err:
         print_steps(err.steps)
-        backups = [step.detail for step in err.steps if step.ok and step.name == "backup readable"]
-        if backups:
-            print(f"Backup: {backups[-1]} (kept; nothing was restored, downgraded or deleted). "
-                  "To restore it, follow docs/sandbox.md, Upgrade the VM's Incus.")
+        print_backup(err.steps)
+        if isinstance(err, upgrade.UpgradeInterrupted):
+            raise SystemExit(130) from err
         raise
     print_steps(steps)
+
+
+def print_backup(steps):
+    """The verified backup a failed apply kept, and where restore is told."""
+    backups = [step.detail for step in steps if step.ok and step.name == "backup readable"]
+    if backups:
+        print(f"Backup: {backups[-1]} (kept; nothing was restored, downgraded or deleted). "
+              "To restore it, follow docs/sandbox.md, Upgrade the VM's Incus.")
 
 
 def print_steps(steps):

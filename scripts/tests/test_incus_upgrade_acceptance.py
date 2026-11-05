@@ -6,6 +6,7 @@ import ast
 from dataclasses import asdict
 import importlib.util
 import io
+import itertools
 import json
 from pathlib import Path
 import stat
@@ -30,6 +31,7 @@ def load_host():
 
 
 HOST = load_host()
+BACKUP_SERIAL = itertools.count(1)
 
 
 def observation():
@@ -124,6 +126,22 @@ class UpgradeBlockerTests(unittest.TestCase):
         self.obs = observation()
         self.obs.incus_root = "/external/incus"
         self.assert_blocked()
+
+    def test_only_explicitly_stopped_instances_pass_the_cold_backup_gate(self):
+        for status in ("Frozen", "Starting", "Stopping", "Error", "", None, "missing"):
+            with self.subTest(status=status):
+                self.obs = observation()
+                self.obs.instances[0]["status"] = status
+                if status == "missing":
+                    self.obs.instances[0].pop("status")
+                self.assert_blocked()
+
+    def test_unknown_or_unsupported_unit_states_block(self):
+        for active, enabled in (("unknown", "enabled"), ("active", "unknown"),
+                                ("activating", "enabled"), ("inactive", "masked")):
+            with self.subTest(active=active, enabled=enabled):
+                self.obs.units["incus.service"] = upgrade.Unit(active, enabled)
+                self.assert_blocked()
 
 
 class UpgradeManifestTests(unittest.TestCase):
@@ -254,62 +272,105 @@ class RecordingRunner:
         self.exception = None
         self.after_start_probe = None
         self.started = False
+        self.hold_noop = False
+        self.query_effect = None
+        self.backup_override = None
 
     def vm(self, argv, timeout):
         argv = list(argv)
         self.calls.append(("vm", argv, timeout))
-        if self.exception and self.exception[0](argv):
-            error, self.exception = self.exception[1], None
-            raise error
-        if self.interrupt and self.interrupt(argv):
-            self.interrupt = None
-            raise KeyboardInterrupt()
-        if self.fail and self.fail(argv):
-            self.fail = None
-            return subprocess.CompletedProcess(argv, 1, "", "injected failure")
-        if creates_policy(argv) and self.policy is not None:
-            return subprocess.CompletedProcess(argv, 1, "", "file already exists")
-        if argv == ["test", "-e", upgrade.POLICY]:
-            return subprocess.CompletedProcess(argv, 0 if self.policy is not None else 1, "", "")
-        return subprocess.CompletedProcess(argv, 0, self.reply(argv), "")
+        raise_injected(self, argv)
+        refused = fake_refusal(self, argv)
+        if refused is not None:
+            return refused
+        return subprocess.CompletedProcess(argv, 0, fake_reply(self, argv), "")
 
     def incus(self, argv, timeout):
         self.calls.append(("incus", list(argv), timeout))
+        if self.query_effect:
+            self.query_effect()
         answer = {"environment": {"server_version": self.server}}
         return subprocess.CompletedProcess(argv, 0, json.dumps(answer), "")
 
-    def reply(self, argv):
-        if argv[:2] == ["apt-mark", "unhold"]:
-            self.holds.difference_update(argv[2:])
-        elif argv[:2] == ["apt-mark", "hold"]:
-            self.holds.update(argv[2:])
-        elif argv[:1] == ["systemctl"]:
-            return self.systemctl(argv)
-        elif argv[:2] == ["tar", "-tzf"]:
-            return self.archive
-        elif creates_policy(argv):
-            self.policy = self.created_policy = written_policy(argv)
-        elif argv == ["cat", upgrade.POLICY]:
-            return self.policy or ""
-        elif argv == ["rm", "-f", upgrade.POLICY]:
-            self.policy = None
-        return ""
 
-    def systemctl(self, argv):
-        action = argv[1]
-        if action == "is-active":
-            restored = self.after_start_probe if self.started else None
-            return (restored or self.probe_state or self.units[argv[-1]].active) + "\n"
-        if action == "is-enabled":
-            return self.units[argv[-1]].enabled + "\n"
-        for name in argv[2:]:
-            unit = self.units.get(name)
-            if unit and action in ("start", "stop"):
-                unit.active = "active" if action == "start" else "inactive"
-                self.started = self.started or action == "start"
-            if unit and action in ("enable", "disable"):
-                unit.enabled = "enabled" if action == "enable" else "disabled"
+def raise_injected(runner, argv):
+    if runner.exception and runner.exception[0](argv):
+        error, runner.exception = runner.exception[1], None
+        raise error
+    if runner.interrupt and runner.interrupt(argv):
+        runner.interrupt = None
+        raise KeyboardInterrupt()
+
+
+def fake_refusal(runner, argv):
+    if runner.fail and runner.fail(argv):
+        runner.fail = None
+        return subprocess.CompletedProcess(argv, 1, "", "injected failure")
+    if creates_policy(argv) and runner.policy is not None:
+        return subprocess.CompletedProcess(argv, 1, "", "file already exists")
+    if argv == ["test", "-e", upgrade.POLICY]:
+        return subprocess.CompletedProcess(argv, 0 if runner.policy is not None else 1, "", "")
+    return None
+
+
+def fake_reply(runner, argv):
+    if creates_policy(argv):
+        runner.policy = runner.created_policy = written_policy(argv)
         return ""
+    handlers = {"apt-mark": fake_holds, "systemctl": fake_systemctl, "mktemp": fake_backup_directory,
+                "tar": fake_tar, "cat": fake_cat, "rm": fake_remove}
+    handler = handlers.get(argv[0])
+    return handler(runner, argv) if handler else ""
+
+
+def fake_holds(runner, argv):
+    if argv[1] == "showhold":
+        return "\n".join(sorted(runner.holds)) + "\n"
+    if argv[1] == "hold" and runner.hold_noop:
+        return ""
+    actions = {"unhold": runner.holds.difference_update, "hold": runner.holds.update}
+    action = actions.get(argv[1])
+    if action:
+        action(argv[2:])
+    return ""
+
+
+def fake_backup_directory(runner, argv):
+    return (runner.backup_override or f"{upgrade.BACKUP_DIR}/pairtask-incus-{next(BACKUP_SERIAL):010d}") + "\n"
+
+
+def fake_tar(runner, argv):
+    return runner.archive if argv[:2] == ["tar", "-tzf"] else ""
+
+
+def fake_cat(runner, argv):
+    return (runner.policy or "") if argv == ["cat", upgrade.POLICY] else ""
+
+
+def fake_remove(runner, argv):
+    if argv == ["rm", "-f", upgrade.POLICY]:
+        runner.policy = None
+    return ""
+
+
+def fake_systemctl(runner, argv):
+    if argv[1] == "is-active":
+        restored = runner.after_start_probe if runner.started else None
+        return (restored or runner.probe_state or runner.units[argv[-1]].active) + "\n"
+    if argv[1] == "is-enabled":
+        return runner.units[argv[-1]].enabled + "\n"
+    changes = {"start": ("active", "active"), "stop": ("active", "inactive"),
+               "enable": ("enabled", "enabled"), "disable": ("enabled", "disabled")}
+    for name in argv[2:]:
+        fake_unit_change(runner, name, argv[1], changes.get(argv[1]))
+    return ""
+
+
+def fake_unit_change(runner, name, action, change):
+    unit = runner.units.get(name)
+    if unit is not None and change is not None:
+        setattr(unit, *change)
+        runner.started = runner.started or action == "start"
 
 
 def installs(argv):
@@ -320,6 +381,16 @@ def stops(argv):
     return argv[:2] == ["systemctl", "stop"]
 
 
+@contextlib.contextmanager
+def recorded_apply(obs, fresh=None, fail=None, interrupt=None):
+    runner = RecordingRunner(obs, fail, interrupt)
+    current = fresh or copy.deepcopy(obs)
+    pins = pins_for(current)
+    with patch.object(upgrade, "observe", return_value=current), \
+            patch.object(upgrade, "trusted_pins", return_value=(pins, transaction_for(pins))) as trusted:
+        yield runner, trusted
+
+
 class UpgradeApplyTests(unittest.TestCase):
     def setUp(self):
         self.obs = observation()
@@ -327,12 +398,8 @@ class UpgradeApplyTests(unittest.TestCase):
 
     @contextlib.contextmanager
     def harness(self, fresh=None, fail=None, interrupt=None):
-        runner = RecordingRunner(self.obs, fail, interrupt)
-        current = fresh or copy.deepcopy(self.obs)
-        pins = pins_for(current)
-        with patch.object(upgrade, "observe", return_value=current), \
-                patch.object(upgrade, "trusted_pins", return_value=(pins, transaction_for(pins))) as trusted:
-            yield runner, trusted
+        with recorded_apply(self.obs, fresh, fail, interrupt) as context:
+            yield context
 
     def assert_no_stop_or_install(self, runner):
         self.assertFalse(any(stops(argv) or installs(argv) for _, argv, _ in runner.calls))
@@ -575,6 +642,70 @@ class UpgradeApplyTests(unittest.TestCase):
             runner.after_start_probe = "failed"
             self.apply_with_failure(runner)
 
+    def test_cleanup_failure_is_a_structured_error_before_version_query(self):
+        with self.harness(fail=lambda argv: argv[:2] == ["apt-mark", "hold"]) as (runner, _):
+            with self.assertRaises(upgrade.UpgradeError) as caught:
+                upgrade.apply(runner, self.manifest, yes=True)
+        self.assertTrue(any(not step.ok and step.name == "restore holds" for step in caught.exception.steps))
+        self.assertFalse(any(scope == "incus" for scope, _, _ in runner.calls))
+
+    def test_primary_error_and_cleanup_failure_are_both_retained(self):
+        with self.harness(fail=lambda argv: argv[:2] == ["apt-mark", "hold"]) as (runner, _):
+            runner.exception = (installs, upgrade.UpgradeError("primary-install-failure"))
+            with self.assertRaises(upgrade.UpgradeError) as caught:
+                upgrade.apply(runner, self.manifest, yes=True)
+        self.assertIn("primary-install-failure", str(caught.exception))
+        self.assertTrue(any(not step.ok and step.name == "restore holds" for step in caught.exception.steps))
+
+    def test_socket_activated_service_returns_to_its_original_inactive_state(self):
+        self.obs.units["incus.service"] = upgrade.Unit("inactive", "disabled")
+        self.manifest = manifest_for(self.obs)
+        with self.harness() as (runner, _):
+            runner.query_effect = lambda: setattr(runner.units["incus.service"], "active", "active")
+            upgrade.apply(runner, self.manifest, yes=True)
+        self.assertEqual(runner.units, self.obs.units)
+
+    def test_hold_restoration_is_verified_after_a_successful_command(self):
+        with self.harness() as (runner, _):
+            runner.hold_noop = True
+            with self.assertRaises(upgrade.UpgradeError) as caught:
+                upgrade.apply(runner, self.manifest, yes=True)
+        self.assertTrue(any(not step.ok and step.name == "restore holds" for step in caught.exception.steps))
+
+    def test_an_extra_incus_hold_is_removed_to_restore_the_original_set(self):
+        self.obs.holds = ["incus", "zfsutils-linux"]
+        self.manifest = manifest_for(self.obs)
+        with self.harness() as (runner, _):
+            def add_hold(argv):
+                if installs(argv):
+                    runner.holds.add("incus-base")
+                return False
+            runner.fail = add_hold
+            try:
+                upgrade.apply(runner, self.manifest, yes=True)
+            except upgrade.UpgradeError as error:
+                self.fail(f"Available cleanup did not restore the original holds: {error}")
+        self.assertEqual(runner.holds, set(self.obs.holds))
+
+    def test_backup_destinations_are_unique_even_at_the_same_clock_second(self):
+        paths = []
+        with patch.object(upgrade, "datetime", create=True) as clock:
+            clock.now.return_value.strftime.return_value = "20261105T090000Z"
+            for _ in range(2):
+                with self.harness() as (runner, _):
+                    upgrade.apply(runner, self.manifest, yes=True)
+                paths.extend(argv[argv.index("-czpf") + 1] for _, argv, _ in runner.calls if "-czpf" in argv)
+        self.assertEqual(len(paths), 2)
+        self.assertNotEqual(paths[0], paths[1])
+        self.assertTrue(all(path.startswith(upgrade.BACKUP_DIR + "/") for path in paths))
+
+    def test_untrusted_backup_reservation_path_is_rejected_before_tar(self):
+        with self.harness() as (runner, _):
+            runner.backup_override = "/tmp/foreign-directory"
+            with self.assertRaises(upgrade.UpgradeError):
+                upgrade.apply(runner, self.manifest, yes=True)
+        self.assertFalse(any(argv[:1] == ["tar"] or installs(argv) for _, argv, _ in runner.calls))
+
 
 class UpgradeReadBoundaryTests(unittest.TestCase):
     def test_transaction_parses_upgrades_dependencies_configures_and_removals(self):
@@ -667,6 +798,15 @@ class UpgradeReadBoundaryTests(unittest.TestCase):
 
 
 class UpgradeCommandTests(unittest.TestCase):
+    def setUp(self):
+        fixtures = (patch.object(HOST, "check_remote"), patch.object(HOST.Path, "is_socket", return_value=True),
+                    patch.object(HOST.shutil, "which", return_value="/mock/tool"),
+                    patch.dict(HOST.os.environ, {}, clear=True),
+                    patch.object(HOST.subprocess, "run", side_effect=AssertionError("unexpected real command")))
+        for fixture in fixtures:
+            fixture.start()
+            self.addCleanup(fixture.stop)
+
     def test_upgrade_scripts_remain_python39_syntax(self):
         for filename in ("sandbox_incus_upgrade.py", "sandbox-host.py", "pairtask.py"):
             with self.subTest(filename=filename):
@@ -702,7 +842,7 @@ class UpgradeCommandTests(unittest.TestCase):
             self.assertIn("manual upgrade", output.getvalue())
 
     def test_failure_reports_steps_backup_location_and_restore_guidance(self):
-        backup = "/var/backups/pairtask-incus-20261105.tar.gz"
+        backup = "/var/backups/pairtask-incus-0123456789/incus.tar.gz"
         steps = [upgrade.Step("backup readable", True, backup), upgrade.Step("install", False, "failed"),
                  upgrade.Step("restore units", False, "failed to start")]
         with tempfile.TemporaryDirectory() as temp:
@@ -719,6 +859,85 @@ class UpgradeCommandTests(unittest.TestCase):
             self.assertIn("FAIL", output.getvalue())
             self.assertIn("restore", output.getvalue().lower())
             self.assertIn("docs/sandbox.md", output.getvalue())
+
+    def test_foreign_remote_is_rejected_before_plan_or_apply(self):
+        for action in ("incus-plan", "incus-apply"):
+            with self.subTest(action=action):
+                self.assert_identity_refused(action)
+
+    def assert_identity_refused(self, action):
+        manifest = manifest_for(observation())
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "manifest.json"
+            if action == "incus-apply":
+                path.write_text(json.dumps(manifest))
+            argv = ["sandbox-host.py", action, "--manifest", str(path), "--yes"]
+            with patch.object(HOST.sys, "argv", argv), patch.object(HOST.platform, "system", return_value="Darwin"), \
+                    patch.object(HOST, "check_remote", side_effect=ValueError("foreign remote")), \
+                    patch.object(upgrade, "plan", return_value=manifest) as plan, \
+                    patch.object(upgrade, "apply", return_value=[]) as apply, contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ValueError, "foreign remote"):
+                    HOST.main()
+                plan.assert_not_called()
+                apply.assert_not_called()
+
+    def test_foreign_colima_home_is_rejected_before_plan(self):
+        argv = ["sandbox-host.py", "incus-plan", "--manifest", "unused.json"]
+        with patch.object(HOST.sys, "argv", argv), patch.object(HOST.platform, "system", return_value="Darwin"), \
+                patch.dict(HOST.os.environ, {"COLIMA_HOME": "/foreign/profile"}), \
+                patch.object(upgrade, "plan", return_value=manifest_for(observation())) as plan, \
+                patch.object(upgrade, "write_manifest"), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "COLIMA_HOME"):
+                HOST.main()
+            plan.assert_not_called()
+
+    def test_command_boundary_exceptions_keep_steps_backup_and_nonzero_outcome(self):
+        errors = (subprocess.TimeoutExpired("apt-get", upgrade.APT), OSError("install boundary failed"), KeyboardInterrupt())
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                self.assert_boundary_error_reported(error)
+
+    def assert_boundary_error_reported(self, error):
+        obs = observation()
+        with tempfile.TemporaryDirectory() as temp, recorded_apply(obs) as (runner, _):
+            path = Path(temp) / "manifest.json"
+            path.write_text(json.dumps(manifest_for(obs)))
+            runner.exception = (installs, error)
+            argv = ["sandbox-host.py", "incus-apply", "--manifest", str(path), "--yes"]
+            output = io.StringIO()
+            with patch.object(HOST.sys, "argv", argv), patch.object(HOST.platform, "system", return_value="Darwin"), \
+                    patch.object(upgrade, "Runner", return_value=runner), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                with self.assertRaises((upgrade.UpgradeError, SystemExit, subprocess.SubprocessError, OSError, KeyboardInterrupt)) as caught:
+                    HOST.main()
+            self.assert_structured_outcome(caught.exception, error)
+            self.assertIn(upgrade.BACKUP_DIR + "/", output.getvalue())
+            self.assertIn("docs/sandbox.md", output.getvalue())
+            self.assertEqual(runner.holds, set(obs.holds))
+            self.assertEqual(runner.units, obs.units)
+            self.assertIsNone(runner.policy)
+
+    def assert_structured_outcome(self, caught, original):
+        if isinstance(original, KeyboardInterrupt):
+            self.assertIsInstance(caught, SystemExit)
+            self.assertEqual(caught.code, 130)
+        else:
+            self.assertIsInstance(caught, upgrade.UpgradeError)
+            self.assertTrue(caught.steps)
+            self.assertIn(type(original).__name__, str(caught))
+
+    def test_plan_keeps_extra_manifest_metadata_in_the_private_file(self):
+        manifest = manifest_for(observation())
+        manifest["metadata_note"] = "not-for-the-summary"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "manifest.json"
+            argv = ["sandbox-host.py", "incus-plan", "--manifest", str(path)]
+            output = io.StringIO()
+            with patch.object(HOST.sys, "argv", argv), patch.object(HOST.platform, "system", return_value="Darwin"), \
+                    patch.object(upgrade, "plan", return_value=manifest), contextlib.redirect_stdout(output):
+                HOST.main()
+            self.assertIn("not-for-the-summary", path.read_text())
+            self.assertNotIn("not-for-the-summary", output.getvalue())
 
 
 if __name__ == "__main__":

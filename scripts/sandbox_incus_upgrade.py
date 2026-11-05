@@ -9,7 +9,6 @@ apply never takes commands, paths or package scope from it.
 """
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 import json
 import os
 import posixpath
@@ -36,6 +35,9 @@ SPACE_MARGIN = 512 * 1024 * 1024
 POLICY_BODY = "#!/bin/sh\n# pairtask incus upgrade {nonce}\nexit 101\n"
 NAME = re.compile(r"[a-z0-9][a-z0-9+.-]*")
 VERSION = re.compile(r"[0-9][0-9A-Za-z.+~:-]*")
+# mktemp -d's private, newly made directory for one apply's backup.
+BACKUP_RESERVED = re.compile(re.escape(BACKUP_DIR) + r"/pairtask-incus-[A-Za-z0-9]{10}")
+CLEANUP = ("remove our policy-rc.d", "restore holds", "restore Incus units")
 SNAPSHOT = ("server_version", "holds", "units", "instances", "pools", "packages")
 
 # A simulated transaction line: ("Inst" | "Conf" | "Remv" | ..., package, version).
@@ -48,6 +50,10 @@ class UpgradeError(ValueError):
     def __init__(self, message: str, steps: Optional[List["Step"]] = None):
         super().__init__(message)
         self.steps = steps or []
+
+
+class UpgradeInterrupted(UpgradeError):
+    """Apply was interrupted; cleanup ran, and steps say how far it got."""
 
 
 class Runner:
@@ -170,11 +176,18 @@ def parse_policy(text: str) -> Dict[str, Package]:
     packages = {name: Package() for name in PACKAGES}
     current, version = None, None
     for line in text.splitlines():
-        if line and not line[0].isspace() and line.rstrip().endswith(":"):
+        if package_heading(line):
             current, version = packages.get(line.rstrip()[:-1]), None
         elif current is not None:
             version = policy_line(current, line.split(), version)
     return packages
+
+
+def package_heading(line: str) -> bool:
+    """A `name:` line opening one package's apt-cache policy."""
+    if not line or line[0].isspace():
+        return False
+    return line.rstrip().endswith(":")
 
 
 def policy_line(package: Package, words: List[str], version: Optional[str]) -> Optional[str]:
@@ -187,9 +200,16 @@ def policy_line(package: Package, words: List[str], version: Optional[str]) -> O
         return words[1]
     if len(words) == 2 and not words[0].isdigit():
         return words[0]
-    if version is not None and version == package.candidate and len(words) >= 2 and "://" in words[1]:
+    if candidate_source(package, words, version):
         package.origin = package.origin or words[1].split("://", 1)[1].rstrip("/")
     return version
+
+
+def candidate_source(package: Package, words: List[str], version: Optional[str]) -> bool:
+    """A repository line under the candidate's version-table entry."""
+    if version is None or version != package.candidate:
+        return False
+    return len(words) >= 2 and "://" in words[1]
 
 
 def compare(runner: Runner, package: Package) -> Optional[bool]:
@@ -233,7 +253,9 @@ def trusted_pins(runner: Runner, obs: Observation) -> Tuple[Dict[str, str], List
 
 def blockers(obs: Observation, tx: List[TxLine]) -> List[str]:
     """Every reason this upgrade can't go ahead; empty when it can."""
-    found = [f"instance {i['project']}/{i['name']} is running" for i in obs.instances if i.get("status") == "Running"]
+    found = [f"instance {i.get('project')}/{i.get('name')} is {i.get('status') or 'in an unknown state'}, not Stopped"
+             for i in obs.instances if not isinstance(i, dict) or i.get("status") != "Stopped"]
+    found += unit_blockers(obs)
     if obs.incus_root != INCUS_DIR:
         found.append(f"{INCUS_DIR} isn't a plain directory here (resolves to {obs.incus_root}); upgrade manually")
     found += [f"storage pool {p['name']} ({p['driver']}) isn't self-contained under {INCUS_DIR}; back it up "
@@ -247,14 +269,39 @@ def blockers(obs: Observation, tx: List[TxLine]) -> List[str]:
     return found
 
 
+# The unit states apply can restore exactly.
+UNIT_ACTIVE, UNIT_ENABLED = ("active", "inactive"), ("enabled", "disabled")
+
+
+def unit_blockers(obs: Observation) -> List[str]:
+    """Units in a state apply couldn't put back exactly."""
+    found = []
+    for unit in UNITS:
+        state = obs.units.get(unit)
+        if not exact_unit(state):
+            found.append(f"{unit} is {state.active + '/' + state.enabled if state else 'unread'}; "
+                         "apply restores only active or inactive, enabled or disabled")
+    return found
+
+
+def exact_unit(state: Optional[Unit]) -> bool:
+    """A unit state apply can restore exactly."""
+    if state is None:
+        return False
+    return state.active in UNIT_ACTIVE and state.enabled in UNIT_ENABLED
+
+
 def self_contained(pool: Dict[str, Optional[str]]) -> bool:
     """A dir pool whose configured and physical source both sit inside
     /var/lib/incus, so the full-server tar holds its data."""
-    source = posixpath.normpath(pool.get("source") or "/")
-    resolved = pool.get("resolved")
-    inside = (INCUS_DIR + "/",)
-    return (pool.get("driver") == "dir" and source.startswith(inside)
-            and isinstance(resolved, str) and posixpath.normpath(resolved).startswith(inside))
+    if pool.get("driver") != "dir":
+        return False
+    return inside_incus(pool.get("source")) and inside_incus(pool.get("resolved"))
+
+
+def inside_incus(path: object) -> bool:
+    """path, normalized, lies under /var/lib/incus."""
+    return isinstance(path, str) and posixpath.normpath(path).startswith(INCUS_DIR + "/")
 
 
 def package_blockers(obs: Observation) -> List[str]:
@@ -306,7 +353,7 @@ def write_manifest(path, manifest: dict) -> None:
 
 def validate_manifest(data: object) -> dict:
     """The manifest as data apply may compare against, or UpgradeError."""
-    if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != MANIFEST_SCHEMA:
+    if not known_schema(data):
         raise UpgradeError("not a pairtask Incus upgrade manifest of a known schema")
     if data.get("target") != TARGET:
         raise UpgradeError("the manifest is for another VM")
@@ -317,29 +364,58 @@ def validate_manifest(data: object) -> dict:
     return {**data, "pins": pins, "transaction": tx}
 
 
+def known_schema(data: object) -> bool:
+    """A dict whose schema is exactly this one, as an int (never True)."""
+    if not isinstance(data, dict):
+        return False
+    schema = data.get("schema")
+    return type(schema) is int and schema == MANIFEST_SCHEMA
+
+
+def describe(manifest: dict) -> List[str]:
+    """A plan as the operator reads it; the manifest file has all of it."""
+    lines = [f"Incus server {manifest.get('server_version')} -> {manifest.get('expected_server')}"]
+    lines += [f"  {op} {name} {version}" for op, name, version in manifest.get("transaction", [])]
+    running = [i for i in manifest.get("instances", []) if i.get("status") == "Running"]
+    lines.append(f"Instances: {len(manifest.get('instances', []))}, running: {len(running)}")
+    lines += [f"Pool {p.get('name')}: {p.get('driver')} at {p.get('resolved')}" for p in manifest.get("pools", [])]
+    return lines
+
+
 def valid_pins(pins: object) -> Dict[str, str]:
     if not isinstance(pins, dict):
         raise UpgradeError("the manifest has no pins")
     for name, version in pins.items():
-        if not (isinstance(name, str) and NAME.fullmatch(name) and isinstance(version, str) and VERSION.fullmatch(version)):
+        if not pin_ok(name, version):
             raise UpgradeError(f"the manifest pins {name!r} badly")
     if not set(PACKAGES) <= set(pins):
         raise UpgradeError("the manifest doesn't pin every Incus package")
     return dict(pins)
 
 
+def pin_ok(name: object, version: object) -> bool:
+    """A package name and version as apt writes them, nothing else."""
+    if not (isinstance(name, str) and isinstance(version, str)):
+        return False
+    return bool(NAME.fullmatch(name)) and bool(VERSION.fullmatch(version))
+
+
 def valid_transaction(tx: object, pins: Dict[str, str]) -> List[TxLine]:
     if not isinstance(tx, list):
         raise UpgradeError("the manifest has no transaction")
-    lines = []
-    for line in tx:
-        if not (isinstance(line, (list, tuple)) and len(line) == 3 and all(isinstance(word, str) for word in line)):
-            raise UpgradeError("the manifest's transaction is malformed")
-        op, name, version = line
-        if op not in ("Inst", "Conf") or pins.get(name) != version:
-            raise UpgradeError(f"the manifest's transaction would {op} {name} outside its pins")
-        lines.append((op, name, version))
-    return lines
+    return [transaction_line(line, pins) for line in tx]
+
+
+def transaction_line(line: object, pins: Dict[str, str]) -> TxLine:
+    """One manifest transaction line: an Inst or Conf of a pinned version."""
+    if not (isinstance(line, (list, tuple)) and len(line) == 3):
+        raise UpgradeError("the manifest's transaction is malformed")
+    op, name, version = line
+    if not all(isinstance(word, str) for word in line):
+        raise UpgradeError("the manifest's transaction is malformed")
+    if op not in ("Inst", "Conf") or pins.get(name) != version:
+        raise UpgradeError(f"the manifest's transaction would {op} {name} outside its pins")
+    return op, name, version
 
 
 def apply(runner: Runner, manifest: object, yes: bool) -> List[Step]:
@@ -355,7 +431,17 @@ def apply(runner: Runner, manifest: object, yes: bool) -> List[Step]:
         run.upgrade()
     except UpgradeError as err:
         raise UpgradeError(str(err), run.steps) from err
+    except (subprocess.SubprocessError, OSError) as err:
+        raise UpgradeError(f"{type(err).__name__}: {err}", run.steps) from err
+    except KeyboardInterrupt as err:
+        raise UpgradeInterrupted("interrupted; cleanup ran", run.steps) from err
     return run.steps
+
+
+def supported_text(found: Optional[str]) -> bool:
+    """A server version string pairtask supports."""
+    version = parse_version(found)
+    return version is not None and supported(version)
 
 
 def restorable(enabled: str) -> bool:
@@ -377,6 +463,7 @@ class Upgrade:
         self.runner, self.planned, self.steps = runner, planned, []
         self.obs = Observation()
         self.policy_tried = False
+        self.backup_path = ""
         # Our policy-rc.d carries this run's own nonce, so cleanup removes
         # only the file this run wrote, never an administrator's.
         self.policy_body = POLICY_BODY.format(nonce=secrets.token_hex(16))
@@ -414,11 +501,15 @@ class Upgrade:
     def upgrade(self) -> None:
         try:
             self.stop()
-            backup = self.backup()
+            self.backup_path = self.backup()
             self.install()
         finally:
             self.cleanup()
-        self.verify(backup)
+        failed = [step.name for step in self.steps if step.name in CLEANUP and not step.ok]
+        if failed:
+            raise UpgradeError("cleanup didn't finish: " + ", ".join(failed))
+        self.verify(self.backup_path)
+        self.settle_units()
 
     def stop(self) -> None:
         result = self.runner.vm(["systemctl", "stop", *reversed(UNITS)], STOP)
@@ -428,8 +519,10 @@ class Upgrade:
         self.step("Incus stopped", not running, "not inactive: " + ", ".join(running) if running else "")
 
     def backup(self) -> str:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        path = f"{BACKUP_DIR}/pairtask-incus-{stamp}.tar.gz"
+        directory = vm_out(self.runner, ["mktemp", "-d", f"{BACKUP_DIR}/pairtask-incus-XXXXXXXXXX"], QUERY).strip()
+        reserved = BACKUP_RESERVED.fullmatch(directory) is not None
+        self.step("reserve a new backup directory", reserved, directory)
+        path = f"{directory}/incus.tar.gz"
         members = [INCUS_DIR.lstrip("/")] + [f for f in ("etc/subuid", "etc/subgid")
                                              if self.runner.vm(["test", "-e", "/" + f], QUERY).returncode == 0]
         made = self.runner.vm(["tar", "--numeric-owner", "--xattrs", "--acls", "-czpf", path, "-C", "/", *members], TAR)
@@ -453,8 +546,7 @@ class Upgrade:
 
     def cleanup(self) -> None:
         """Put back what apply found, each part on its own; failures are steps."""
-        for name, action in (("remove our policy-rc.d", self.remove_policy), ("restore holds", self.restore_holds),
-                             ("restore Incus units", self.restore_units)):
+        for name, action in zip(CLEANUP, (self.remove_policy, self.restore_holds, self.restore_units)):
             try:
                 action()
                 self.steps.append(Step(name, True))
@@ -471,9 +563,16 @@ class Upgrade:
         vm_out(self.runner, ["rm", "-f", POLICY], QUERY)
 
     def restore_holds(self) -> None:
+        """Re-hold the Incus packages that were held, then read the holds back."""
         held = [name for name in PACKAGES if name in self.obs.holds]
+        unheld = [name for name in PACKAGES if name not in held]
+        if unheld:  # an install can add a hold; the storage tools' holds stay as they are
+            vm_out(self.runner, ["apt-mark", "unhold", *unheld], QUERY)
         if held:
             vm_out(self.runner, ["apt-mark", "hold", *held], QUERY)
+        now = set(vm_out(self.runner, ["apt-mark", "showhold"], QUERY).split())
+        if now & set(PACKAGES) != set(held):
+            raise UpgradeError(f"Incus holds are {sorted(now & set(PACKAGES))}, were {held}")
 
     def restore_units(self) -> None:
         """Each unit's enablement and activity on its own: one failing never
@@ -499,25 +598,33 @@ class Upgrade:
             except (subprocess.SubprocessError, OSError) as err:
                 mismatched.append(f"{unit}: state unreadable ({err})")
                 continue
-            if restorable(want.enabled) and now.enabled != want.enabled:
-                mismatched.append(f"{unit} is {now.enabled}, was {want.enabled}")
-            if want.active == "active" and now.active != "active":
-                mismatched.append(f"{unit} is {now.active}, was active")
+            if (now.active, now.enabled) != (want.active, want.enabled):
+                mismatched.append(f"{unit} is {now.active}/{now.enabled}, was {want.active}/{want.enabled}")
         return mismatched
 
     def unit_restores(self) -> List[Tuple[List[str], float]]:
-        restores = []
-        for unit in UNITS:
-            state = self.obs.units.get(unit) or Unit()
-            if restorable(state.enabled):
-                restores.append((["systemctl", state.enabled[:-1], unit], QUERY))
-        for unit in UNITS:
-            if (self.obs.units.get(unit) or Unit()).active == "active":
-                restores.append((["systemctl", "start", unit], STOP))
-        return restores
+        """Enablement, then the units as they were: started socket first,
+        stopped service first."""
+        found = {unit: self.obs.units.get(unit) or Unit() for unit in UNITS}
+        enable = [(["systemctl", state.enabled[:-1], unit], QUERY)
+                  for unit, state in found.items() if restorable(state.enabled)]
+        start = [(["systemctl", "start", unit], STOP) for unit, state in found.items() if state.active == "active"]
+        stop = [(["systemctl", "stop", unit], STOP) for unit, state in reversed(list(found.items()))
+                if state.active == "inactive"]
+        return enable + stop + start
+
+    def settle_units(self) -> None:
+        """The version query may socket-activate a service that was
+        inactive: put the units back as found, and confirm it."""
+        if self.unit_mismatches():
+            try:
+                self.restore_units()
+                ok, detail = True, ""
+            except UpgradeError as err:
+                ok, detail = False, str(err)
+            self.step("units as found after the version check", ok, detail)
 
     def verify(self, backup: str) -> None:
         found = server_version(incus_json(self.runner, ["query", TARGET["remote"] + ":/1.0"]))
-        version = parse_version(found)
-        ok = found == self.expected and version is not None and supported(version)
+        ok = found == self.expected and supported_text(found)
         self.step("server is " + self.expected, ok, "" if ok else f"server reports {found}; the backup is {backup}")
