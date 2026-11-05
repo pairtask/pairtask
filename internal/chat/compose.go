@@ -284,12 +284,13 @@ func (m *Model) pickerKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 func (m *Model) complete(id string) {
 	c := &m.compose
 	// An agent named "all" must never become the everyone keyword.
-	if id == "all" || !mentionID.MatchString(id) {
+	if id == "all" || !writableMention(id) {
 		m.pickLiteral(id)
 		return
 	}
 	value := c.editor.Value()
-	cut := strings.LastIndex(value, "@")
+	fields := strings.Fields(value)
+	cut := len(value) - len(fields[len(fields)-1]) // the typed token, a scoped one's @ included
 	c.editor.SetValue(value[:cut] + "@" + id + " ")
 	c.editor.CursorEnd()
 	c.picker = nil

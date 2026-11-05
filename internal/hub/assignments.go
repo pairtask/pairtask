@@ -106,8 +106,8 @@ func checkNoAssignment(msg protocol.Message) *routingError {
 // it was asked: to everyone, in the parent's room. A reply to a message
 // that assigns nobody keeps the rules it had.
 func (h *Hub) assignedReplyAudience(ctx context.Context, msg protocol.Message) *routingError {
-	if msg.InReplyTo == "" {
-		return nil
+	if msg.InReplyTo == "" || h.inSharedConversation(ctx, msg.InReplyTo) {
+		return nil // a shared conversation's reply goes back to it (#278)
 	}
 	assigned, room, err := h.store.AssignedAudience(ctx, msg.InReplyTo)
 	if err != nil {
