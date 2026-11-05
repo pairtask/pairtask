@@ -37,18 +37,16 @@ func plainSegments(segs []hintSegment) string {
 }
 
 // renderSegments styles each part, cut to width cells with a visible
-// ellipsis where the line runs over.
+// ellipsis where the line runs over: the styled line is cut as a whole, so
+// the ellipsis shows even when width ends exactly on a part.
 func renderSegments(segs []hintSegment, width int) string {
 	var b strings.Builder
-	left := width
 	for _, s := range segs {
-		w := ansi.StringWidth(s.text)
-		if w > left {
-			b.WriteString(s.style.Render(ansi.Truncate(s.text, left, "…")))
-			break
-		}
 		b.WriteString(s.style.Render(s.text))
-		left -= w
 	}
-	return b.String()
+	styled := b.String()
+	if ansi.StringWidth(styled) <= width {
+		return styled
+	}
+	return ansi.Truncate(styled, width, "…")
 }
