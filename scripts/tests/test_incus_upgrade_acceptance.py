@@ -706,6 +706,76 @@ class UpgradeApplyTests(unittest.TestCase):
                 upgrade.apply(runner, self.manifest, yes=True)
         self.assertFalse(any(argv[:1] == ["tar"] or installs(argv) for _, argv, _ in runner.calls))
 
+    def test_failed_timed_out_or_interrupted_verification_still_settles_units(self):
+        errors = (None, subprocess.TimeoutExpired("incus-query", upgrade.QUERY), KeyboardInterrupt())
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                self.assert_failed_query_settles(error)
+
+    def assert_failed_query_settles(self, error):
+        self.obs.units["incus.service"] = upgrade.Unit("inactive", "disabled")
+        self.manifest = manifest_for(self.obs)
+        with self.harness() as (runner, _):
+            runner.server = "7.4"
+
+            def query():
+                runner.units["incus.service"].active = "active"
+                if error is not None:
+                    raise error
+
+            runner.query_effect = query
+            with self.assertRaises(upgrade.UpgradeError) as caught:
+                upgrade.apply(runner, self.manifest, yes=True)
+        self.assertEqual(runner.units, self.obs.units)
+        self.assertTrue(any(step.name == "units as found after the version check" for step in caught.exception.steps))
+        if error is None:
+            self.assertIn("7.4", str(caught.exception))
+
+    def test_primary_verify_failure_survives_failed_final_unit_cleanup(self):
+        self.obs.units["incus.service"] = upgrade.Unit("inactive", "disabled")
+        self.manifest = manifest_for(self.obs)
+        queried = {"started": False}
+        with self.harness() as (runner, _):
+            runner.server = "7.4"
+
+            def query():
+                queried["started"] = True
+                runner.units["incus.service"].active = "active"
+
+            runner.query_effect = query
+            runner.fail = lambda argv: queried["started"] and argv == ["systemctl", "stop", "incus.service"]
+            with self.assertRaises(upgrade.UpgradeError) as caught:
+                upgrade.apply(runner, self.manifest, yes=True)
+        self.assertIn("7.4", str(caught.exception))
+        self.assertTrue(any(not step.ok and "unit" in step.name for step in caught.exception.steps))
+
+    def test_hold_changes_and_readback_continue_after_each_individual_failure(self):
+        for action in ("unhold", "hold"):
+            with self.subTest(action=action):
+                self.assert_hold_cleanup_continues(action)
+
+    def assert_hold_cleanup_continues(self, action):
+        self.obs.holds = ["incus", "zfsutils-linux"]
+        self.manifest = manifest_for(self.obs)
+        unheld = set(upgrade.PACKAGES) - {"incus"}
+        with self.harness() as (runner, _):
+            def reject_change(argv):
+                if installs(argv):
+                    runner.holds.add("incus-base")
+                if action == "unhold":
+                    return argv[:2] == ["apt-mark", "unhold"] and set(argv[2:]) == unheld
+                return argv[:2] == ["apt-mark", "hold"]
+
+            runner.fail = reject_change
+            with self.assertRaises(upgrade.UpgradeError) as caught:
+                upgrade.apply(runner, self.manifest, yes=True)
+        commands = [argv for _, argv, _ in runner.calls]
+        self.assertIn(["apt-mark", "hold", "incus"], commands)
+        self.assertIn(["apt-mark", "showhold"], commands)
+        self.assertTrue(any(not step.ok and step.name == "restore holds" for step in caught.exception.steps))
+        if action == "unhold":
+            self.assertIn("incus", runner.holds)
+
 
 class UpgradeReadBoundaryTests(unittest.TestCase):
     def test_transaction_parses_upgrades_dependencies_configures_and_removals(self):

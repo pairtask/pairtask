@@ -508,8 +508,12 @@ class Upgrade:
         failed = [step.name for step in self.steps if step.name in CLEANUP and not step.ok]
         if failed:
             raise UpgradeError("cleanup didn't finish: " + ", ".join(failed))
-        self.verify(self.backup_path)
-        self.settle_units()
+        try:
+            self.verify(self.backup_path)
+        except BaseException:
+            self.settle_units(failing=True)  # recorded; the verification failure is what's raised
+            raise
+        self.settle_units(failing=False)
 
     def stop(self) -> None:
         result = self.runner.vm(["systemctl", "stop", *reversed(UNITS)], STOP)
@@ -563,16 +567,27 @@ class Upgrade:
         vm_out(self.runner, ["rm", "-f", POLICY], QUERY)
 
     def restore_holds(self) -> None:
-        """Re-hold the Incus packages that were held, then read the holds back."""
+        """Unhold the Incus packages that weren't held and re-hold those that
+        were, each attempted on its own, then read the holds back."""
         held = [name for name in PACKAGES if name in self.obs.holds]
         unheld = [name for name in PACKAGES if name not in held]
-        if unheld:  # an install can add a hold; the storage tools' holds stay as they are
-            vm_out(self.runner, ["apt-mark", "unhold", *unheld], QUERY)
-        if held:
-            vm_out(self.runner, ["apt-mark", "hold", *held], QUERY)
+        # An install can add a hold; the storage tools' holds stay as they are.
+        failed = [error for error in (self.hold_change("unhold", unheld), self.hold_change("hold", held)) if error]
         now = set(vm_out(self.runner, ["apt-mark", "showhold"], QUERY).split())
         if now & set(PACKAGES) != set(held):
-            raise UpgradeError(f"Incus holds are {sorted(now & set(PACKAGES))}, were {held}")
+            failed.append(f"Incus holds are {sorted(now & set(PACKAGES))}, were {held}")
+        if failed:
+            raise UpgradeError("; ".join(failed))
+
+    def hold_change(self, verb: str, names: List[str]) -> str:
+        """apt-mark VERB names, or why it failed; "" when done or nothing to do."""
+        if not names:
+            return ""
+        try:
+            vm_out(self.runner, ["apt-mark", verb, *names], QUERY)
+        except (UpgradeError, subprocess.SubprocessError, OSError) as err:
+            return f"apt-mark {verb}: {err}"
+        return ""
 
     def restore_units(self) -> None:
         """Each unit's enablement and activity on its own: one failing never
@@ -613,16 +628,21 @@ class Upgrade:
                 if state.active == "inactive"]
         return enable + stop + start
 
-    def settle_units(self) -> None:
+    def settle_units(self, failing: bool) -> None:
         """The version query may socket-activate a service that was
-        inactive: put the units back as found, and confirm it."""
-        if self.unit_mismatches():
-            try:
+        inactive: put the units back as found, and confirm it. It runs
+        whether or not the query succeeded, and on its own failure records
+        the step without hiding a failure already raised."""
+        try:
+            mismatched = self.unit_mismatches()
+            if mismatched:
                 self.restore_units()
-                ok, detail = True, ""
-            except UpgradeError as err:
-                ok, detail = False, str(err)
-            self.step("units as found after the version check", ok, detail)
+            ok, detail = True, ""
+        except (UpgradeError, subprocess.SubprocessError, OSError) as err:
+            ok, detail = False, str(err)
+        self.steps.append(Step("units as found after the version check", ok, detail))
+        if not ok and not failing:
+            raise UpgradeError("units as found after the version check: " + detail)
 
     def verify(self, backup: str) -> None:
         found = server_version(incus_json(self.runner, ["query", TARGET["remote"] + ":/1.0"]))
