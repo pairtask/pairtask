@@ -84,7 +84,7 @@ func (m *Model) untyped(tags []string, q pickQuery) []string {
 func (m *Model) finishedTags() []string {
 	line, _, _ := strings.Cut(m.compose.editor.Value(), "\n")
 	words := strings.Fields(line)
-	if len(words) > 0 && !strings.HasSuffix(line, " ") {
+	if len(words) > 0 && !endsInSpace([]rune(line)) {
 		words = words[:len(words)-1]
 	}
 	var tags []string
@@ -96,6 +96,10 @@ func (m *Model) finishedTags() []string {
 	}
 	return tags
 }
+
+// endsInSpace: the line's last rune is whitespace, as the parser splits
+// words, so a tag before a tab or any Unicode space is finished.
+func endsInSpace(r []rune) bool { return len(r) > 0 && unicode.IsSpace(r[len(r)-1]) }
 
 // tagIdentity is whom a ⇄ tag names: this side or theirs, and the ID.
 type tagIdentity struct {

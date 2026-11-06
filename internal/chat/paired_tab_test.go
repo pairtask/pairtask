@@ -41,3 +41,12 @@ func TestStoredHomeNamesOnlyASentRowsStoredRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestEndsInSpaceUsesUnicodeWhitespace(t *testing.T) {
+	cases := map[string]bool{"": false, "@a": false, "@a ": true, "@a\t": true, "@a ": true, "@a ": true}
+	for line, want := range cases {
+		if got := endsInSpace([]rune(line)); got != want {
+			t.Errorf("endsInSpace(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
