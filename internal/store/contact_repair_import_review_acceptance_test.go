@@ -57,8 +57,13 @@ func TestContactRepairImportAcceptanceOldConsentIsNotReplayedInNewEpoch(t *testi
 	namespaceRepair(t, f)
 	a, err := f.consentAccept(t, 8, m, messageAt)
 	pairOK(t, err)
-	if !a.Stored || !a.Held || a.HeldID == "" || a.HeldID == old.ID {
-		t.Fatalf("new pairing needs its own consent hold: %+v", a)
+	pairEqual(t, a.Stored, true)
+	pairEqual(t, a.Held, true)
+	if a.HeldID == "" {
+		t.Fatal("new pairing needs an identified consent hold")
+	}
+	if a.HeldID == old.ID {
+		t.Fatal("new pairing reused the old consent hold")
 	}
 	pairEqual(t, epochCount(t, f.raw, `SELECT count(*) FROM consent_requests WHERE pairing_epoch=2 AND state='pending'`), 1)
 	pairEqual(t, epochCount(t, f.raw, `SELECT count(*) FROM consent_requests WHERE pairing_epoch=1 AND id=? AND state='allowed'`, old.ID), 1)
