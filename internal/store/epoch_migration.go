@@ -105,11 +105,11 @@ CREATE TABLE IF NOT EXISTS pairing_exchanges (
     xseq            INTEGER PRIMARY KEY AUTOINCREMENT,
     operation_id    TEXT NOT NULL UNIQUE,
     identity_key    TEXT NOT NULL,
-    role            TEXT CHECK (role IN ('inviter', 'joiner')),
-    kind            TEXT CHECK (kind IN ('pair', 'repair', 'address_move')),
+    role            TEXT NOT NULL CHECK (role IN ('inviter', 'joiner')),
+    kind            TEXT NOT NULL CHECK (kind IN ('pair', 'repair', 'address_move')),
     transcript_id   BLOB NOT NULL,
     begun_mark      INTEGER NOT NULL,
-    state           TEXT CHECK (state IN ('open', 'installed', 'retired', 'refused', 'legacy')),
+    state           TEXT NOT NULL CHECK (state IN ('open', 'installed', 'retired', 'refused', 'legacy')),
     mode            TEXT NOT NULL CHECK (mode IN ('epoch', 'legacy')),
     decision        TEXT NOT NULL DEFAULT 'pending' CHECK (decision IN ('pending', 'accepted', 'rejected')),
     decided_at      TEXT,
@@ -179,7 +179,7 @@ func createEpochTable(ctx context.Context, db *sql.DB, t epochTable) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, statement := range t.createStatements(t) {
+	for _, statement := range append(t.createStatements(t), t.indexStatements()...) {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return err
 		}
@@ -370,6 +370,18 @@ func (t epochTable) createStatements(named epochTable) []string {
 	statements := []string{`CREATE TABLE ` + string(named) + ` ` + t.definition()}
 	for _, c := range t.added() {
 		statements = append(statements, `ALTER TABLE `+string(named)+` ADD COLUMN `+c.column+` `+c.decl)
+	}
+	return statements
+}
+
+// indexStatements create the listed indexes on the table: a restored table
+// gets them with it, since the marked transition's indexes step won't run.
+func (t epochTable) indexStatements() []string {
+	var statements []string
+	for _, ix := range epochIndexes {
+		if ix.table == string(t) {
+			statements = append(statements, `CREATE INDEX IF NOT EXISTS `+ix.name+` ON `+ix.table+` (`+ix.columns+`)`)
+		}
 	}
 	return statements
 }
