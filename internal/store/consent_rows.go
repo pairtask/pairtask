@@ -93,8 +93,11 @@ func oneConsent(row *sql.Row) (consentRow, bool, error) {
 	return c, err == nil, err
 }
 
+// consentByMessage is the request held under a message ID in the
+// contact's current pairing (#276).
 func consentByMessage(ctx context.Context, q rowQuerier, contact, messageID string) (consentRow, bool, error) {
-	return oneConsent(q.QueryRowContext(ctx, `SELECT `+consentColumns+` FROM consent_requests WHERE contact = ? AND message_id = ?`, contact, messageID))
+	return oneConsent(q.QueryRowContext(ctx, `SELECT `+consentColumns+` FROM consent_requests
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND message_id = ?2`, contact, messageID))
 }
 
 func consentByID(ctx context.Context, q rowQuerier, id string) (consentRow, bool, error) {

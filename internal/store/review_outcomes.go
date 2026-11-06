@@ -124,13 +124,9 @@ func outcomeContactRetired(ctx context.Context, tx *sql.Tx, src pairingKey) (boo
 }
 
 // askOutcome is an outcome of a request before it is a review: its state,
-// why, and when. A request not yet a review is of the current pairing.
+// why, and when, in the pairing its import was staged under (#276).
 func askOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, e askEnd) error {
-	epoch, err := contactEpoch(ctx, tx, imp.Contact)
-	if err != nil {
-		return err
-	}
-	return emitOutcome(ctx, tx, outcomeEvent{src: pairingKey{imp.Contact, epoch}, askID: imp.RemoteID,
+	return emitOutcome(ctx, tx, outcomeEvent{src: imp.source(), askID: imp.RemoteID,
 		o: messaging.ReviewOutcome{State: e.state, Reason: e.reason}, terminal: askTerminal[e.state], at: e.at})
 }
 

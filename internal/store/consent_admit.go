@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -174,8 +175,11 @@ func holdRequest(ctx context.Context, tx *sql.Tx, h heldRow) (messaging.Answer, 
 	if err != nil || !token {
 		return refused(messaging.ReasonBusy), false, err
 	}
-	id := consentID(h.r.key.contact, h.r.m.ID)
-	if err := insertConsent(ctx, tx, h, id); err != nil {
+	id, err := heldID(ctx, tx, h)
+	if err == nil {
+		err = insertConsent(ctx, tx, h, id)
+	}
+	if err != nil {
 		return messaging.Answer{}, false, err
 	}
 	return heldAnswer(id), true, nil
@@ -187,11 +191,14 @@ func holdRequest(ctx context.Context, tx *sql.Tx, h heldRow) (messaging.Answer, 
 // does first. The requester hears held, then the dispatch's outcome. No
 // prompt, so no arrival token.
 func admitUnderSession(ctx context.Context, tx *sql.Tx, h heldRow, owner LiveOwner) (messaging.Answer, bool, error) {
-	id := consentID(h.r.key.contact, h.r.m.ID)
-	if err := insertConsent(ctx, tx, h, id); err != nil {
+	id, err := heldID(ctx, tx, h)
+	if err == nil {
+		err = insertConsent(ctx, tx, h, id)
+	}
+	if err != nil {
 		return messaging.Answer{}, false, err
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE consent_requests SET state = 'allowed', revision = revision + 1, decided_at = ?,
+	_, err = tx.ExecContext(ctx, `UPDATE consent_requests SET state = 'allowed', revision = revision + 1, decided_at = ?,
     choice = 'session', evidence_kind = 'session', evidence_epoch = ?, evidence_gen = ? WHERE id = ?`,
 		msgStamp(h.r.now), owner.Epoch, int64(owner.Gen), id)
 	if err != nil {
@@ -331,10 +338,22 @@ func laterOf(a, b time.Time) time.Time {
 	return b
 }
 
-// consentID is a held request's ID: derived from the contact and the
-// message's ID, so the peer can't choose it.
-func consentID(contact, messageID string) string {
-	sum := sha256.Sum256([]byte("consent\x00" + contact + "\x00" + messageID))
+// heldID is the ID a request is held under, in its contact's current
+// pairing.
+func heldID(ctx context.Context, tx *sql.Tx, h heldRow) (string, error) {
+	src, err := currentPairing(ctx, tx, h.r.key.contact)
+	return consentID(src, h.r.m.ID), err
+}
+
+// consentID is a held request's ID: derived from the contact, its pairing
+// and the message's ID, so the peer can't choose it. The first pairing's
+// keep the form they had before epochs (#276).
+func consentID(src pairingKey, messageID string) string {
+	seed := "consent\x00" + src.contact + "\x00" + messageID
+	if src.epoch > 1 {
+		seed += "\x00" + strconv.FormatInt(src.epoch, 10)
+	}
+	sum := sha256.Sum256([]byte(seed))
 	return "consent:" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:]))[:52]
 }
 
@@ -361,16 +380,17 @@ VALUES (?, ?, `+currentEpoch+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending'
 	return err
 }
 
-// consentReplay answers a message held before under its ID or sequence:
-// the same message as its request stands, anything else a conflict.
+// consentReplay answers a message held before under its ID or sequence in
+// the contact's current pairing: the same message as its request stands,
+// anything else a conflict. An earlier pairing's hold is never replayed.
 func consentReplay(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool, error) {
 	held, found, err := consentByMessage(ctx, tx, r.key.contact, r.m.ID)
 	if err != nil || found {
 		return replayedHold(held, r), found, err
 	}
 	var other bool
-	err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM consent_requests WHERE contact = ? AND n = ?)`,
-		r.key.contact, int64(r.m.N)).Scan(&other)
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM consent_requests WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND n = ?2)`, r.key.contact, int64(r.m.N)).Scan(&other)
 	if err != nil || !other {
 		return messaging.Answer{}, false, err
 	}

@@ -84,8 +84,8 @@ var ErrTooManyGrants = fmt.Errorf("%w: a contact is shared at most %d agents", m
 const shareAll = "*"
 
 // Share grants contact's agents messages to agents, all at once or none,
-// and answers what is shared now. "*" alone is every agent registered now:
-// one registering later isn't shared.
+// in its current pairing, and answers what is shared now. "*" alone is
+// every agent registered now: one registering later isn't shared.
 func (p *PeerMessages) Share(ctx context.Context, contact string, agents []string, now time.Time) ([]string, error) {
 	return p.grantChange(ctx, contact, func(tx *sql.Tx) error {
 		named, err := namedAgents(ctx, tx, agents, everyAgent{query: `SELECT agent_id FROM durable_agents WHERE agent_id != 'operator'`})
@@ -93,7 +93,7 @@ func (p *PeerMessages) Share(ctx context.Context, contact string, agents []strin
 			return err
 		}
 		for _, agent := range named {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO peer_grants (contact, agent, granted_at) VALUES (?, ?, ?)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO peer_grants (contact, pairing_epoch, agent, granted_at) VALUES (?1, `+currentEpochOf1+`, ?2, ?3)
 ON CONFLICT DO NOTHING`, contact, agent, msgStamp(now)); err != nil {
 				return err
 			}
@@ -106,18 +106,20 @@ ON CONFLICT DO NOTHING`, contact, agent, msgStamp(now)); err != nil {
 	})
 }
 
-// Unshare revokes agents' grants, "*" alone every one, and answers what is
-// still shared. A message staged for a group a revoked agent is in is
+// Unshare revokes agents' grants in the contact's current pairing, "*"
+// alone every one, and answers what is still shared. A message staged for a group a revoked agent is in is
 // withheld, the whole group, for good: a later Share doesn't revive it. A
 // revoked agent's messages still queued to the contact are refused here.
 func (p *PeerMessages) Unshare(ctx context.Context, contact string, agents []string, now time.Time) ([]string, error) {
 	return p.grantChange(ctx, contact, func(tx *sql.Tx) error {
-		named, err := namedAgents(ctx, tx, agents, everyAgent{`SELECT agent FROM peer_grants WHERE contact = ?`, []any{contact}})
+		named, err := namedAgents(ctx, tx, agents, everyAgent{`SELECT agent FROM peer_grants WHERE contact = ?1 AND pairing_epoch = ` + currentEpochOf1,
+			[]any{contact}})
 		if err != nil {
 			return err
 		}
 		for _, agent := range named {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM peer_grants WHERE contact = ? AND agent = ?`, contact, agent); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM peer_grants WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND agent = ?2`,
+				contact, agent); err != nil {
 				return err
 			}
 		}
@@ -129,8 +131,8 @@ func (p *PeerMessages) Unshare(ctx context.Context, contact string, agents []str
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'refused', class = ?2, reason = ?3
-WHERE contact = ?1 AND direction = 'out' AND state = 'queued' AND from_agent IS NOT NULL
-    AND from_agent NOT IN (SELECT agent FROM peer_grants WHERE contact = ?1)`,
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = 'out' AND state = 'queued' AND from_agent IS NOT NULL
+    AND from_agent NOT IN (SELECT agent FROM peer_grants WHERE contact = ?1 AND pairing_epoch = peer_messages.pairing_epoch)`,
 			contact, messaging.Terminal, messaging.ReasonNotShared)
 		return err
 	})
@@ -180,17 +182,21 @@ func namedAgents(ctx context.Context, tx *sql.Tx, agents []string, all everyAgen
 	return agents, nil
 }
 
-// ungranted is an import from contact ?2 whose group holds an agent no
-// longer shared with it. One the operator allowed from a hold (#293) needs
-// no share: only an agent's explicit denial since withholds it.
-const ungranted = `remote_imports.contact = ?2 AND COALESCE(remote_imports.kind, 'message') = 'message' AND EXISTS (SELECT 1 FROM json_each(remote_imports.recipients) j
-    WHERE j.value NOT IN (SELECT agent FROM peer_grants WHERE contact = ?2) AND (NOT ` + consentAllowedImport + ` OR j.value IN (
-        SELECT agent FROM consent_decisions WHERE contact = ?2 AND operation = 'message' AND state = 'denied')))`
+// ungranted is an import from contact ?2, in its current pairing, whose
+// group holds an agent no longer shared with it there. One the operator
+// allowed from a hold (#293) needs no share: only an agent's explicit
+// denial since withholds it.
+var ungranted = `remote_imports.contact = ?2 AND remote_imports.pairing_epoch = ` + currentEpochAt(2) + `
+    AND COALESCE(remote_imports.kind, 'message') = 'message' AND EXISTS (SELECT 1 FROM json_each(remote_imports.recipients) j
+    WHERE j.value NOT IN (SELECT agent FROM peer_grants WHERE contact = ?2 AND pairing_epoch = remote_imports.pairing_epoch)
+    AND (NOT ` + consentAllowedImport + ` OR j.value IN (SELECT agent FROM consent_decisions
+        WHERE contact = ?2 AND pairing_epoch = remote_imports.pairing_epoch AND operation = 'message' AND state = 'denied')))`
 
 // consentAllowedImport: the import was staged by the operator allowing
-// its hold once or for a session (#293).
+// its hold once or for a session (#293), in the import's pairing.
 const consentAllowedImport = `EXISTS (SELECT 1 FROM consent_requests cr WHERE cr.contact = remote_imports.contact
-    AND cr.message_id = remote_imports.remote_id AND cr.evidence_kind IN ('once', 'session'))`
+    AND cr.pairing_epoch = remote_imports.pairing_epoch AND cr.message_id = remote_imports.remote_id
+    AND cr.evidence_kind IN ('once', 'session'))`
 
 // withholdUngranted withholds, for the whole group, every message from
 // contact to a group holding an agent no longer shared with it: staged ones
@@ -220,15 +226,19 @@ func (p *PeerMessages) SharedAgents(ctx context.Context, contact string) ([]stri
 	return agents, err
 }
 
+// grantedAgents is the agents shared with contact in its current pairing:
+// an earlier pairing's grants never authorize this one (#276).
 func grantedAgents(ctx context.Context, q rowsQuerier, contact string) ([]string, error) {
-	return queryStrings(ctx, q, `SELECT agent FROM peer_grants WHERE contact = ? ORDER BY agent`, contact)
+	return queryStrings(ctx, q, `SELECT agent FROM peer_grants WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` ORDER BY agent`, contact)
 }
 
-// allGranted: every agent is shared with contact now.
+// allGranted: every agent is shared with contact now, in its current
+// pairing.
 func allGranted(ctx context.Context, q rowQuerier, contact string, agents []string) (bool, error) {
 	for _, agent := range agents {
 		var ok bool
-		err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_grants WHERE contact = ? AND agent = ?)`, contact, agent).Scan(&ok)
+		err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_grants WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND agent = ?2)`, contact, agent).Scan(&ok)
 		if err != nil || !ok {
 			return false, err
 		}

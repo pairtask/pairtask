@@ -28,7 +28,7 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 	if held != "" {
 		return heldOutcome(ctx, tx, imp, askSettle{held, heldReasons[held], at})
 	}
-	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
+	if imp.LocalID, err = freeLocalID(ctx, tx, imp.source(), imp.RemoteID); err != nil {
 		return ImportResult{}, err
 	}
 	label, err := contactLabel(ctx, tx, imp.Contact)
@@ -36,7 +36,7 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 		return ImportResult{}, err
 	}
 	rec := remoteReview(imp, g, label, at)
-	created, err := createRemoteReview(ctx, tx, rec)
+	created, err := createRemoteReview(ctx, tx, rec, imp.source().epoch)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -67,7 +67,10 @@ func announceReview(ctx context.Context, tx *sql.Tx, n newReview) error {
 	if err := askOutcome(ctx, tx, n.imp, askEnd{"requested", "", n.at.ts}); err != nil {
 		return err
 	}
-	return persistMessage(ctx, tx, routedMessage{msg: n.notice.Msg, recipients: n.notice.Recipients})
+	if err := persistMessage(ctx, tx, routedMessage{msg: n.notice.Msg, recipients: n.notice.Recipients}); err != nil {
+		return err
+	}
+	return stampSource(ctx, tx, n.notice.Msg.MessageID, n.imp.source().epoch)
 }
 
 // heldReasons are why a request that can't be dispatched now is held.
@@ -116,10 +119,12 @@ type askSettle struct {
 	at            importSlot
 }
 
+// settleAsk moves a request's import, in its own pairing, where s says.
 func settleAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport, s askSettle) (ImportResult, error) {
+	src := imp.source()
 	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = ?1, reason = NULLIF(?2, ''), local_id = ?3,
-    settled_at = CASE WHEN ?1 = 'awaiting' THEN NULL ELSE ?4 END WHERE contact = ?5 AND remote_id = ?6`,
-		s.state, s.reason, imp.LocalID, msgStamp(s.at.ts), imp.Contact, imp.RemoteID)
+    settled_at = CASE WHEN ?1 = 'awaiting' THEN NULL ELSE ?4 END WHERE contact = ?5 AND pairing_epoch = ?6 AND remote_id = ?7`,
+		s.state, s.reason, imp.LocalID, msgStamp(s.at.ts), src.contact, src.epoch, imp.RemoteID)
 	return ImportResult{State: s.state, Changed: true}, err
 }
 
@@ -151,27 +156,24 @@ func remoteReviewHash(rec review.Record) string {
 	return review.Hash(RemoteRequester+string(data), rec.View.Spec)
 }
 
-// createRemoteReview stores the review with its event and the pairing it
-// came under, under the open bounds; one already stored for this request
-// is answered as it is.
-func createRemoteReview(ctx context.Context, tx *sql.Tx, rec review.Record) (bool, error) {
+// createRemoteReview stores the review with its event and the pairing
+// epoch its request was staged under, under the open bounds; one already
+// stored for this request is answered as it is.
+func createRemoteReview(ctx context.Context, tx *sql.Tx, rec review.Record, epoch int64) (bool, error) {
 	_, created, err := createReview(ctx, tx, rec)
-	if err != nil {
-		return false, err
+	if err == nil && created {
+		err = stampRemoteEpoch(ctx, tx, rec.View.ID, epoch)
 	}
-	if err := stampRemoteEpoch(ctx, tx, rec, created); err != nil {
+	if err != nil {
 		return false, err
 	}
 	return created, record(ctx, tx, reviewChange{rec, created, ReviewAction{Actor: RemoteRequester, Action: protocol.ReviewOpRequest}})
 }
 
-// stampRemoteEpoch keeps a new review's source: the pairing epoch its
-// request was dispatched under, its contact's current one (#276).
-func stampRemoteEpoch(ctx context.Context, tx *sql.Tx, rec review.Record, created bool) error {
-	if !created {
-		return nil
-	}
-	_, err := tx.ExecContext(ctx, `UPDATE reviews SET remote_epoch = `+currentEpoch+` WHERE review_id = ?`, rec.View.Remote.Contact, rec.View.ID)
+// stampRemoteEpoch keeps a new review's source: the pairing epoch frozen
+// with its request when it was staged, never the one at dispatch (#276).
+func stampRemoteEpoch(ctx context.Context, tx *sql.Tx, reviewID string, epoch int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE reviews SET remote_epoch = ? WHERE review_id = ?`, epoch, reviewID)
 	return err
 }
 

@@ -27,9 +27,10 @@ type rowsQuerier interface {
 // messageKey names one message: a contact, a direction and an ID.
 type messageKey struct{ contact, direction, id string }
 
+// messageRow is the message k names in its contact's current pairing (#276).
 func messageRow(ctx context.Context, q rowQuerier, k messageKey) (storedRow, bool, error) {
-	row := q.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM peer_messages WHERE contact = ? AND direction = ? AND message_id = ?`,
-		k.contact, k.direction, k.id)
+	row := q.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM peer_messages
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = ?2 AND message_id = ?3`, k.contact, k.direction, k.id)
 	r, err := scanMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedRow{}, false, nil

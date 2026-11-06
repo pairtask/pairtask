@@ -345,14 +345,16 @@ func (r newRow) state() string {
 	return initialState[r.key.direction]
 }
 
+// insertMessage stores a message in its contact's current pairing: an ID
+// an earlier pairing used is a new message there, the old row history.
 func insertMessage(ctx context.Context, tx *sql.Tx, r newRow) error {
 	key, m, now := r.key, r.m, r.now
 	hash := m.Hash()
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
-(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at,
+(contact, pairing_epoch, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at,
     from_agent, to_agents, reply_id, reply_author, local_id, review_ask)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		key.contact, key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
 		r.state(), msgStamp(now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), replyAuthor(m), nullString(r.localID), reviewAskJSON(m.Review))
 	return err
 }

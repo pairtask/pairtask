@@ -134,11 +134,13 @@ func decidedState(ctx context.Context, tx *sql.Tx, sc consentScope, legacy bool)
 	return scopeUndecided, nil
 }
 
-// explicitState is a scope's explicit decision row, if any.
+// explicitState is a scope's explicit decision row in its contact's
+// current pairing, if any: an earlier pairing's decision is no decision
+// here (#276).
 func explicitState(ctx context.Context, tx *sql.Tx, sc consentScope) (string, bool, error) {
 	var state string
-	err := tx.QueryRowContext(ctx, `SELECT state FROM consent_decisions WHERE contact = ? AND agent = ? AND operation = ?`,
-		sc.contact, sc.agent, sc.operation).Scan(&state)
+	err := tx.QueryRowContext(ctx, `SELECT state FROM consent_decisions WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND agent = ?2 AND operation = ?3`, sc.contact, sc.agent, sc.operation).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}

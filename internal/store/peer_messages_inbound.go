@@ -227,8 +227,9 @@ func decideInbound(ctx context.Context, tx *sql.Tx, contact string, m messaging.
 // validSequence: from 1, within what the store can hold.
 func validSequence(n uint64) bool { return n != 0 && n < math.MaxInt64 }
 
-// replay answers a message whose ID or sequence is already held: the same
-// message is Stored again, anything else is a conflict.
+// replay answers a message whose ID or sequence is already held in the
+// contact's current pairing: the same message is Stored again, anything
+// else is a conflict.
 func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (messaging.Answer, bool, error) {
 	row, found, err := messageRow(ctx, tx, messageKey{contact, messaging.DirIn, m.ID})
 	if err != nil {
@@ -241,8 +242,8 @@ func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message
 		return messaging.Answer{}, false, nil
 	}
 	var other int
-	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peer_messages WHERE contact = ? AND direction = 'in' AND n = ?`,
-		contact, int64(m.N)).Scan(&other)
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peer_messages WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND direction = 'in' AND n = ?2`, contact, int64(m.N)).Scan(&other)
 	if err != nil || other == 0 {
 		return messaging.Answer{}, false, err
 	}
@@ -270,9 +271,11 @@ func belowFloor(ctx context.Context, tx *sql.Tx, contact string, n uint64) (bool
 	return int64(n) < floor, err
 }
 
+// replayFloor is the contact's replay floor in its current pairing.
 func replayFloor(ctx context.Context, q rowQuerier, contact string) (int64, error) {
 	var floor int64
-	err := q.QueryRowContext(ctx, `SELECT floor FROM peer_message_floors WHERE contact = ?`, contact).Scan(&floor)
+	err := q.QueryRowContext(ctx, `SELECT floor FROM peer_message_floors WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1,
+		contact).Scan(&floor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}

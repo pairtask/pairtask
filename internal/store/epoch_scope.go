@@ -16,6 +16,12 @@ const currentEpoch = `COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WH
 // parameters, the contact its first.
 const currentEpochOf1 = `COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WHERE ce.identity_key = ?1), 1)`
 
+// currentEpochAt is currentEpoch for a statement with numbered
+// parameters, the contact its nth.
+func currentEpochAt(n int) string {
+	return fmt.Sprintf(`COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WHERE ce.identity_key = ?%d), 1)`, n)
+}
+
 // errPairingEnded refuses work from a pairing the contact has since ended
 // and paired again: the new pairing's authority never covers it (#276).
 var errPairingEnded = fmt.Errorf("%w: this came under an earlier pairing with the contact", ErrUnpaired)
@@ -31,6 +37,12 @@ func contactEpoch(ctx context.Context, q rowQuerier, contact string) (int64, err
 	var epoch int64
 	err := q.QueryRowContext(ctx, `SELECT `+currentEpoch, contact).Scan(&epoch)
 	return epoch, err
+}
+
+// currentPairing is a contact's current pairing.
+func currentPairing(ctx context.Context, q rowQuerier, contact string) (pairingKey, error) {
+	epoch, err := contactEpoch(ctx, q, contact)
+	return pairingKey{contact, epoch}, err
 }
 
 // remoteEpoch is the pairing epoch a review a paired workspace asked for
@@ -58,4 +70,21 @@ func refuseRetired(ctx context.Context, q rowQuerier, k pairingKey) error {
 		return errPairingEnded
 	}
 	return nil
+}
+
+// livePairingImport is an import, as ri, staged under its contact's
+// current pairing, which hasn't ended: a key with no contact row passes.
+const livePairingImport = `NOT EXISTS (SELECT 1 FROM peer_contacts lp WHERE lp.identity_key = ri.contact
+    AND (lp.unpaired_at != '' OR lp.pairing_epoch != ri.pairing_epoch))`
+
+// source is the pairing an import was staged under; 0 is the legacy 1.
+func (imp RemoteImport) source() pairingKey {
+	return pairingKey{imp.Contact, max(imp.Epoch, 1)}
+}
+
+// stampSource keeps, with a message an import became, the pairing epoch
+// the import came under (#276).
+func stampSource(ctx context.Context, tx *sql.Tx, messageID string, epoch int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE message_metadata SET remote_epoch = ? WHERE message_id = ?`, epoch, messageID)
+	return err
 }

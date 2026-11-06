@@ -33,11 +33,12 @@ func importDenied(ctx context.Context, tx *sql.Tx, imp RemoteImport) (bool, erro
 	return false, nil
 }
 
-// queuedConsentImports are the contact's imports allowed from a hold and
-// not yet dispatched.
+// queuedConsentImports are the contact's imports allowed from a hold in
+// its current pairing and not yet dispatched.
 func queuedConsentImports(ctx context.Context, tx *sql.Tx, contact string) ([]RemoteImport, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT `+importColumns+importFrom+`
-WHERE ri.contact = ? AND ri.state IN ('pending', 'awaiting') AND cr.evidence_kind IN ('once', 'session') ORDER BY ri.rowid`, contact)
+WHERE ri.contact = ?1 AND ri.pairing_epoch = `+currentEpochOf1+` AND ri.state IN ('pending', 'awaiting')
+    AND cr.evidence_kind IN ('once', 'session') ORDER BY ri.rowid`, contact)
 	if err != nil {
 		return nil, err
 	}
@@ -99,11 +100,13 @@ func withholdQueued(ctx context.Context, tx *sql.Tx, e queuedEnd, ends func(cont
 	return settleConsentOutcomes(ctx, tx, e.contact)
 }
 
-// withholdImport settles one queued import withheld, for good, and tells a
-// review request's requester.
+// withholdImport settles one queued import withheld, for good, in its own
+// pairing, and tells a review request's requester.
 func withholdImport(ctx context.Context, tx *sql.Tx, imp RemoteImport, e queuedEnd) error {
+	src := imp.source()
 	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', reason = ?, settled_at = ?
-WHERE contact = ? AND remote_id = ? AND state IN ('pending', 'awaiting')`, e.reason, msgStamp(e.at), imp.Contact, imp.RemoteID)
+WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND state IN ('pending', 'awaiting')`,
+		e.reason, msgStamp(e.at), src.contact, src.epoch, imp.RemoteID)
 	if err != nil {
 		return err
 	}

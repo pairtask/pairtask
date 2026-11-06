@@ -43,24 +43,26 @@ WHERE contact = ?1 AND state = 'allowed' AND outcome = '' AND (`+settledImport+`
 // settledImport is the state of the import an allowed request staged;
 // withheldReason is why it was withheld.
 const (
-	settledImport = `SELECT ri.state FROM remote_imports ri
-    WHERE ri.contact = consent_requests.contact AND ri.remote_id = consent_requests.message_id`
-	withheldReason = `SELECT COALESCE(ri.reason, '') FROM remote_imports ri
-    WHERE ri.contact = consent_requests.contact AND ri.remote_id = consent_requests.message_id`
+	settledImport = `SELECT ri.state FROM remote_imports ri WHERE ri.contact = consent_requests.contact
+    AND ri.pairing_epoch = consent_requests.pairing_epoch AND ri.remote_id = consent_requests.message_id`
+	withheldReason = `SELECT COALESCE(ri.reason, '') FROM remote_imports ri WHERE ri.contact = consent_requests.contact
+    AND ri.pairing_epoch = consent_requests.pairing_epoch AND ri.remote_id = consent_requests.message_id`
 )
 
 // WithholdConsent settles, for good, an import staged under session
 // evidence the hub found ended: nothing is delivered or dispatched, and
-// the requester hears it was withheld, in one transaction. One no longer
-// pending is answered as it is.
+// the requester hears it was withheld, in one transaction, in the pairing
+// imp was staged under. One no longer pending is answered as it is.
 func (s *Store) WithholdConsent(ctx context.Context, imp RemoteImport, reason string, now time.Time) (ImportResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ImportResult{}, err
 	}
 	defer tx.Rollback()
+	src := imp.source()
 	ids, err := queryStrings(ctx, tx, `UPDATE remote_imports SET state = 'withheld', reason = ?1, settled_at = ?2
-WHERE contact = ?3 AND remote_id = ?4 AND state = 'pending' RETURNING remote_id`, reason, msgStamp(now), imp.Contact, imp.RemoteID)
+WHERE contact = ?3 AND pairing_epoch = ?4 AND remote_id = ?5 AND state = 'pending' RETURNING remote_id`,
+		reason, msgStamp(now), src.contact, src.epoch, imp.RemoteID)
 	if err != nil || len(ids) == 0 {
 		return ImportResult{}, err
 	}

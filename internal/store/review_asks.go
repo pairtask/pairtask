@@ -89,22 +89,27 @@ func recordedAsk(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	return recordAsk(ctx, tx, o)
 }
 
-// recordAsk records a request this side queues, within the bounds on open
-// ones; a replay of the same request is never counted again.
+// recordAsk records a request this side queues, in the contact's current
+// pairing, within the bounds on open ones; a replay of the same request is
+// never counted again.
 func recordAsk(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	if err := askRoom(ctx, tx, o); err != nil {
 		return err
 	}
 	ask, _ := json.Marshal(o.m.Review) // strings and bools always encode
 	_, err := tx.ExecContext(ctx, `INSERT INTO review_asks_out
-(contact, ask_id, reviewer, requester_agent, local_id, ask, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'asked', ?, ?)`,
-		o.key.contact, o.key.id, o.m.To[0], o.m.From, o.localID, string(ask), msgStamp(o.now), msgStamp(o.now))
+(contact, pairing_epoch, ask_id, reviewer, requester_agent, local_id, ask, state, created_at, updated_at)
+VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4, ?5, ?6, 'asked', ?7, ?7)`,
+		o.key.contact, o.key.id, o.m.To[0], o.m.From, o.localID, string(ask), msgStamp(o.now))
 	return err
 }
 
+// askRoom refuses a request past the bounds on open ones: the contact's
+// counted in its current pairing (#276).
 func askRoom(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	var mine, theirs, total int
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(contact = ?1 AND requester_agent = ?2), 0), COALESCE(SUM(contact = ?1), 0), COUNT(*)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND requester_agent = ?2), 0),
+    COALESCE(SUM(contact = ?1 AND pairing_epoch = `+currentEpochOf1+`), 0), COUNT(*)
 FROM review_asks_out WHERE settled_at IS NULL`, o.key.contact, o.m.From).Scan(&mine, &theirs, &total)
 	if err != nil {
 		return err
@@ -430,33 +435,54 @@ const NoticesPerAgent = 16
 // message, and replacing one of the same request still waiting. It reports
 // full when that agent's notices are at their bound.
 func stageOutcomeNotice(ctx context.Context, tx *sql.Tx, t takenOutcome) (bool, error) {
-	a, o, at := t.a, t.o, t.at
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', reason = 'superseded', settled_at = ?
-WHERE contact = ? AND kind = 'outcome' AND state = 'pending' AND reply_id = ?`, msgStamp(at), a.Contact, a.AskID); err != nil {
-		return false, err
-	}
-	// Notices waiting to be imported, or imported and not acknowledged.
-	var waiting int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM remote_imports ri WHERE ri.kind = 'outcome' AND ri.recipients = json_array(?)
-    AND (ri.state = 'pending' OR ri.state = 'imported' AND EXISTS (SELECT 1 FROM durable_inbox d
-        WHERE d.message_id = ri.local_id AND d.acknowledged_at IS NULL))`,
-		a.RequesterAgent).Scan(&waiting); err != nil {
-		return false, err
-	}
-	if waiting >= NoticesPerAgent {
-		return true, nil
-	}
-	key := outcomeKey(a.AskID, o.Seq)
-	localID, err := freeLocalID(ctx, tx, a.Contact, key)
+	src, err := currentPairing(ctx, tx, t.a.Contact)
 	if err != nil {
 		return false, err
 	}
+	if err := supersedeNotice(ctx, tx, src, t); err != nil {
+		return false, err
+	}
+	full, err := outcomeNoticesFull(ctx, tx, t.a.RequesterAgent)
+	if err != nil || full {
+		return full, err
+	}
+	return false, insertOutcomeNotice(ctx, tx, src, t)
+}
+
+// supersedeNotice withholds a notice of the same request, in the same
+// pairing, still waiting to be imported.
+func supersedeNotice(ctx context.Context, tx *sql.Tx, src pairingKey, t takenOutcome) error {
+	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', reason = 'superseded', settled_at = ?
+WHERE contact = ? AND pairing_epoch = ? AND kind = 'outcome' AND state = 'pending' AND reply_id = ?`,
+		msgStamp(t.at), src.contact, src.epoch, t.a.AskID)
+	return err
+}
+
+// outcomeNoticesFull: the agent's notices waiting to be imported, or imported
+// and not acknowledged, are at their bound.
+func outcomeNoticesFull(ctx context.Context, tx *sql.Tx, agent string) (bool, error) {
+	var waiting int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM remote_imports ri WHERE ri.kind = 'outcome' AND ri.recipients = json_array(?)
+    AND (ri.state = 'pending' OR ri.state = 'imported' AND EXISTS (SELECT 1 FROM durable_inbox d
+        WHERE d.message_id = ri.local_id AND d.acknowledged_at IS NULL))`, agent).Scan(&waiting)
+	return waiting >= NoticesPerAgent, err
+}
+
+// insertOutcomeNotice stages an outcome's notice in the pairing it came
+// under.
+func insertOutcomeNotice(ctx context.Context, tx *sql.Tx, src pairingKey, t takenOutcome) error {
+	a, o := t.a, t.o
+	key := outcomeKey(a.AskID, o.Seq)
+	localID, err := freeLocalID(ctx, tx, src, key)
+	if err != nil {
+		return err
+	}
 	recipients, _ := json.Marshal([]string{a.RequesterAgent}) // a []string always encodes
 	_, err = tx.ExecContext(ctx, `INSERT INTO remote_imports
-(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, body)
-VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?, 'outcome', ?)`, a.Contact, key, localID, a.Reviewer, string(recipients), a.AskID,
-		msgStamp(at), outcomeText(a, o))
-	return false, err
+(contact, pairing_epoch, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, body)
+VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, 'outcome', ?)`, src.contact, src.epoch, key, localID, a.Reviewer, string(recipients), a.AskID,
+		msgStamp(t.at), outcomeText(a, o))
+	return err
 }
 
 // outcomeKey is a notice's import key: with a character no message ID
@@ -525,7 +551,7 @@ func dispatchOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, at impor
 	if err != nil || !found {
 		return ImportResult{}, errors.Join(err, ErrNoImport)
 	}
-	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
+	if imp.LocalID, err = freeLocalID(ctx, tx, imp.source(), imp.RemoteID); err != nil {
 		return ImportResult{}, err
 	}
 	label, err := contactLabel(ctx, tx, imp.Contact)
@@ -534,6 +560,9 @@ func dispatchOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, at impor
 	}
 	msg, recipients := outcomeNotice(imp, a, label, at)
 	if err := persistMessage(ctx, tx, routedMessage{msg: msg, recipients: recipients}); err != nil {
+		return ImportResult{}, err
+	}
+	if err := stampSource(ctx, tx, msg.MessageID, imp.source().epoch); err != nil {
 		return ImportResult{}, err
 	}
 	result, err := settleAsk(ctx, tx, imp, askSettle{ImportImported, "", at})

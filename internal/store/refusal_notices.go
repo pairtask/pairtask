@@ -114,16 +114,21 @@ type notice struct {
 	at      time.Time
 }
 
-// stageNotice stages it once: a replay of the same key stages nothing.
+// stageNotice stages it once in the contact's current pairing: a replay
+// of the same key there stages nothing.
 func stageNotice(ctx context.Context, tx *sql.Tx, n notice) error {
-	localID, err := freeLocalID(ctx, tx, n.scope.contact, n.key)
+	src, err := currentPairing(ctx, tx, n.scope.contact)
+	if err != nil {
+		return err
+	}
+	localID, err := freeLocalID(ctx, tx, src, n.key)
 	if err != nil {
 		return err
 	}
 	// json_array, as the bounds compare it: one encoding for the agent.
 	_, err = tx.ExecContext(ctx, `INSERT INTO remote_imports
-(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, body)
-VALUES (?, ?, ?, ?, json_array(?), ?, 0, 'pending', ?, 'outcome', ?) ON CONFLICT DO NOTHING`, n.scope.contact, n.key, localID, n.sender,
+(contact, pairing_epoch, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, body)
+VALUES (?, ?, ?, ?, ?, json_array(?), ?, 0, 'pending', ?, 'outcome', ?) ON CONFLICT DO NOTHING`, src.contact, src.epoch, n.key, localID, n.sender,
 		n.scope.agent, n.replyID, msgStamp(n.at), n.text)
 	return err
 }
