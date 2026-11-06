@@ -128,7 +128,7 @@ func (h *Hub) consentView(ctx context.Context, view *protocol.ContactMessageView
 	if r.Direction != messaging.DirOut {
 		return nil
 	}
-	held, found, err := h.store.PeerMessages().HeldStatus(ctx, r.Contact, r.ID)
+	held, found, err := h.store.PeerMessages().HeldStatusIn(ctx, historyKey(r))
 	if found {
 		view.Consent, view.ConsentReason = held.State, held.Reason
 	}

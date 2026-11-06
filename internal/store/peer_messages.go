@@ -527,17 +527,37 @@ WHERE `+currentOutbound+` AND state IN ('queued', 'expired', 'delivered', 'read'
 		contact, id, msgStamp(at))
 }
 
-// Page is a contact's messages, both directions, newest first, before a
-// cursor (0 or less for the newest).
+// Page is a contact's messages, both directions, of every pairing with it
+// (#276), newest first, before a cursor (0 or less for the newest).
 func (p *PeerMessages) Page(ctx context.Context, contact string, before int64, limit int) ([]messaging.Row, bool, error) {
+	return p.page(ctx, pageQuery{contact, before, limit, ""})
+}
+
+// CurrentPage is Page in the newest pairing the contact's history holds,
+// its current one while paired (#276): what a client without pairing
+// history reads, never another pairing's message of the same ID.
+func (p *PeerMessages) CurrentPage(ctx context.Context, contact string, before int64, limit int) ([]messaging.Row, bool, error) {
+	return p.page(ctx, pageQuery{contact, before, limit, ` AND pairing_epoch = ` + historyEpochOf1})
+}
+
+// pageQuery is one page of a contact's messages: before a cursor, at most
+// limit, in the pairings scope admits.
+type pageQuery struct {
+	contact string
+	before  int64
+	limit   int
+	scope   string
+}
+
+func (p *PeerMessages) page(ctx context.Context, q pageQuery) ([]messaging.Row, bool, error) {
 	if err := p.localOnly(); err != nil {
 		return nil, false, err
 	}
-	limit = max(1, min(limit, messagePageLimit))
+	limit, before := max(1, min(q.limit, messagePageLimit)), q.before
 	if before <= 0 {
 		before = math.MaxInt64
 	}
-	rows, err := queryRows(ctx, p.db, `WHERE contact = ? AND cursor < ? ORDER BY cursor DESC LIMIT ?`, contact, before, limit+1)
+	rows, err := queryRows(ctx, p.db, `WHERE contact = ?1 AND cursor < ?2`+q.scope+` ORDER BY cursor DESC LIMIT ?3`, q.contact, before, limit+1)
 	if err != nil {
 		return nil, false, err
 	}

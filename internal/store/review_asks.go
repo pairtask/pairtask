@@ -190,6 +190,15 @@ func loadCurrentAsk(ctx context.Context, q rowQuerier, contact, askID string) (A
 	return loadAsk(ctx, q, k, askID)
 }
 
+// loadAskRef is the request a ref names: in its pairing, or with 0 in the
+// contact's current one (#276).
+func loadAskRef(ctx context.Context, q rowQuerier, ref protocol.ReviewAskRef) (AskOut, []byte, bool, error) {
+	if ref.PairingEpoch == 0 {
+		return loadCurrentAsk(ctx, q, ref.Contact, ref.AskID)
+	}
+	return loadAsk(ctx, q, pairingKey{ref.Contact, ref.PairingEpoch}, ref.AskID)
+}
+
 // pairing is the pairing a request was asked under.
 func (a AskOut) pairing() pairingKey { return pairingKey{a.Contact, a.Epoch} }
 
@@ -600,6 +609,7 @@ func outcomeNotice(imp RemoteImport, a AskOut, label string, at importSlot) (pro
 	ts := at.ts.UTC()
 	agent := a.RequesterAgent
 	view := a.View()
+	view.PairingEpoch = 0 // the notice is stored once for an agent of any version: as it always was
 	msg := protocol.Message{Type: protocol.TypeMsg, Seq: at.seq, TS: &ts, From: a.Reviewer, To: agent, Origin: protocol.OriginRemote,
 		Remote: &protocol.Remote{Contact: imp.Contact, Label: label, Sender: a.Reviewer}, Payload: payload, MessageID: imp.LocalID,
 		InReplyTo: a.LocalID, AckRequested: true, Durable: true, ReviewOutcome: &view}
@@ -622,10 +632,28 @@ type AsksPage struct {
 // in an order that stays put (#303), each with its pairing's epoch (#276)
 // and counts of its findings only.
 func (s *Store) AsksBy(ctx context.Context, agent, before string) (AsksPage, error) {
-	where, args, err := asksAfter(agent, before)
+	return s.asksBy(ctx, asksQuery{agent, before, ""})
+}
+
+// CurrentAsksBy is AsksBy in the newest pairing with each contact its
+// history holds, its current one while paired (#276): what an agent
+// without pairing history reads.
+func (s *Store) CurrentAsksBy(ctx context.Context, agent, before string) (AsksPage, error) {
+	return s.asksBy(ctx, asksQuery{agent, before, ` AND pairing_epoch = ` + historyEpochFor("review_asks_out.contact")})
+}
+
+// asksQuery is one page of an agent's requests: after a cursor, in the
+// pairings scope admits.
+type asksQuery struct {
+	agent, before, scope string
+}
+
+func (s *Store) asksBy(ctx context.Context, q asksQuery) (AsksPage, error) {
+	where, args, err := asksAfter(q.agent, q.before)
 	if err != nil {
 		return AsksPage{}, err
 	}
+	where += q.scope
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true}) // keys and rows from one snapshot
 	if err != nil {
 		return AsksPage{}, err
@@ -698,11 +726,11 @@ func askPageKeys(rows *sql.Rows) ([]askRef, []string, error) {
 	return keys, cursors, rows.Err()
 }
 
-// AskBy is one request an agent here sent, in the contact's current
-// pairing, with every finding received (#303); another agent's request is
-// not found.
+// AskBy is one request an agent here sent, in the pairing the ref names,
+// 0 for the contact's current one (#276), with every finding received
+// (#303); another agent's request is not found.
 func (s *Store) AskBy(ctx context.Context, agent string, ref protocol.ReviewAskRef) (AskOut, bool, error) {
-	a, _, found, err := loadCurrentAsk(ctx, s.db, ref.Contact, ref.AskID)
+	a, _, found, err := loadAskRef(ctx, s.db, ref)
 	if err != nil {
 		return AskOut{}, false, err
 	}
@@ -719,9 +747,21 @@ func (p *PeerMessages) AskOutFor(ctx context.Context, contact, askID string) (As
 	return a, found, err
 }
 
-// View is the request as an agent or the operator sees it.
+// AskOutIn is AskOutFor in the pairing k names (#276): its epoch, or with
+// 0 the newest the contact's history holds; an earlier pairing's request
+// of the same ID is another. An epoch the contact never had is
+// messaging.ErrInvalid.
+func (p *PeerMessages) AskOutIn(ctx context.Context, k MessageKey) (AskOut, bool, error) {
+	return inHistory(ctx, p.db, k, func(tx *sql.Tx, pk pairingKey) (AskOut, bool, error) {
+		a, _, found, err := loadAsk(ctx, tx, pk, k.ID)
+		return a, found, err
+	})
+}
+
+// View is the request as an agent or the operator sees it, with the
+// pairing it was asked under (#276).
 func (a AskOut) View() protocol.ReviewOutcomeView {
 	return protocol.ReviewOutcomeView{AskID: a.AskID, Workspace: a.Contact, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
 		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason,
-		ReviewID: a.ReviewID, Findings: a.Findings}
+		ReviewID: a.ReviewID, Findings: a.Findings, PairingEpoch: a.Epoch}
 }

@@ -50,23 +50,36 @@ func (h *Hub) reviewsAsked(ctx context.Context, in Inbound) protocol.Message {
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
 	case in.From.ProtocolVersion < protocol.AskedVersion:
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, "reviews_asked requires protocol_version 15")
+	case refsEpochRefused(msg.ReviewAskRefs, in.From.ProtocolVersion) != nil:
+		return statusError(msg.RequestID, protocol.ErrMalformedFrame, errHistoryVersion.detail)
 	case msg.ReviewAskRefs != nil:
 		return h.reviewAskedDetail(ctx, in)
 	}
 	return h.reviewsAskedPage(ctx, in)
 }
 
-// reviewsAskedPage answers one page of the caller's requests (#303).
+// reviewsAskedPage answers one page of the caller's requests (#303): of
+// every pairing, each tagged, for an agent at PairingHistoryVersion; of the
+// newest pairing with each contact, untagged, for an older one (#276).
 func (h *Hub) reviewsAskedPage(ctx context.Context, in Inbound) protocol.Message {
 	msg := in.Msg
-	page, err := h.store.AsksBy(ctx, in.From.ID, msg.ReviewBefore)
+	history := historyCapable(in.From.ProtocolVersion)
+	asks := h.store.CurrentAsksBy
+	if history {
+		asks = h.store.AsksBy
+	}
+	page, err := asks(ctx, in.From.ID, msg.ReviewBefore)
 	switch {
 	case errors.Is(err, store.ErrReviewCursor):
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, err.Error())
 	case err != nil:
 		return statusError(msg.RequestID, protocol.ErrInternal, "review requests unavailable")
 	}
-	return askedFrame(msg.RequestID, page)
+	out := askedFrame(msg.RequestID, page)
+	if !history {
+		untaggedOutcomes(out.ReviewsAsked)
+	}
+	return out
 }
 
 // askedFrameBudget is what a page of requests may take as encoded, short
@@ -122,6 +135,9 @@ func (h *Hub) reviewAskedDetail(ctx context.Context, in Inbound) protocol.Messag
 	views := []protocol.ReviewOutcomeView{}
 	if found {
 		views = append(views, a.View())
+	}
+	if !historyCapable(in.From.ProtocolVersion) {
+		untaggedOutcomes(views)
 	}
 	return protocol.Message{Type: protocol.TypeReviewsAskedResult, RequestID: msg.RequestID, ReviewsAsked: views}
 }

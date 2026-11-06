@@ -195,10 +195,27 @@ type HeldStatus struct {
 	State, Reason string
 }
 
-// HeldStatus is the hold of this side's message id, if the contact held it.
+// HeldStatus is the hold of this side's message id, if the contact held it
+// in its current pairing.
 func (p *PeerMessages) HeldStatus(ctx context.Context, contact, id string) (HeldStatus, bool, error) {
 	h, found, err := heldOutFor(ctx, p.db, contact, id)
 	return HeldStatus{State: h.state, Reason: h.reason}, found, err
+}
+
+// HeldStatusIn is HeldStatus in the pairing k names (#276): its epoch, or
+// with 0 the newest the contact's history holds; an earlier pairing's hold
+// of the same ID is another. An epoch the contact never had is
+// messaging.ErrInvalid.
+func (p *PeerMessages) HeldStatusIn(ctx context.Context, k MessageKey) (HeldStatus, bool, error) {
+	return inHistory(ctx, p.db, k, func(tx *sql.Tx, pk pairingKey) (HeldStatus, bool, error) {
+		var h HeldStatus
+		err := tx.QueryRowContext(ctx, `SELECT state, reason FROM consent_held_out WHERE contact = ? AND pairing_epoch = ? AND message_id = ?`,
+			pk.contact, pk.epoch, k.ID).Scan(&h.State, &h.Reason)
+		if errors.Is(err, sql.ErrNoRows) {
+			return HeldStatus{}, false, nil
+		}
+		return h, err == nil, err
+	})
 }
 
 // ConsentOutcomeRefused records the contact's refusal of an outcome this

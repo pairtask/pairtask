@@ -313,15 +313,24 @@ type ReadMark struct {
 
 // MarkReadIn marks inbound messages of the pairing r names read as shown
 // here: the current one as MarkRead does, an earlier one, or any of an
-// unpaired contact, as history read here alone, with no receipt for the
-// peer (#276). An epoch the contact never had is messaging.ErrInvalid,
-// marking nothing.
+// unpaired or removed contact, as history read here alone, with no receipt
+// for the peer (#276). An epoch past the newest the contact's history
+// holds, or below 1, is messaging.ErrInvalid, marking nothing.
 func (p *PeerMessages) MarkReadIn(ctx context.Context, r ReadMark) (int, error) {
 	return p.markRead(ctx, r, explicitMark)
 }
 
 // markScope is the pairing a mark is read in: as named, or the current one.
 type markScope func(ctx context.Context, tx *sql.Tx, r ReadMark) (ReadMark, error)
+
+// readScope is the scope of a read naming epoch: the current pairing for
+// 0, else the one named (#276).
+func readScope(epoch int64) markScope {
+	if epoch == 0 {
+		return currentMark
+	}
+	return explicitMark
+}
 
 // explicitMark is the mark as named.
 func explicitMark(_ context.Context, _ *sql.Tx, r ReadMark) (ReadMark, error) { return r, nil }
@@ -379,18 +388,12 @@ func markReadIn(ctx context.Context, tx *sql.Tx, r ReadMark) (int, error) {
 }
 
 // readReceipt is the receipt a read in pairing k owes the peer: pending in
-// the current pairing; local only in an earlier one, or for an unpaired
-// contact, whose history is read here alone (#276).
+// the live pairing alone; local only in an earlier one, for an unpaired
+// contact, or one removed, whose history is read here alone (#276).
 func readReceipt(ctx context.Context, tx *sql.Tx, k pairingKey) (string, error) {
-	current, err := heldPairing(ctx, tx, k)
-	if err != nil || !current {
+	live, err := heldPairing(ctx, tx, k)
+	if err != nil || !live {
 		return "local", err
-	}
-	switch err := refuseUnpaired(ctx, tx, k.contact); {
-	case errors.Is(err, ErrUnpaired):
-		return "local", nil
-	case err != nil:
-		return "", err
 	}
 	return "pending", nil
 }

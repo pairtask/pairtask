@@ -226,7 +226,7 @@ func scanAsked(row rowScanner, limit int) (askedRow, error) {
 	if err != nil {
 		return r, err
 	}
-	item.Findings = r.f.view(limit)
+	item.Findings, item.PairingEpoch = r.f.view(limit), r.epoch
 	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, r.updated)
 	return r, err
 }
@@ -312,15 +312,26 @@ func (s *Store) AskedDetail(ctx context.Context, ref protocol.ReviewAskRef) (pro
 	return page, err
 }
 
-// askedItem is one request, of the contact's current pairing (#276), as
-// the asked list shows it, with at most limit findings.
+// askedItem is one request, of the pairing the ref names, 0 for the
+// contact's current one (#276), as the asked list shows it, with at most
+// limit findings.
 func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef, limit int) (protocol.ReviewAskedItem, bool, error) {
+	epoch, args := refEpoch(ref)
 	r, err := scanAsked(tx.QueryRowContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+`
-WHERE a.contact = ?1 AND a.pairing_epoch = `+currentEpochOf1+` AND a.ask_id = ?2`, ref.Contact, ref.AskID), limit)
+WHERE a.contact = ?1 AND a.pairing_epoch = `+epoch+` AND a.ask_id = ?2`, args...), limit)
 	if err == sql.ErrNoRows {
 		return r.item, false, nil
 	}
 	return r.item, err == nil, err
+}
+
+// refEpoch is the pairing a ref names as a condition on contact ?1, with
+// the ref's arguments: its epoch as ?3, or the contact's current one.
+func refEpoch(ref protocol.ReviewAskRef) (string, []any) {
+	if ref.PairingEpoch == 0 {
+		return currentEpochOf1, []any{ref.Contact, ref.AskID}
+	}
+	return "?3", []any{ref.Contact, ref.AskID, ref.PairingEpoch}
 }
 
 // pendingLimit reads one item past a page, to tell whether more follow.

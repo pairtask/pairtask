@@ -76,10 +76,19 @@ func (h *Hub) openSession(ctx context.Context, req operatorRequest) protocol.Mes
 	}
 	h.gen++
 	req.sess.gen = h.gen
+	req.sess.ProtocolVersion = negotiatedVersion(req.msg.ProtocolVersion)
 	h.owner = req.sess
 	h.consentOwned(ctx, req.sess)
 	return protocol.Message{Type: protocol.TypeOperatorSession, RequestID: req.msg.RequestID, Session: &protocol.SessionInfo{
-		SessionID: req.sess.ID, Epoch: h.epoch, Gen: req.sess.gen, Capabilities: protocol.SessionCapabilities, OpenedAt: req.sess.OpenedAt}}
+		SessionID: req.sess.ID, Epoch: h.epoch, Gen: req.sess.gen, Capabilities: protocol.SessionCapabilitiesFor(req.sess.ProtocolVersion),
+		OpenedAt: req.sess.OpenedAt}}
+}
+
+// negotiatedVersion is the protocol a session opened at: what its client
+// named, never past this broker's own, and 0 for a client that named none
+// (#276).
+func negotiatedVersion(named int) int {
+	return max(0, min(named, protocol.Version))
 }
 
 // closeSession releases only the matching generation, never a newer owner.
@@ -96,6 +105,9 @@ func (h *Hub) closeSession(ctx context.Context, sess *OperatorSession) {
 }
 
 func (h *Hub) routeSession(ctx context.Context, clients map[string]*Client, req operatorRequest) {
+	// A session's requests are served at the version it opened at: one
+	// can't name another to read what the session didn't negotiate (#276).
+	req.msg.ProtocolVersion = req.sess.ProtocolVersion
 	var resp protocol.Message
 	switch req.msg.Type {
 	case protocol.TypeOperatorSnapshot:

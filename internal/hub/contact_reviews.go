@@ -42,7 +42,7 @@ func (h *Hub) contactReviewAsk(ctx context.Context, req operatorRequest, auditID
 	}
 	h.SyncMessages(msg.ContactKey)
 	h.MessagesChanged(msg.ContactKey)
-	view := contactMessageView(row)
+	view := versionedView(contactMessageView(row), msg.ProtocolVersion)
 	return protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactMessage: &view, ReviewAdvisories: advice}, nil
 }
@@ -69,8 +69,8 @@ func (h *Hub) contactChanged(ctx context.Context, req operatorRequest, auditID i
 	h.importsDue()
 	h.SyncMessages(msg.ContactKey) // outcomes it queued leave at once
 	h.MessagesChanged(msg.ContactKey)
-	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ContactKey: msg.ContactKey,
-		ContactOp: msg.ContactOp}), nil
+	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
+		ContactKey: msg.ContactKey, ContactOp: msg.ContactOp}), nil
 }
 
 // reviewRefusals are the review ops' refusals the operator can act on.
@@ -100,7 +100,7 @@ func (h *Hub) reviewView(ctx context.Context, view *protocol.ContactMessageView,
 	}
 	view.ReviewAsk = store.AskView(r.Review)
 	if r.Direction != messaging.DirIn {
-		a, found, err := h.store.PeerMessages().AskOutFor(ctx, r.Contact, r.ID)
+		a, found, err := h.store.PeerMessages().AskOutIn(ctx, historyKey(r))
 		if found {
 			outcome := a.View()
 			view.ReviewOutcome = &outcome
@@ -112,7 +112,7 @@ func (h *Hub) reviewView(ctx context.Context, view *protocol.ContactMessageView,
 		view.ReviewState, view.ReviewReason = messaging.StateRefused, r.Refusal.Reason
 		return nil
 	}
-	status, _, err := h.store.PeerMessages().AskStatus(ctx, r.Contact, r.ID)
+	status, _, err := h.store.PeerMessages().AskStatusIn(ctx, historyKey(r))
 	view.ReviewState, view.ReviewID, view.ReviewReason = status.State, status.ReviewID, status.Reason
 	return err
 }

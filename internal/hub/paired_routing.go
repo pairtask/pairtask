@@ -13,7 +13,7 @@ func (h *Hub) homeView(ctx context.Context, view *protocol.ContactMessageView, r
 	if r.Direction != messaging.DirOut {
 		return nil
 	}
-	route, err := h.store.HomeRouting(ctx, r.Contact, r.ID)
+	route, err := h.store.HomeRoutingIn(ctx, historyKey(r))
 	view.Here, view.OperatorHere = route.Agents, route.Operator
 	return err
 }

@@ -54,24 +54,121 @@ func currentPairing(ctx context.Context, q rowQuerier, contact string) (pairingK
 	return pairingKey{contact, epoch}, err
 }
 
+// historyEpochOf1 is the newest pairing the history of contact ?1 holds:
+// its current one, or past it the newest a kept message came under, as
+// for a contact removed after pairing again; 1 with neither. History reads
+// default to it; it never names authority, which contactEpoch and the
+// contact row keep (#276).
+const historyEpochOf1 = `MAX(` + currentEpochOf1 + `,
+    COALESCE((SELECT MAX(he.pairing_epoch) FROM peer_messages he WHERE he.contact = ?1), 1))`
+
+// historyEpochFor is historyEpochOf1 for the contact a row names in
+// column, for a statement over many contacts' rows.
+func historyEpochFor(column string) string {
+	return `MAX(` + currentEpochFor(column) + `,
+    COALESCE((SELECT MAX(he.pairing_epoch) FROM peer_messages he WHERE he.contact = ` + column + `), 1))`
+}
+
+// historyEpoch is the newest pairing a contact's history holds: the bound
+// of every pairing a history read may name, and the one it reads by
+// default.
+func historyEpoch(ctx context.Context, q rowQuerier, contact string) (int64, error) {
+	var epoch int64
+	err := q.QueryRowContext(ctx, `SELECT `+historyEpochOf1, contact).Scan(&epoch)
+	return epoch, err
+}
+
+// ContactEpoch is the newest pairing with the contact its history holds
+// (#276): the current one, or for a contact removed since, the newest its
+// kept messages came under. It is what a history read names by default,
+// never authority to send or receive under it.
+func (s *Store) ContactEpoch(ctx context.Context, contact string) (int64, error) {
+	return historyEpoch(ctx, s.db, contact)
+}
+
 // errNoSuchPairing names, for history, a pairing epoch the contact never
-// had: none before 1, none past the current one.
+// had: none before 1, none past the newest its history holds.
 var errNoSuchPairing = fmt.Errorf("%w: no such pairing with the contact", messaging.ErrInvalid)
 
-// heldPairing checks k names one of its contact's pairings, the current
-// one or an earlier, and reports whether it is the current one (#276).
+// heldPairing checks k names one of the pairings its contact's history
+// holds, the current one or an earlier, and reports whether it is live:
+// the contact's pairing now, and not unpaired (#276). A contact with no
+// row has none live, whatever its history holds.
 func heldPairing(ctx context.Context, q rowQuerier, k pairingKey) (bool, error) {
 	if k.epoch <= 0 {
 		return false, errNoSuchPairing
 	}
-	current, err := contactEpoch(ctx, q, k.contact)
+	bound, err := historyEpoch(ctx, q, k.contact)
 	if err != nil {
 		return false, err
 	}
-	if k.epoch > current {
+	if k.epoch > bound {
 		return false, errNoSuchPairing
 	}
-	return k.epoch == current, nil
+	return livePairing(ctx, q, k)
+}
+
+// namedPairing is the pairing an operation names by k's epoch: the
+// contact's current one for 0, else one its history holds (#276).
+func namedPairing(ctx context.Context, q rowQuerier, k pairingKey) (pairingKey, error) {
+	if k.epoch == 0 {
+		return currentPairing(ctx, q, k.contact)
+	}
+	_, err := heldPairing(ctx, q, k)
+	return k, err
+}
+
+// livePairing: k is its contact's pairing now, with a contact row that
+// isn't unpaired.
+func livePairing(ctx context.Context, q rowQuerier, k pairingKey) (bool, error) {
+	var live bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts
+WHERE identity_key = ? AND pairing_epoch = ? AND unpaired_at = '')`, k.contact, k.epoch).Scan(&live)
+	return live, err
+}
+
+// MessageKey names one message of one pairing with a contact, for a
+// history read (#276): the contact, the pairing's epoch, 0 for the newest
+// the history holds, and the message's ID.
+type MessageKey struct {
+	Contact string
+	Epoch   int64
+	ID      string
+}
+
+// inHistory runs a read-only lookup of the message k names in the pairing
+// it names, both from one snapshot (#276).
+func inHistory[T any](ctx context.Context, db *sql.DB, k MessageKey, read func(*sql.Tx, pairingKey) (T, bool, error)) (T, bool, error) {
+	var none T
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return none, false, err
+	}
+	defer tx.Rollback()
+	pk, err := historyPairing(ctx, tx, k)
+	if err != nil {
+		return none, false, err
+	}
+	return read(tx, pk)
+}
+
+// historyPairing is the pairing a history read of k names: its epoch as
+// given, or with 0 the newest the history holds. One the contact never
+// had is messaging.ErrInvalid.
+func historyPairing(ctx context.Context, q rowQuerier, k MessageKey) (pairingKey, error) {
+	if k.Epoch < 0 {
+		return pairingKey{}, errNoSuchPairing
+	}
+	bound, err := historyEpoch(ctx, q, k.Contact)
+	switch {
+	case err != nil:
+		return pairingKey{}, err
+	case k.Epoch > bound:
+		return pairingKey{}, errNoSuchPairing
+	case k.Epoch == 0:
+		return pairingKey{k.Contact, bound}, nil
+	}
+	return pairingKey{k.Contact, k.Epoch}, nil
 }
 
 // remoteEpoch is the pairing epoch a review a paired workspace asked for

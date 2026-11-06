@@ -57,6 +57,7 @@ const (
 	ReviewFindingsVersion   = 21 // asked requests carry the findings their verdict sent (#303)
 	ReviewAdvisoriesVersion = 22 // a review request queued comes back with advisories (#304)
 	PairedMentionsVersion   = 23 // a ⇄ message tags this side's agents and operator; replies share its audience (#278)
+	PairingHistoryVersion   = 25 // contact history is tagged by pairing and an earlier pairing's read or acknowledged (#276)
 	StageAccepted           = "accepted"
 	StageAdapterReceived    = "adapter_received"
 	StageAgentAcknowledged  = "agent_acknowledged"
@@ -164,7 +165,6 @@ type ReceiptState struct {
 // Message is the single frame type used in both directions.
 // Fields are populated depending on Type.
 type Message struct {
-	ContactEpoch        int64               `json:"contact_epoch,omitempty"`
 	Status              *StatusSnapshot     `json:"status,omitempty"` // status response only
 	Type                string              `json:"type"`
 	ProtocolVersion     int                 `json:"protocol_version,omitempty"` // hello/welcome capability negotiation
@@ -255,6 +255,7 @@ type Message struct {
 	ContactReviewGrant  *ContactReviewGrant `json:"contact_review_grant,omitempty"`  // operator_contact review_grant (#235)
 	ContactApprove      *bool               `json:"contact_approve,omitempty"`       // operator_contact review_decide
 	ContactBefore       int64               `json:"contact_before,omitempty"`        // operator_contact list: a cursor, 0 for the newest
+	ContactEpoch        int64               `json:"contact_epoch,omitempty"`         // operator_contact read and ack: the pairing, 0 for the current one (#276)
 	ContactMessage      *ContactMessageView `json:"contact_message,omitempty"`       // operator_contact_result for send
 	ContactPage         *ContactMessagePage `json:"contact_page,omitempty"`          // operator_contact_result for list and read
 	ContactSync         *ContactSyncView    `json:"contact_sync,omitempty"`          // operator_contact_result for sync

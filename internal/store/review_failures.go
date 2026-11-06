@@ -20,19 +20,24 @@ import (
 // uncertain there, still open, or settled without a review.
 const failedAskStates = `('publication_failed', 'uncertain', 'refused', 'unsent', 'expired', 'review_expired', 'contact_removed')`
 
-// failedSet is every failure, one row each: its kind, contact and ID, its
-// state, what it reviews, when it last changed, and the key naming it as
-// it stands. The key holds when it last changed too, so a set with the
-// same token is in the same order, page after page.
-const failedSet = `SELECT 'ask' AS kind, a.contact AS contact, a.ask_id AS id, COALESCE(pm.cursor, 0) AS cursor, a.state AS state,
+// failedSet is every failure, one row each: its kind, contact, pairing
+// (#276) and ID, its state, what it reviews, when it last changed, and the
+// key naming it as it stands. The key holds when it last changed too, so a
+// set with the same token is in the same order, page after page. A
+// request of the first pairing keeps the key it always had; a later one's
+// names its pairing, so the same ID asked again is another failure. A
+// review here has no pairing: 0.
+const failedSet = `SELECT 'ask' AS kind, a.contact AS contact, a.pairing_epoch AS epoch, a.ask_id AS id, COALESCE(pm.cursor, 0) AS cursor,
+    a.state AS state,
     a.reviewer AS reviewer, COALESCE(json_extract(a.ask, '$.Repository'), '') AS repository,
     COALESCE(json_extract(a.ask, '$.Change'), '') AS change, a.reason AS reason, a.updated_at AS updated_at,
-    'ask' || char(0) || a.contact || char(0) || a.ask_id || char(0) || a.seq || char(0) || a.state || char(0) || a.updated_at AS fkey
+    'ask' || char(0) || a.contact || char(0) || a.ask_id || char(0) || a.seq || char(0) || a.state || char(0) || a.updated_at
+        || CASE WHEN a.pairing_epoch > 1 THEN char(0) || 'e' || a.pairing_epoch ELSE '' END AS fkey
 FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.pairing_epoch = a.pairing_epoch
     AND pm.direction = 'out' AND pm.message_id = a.ask_id
 WHERE a.state IN ` + failedAskStates + `
 UNION ALL
-SELECT 'review', '', r.review_id, 0, json_extract(r.doc, '$.publication.state'), r.reviewer,
+SELECT 'review', '', 0, r.review_id, 0, json_extract(r.doc, '$.publication.state'), r.reviewer,
     COALESCE(json_extract(r.doc, '$.spec.repository'), ''), COALESCE(json_extract(r.doc, '$.spec.change'), ''),
     COALESCE(json_extract(r.doc, '$.publication.reason'), ''), r.updated_at,
     'review' || char(0) || r.review_id || char(0) || COALESCE(json_extract(r.doc, '$.attempt'), 0) || char(0)
@@ -40,11 +45,12 @@ SELECT 'review', '', r.review_id, 0, json_extract(r.doc, '$.publication.state'),
         || char(0) || r.updated_at
 FROM reviews r WHERE json_extract(r.doc, '$.publication.state') IN ('failed', 'uncertain')`
 
-// failedOrder is newest change first, then by kind, contact and ID;
-// afterFailed is everything past a cursor in it.
+// failedOrder is newest change first, then by kind, contact, pairing
+// (#276) and ID; afterFailed is everything past a cursor in it.
 const (
-	failedOrder = `ORDER BY updated_at DESC, kind, contact, id`
-	afterFailed = ` WHERE (updated_at < :t OR updated_at = :t AND (kind > :k OR kind = :k AND (contact > :c OR contact = :c AND id > :i)))`
+	failedOrder = `ORDER BY updated_at DESC, kind, contact, epoch, id`
+	afterFailed = ` WHERE (updated_at < :t OR updated_at = :t AND (kind > :k OR kind = :k AND (contact > :c OR contact = :c
+    AND (epoch > :e OR epoch = :e AND id > :i))))`
 )
 
 // failures counts the failures and hashes which they are, as they stand:
@@ -90,9 +96,10 @@ func (s *Store) FailedReviews(ctx context.Context, before string) (protocol.Revi
 	where, args := "", []any{}
 	if cur != nil {
 		where = afterFailed
-		args = append(args, sql.Named("t", cur.At), sql.Named("k", cur.Kind), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
+		args = append(args, sql.Named("t", cur.At), sql.Named("k", cur.Kind), sql.Named("c", cur.Contact), sql.Named("e", failedEpoch(cur)),
+			sql.Named("i", cur.ID))
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT kind, contact, id, cursor, state, reviewer, repository, change, reason, updated_at
+	rows, err := tx.QueryContext(ctx, `SELECT kind, contact, epoch, id, cursor, state, reviewer, repository, change, reason, updated_at
 FROM (`+failedSet+`)`+where+` `+failedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
 		return page, err
@@ -105,16 +112,26 @@ FROM (`+failedSet+`)`+where+` `+failedOrder+` LIMIT `+pendingLimit, args...)
 			return page, err
 		}
 		page.Items = append(page.Items, item)
-		cursors = append(cursors, pendingCursor{At: at, Kind: item.Kind, Contact: item.Contact, ID: item.ID}.encode())
+		cursors = append(cursors, pendingCursor{At: at, Kind: item.Kind, Contact: item.Contact, Epoch: item.PairingEpoch, ID: item.ID}.encode())
 	}
 	page.More, page.Next, err = finishPage(rows, &page.Items, cursors)
 	return page, err
 }
 
+// failedEpoch is a cursor's pairing: a request's cursor without one, from
+// before epochs were listed, reads as the first pairing's; a review's has
+// none.
+func failedEpoch(cur *pendingCursor) int64 {
+	if cur.Kind == protocol.FailedAsk {
+		return max(cur.Epoch, 1)
+	}
+	return cur.Epoch
+}
+
 func scanFailed(rows *sql.Rows) (protocol.ReviewFailedItem, string, error) {
 	var item protocol.ReviewFailedItem
 	var updated string
-	if err := rows.Scan(&item.Kind, &item.Contact, &item.ID, &item.Cursor, &item.State, &item.Reviewer, &item.Repository,
+	if err := rows.Scan(&item.Kind, &item.Contact, &item.PairingEpoch, &item.ID, &item.Cursor, &item.State, &item.Reviewer, &item.Repository,
 		&item.Change, &item.Reason, &updated); err != nil {
 		return item, "", err
 	}

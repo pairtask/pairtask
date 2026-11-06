@@ -1,6 +1,9 @@
 package protocol
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Live operator session limits.
 const (
@@ -25,6 +28,17 @@ const (
 
 // SessionCapabilities are advertised in the operator_session response.
 var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityPairingContactSummary, CapabilityReviews, CapabilityContactMessages, CapabilityContactRouting, CapabilityContactReviews, CapabilityContactNames, CapabilityContactAddress, CapabilityContactPause, CapabilityAssignments, CapabilityContactAcks, CapabilityReviewCounts, CapabilityReviewFailures, CapabilityContactShareSync, CapabilityReviewAskRefs, CapabilityAskFindings, CapabilityReviewAdvisories, CapabilityPairedMentions, CapabilityConsentPrompts}
+
+// SessionCapabilitiesFor are the capabilities advertised to a session
+// opened at version: pairing_history only from PairingHistoryVersion, so
+// an older client never takes a page of every pairing for its current one
+// (#276).
+func SessionCapabilitiesFor(version int) []string {
+	if version < PairingHistoryVersion {
+		return SessionCapabilities
+	}
+	return append(slices.Clone(SessionCapabilities), CapabilityPairingHistory)
+}
 
 // CapabilityMentions: operator_send to a room or group may carry mentions
 // (#164); a broker without it would drop them, so the chat refuses such a

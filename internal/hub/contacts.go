@@ -59,11 +59,14 @@ func (h *Hub) operatorContact(ctx context.Context, clients map[string]*Client, r
 	return h.contactOperation(ctx, req)
 }
 
-// contactFrameError refuses a malformed contact request or one that names
-// a conversation.
+// contactFrameError refuses a malformed contact request, one that names a
+// conversation, or one naming a pairing its client can't (#276).
 func contactFrameError(msg protocol.Message) *routingError {
 	if err := protocol.ValidateContactRequest(msg); err != nil {
 		return &routingError{protocol.ErrMalformedFrame, err.Error()}
+	}
+	if rerr := contactEpochRefused(msg); rerr != nil {
+		return rerr
 	}
 	return checkNoConversation(msg)
 }
@@ -165,7 +168,7 @@ func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int6
 		h.sentHere(ctx, req.clients, homeSend{msg: msg, seq: send.Seq, at: send.Now, recipients: home})
 		h.MessagesChanged(msg.ContactKey)
 	}
-	view := contactMessageView(sent.Row)
+	view := versionedView(contactMessageView(sent.Row), msg.ProtocolVersion)
 	if err := h.homeView(ctx, &view, sent.Row); err != nil { // sent all the same: the history reads it again
 		h.log.Error("paired routing unavailable", "error", err)
 	}
@@ -178,7 +181,7 @@ func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int6
 func (h *Hub) contactRead(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
 	marked, err := h.store.OperatorContactRead(ctx, store.ContactRead{OperationID: msg.MessageID, Contact: msg.ContactKey,
-		IDs: msg.ContactRead, AuditID: auditID, Now: h.contactNow()})
+		IDs: msg.ContactRead, AuditID: auditID, Now: h.contactNow(), Epoch: msg.ContactEpoch})
 	if err != nil {
 		return protocol.Message{}, err
 	}
@@ -186,8 +189,8 @@ func (h *Hub) contactRead(ctx context.Context, req operatorRequest, auditID int6
 		h.SyncMessages(msg.ContactKey) // the receipts travel at the next session
 		h.MessagesChanged(msg.ContactKey)
 	}
-	out := h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ContactKey: msg.ContactKey,
-		ContactOp: msg.ContactOp, ContactMarked: &marked})
+	out := h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
+		ContactKey: msg.ContactKey, ContactOp: msg.ContactOp, ContactMarked: &marked})
 	return out, nil
 }
 
@@ -205,15 +208,35 @@ func (h *Hub) contactSync(ctx context.Context, req operatorRequest, auditID int6
 		ContactOp: msg.ContactOp, ContactSync: &view}, nil
 }
 
-// contactList pages a contact's messages; it marks nothing read.
+// contactList pages a contact's messages; it marks nothing read. A client
+// at PairingHistoryVersion reads every pairing's, each tagged; an older one
+// the newest pairing's alone (#276).
 func (h *Hub) contactList(ctx context.Context, msg protocol.Message) protocol.Message {
-	rows, more, err := h.store.PeerMessages().Page(ctx, msg.ContactKey, msg.ContactBefore, contactPage)
+	history := historyCapable(msg.ProtocolVersion)
+	page := h.store.PeerMessages().CurrentPage
+	if history {
+		page = h.store.PeerMessages().Page
+	}
+	rows, more, err := page(ctx, msg.ContactKey, msg.ContactBefore, contactPage)
 	if err != nil {
 		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
 	}
-	page := protocol.ContactMessagePage{Contact: msg.ContactKey, Messages: []protocol.ContactMessageView{}, More: more,
+	return h.contactListPage(ctx, msg, contactRows{rows, more, history})
+}
+
+// contactRows are a page's messages as read, whether more follow, and
+// whether its client reads them tagged with their pairing.
+type contactRows struct {
+	rows    []messaging.Row
+	more    bool
+	history bool
+}
+
+// contactListPage answers a list with the page its rows make.
+func (h *Hub) contactListPage(ctx context.Context, msg protocol.Message, c contactRows) protocol.Message {
+	page := protocol.ContactMessagePage{Contact: msg.ContactKey, Messages: []protocol.ContactMessageView{}, More: c.more,
 		Sync: h.contactSyncView(msg.ContactKey)}
-	if err := h.routingViews(ctx, &page, rows); err != nil {
+	if err := h.routingViews(ctx, &page, c); err != nil {
 		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
 	}
 	out := protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
@@ -270,7 +293,8 @@ func contactMessageView(r messaging.Row) protocol.ContactMessageView {
 	view := protocol.ContactMessageView{ID: r.ID, Contact: r.Contact, Direction: r.Direction, Seq: r.N, CreatedAt: r.CreatedAt,
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
 		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
-		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt}
+		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt,
+		PairingEpoch: r.PairingEpoch}
 	if r.Direction == messaging.DirKept { // a reply that never went there (#278): this side's, with no sequence there
 		view.Direction, view.Seq = messaging.DirOut, 0
 	}
@@ -313,8 +337,8 @@ func (h *Hub) contactShare(ctx context.Context, req operatorRequest, auditID int
 	h.SyncMessages(msg.ContactKey)
 	h.importsDue()
 	h.MessagesChanged(msg.ContactKey)
-	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ContactKey: msg.ContactKey,
-		ContactOp: msg.ContactOp}), nil
+	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
+		ContactKey: msg.ContactKey, ContactOp: msg.ContactOp}), nil
 }
 
 // sharedSync fills what is shared with the contact and whether it has
@@ -334,12 +358,15 @@ func sharedSync(ctx context.Context, peer *store.PeerMessages, page *protocol.Co
 
 // routingViews fills a page's messages, with the agents that acknowledged
 // each one sent to the contact's agents, and what each side shares.
-func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePage, rows []messaging.Row) error {
+func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePage, c contactRows) error {
 	peer := h.store.PeerMessages()
-	for _, r := range rows {
+	for _, r := range c.rows {
 		view, err := h.messageView(ctx, r)
 		if err != nil {
 			return err
+		}
+		if !c.history {
+			untaggedMessage(&view)
 		}
 		page.Messages = append(page.Messages, view)
 	}
@@ -358,7 +385,7 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 }
 
 // messageView is a message as the operator reads it, with what else this
-// side knows of it.
+// side knows of it in the pairing it came under (#276), tagged with it.
 func (h *Hub) messageView(ctx context.Context, r messaging.Row) (protocol.ContactMessageView, error) {
 	view := contactMessageView(r)
 	for _, add := range []func(context.Context, *protocol.ContactMessageView, messaging.Row) error{h.agentAcks, h.reviewView, h.consentView, h.homeView} {
@@ -375,7 +402,7 @@ func (h *Hub) agentAcks(ctx context.Context, view *protocol.ContactMessageView, 
 	if r.Direction != messaging.DirOut || len(r.To) == 0 {
 		return nil
 	}
-	acks, err := h.store.PeerMessages().AgentAcks(ctx, r.Contact, r.ID)
+	acks, err := h.store.PeerMessages().AgentAcksIn(ctx, r.Contact, r.PairingEpoch, r.ID)
 	view.AgentAcks = acks
 	return err
 }

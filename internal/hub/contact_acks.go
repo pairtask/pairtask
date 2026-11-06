@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -17,7 +18,7 @@ import (
 func (h *Hub) contactAck(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
 	acked, summary, err := h.store.OperatorContactAck(ctx, store.ContactAck{OperationID: msg.MessageID, Contact: msg.ContactKey,
-		Selector: store.AckSelector{IDs: msg.ContactAck, Upto: msg.ContactAckUpto}, AuditID: auditID, Now: h.contactNow()})
+		Selector: store.AckSelector{IDs: msg.ContactAck, Upto: msg.ContactAckUpto}, AuditID: auditID, Now: h.contactNow(), Epoch: msg.ContactEpoch})
 	if err != nil {
 		return protocol.Message{}, err
 	}
@@ -53,7 +54,8 @@ func ackView(acks map[string]protocol.ContactAckSummary, contact string) *protoc
 }
 
 // ackBound refuses a new acknowledgment's cursor past the newest message
-// received, before anything is audited or changed. Messages only arrive,
+// received in the pairing it names (#276), or a pairing the contact never
+// had, before anything is audited or changed. Messages only arrive,
 // so a cursor that passes here still holds when it is applied. A retry of
 // one already stored is answered from it, even once the messages it
 // covered are gone.
@@ -68,8 +70,10 @@ func (h *Hub) ackBound(ctx context.Context, msg protocol.Message) *routingError 
 	if known {
 		return nil
 	}
-	newest, err := h.store.PeerMessages().NewestReceived(ctx, msg.ContactKey)
+	newest, err := h.store.PeerMessages().NewestReceivedIn(ctx, msg.ContactKey, msg.ContactEpoch)
 	switch {
+	case errors.Is(err, messaging.ErrInvalid):
+		return &routingError{protocol.ErrMalformedFrame, "contact_epoch names no pairing with this contact"}
 	case err != nil:
 		return &routingError{protocol.ErrInternal, "contact messages unavailable"}
 	case msg.ContactAckUpto > newest:

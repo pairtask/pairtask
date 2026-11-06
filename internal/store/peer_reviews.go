@@ -429,5 +429,22 @@ FROM remote_imports WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` A
 	return a, err == nil, err
 }
 
+// AskStatusIn is AskStatus in the pairing k names (#276): its epoch, or
+// with 0 the newest the contact's history holds; an earlier pairing's
+// request of the same ID is another. An epoch the contact never had is
+// messaging.ErrInvalid.
+func (p *PeerMessages) AskStatusIn(ctx context.Context, k MessageKey) (AskStatus, bool, error) {
+	return inHistory(ctx, p.db, k, func(tx *sql.Tx, pk pairingKey) (AskStatus, bool, error) {
+		var a AskStatus
+		err := tx.QueryRowContext(ctx, `SELECT state, CASE WHEN state = 'imported' THEN local_id ELSE '' END, COALESCE(reason, '')
+FROM remote_imports WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND kind = 'review'`,
+			pk.contact, pk.epoch, k.ID).Scan(&a.State, &a.ReviewID, &a.Reason)
+		if errors.Is(err, sql.ErrNoRows) {
+			return a, false, nil
+		}
+		return a, err == nil, err
+	})
+}
+
 // IsReview: the import is a review request, whose outcomes go back.
 func (imp RemoteImport) IsReview() bool { return imp.Kind == importReview }
