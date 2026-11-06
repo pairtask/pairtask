@@ -95,6 +95,10 @@ type ackRequest struct {
 }
 
 func ackIn(ctx context.Context, tx *sql.Tx, r ackRequest) (int, error) {
+	// An unpaired contact's history is acknowledged to nobody (#276).
+	if err := refuseUnpaired(ctx, tx, r.contact); err != nil {
+		return 0, err
+	}
 	where, args, err := ackSelection(ctx, tx, r.contact, r.sel)
 	if err != nil {
 		return 0, err

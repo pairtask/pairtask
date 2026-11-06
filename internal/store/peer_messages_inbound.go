@@ -323,25 +323,42 @@ type readSet struct {
 
 // markReadIn is MarkRead inside a transaction.
 func markReadIn(ctx context.Context, tx *sql.Tx, r readSet) (int, error) {
-	contact, ids, at := r.contact, r.ids, r.at
+	receipt, err := readReceipt(ctx, tx, r.contact)
+	if err != nil {
+		return 0, err
+	}
 	marked := 0
-	for _, id := range ids {
-		n, err := markOneRead(ctx, tx, readOne{contact, id, at})
+	for _, id := range r.ids {
+		n, err := markOneRead(ctx, tx, readOne{r.contact, id, r.at, receipt})
 		if err != nil {
 			return 0, err
 		}
 		marked += n
 	}
-	if err := dropReceiptsOver(ctx, tx, contact); err != nil {
+	if err := dropReceiptsOver(ctx, tx, r.contact); err != nil {
 		return 0, err
 	}
 	return marked, nil
 }
 
-// readOne is one inbound message shown to the operator at a time.
+// readReceipt is the receipt a read owes the peer: pending, or local only
+// for an unpaired contact, whose history is read here alone (#276).
+func readReceipt(ctx context.Context, tx *sql.Tx, contact string) (string, error) {
+	switch err := refuseUnpaired(ctx, tx, contact); {
+	case errors.Is(err, ErrUnpaired):
+		return "local", nil
+	case err != nil:
+		return "", err
+	}
+	return "pending", nil
+}
+
+// readOne is one inbound message shown to the operator at a time, and the
+// receipt its read owes.
 type readOne struct {
 	contact, id string
 	at          time.Time
+	receipt     string
 }
 
 // markOneRead marks a received message read with a receipt for the peer,
@@ -349,10 +366,10 @@ type readOne struct {
 func markOneRead(ctx context.Context, tx *sql.Tx, r readOne) (int, error) {
 	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET
     state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?1,
-    receipt = CASE WHEN state = 'received' THEN 'pending' ELSE receipt END,
+    receipt = CASE WHEN state = 'received' THEN ?4 ELSE receipt END,
     receipt_at = CASE WHEN state = 'received' THEN ?1 ELSE receipt_at END
 WHERE contact = ?2 AND direction = 'in' AND message_id = ?3
-    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, msgStamp(r.at), r.contact, r.id)
+    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, msgStamp(r.at), r.contact, r.id, r.receipt)
 	if err != nil {
 		return 0, err
 	}

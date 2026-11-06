@@ -33,21 +33,22 @@ type linkFence struct {
 }
 
 // contactState is what admission and the fence check: whether the contact
-// is confirmed, whether it is paused, and its generation.
+// was confirmed, whether it is paused or unpaired, and its generation.
 type contactState struct {
-	confirmed, paused bool
-	generation        int64
+	confirmed, paused, unpaired bool
+	generation                  int64
 }
 
 func readContactState(ctx context.Context, q rowQuerier, contact string) (contactState, error) {
-	confirmed, err := confirmedContact(ctx, q, contactKey(contact))
-	if err != nil || !confirmed {
+	known, err := knownContact(ctx, q, contactKey(contact))
+	if err != nil || !known {
 		return contactState{}, err
 	}
 	s := contactState{confirmed: true}
-	var pausedAt string
-	err = q.QueryRowContext(ctx, `SELECT paused_at, generation FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&pausedAt, &s.generation)
-	s.paused = pausedAt != ""
+	var pausedAt, unpairedAt string
+	err = q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, generation FROM peer_contacts WHERE identity_key = ?`, contact).
+		Scan(&pausedAt, &unpairedAt, &s.generation)
+	s.paused, s.unpaired = pausedAt != "", unpairedAt != ""
 	return s, err
 }
 
@@ -67,6 +68,8 @@ func (p *PeerMessages) Admit(ctx context.Context, contact string) (*PeerMessages
 		return nil, err
 	case !s.confirmed:
 		return nil, messaging.ErrUnknownContact
+	case s.unpaired:
+		return nil, ErrUnpaired
 	case s.paused:
 		return nil, ErrPaused
 	}
@@ -109,7 +112,7 @@ func (s contactState) admits(generation int64) bool {
 }
 
 func (s contactState) active() bool {
-	return s.confirmed && !s.paused
+	return s.confirmed && !s.paused && !s.unpaired
 }
 
 // inTx runs fn in one transaction, after the fence check: nothing in fn may
@@ -138,17 +141,36 @@ func (p *PeerMessages) localOnly() error {
 	return nil
 }
 
-// requireActive refuses a paused contact, inside the caller's transaction.
+// requireActive refuses a paused or unpaired contact, inside the caller's
+// transaction.
 func requireActive(ctx context.Context, q rowQuerier, contact string) error {
-	var pausedAt string
-	err := q.QueryRowContext(ctx, `SELECT paused_at FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&pausedAt)
+	var pausedAt, unpairedAt string
+	err := q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&pausedAt, &unpairedAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return messaging.ErrUnknownContact
 	case err != nil:
 		return err
+	case unpairedAt != "":
+		return ErrUnpaired
 	case pausedAt != "":
 		return ErrPaused
+	}
+	return nil
+}
+
+// refuseUnpaired refuses an unpaired contact, inside the caller's
+// transaction; any other, or none, passes.
+func refuseUnpaired(ctx context.Context, q rowQuerier, contact string) error {
+	var unpairedAt string
+	err := q.QueryRowContext(ctx, `SELECT unpaired_at FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&unpairedAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	case unpairedAt != "":
+		return ErrUnpaired
 	}
 	return nil
 }
@@ -214,7 +236,7 @@ func (s *Store) ApplyContactPause(ctx context.Context, r ContactPause) (ContactP
 func pauseIn(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseResult, bool, error) {
 	action := pauseDetail(r.Paused, true)
 	op := operation{r.OperationID, action, r.Contact, operationFingerprint(action, r.Contact), r.AuditID, r.At}
-	if err := requireContact(ctx, tx, contactKey(r.Contact)); err != nil {
+	if err := requireKnown(ctx, tx, contactKey(r.Contact)); err != nil {
 		return ContactPauseResult{}, false, err
 	}
 	replay, err := registered(ctx, tx, op)
@@ -235,6 +257,9 @@ func pauseIn(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseResul
 // what the audit records.
 func pauseOutcome(ctx context.Context, tx *sql.Tx, r ContactPause, replay bool) (ContactPauseResult, string, error) {
 	if !replay {
+		if err := refuseUnpaired(ctx, tx, r.Contact); err != nil {
+			return ContactPauseResult{}, "", err
+		}
 		return changePause(ctx, tx, r)
 	}
 	out, err := pauseResult(ctx, tx, r.OperationID)

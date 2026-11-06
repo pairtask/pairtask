@@ -75,22 +75,45 @@ var _ messaging.Store = (*PeerMessages)(nil)
 func (s *Store) PeerMessages() *PeerMessages { return &PeerMessages{db: s.db, gate: s.gate} }
 
 // confirmedContact: a contact row and a confirmed decision, as the inviter
-// (a delivered acceptance) or as the joiner (a confirmed contact join). A
-// pending or rejected pairing never counts.
+// (a delivered acceptance) or as the joiner (a confirmed contact join),
+// whose pairing wasn't ended since (#276). A pending or rejected pairing
+// never counts.
 func confirmedContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, error) {
 	var ok bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1) AND (
-    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?1 AND state = 'accepted' AND delivered_at IS NOT NULL)
-    OR EXISTS (SELECT 1 FROM peer_joins WHERE peer = ?1 AND state = 'contact' AND decision_confirmed_at IS NOT NULL))`,
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1 AND unpaired_at = '') AND `+pairingDecided,
 		string(contact)).Scan(&ok)
 	return ok, err
 }
 
+// knownContact: a confirmed contact, or one whose pairing was confirmed and
+// has ended since; an unpaired contact keeps its history (#276).
+func knownContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, error) {
+	var ok bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1 AND unpaired_at != '') OR (
+    EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1) AND `+pairingDecided+`)`,
+		string(contact)).Scan(&ok)
+	return ok, err
+}
+
+// pairingDecided is the confirmed decision for identity ?1.
+const pairingDecided = `(
+    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?1 AND state = 'accepted' AND delivered_at IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM peer_joins WHERE peer = ?1 AND state = 'contact' AND decision_confirmed_at IS NOT NULL))`
+
 // contactKey is a contact's identity key.
 type contactKey string
 
+// requireContact: a confirmed contact; an unpaired one is ErrUnpaired.
 func requireContact(ctx context.Context, q rowQuerier, contact contactKey) error {
-	ok, err := confirmedContact(ctx, q, contact)
+	if err := requireKnown(ctx, q, contact); err != nil {
+		return err
+	}
+	return refuseUnpaired(ctx, q, string(contact))
+}
+
+// requireKnown: a confirmed contact, or an unpaired one.
+func requireKnown(ctx context.Context, q rowQuerier, contact contactKey) error {
+	ok, err := knownContact(ctx, q, contact)
 	if err == nil && !ok {
 		err = messaging.ErrUnknownContact
 	}

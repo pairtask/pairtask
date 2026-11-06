@@ -200,7 +200,9 @@ func (s *Store) operationTx(ctx context.Context, op operation, apply func(tx *sq
 		return err
 	}
 	defer tx.Rollback()
-	if err := requireContact(ctx, tx, contactKey(op.contact)); err != nil {
+	// An unpaired contact's history stays readable; a send is refused
+	// where it is queued (#276).
+	if err := requireKnown(ctx, tx, contactKey(op.contact)); err != nil {
 		return err
 	}
 	replay, err := registered(ctx, tx, op)
