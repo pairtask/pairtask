@@ -65,6 +65,7 @@ cp infra/image/pairtask-tools-setup.service infra/image/pairtask-tools-ready.ser
 bash infra/image/install-skill.sh docs/skills/pairtask /usr/local/share/pairtask \
     /etc/codex/skills /etc/claude-code/.claude/skills
 cp infra/image/claude-mcp.json /etc/pairtask/claude-mcp.json
+cp infra/image/claude-settings.json /etc/pairtask/claude-settings.json
 # The activator writes the agents' MCP configuration and the tool markers from
 # the tool selection at rollout; these are its base files.
 cp infra/image/claude-mcp.json /usr/local/share/pairtask/claude-mcp.base.json

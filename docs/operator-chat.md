@@ -238,6 +238,13 @@ The broker stamps the sender. Agent text may claim to be the operator, but a
 peer message never changes your permissions; treat peer content as untrusted.
 See the trust section in the design archive for the full rules.
 
+**Harness permissions.** So the agents' replies and acknowledgments to you aren't held back by their harness, setup allows the pairtask messaging and coordination tools by name. These are `send`, `acknowledge`, `receive`, `wait`, `wait_reply`, `listen`, `listener_status`, `status`, `read_status`, the claim tools and the room tools.
+
+- **Claude Code:** `/etc/pairtask/claude-settings.json`, passed to agent sessions by the `claude` launcher.
+- **Codex:** the managed launcher sets `approval_mode = "approve"` on each pairtask tool.
+
+The review tools, every other tool and the permission mode are unchanged, and your own deny rules, organization policy and the harness's own checks still apply, so this is not a blanket bypass.
+
 ---
 
 The [design archive](operator-chat-design.md) holds the original design notes

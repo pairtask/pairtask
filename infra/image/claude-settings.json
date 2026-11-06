@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__pairtask__acknowledge",
+      "mcp__pairtask__claim",
+      "mcp__pairtask__finish_claim",
+      "mcp__pairtask__join_room",
+      "mcp__pairtask__leave_room",
+      "mcp__pairtask__list_rooms",
+      "mcp__pairtask__listen",
+      "mcp__pairtask__listener_status",
+      "mcp__pairtask__read_claims",
+      "mcp__pairtask__read_status",
+      "mcp__pairtask__receive",
+      "mcp__pairtask__release_claim",
+      "mcp__pairtask__send",
+      "mcp__pairtask__status",
+      "mcp__pairtask__wait",
+      "mcp__pairtask__wait_reply",
+      "mcp__pairtask__workspaces"
+    ]
+  }
+}
