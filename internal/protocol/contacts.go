@@ -166,6 +166,12 @@ type ContactMessageView struct {
 	// why it ended; "" for one never held. One line per request.
 	Consent       string `json:"consent,omitempty"`
 	ConsentReason string `json:"consent_reason,omitempty"`
+	// Here and OperatorHere are who a sent message also went to on this
+	// side (#327): the tagged agents, canonical, and whether this side's
+	// operator, as stored when it was sent. Only a broker serving
+	// paired_mentions sets them.
+	Here         []string `json:"here,omitempty"`
+	OperatorHere bool     `json:"operator_here,omitempty"`
 }
 
 // ContactHeldForUpgrade is the refusal_reason of a queued message to or

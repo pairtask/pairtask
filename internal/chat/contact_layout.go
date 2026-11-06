@@ -53,7 +53,7 @@ func (s contactSides) recipients(v protocol.ContactMessageView) string {
 	if v.Direction == "in" {
 		return s.ours(v.To)
 	}
-	return s.theirs(v.To)
+	return s.theirs(v.To) + storedHome(v)
 }
 
 // messageHead is "HH:MM  FROM → TO", marked [remote] when received, wrapped

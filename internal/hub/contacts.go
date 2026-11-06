@@ -155,7 +155,7 @@ func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int6
 	if err != nil {
 		return protocol.Message{}, err
 	}
-	send := h.contactSendRow(msg, auditID)
+	send := h.contactSendRow(msg, auditID, home)
 	sent, err := h.store.OperatorContactSent(ctx, send)
 	if err != nil {
 		return protocol.Message{}, err
@@ -166,6 +166,9 @@ func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int6
 		h.MessagesChanged(msg.ContactKey)
 	}
 	view := contactMessageView(sent.Row)
+	if err := h.homeView(ctx, &view, sent.Row); err != nil { // sent all the same: the history reads it again
+		h.log.Error("paired routing unavailable", "error", err)
+	}
 	return protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactMessage: &view}, nil
 }
@@ -334,14 +337,8 @@ func sharedSync(ctx context.Context, peer *store.PeerMessages, page *protocol.Co
 func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePage, rows []messaging.Row) error {
 	peer := h.store.PeerMessages()
 	for _, r := range rows {
-		view := contactMessageView(r)
-		if err := h.agentAcks(ctx, &view, r); err != nil {
-			return err
-		}
-		if err := h.reviewView(ctx, &view, r); err != nil {
-			return err
-		}
-		if err := h.consentView(ctx, &view, r); err != nil {
+		view, err := h.messageView(ctx, r)
+		if err != nil {
 			return err
 		}
 		page.Messages = append(page.Messages, view)
@@ -358,6 +355,18 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 	}
 	page.Acks, err = h.ackSummary(ctx, page.Contact)
 	return err
+}
+
+// messageView is a message as the operator reads it, with what else this
+// side knows of it.
+func (h *Hub) messageView(ctx context.Context, r messaging.Row) (protocol.ContactMessageView, error) {
+	view := contactMessageView(r)
+	for _, add := range []func(context.Context, *protocol.ContactMessageView, messaging.Row) error{h.agentAcks, h.reviewView, h.consentView, h.homeView} {
+		if err := add(ctx, &view, r); err != nil {
+			return view, err
+		}
+	}
+	return view, nil
 }
 
 // agentAcks adds to a message sent to the contact's agents those that

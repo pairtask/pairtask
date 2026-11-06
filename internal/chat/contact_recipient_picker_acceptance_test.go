@@ -39,10 +39,10 @@ func contactRecipientRefresh(t *testing.T, h *chatHarness, key string, agents ..
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 }
 
-func TestContactRecipientPickerAcceptanceOnlyRemoteSharedAgents(t *testing.T) {
+func TestContactRecipientPickerAcceptanceBothSidesKeepRemoteSendScope(t *testing.T) {
 	h, key := sharePickerHarness(t, "codex-1", "claude-1")
 	v2Type(h, "@")
-	contactRecipientItems(t, h, "remote-only")
+	contactRecipientItems(t, h, "remote-only", "operator@Office", "claude-1@here", "codex-1@here", "operator")
 	h.input(chatKey(tea.KeyEnter, 0))
 	chatEqual(t, "completion sends nothing", h.m.State().InFlight, 0)
 	v2Type(h, "test ping")
@@ -58,12 +58,12 @@ func TestContactRecipientPickerAcceptanceOnlyRemoteSharedAgents(t *testing.T) {
 func TestContactRecipientPickerAcceptanceOpenPickerTracksSharing(t *testing.T) {
 	h, key := sharePickerHarness(t, "codex-1")
 	v2Type(h, "@")
-	contactRecipientItems(t, h, "remote-only")
+	contactRecipientItems(t, h, "remote-only", "operator@Office", "codex-1@here", "operator")
 	contactRecipientRefresh(t, h, key, "claude-1")
-	contactRecipientItems(t, h, "claude-1")
+	contactRecipientItems(t, h, "claude-1", "operator@Office", "codex-1@here", "operator")
 	chatEqual(t, "refresh preserves typed draft", h.m.State().Draft, "@")
 	contactRecipientRefresh(t, h, key)
-	contactRecipientItems(t, h)
+	contactRecipientItems(t, h, "operator@Office", "codex-1@here", "operator")
 	chatEqual(t, "revocation doesn't send", h.m.State().InFlight, 0)
 }
 
@@ -74,7 +74,7 @@ func TestContactRecipientPickerAcceptancePrefixAndAlreadyNamed(t *testing.T) {
 	contactRecipientItems(t, h, "codex-1")
 	h.input(chatKey(tea.KeyBackspace, 0))
 	h.input(chatKey(tea.KeyBackspace, 0))
-	contactRecipientItems(t, h, "codex-1", "zeta")
+	contactRecipientItems(t, h, "codex-1", "zeta", "operator@Office", "local-only@here", "operator")
 	chatEqual(t, "choosing changes no sharing", h.m.State().InFlight, 0)
 }
 
@@ -83,10 +83,10 @@ func TestContactRecipientPickerAcceptanceRefreshKeepsSelectedIdentity(t *testing
 	contactRecipientRefresh(t, h, key, "claude-1", "codex-1")
 	v2Type(h, "@")
 	h.input(chatKey(tea.KeyDown, 0))
-	contactRecipientItems(t, h, "claude-1", "codex-1")
+	contactRecipientItems(t, h, "claude-1", "codex-1", "operator@Office", "operator")
 	chatEqual(t, "codex selected", h.m.State().Picker.Selected, 1)
 	contactRecipientRefresh(t, h, key, "alpha", "claude-1", "codex-1")
-	contactRecipientItems(t, h, "alpha", "claude-1", "codex-1")
+	contactRecipientItems(t, h, "alpha", "claude-1", "codex-1", "operator@Office", "operator")
 	p := h.m.State().Picker
 	chatEqual(t, "refresh retains selected agent", p.Items[p.Selected], "codex-1")
 	h.input(chatKey(tea.KeyEnter, 0))

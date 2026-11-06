@@ -80,11 +80,11 @@ func (m *Model) eligibleMembers() ([]string, bool) {
 
 // mentionCandidates are the @ picker's choices: in a room or group only its
 // members (offline ones too) not yet named; in a ⇄ tab only the agents that
-// workspace shares, never one of ours; elsewhere every known agent.
+// workspace shares, and ours as tags (contactCandidates); elsewhere every known agent.
 func (m *Model) mentionCandidates(fragment string) []string {
 	key := m.conv.selected
 	if key.isContact() {
-		return append(m.unnamed(m.sharedByContact(key.contact), fragment), m.scopedMentions(key.contact, fragment)...)
+		return m.contactCandidates(pickQuery{key.contact, fragment})
 	}
 	if !key.isGroup() && !key.isRoom() {
 		return m.agentCandidates(fragment)
