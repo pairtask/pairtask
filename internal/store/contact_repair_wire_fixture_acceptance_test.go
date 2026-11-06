@@ -21,7 +21,7 @@ func wireQueue(t *testing.T, f workspaceStoreFixture, id, text string) {
 	pairOK(t, err)
 }
 
-func wireImported(t *testing.T, f workspaceStoreFixture, id, text string, seq uint64) store.ImportResult {
+func (f workspaceStoreFixture) wireImported(t *testing.T, id, text string, seq uint64) store.ImportResult {
 	t.Helper()
 	namespaceAccept(t, f, namespaceMessage(id, text))
 	imp := namespacePending(t, f, id)

@@ -17,7 +17,7 @@ func namespaceReply(parent, id string, seq uint64) store.RemoteReply {
 
 func TestContactRepairWireAcceptanceOldImportedReplyIsRefusedWithoutMutation(t *testing.T) {
 	f := namespaceFixture(t)
-	old := wireImported(t, f, "old-parent", "old body", 1)
+	old := f.wireImported(t, "old-parent", "old body", 1)
 	namespaceRepair(t, f)
 	namespaceShare(t, f, "recipient")
 	before := wireMutationSnapshot(t, f)
@@ -34,7 +34,7 @@ func TestContactRepairWireAcceptanceCurrentImportedParentReplyQueues(t *testing.
 	f := namespaceFixture(t)
 	namespaceRepair(t, f)
 	namespaceShare(t, f, "recipient")
-	current := wireImported(t, f, "current-parent", "new body", 2)
+	current := f.wireImported(t, "current-parent", "new body", 2)
 	request := namespaceReply(current.Msg.MessageID, "new-reply", 11)
 	first, err := f.db.QueueRemoteReply(context.Background(), request)
 	pairOK(t, err)

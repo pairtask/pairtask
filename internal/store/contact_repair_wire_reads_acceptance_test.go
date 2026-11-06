@@ -38,7 +38,7 @@ func TestContactRepairWireAcceptanceMarkReadCannotReviveOldReceipt(t *testing.T)
 
 func TestContactRepairWireAcceptanceAgentReadQueueAndConfirmUseCurrentEpoch(t *testing.T) {
 	f := namespaceFixture(t)
-	oldImport := wireImported(t, f, "agent-message", "old body", 1)
+	oldImport := f.wireImported(t, "agent-message", "old body", 1)
 	pairOK(t, f.db.PeerMessages().QueueAgentRead(context.Background(), oldImport.Msg.MessageID, "recipient", messageAt))
 	namespaceRepair(t, f)
 	old := namespaceEpochRows(t, f, "peer_agent_reads", 1)
@@ -49,7 +49,7 @@ func TestContactRepairWireAcceptanceAgentReadQueueAndConfirmUseCurrentEpoch(t *t
 		t.Errorf("new session offered retired agent reads: %+v", pending)
 	}
 	namespaceShare(t, f, "recipient")
-	current := wireImported(t, f, "agent-message", "new body", 2)
+	current := f.wireImported(t, "agent-message", "new body", 2)
 	pairOK(t, f.db.PeerMessages().QueueAgentRead(context.Background(), current.Msg.MessageID, "recipient", messageAt))
 	pairEqual(t, epochCount(t, f.raw, `SELECT count(*) FROM peer_agent_reads WHERE pairing_epoch=2 AND state='pending'`), 1)
 	pairOK(t, bound.AgentReadConfirmed(context.Background(), f.key, messaging.AgentRead{ID: "agent-message", Agent: "recipient"}))
