@@ -26,8 +26,8 @@ func (m *Model) contactCandidates(q pickQuery) []string {
 		return theirs
 	}
 	theirs = slices.DeleteFunc(theirs, func(id string) bool { return id == protocol.OperatorID }) // bare @operator is ours
-	theirs = append(theirs, m.untyped(m.theirTags(q), q)...)
-	return append(theirs, m.untyped(m.homeTags(), q)...)
+	tags := append(append(theirs, m.theirTags(q)...), m.homeTags()...)
+	return m.untyped(tags, q)
 }
 
 // offersBothSides: on a broker that takes tags here, the picker offers
@@ -44,7 +44,7 @@ func (m *Model) theirTags(q pickQuery) []string {
 	}
 	var tags []string
 	if strings.Contains(q.fragment, "@") {
-		for _, id := range m.sharedByContact(q.contact) {
+		for _, id := range taggable(m.sharedByContact(q.contact)) {
 			tags = append(tags, id+"@"+qualifier)
 		}
 	}
@@ -55,17 +55,61 @@ func (m *Model) theirTags(q pickQuery) []string {
 // homeTags are ours: each agent here as AGENT@here, then our operator.
 func (m *Model) homeTags() []string {
 	var tags []string
-	for _, id := range m.localAgents("") {
+	for _, id := range taggable(m.localAgents("")) {
 		tags = append(tags, id+"@"+hereScope)
 	}
 	return append(tags, protocol.OperatorID)
 }
 
-// untyped are the tags starting with fragment that the line doesn't
-// already name.
+// taggable are the IDs a tag can carry: the mention grammar's, without an
+// @ or space of their own.
+func taggable(ids []string) []string {
+	return slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !mentionID.MatchString(id) })
+}
+
+// untyped are the tags starting with fragment whose recipient the line
+// doesn't already name, in any of its aliases: a side and an ID, so the
+// same name on the other side stays offered.
 func (m *Model) untyped(tags []string, q pickQuery) []string {
-	typed := m.namedBefore()
-	return withPrefix(slices.DeleteFunc(tags, func(tag string) bool { return slices.Contains(typed, tag) }), q.fragment)
+	named := make(map[tagIdentity]bool)
+	for _, word := range m.finishedTags() {
+		named[identityOf(parseTag(word))] = true
+	}
+	kept := slices.DeleteFunc(slices.Clone(tags), func(tag string) bool { return named[identityOf(parseTag(tag))] })
+	return withPrefix(kept, q.fragment)
+}
+
+// finishedTags are the draft's leading @words, without their @, that a
+// space has finished: the one still being typed counts only once it is.
+func (m *Model) finishedTags() []string {
+	line, _, _ := strings.Cut(m.compose.editor.Value(), "\n")
+	words := strings.Fields(line)
+	if len(words) > 0 && !strings.HasSuffix(line, " ") {
+		words = words[:len(words)-1]
+	}
+	var tags []string
+	for _, w := range words {
+		if !strings.HasPrefix(w, "@") {
+			break
+		}
+		tags = append(tags, strings.TrimPrefix(w, "@"))
+	}
+	return tags
+}
+
+// tagIdentity is whom a ⇄ tag names: this side or theirs, and the ID.
+type tagIdentity struct {
+	here bool
+	id   string
+}
+
+// identityOf resolves a tag as a ⇄ tab reads it: AGENT@here and a bare
+// operator are ours; a bare agent and any other scope are theirs.
+func identityOf(t tagWord) tagIdentity {
+	if !t.scoped {
+		return tagIdentity{here: t.operator(), id: t.word}
+	}
+	return tagIdentity{here: t.scope == hereScope, id: t.name}
 }
 
 // agentPickNote follows an @ picker row: the workspace a bare agent of
