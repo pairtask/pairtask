@@ -39,8 +39,8 @@ sign-in; public releases do not. `--output NEW_DIRECTORY` selects an explicit ca
 | Tool store launchers | `go`, `gofmt`, `codex`, `claude`, `node`, `npm`, `npx`, `cs-mcp`, `rtk`, `starship` launch from the [tool store](sandbox-tools.md), which the rollout fills from `tools.lock.json` and the release bundles |
 | Codex, Claude Code, Go, RTK, Starship, Node, CodeScene MCP, Playwright + Chromium, Docker | **Not in the image.** Installed at rollout, checksum-verified; the optional ones follow the tool selection |
 | Claude collaboration config | `/etc/pairtask/claude-mcp.json` |
-| Claude tool permissions | `/etc/pairtask/claude-settings.json`: allows the pairtask messaging and coordination tools by name ([trust model](operator-chat.md#trust-model)) |
-| Interactive shell aliases | `/etc/profile.d/collab-agent-aliases.sh`; `codex`, `dashboard`, and a `claude` launcher that adds the MCP config, tool permissions and channel to sessions and runs CLI subcommands (`claude auth login`, `claude mcp …`) as typed |
+| Claude tool permissions | `/etc/pairtask/claude-settings.json`: allows the pairtask messaging and coordination tools by name; the `claude` launcher and `pairtask start claude` pass it ([trust model](operator-chat.md#trust-model)) |
+| Interactive shell aliases | `/etc/profile.d/pairtask-agent-aliases.sh`; `codex`, `dashboard`, and a `claude` launcher that adds the MCP config, tool permissions and channel to sessions and runs CLI subcommands (`claude auth login`, `claude mcp …`) as typed |
 | Collaboration skill and build manifests | `/usr/local/share/pairtask/` |
 
 No host files, credentials or private keys enter the image. SSH host keys are

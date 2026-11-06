@@ -88,8 +88,9 @@ session of either agent starts with `pairtask start codex --id codex-2` or
 `pairtask start claude --id claude-2` (optional `--model NAME`, `--effort
 LEVEL`, and the agent's own arguments after `--`), which passes the ID to the
 Codex launcher or writes a per-ID Claude MCP config under
-`$XDG_CONFIG_HOME/pairtask/` (default `~/.config/pairtask/`); `--dry-run`
-shows the command.
+`$XDG_CONFIG_HOME/pairtask/` (default `~/.config/pairtask/`) and passes
+Claude the installed [tool permissions](operator-chat.md#trust-model);
+`--dry-run` shows the command.
 
 **Rooms**: `pairtask start codex --id x --room pairtask` (repeatable)
 joins rooms on registration, in addition to any the agent already has. From
