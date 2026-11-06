@@ -414,3 +414,23 @@ WHERE `+currentInbound+` AND message_id = ?2 AND receipt = 'pending'`, contact, 
 // currentInbound is the messages from contact ?1 in its current pairing
 // (#276).
 const currentInbound = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND direction = 'in'`
+
+// ReadMark marks messages of one of the contact's pairings read here
+// (#276).
+type ReadMark struct {
+	Contact string
+	Epoch   int64
+	IDs     []string
+	At      time.Time
+}
+
+// MarkReadIn is MarkRead for the marked pairing; a compile-only seam until
+// history reads are scoped (#276).
+func (p *PeerMessages) MarkReadIn(ctx context.Context, r ReadMark) (int, error) {
+	return p.MarkRead(ctx, r.Contact, r.IDs, r.At)
+}
+
+// AgentAcksIn is AgentAcks for one pairing; a compile-only seam (#276).
+func (p *PeerMessages) AgentAcksIn(ctx context.Context, contact string, epoch int64, id string) ([]string, error) {
+	return p.AgentAcks(ctx, contact, id)
+}

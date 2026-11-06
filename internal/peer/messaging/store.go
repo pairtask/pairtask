@@ -36,15 +36,16 @@ var SessionLimit = Limit{Count: SessionMessages, Bytes: SessionBytes}
 
 // Row is one message as a side holds it, either direction.
 type Row struct {
-	Cursor      int64  // local insertion order; Page pages by it
-	Contact     string // the peer's identity key
-	Direction   string // DirOut or DirIn
-	Message            // Text is empty once collected
-	State       string
-	Refusal     Refusal // the last refusal: terminal for StateRefused, transient on a queued row
-	DeliveredAt *time.Time
-	ReadAt      *time.Time
-	Receipt     string // inbound rows read here: ReceiptPending, ReceiptConfirmed or ReceiptDropped
+	PairingEpoch int64  // the pairing it was sent or received under (#276)
+	Cursor       int64  // local insertion order; Page pages by it
+	Contact      string // the peer's identity key
+	Direction    string // DirOut or DirIn
+	Message             // Text is empty once collected
+	State        string
+	Refusal      Refusal // the last refusal: terminal for StateRefused, transient on a queued row
+	DeliveredAt  *time.Time
+	ReadAt       *time.Time
+	Receipt      string // inbound rows read here: ReceiptPending, ReceiptConfirmed or ReceiptDropped
 	// The local operator's acknowledgment of an inbound row (#287): its
 	// state and when; local only, never sent.
 	AckState string

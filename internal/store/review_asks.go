@@ -56,6 +56,7 @@ var ErrAsksFull = errors.New("too many review requests to paired workspaces are 
 
 // AskOut is a review request this side sent, as it stands.
 type AskOut struct {
+	Epoch                                             int64 // the pairing it was asked under (#276)
 	Contact, AskID, Reviewer, RequesterAgent, LocalID string
 	Ask                                               messaging.ReviewAsk
 	State                                             string
