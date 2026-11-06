@@ -6,9 +6,10 @@ case $- in
       alias codex='/usr/local/lib/pairtask/pairtask-codex --codex /usr/local/bin/codex --agent-id codex-1 --socket /tmp/collab-ai.sock --terminal --'
       # Sessions get the pairtask MCP server, its tool permissions and the
       # channel; CLI subcommands (claude --help, 2.1.283) run as typed, so a
-      # subcommand's own arguments are never read as channel entries.
-      unalias claude 2>/dev/null # the function keyword keeps an older alias from expanding in its name
-      function claude {
+      # subcommand's own arguments are never read as channel entries. A private
+      # POSIX name and an alias, so no older claude alias can rewrite the
+      # definition and /bin/sh still parses this profile script.
+      pairtask_claude() {
         case "${1-}" in
           agents|attach|auth|auto-mode|doctor|gateway|import|install|logs|mcp|plugin|plugins|project|respawn|rm|setup-token|stop|kill|ultrareview|update|upgrade)
             /usr/local/bin/claude "$@" ;;
@@ -18,6 +19,7 @@ case $- in
               --dangerously-load-development-channels server:pairtask "$@" ;;
         esac
       }
+      alias claude=pairtask_claude
     fi
     ;;
 esac
