@@ -85,7 +85,7 @@ func stageImport(ctx context.Context, tx *sql.Tx, r newRow) error {
 	if err != nil || r.m.Review == nil {
 		return err
 	}
-	return stagedAsk(ctx, tx, r, RemoteImport{Contact: src.contact, Epoch: src.epoch, RemoteID: r.m.ID}, state)
+	return stagedAsk(ctx, tx, r, staged{RemoteImport{Contact: src.contact, Epoch: src.epoch, RemoteID: r.m.ID}, state})
 }
 
 // insertStaged writes a staged message's import row in its pairing, and
@@ -107,13 +107,19 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, src.contact, src.epoch, r.m.ID, lo
 	return state, err
 }
 
+// staged is an import as staging wrote it, and the state it starts in.
+type staged struct {
+	imp   RemoteImport
+	state string
+}
+
 // stagedAsk reserves a staged request's outcomes, and tells its requester
 // when it waits for this side's operator.
-func stagedAsk(ctx context.Context, tx *sql.Tx, r newRow, imp RemoteImport, state string) error {
-	if err := reserveOutcomes(ctx, tx, r); err != nil || state != ImportAwaiting {
+func stagedAsk(ctx context.Context, tx *sql.Tx, r newRow, s staged) error {
+	if err := reserveOutcomes(ctx, tx, r); err != nil || s.state != ImportAwaiting {
 		return err
 	}
-	return askOutcome(ctx, tx, imp, askEnd{"waiting", "", r.now})
+	return askOutcome(ctx, tx, s.imp, askEnd{"waiting", "", r.now})
 }
 
 // approvedAt is when this side's operator approved a staged review
