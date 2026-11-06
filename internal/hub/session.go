@@ -15,9 +15,10 @@ import (
 // hub appends to it without blocking; the server's single writer drains it in
 // order, so a snapshot response always precedes later events.
 type OperatorSession struct {
-	ID       string
-	UID      int
-	OpenedAt time.Time
+	ProtocolVersion int
+	ID              string
+	UID             int
+	OpenedAt        time.Time
 
 	gen      uint64
 	mu       sync.Mutex

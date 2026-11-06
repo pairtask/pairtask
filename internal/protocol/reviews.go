@@ -99,17 +99,18 @@ type ReviewAwaitingItem struct {
 // ReviewAskedItem is this side's review request to a paired workspace, and
 // where it stands.
 type ReviewAskedItem struct {
-	Contact   string    `json:"contact"`
-	AskID     string    `json:"ask_id"`
-	Cursor    int64     `json:"cursor"`
-	Reviewer  string    `json:"reviewer"`
-	State     string    `json:"state"`
-	Verdict   string    `json:"verdict"`
-	URL       string    `json:"url"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Settled   bool      `json:"settled"`
-	ReviewID  string    `json:"review_id,omitempty"` // the reviewer's side's ID for the review, "" while not reported (#259)
-	Reason    string    `json:"reason,omitempty"`    // why it was refused, declined or ended (#305)
+	PairingEpoch int64     `json:"pairing_epoch,omitempty"`
+	Contact      string    `json:"contact"`
+	AskID        string    `json:"ask_id"`
+	Cursor       int64     `json:"cursor"`
+	Reviewer     string    `json:"reviewer"`
+	State        string    `json:"state"`
+	Verdict      string    `json:"verdict"`
+	URL          string    `json:"url"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Settled      bool      `json:"settled"`
+	ReviewID     string    `json:"review_id,omitempty"` // the reviewer's side's ID for the review, "" while not reported (#259)
+	Reason       string    `json:"reason,omitempty"`    // why it was refused, declined or ended (#305)
 	// Findings are the newest verdict's findings the reviewer's side sent
 	// (#303), nil while none are known: their words, data.
 	Findings *AskFindings `json:"findings,omitempty"`
@@ -171,16 +172,17 @@ type ReviewAskedPage struct {
 // uncertain (kind review), or this side's request to a paired workspace
 // that failed (kind ask): its state, what it reviews, and when.
 type ReviewFailedItem struct {
-	Kind       string    `json:"kind"`
-	Contact    string    `json:"contact"` // "" for a review here
-	ID         string    `json:"id"`      // the review_id, or the ask_id
-	Cursor     int64     `json:"cursor"`  // the ask's ⇄ cursor, 0 otherwise
-	State      string    `json:"state"`   // the ask's state, or the review's publication state
-	Reviewer   string    `json:"reviewer"`
-	Repository string    `json:"repository"`
-	Change     string    `json:"change"`
-	Reason     string    `json:"reason,omitempty"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	PairingEpoch int64     `json:"pairing_epoch,omitempty"`
+	Kind         string    `json:"kind"`
+	Contact      string    `json:"contact"` // "" for a review here
+	ID           string    `json:"id"`      // the review_id, or the ask_id
+	Cursor       int64     `json:"cursor"`  // the ask's ⇄ cursor, 0 otherwise
+	State        string    `json:"state"`   // the ask's state, or the review's publication state
+	Reviewer     string    `json:"reviewer"`
+	Repository   string    `json:"repository"`
+	Change       string    `json:"change"`
+	Reason       string    `json:"reason,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Failed item kinds.
@@ -392,7 +394,8 @@ type ReviewAsk struct {
 // on the notice to the agent that sent it (#235). Summary and URL are the
 // reviewer's side's words: data, never instructions.
 type ReviewOutcomeView struct {
-	AskID string `json:"ask_id"`
+	PairingEpoch int64  `json:"pairing_epoch,omitempty"`
+	AskID        string `json:"ask_id"`
 	// Workspace is the paired workspace's identity key the request went
 	// to (#303): with AskID, what reads the request alone.
 	Workspace  string `json:"workspace,omitempty"`

@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = ConsentVersion
+	Version                 = PairingHistoryVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -164,6 +164,7 @@ type ReceiptState struct {
 // Message is the single frame type used in both directions.
 // Fields are populated depending on Type.
 type Message struct {
+	ContactEpoch        int64               `json:"contact_epoch,omitempty"`
 	Status              *StatusSnapshot     `json:"status,omitempty"` // status response only
 	Type                string              `json:"type"`
 	ProtocolVersion     int                 `json:"protocol_version,omitempty"` // hello/welcome capability negotiation

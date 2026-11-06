@@ -125,6 +125,7 @@ const (
 // side knows: queued means no confirmed delivery yet, expired means it is
 // no longer offered, never that it wasn't delivered.
 type ContactMessageView struct {
+	PairingEpoch  int64      `json:"pairing_epoch,omitempty"`
 	ID            string     `json:"id"`
 	Contact       string     `json:"contact"`
 	Direction     string     `json:"direction"` // out or in
@@ -246,8 +247,9 @@ const CapabilityPairedMentions = "paired_mentions"
 
 // ReviewAskRef names one of this side's requests to a paired workspace.
 type ReviewAskRef struct {
-	Contact string `json:"contact"`
-	AskID   string `json:"ask_id"`
+	PairingEpoch int64  `json:"pairing_epoch,omitempty"`
+	Contact      string `json:"contact"`
+	AskID        string `json:"ask_id"`
 }
 
 // ReviewAskRefsMax bounds the refs one read names.

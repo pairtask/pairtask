@@ -49,6 +49,7 @@ type ContactSend struct {
 
 // ContactRead is one operator read of messages shown to the operator.
 type ContactRead struct {
+	Epoch                int64
 	OperationID, Contact string
 	IDs                  []string
 	AuditID              int64

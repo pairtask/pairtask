@@ -180,6 +180,7 @@ ON CONFLICT(contact, pairing_epoch) DO UPDATE SET expired = expired + excluded.e
 
 // ContactAck is one operator acknowledgment, audited.
 type ContactAck struct {
+	Epoch                int64
 	OperationID, Contact string
 	Selector             AckSelector
 	AuditID              int64
