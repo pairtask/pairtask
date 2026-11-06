@@ -352,10 +352,10 @@ func insertConsent(ctx context.Context, tx *sql.Tx, h heldRow, id string) error 
 	recipients, _ := json.Marshal(m.To)
 	hash := m.Hash()
 	_, err := tx.ExecContext(ctx, `INSERT INTO consent_requests
-(id, contact, message_id, n, created_at, sender, recipients, reply_id, reply_author, text, review_ask, hash,
+(id, contact, pairing_epoch, message_id, n, created_at, sender, recipients, reply_id, reply_author, text, review_ask, hash,
     targets, digest, bytes, state, revision, received_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)`,
-		id, r.key.contact, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.From, string(recipients), m.ReplyTo.ID, int(m.ReplyTo.Author),
+VALUES (?, ?, `+currentEpoch+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)`,
+		id, r.key.contact, r.key.contact, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.From, string(recipients), m.ReplyTo.ID, int(m.ReplyTo.Author),
 		m.Text, reviewAskJSON(m.Review), hash[:], string(targets), consentDigest(r.key.contact, m, h.targets), h.size(),
 		msgStamp(r.now), msgStamp(r.now.Add(ConsentExpiry)))
 	return err

@@ -132,7 +132,8 @@ type grantRow struct {
 func setGrant(ctx context.Context, tx *sql.Tx, r grantRow) error {
 	g := r.change
 	if g.Mode == ReviewOff {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_review_grants WHERE contact = ? AND agent = ?`, r.contact, r.agent); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_review_grants WHERE contact = ? AND pairing_epoch = `+currentEpoch+` AND agent = ?`,
+			r.contact, r.contact, r.agent); err != nil {
 			return err
 		}
 		// Off is an explicit decision: it never reads as undecided (#293).
@@ -180,13 +181,14 @@ func askOutcomes(ctx context.Context, tx *sql.Tx, s askScope, remoteIDs []string
 	return nil
 }
 
-// ReviewGrants are a contact's grants, by agent.
+// ReviewGrants are a contact's grants in its current pairing, by agent.
 func (p *PeerMessages) ReviewGrants(ctx context.Context, contact string) ([]ReviewGrant, error) {
 	return reviewGrants(ctx, p.db, contact)
 }
 
 func reviewGrants(ctx context.Context, q rowsQuerier, contact string) ([]ReviewGrant, error) {
-	rows, err := q.QueryContext(ctx, `SELECT agent, mode, publish, formal, granted_at FROM peer_review_grants WHERE contact = ? ORDER BY agent`, contact)
+	rows, err := q.QueryContext(ctx, `SELECT agent, mode, publish, formal, granted_at FROM peer_review_grants
+WHERE contact = ? AND pairing_epoch = `+currentEpoch+` ORDER BY agent`, contact, contact)
 	if err != nil {
 		return nil, err
 	}
@@ -213,10 +215,11 @@ func scanGrant(row rowScanner) (ReviewGrant, error) {
 	return g, err
 }
 
-// reviewGrant is the grant a contact has for agent now; found is false for none.
+// reviewGrant is the grant a contact has for agent now, in its current
+// pairing; found is false for none.
 func reviewGrant(ctx context.Context, q rowQuerier, contact, agent string) (ReviewGrant, bool, error) {
 	g, err := scanGrant(q.QueryRowContext(ctx, `SELECT agent, mode, publish, formal, granted_at FROM peer_review_grants
-WHERE contact = ? AND agent = ?`, contact, agent))
+WHERE contact = ? AND pairing_epoch = `+currentEpoch+` AND agent = ?`, contact, contact, agent))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ReviewGrant{}, false, nil
 	}
