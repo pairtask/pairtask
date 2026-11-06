@@ -8,7 +8,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
-from sandbox_boundary_checks import check_budget, check_native, prepare_files
+from sandbox_boundary_checks import check_budget, check_native, check_settings, prepare_files
 from sandbox_boundary_host import BoundaryHost
 from sandbox_rollout import activate_instances
 
@@ -37,6 +37,7 @@ def main():
         check_budget(host)
         check_native(host, "codex")
         check_native(host, "claude")
+        check_settings(host)
     finally:
         host.cleanup()
 

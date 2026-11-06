@@ -51,6 +51,31 @@ def claude_events(number):
     return [start, *claude_content(number), *end]
 
 
+SETTINGS_CALLS = (("mcp__pairtask__send", {"to": "operator", "text": "permission fixture",
+                                           "message_id": "permission-send"}),
+                  ("mcp__pairtask__acknowledge", {"message_id": "permission-received"}),
+                  ("mcp__pairtask__publish_review", {"review_id": "permission-review"}))
+
+
+def settings_content(number):
+    if number > len(SETTINGS_CALLS):
+        return [{"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0,
+                 "delta": {"type": "text_delta", "text": "fixture complete"}}]
+    name, arguments = SETTINGS_CALLS[number - 1]
+    return [{"type": "content_block_start", "index": 0,
+             "content_block": {"type": "tool_use", "id": f"call-{number}", "name": name, "input": {}}},
+            {"type": "content_block_delta", "index": 0,
+             "delta": {"type": "input_json_delta", "partial_json": json.dumps(arguments)}}]
+
+
+def settings_events(number):
+    """One tool_use turn per pairtask tool, then a final text turn."""
+    events = claude_events(len(SETTINGS_CALLS) + 1 if number > len(SETTINGS_CALLS) else 1)
+    events[0]["message"]["id"] = f"proof-{number}"
+    return [events[0], *settings_content(number), *events[-3:]]
+
+
 class Model(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
@@ -69,7 +94,7 @@ class Model(http.server.BaseHTTPRequestHandler):
             return
         self.server.observed.append(body)
         number = len(self.server.observed)
-        if number > 3:
+        if number > getattr(self.server, "limit", 3):
             self.send_error(400, "Unexpected extra fixture request")
             return
         events = self.server.events(number)

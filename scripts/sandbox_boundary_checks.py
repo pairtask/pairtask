@@ -139,6 +139,11 @@ def check_native(host, kind):
         stop_relay(process)
 
 
+def check_settings(host):
+    """Run the pinned Claude CLI against the image's shipped permission settings; evidence stays raw."""
+    print(host.exe("secured", "python3", "/opt/proof/settings_proof.py"), end="", flush=True)
+
+
 def check_restricted_native(host):
     print(host.exe("secured", "python3", "/opt/proof/restricted.py"), end="", flush=True)
     print(host.exe("secured", "python3", "/opt/proof/crash.py"), end="", flush=True)
