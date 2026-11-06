@@ -199,10 +199,10 @@ func decideScope(ctx context.Context, tx *sql.Tx, d scopeDecision) error {
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO consent_decisions (contact, agent, operation, state, decided_at, audit_id)
-VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (contact, agent, operation) DO UPDATE SET
+	_, err := tx.ExecContext(ctx, `INSERT INTO consent_decisions (contact, pairing_epoch, agent, operation, state, decided_at, audit_id)
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, ?) ON CONFLICT (contact, pairing_epoch, agent, operation) DO UPDATE SET
     state = excluded.state, decided_at = excluded.decided_at, audit_id = excluded.audit_id`,
-		d.scope.contact, d.scope.agent, d.scope.operation, d.state, msgStamp(d.at), nullAudit(d.auditID))
+		d.scope.contact, d.scope.contact, d.scope.agent, d.scope.operation, d.state, msgStamp(d.at), nullAudit(d.auditID))
 	return err
 }
 

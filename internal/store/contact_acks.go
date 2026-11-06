@@ -17,16 +17,17 @@ import (
 // Messages received before acknowledgments were tracked stay "before",
 // below a floor written once at migration, never taken for acknowledged.
 
-const contactAcksSchema = `
-CREATE TABLE IF NOT EXISTS peer_ack_floors (
-    contact TEXT PRIMARY KEY,
+// peerAckFloorsColumns is peer_ack_floors with pairing_epoch in its key (#276).
+const peerAckFloorsColumns = `(
+    contact TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     floor   INTEGER NOT NULL DEFAULT 0,
-    expired INTEGER NOT NULL DEFAULT 0
-);
-`
+    expired INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (contact, pairing_epoch)
+)`
 
 // ackFloor is a row's contact's floor: 0 for a contact with none.
-const ackFloor = `COALESCE((SELECT f.floor FROM peer_ack_floors f WHERE f.contact = peer_messages.contact), 0)`
+const ackFloor = `COALESCE((SELECT f.floor FROM peer_ack_floors f WHERE f.contact = peer_messages.contact AND f.pairing_epoch = peer_messages.pairing_epoch), 0)`
 
 // ackEligible: a message received for this side's operator, after the floor.
 // Messages routed to agents are theirs to acknowledge.
@@ -43,11 +44,12 @@ const ackStateColumn = `CASE WHEN direction != 'in' OR state NOT IN ('received',
     ELSE 'needs_ack' END`
 
 // seedAckFloors puts every existing contact's received messages below its
-// floor, once, when acknowledgments start being tracked.
+// floor, once, when acknowledgments start being tracked. It runs inside the
+// pairing-epoch transition (#276), where both tables have the epoch.
 func seedAckFloors(tx *sql.Tx) error {
-	_, err := tx.Exec(`INSERT INTO peer_ack_floors (contact, floor)
-SELECT contact, MAX(cursor) FROM peer_messages WHERE direction = 'in' GROUP BY contact
-ON CONFLICT(contact) DO NOTHING`)
+	_, err := tx.Exec(`INSERT INTO peer_ack_floors (contact, pairing_epoch, floor)
+SELECT contact, pairing_epoch, MAX(cursor) FROM peer_messages WHERE direction = 'in' GROUP BY contact, pairing_epoch
+ON CONFLICT (contact, pairing_epoch) DO NOTHING`)
 	return err
 }
 
@@ -163,8 +165,8 @@ func expireUnacked(ctx context.Context, tx *sql.Tx, contact string, now time.Tim
 	if err != nil || n == 0 {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_ack_floors (contact, expired) VALUES (?, ?)
-ON CONFLICT(contact) DO UPDATE SET expired = expired + excluded.expired`, contact, n)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_ack_floors (contact, pairing_epoch, expired) VALUES (?, `+currentEpoch+`, ?)
+ON CONFLICT(contact, pairing_epoch) DO UPDATE SET expired = expired + excluded.expired`, contact, contact, n)
 	return err
 }
 

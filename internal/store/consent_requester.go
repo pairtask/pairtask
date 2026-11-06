@@ -18,20 +18,21 @@ import (
 // transaction, as the request can't be run there; allowed leaves the ask
 // to the review's own outcomes.
 
-// consentHeldOutSchema keeps this side's messages a contact holds, one row
-// each, by the message's own ID.
-const consentHeldOutSchema = `
-CREATE TABLE IF NOT EXISTS consent_held_out (
+// consentHeldOutColumns keeps this side's messages a contact holds, one
+// row each, by the message's own ID.
+// The transition creates it, or rebuilds a released one, with
+// pairing_epoch in its key (#276).
+const consentHeldOutColumns = `(
     contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     message_id TEXT NOT NULL,
     held_id    TEXT NOT NULL,
     held_at    TEXT NOT NULL,
     state      TEXT NOT NULL DEFAULT 'held',
     reason     TEXT NOT NULL DEFAULT '',
     decided_at TEXT,
-    PRIMARY KEY (contact, message_id)
-);
-`
+    PRIMARY KEY (contact, pairing_epoch, message_id)
+)`
 
 // heldOut is the state a held message waits in until its outcome.
 const heldOut = "held"

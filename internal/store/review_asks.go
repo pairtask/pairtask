@@ -18,9 +18,10 @@ import (
 // and outlives the message: its outcomes are checked against it, never
 // against the message, which may be long collected by then.
 
-const reviewAsksSchema = `
-CREATE TABLE IF NOT EXISTS review_asks_out (
+// reviewAsksOutColumns is review_asks_out with pairing_epoch in its key (#276).
+const reviewAsksOutColumns = `(
     contact         TEXT NOT NULL,
+    pairing_epoch   INTEGER NOT NULL DEFAULT 1,
     ask_id          TEXT NOT NULL,
     reviewer        TEXT NOT NULL,
     requester_agent TEXT NOT NULL,
@@ -38,9 +39,8 @@ CREATE TABLE IF NOT EXISTS review_asks_out (
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     settled_at      TEXT,
-    PRIMARY KEY (contact, ask_id)
-);
-`
+    PRIMARY KEY (contact, pairing_epoch, ask_id)
+)`
 
 // Bounds on requests sent and not yet settled.
 const (

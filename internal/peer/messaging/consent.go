@@ -60,7 +60,7 @@ var (
 // consentStates are the outcomes a held request can end in.
 var consentStates = map[string]bool{"allowed": true, "declined": true, "expired": true, "withheld": true}
 
-// fieldCodec is a version 8 frame of string fields: its shape, what an
+// fieldCodec is a frame of string fields (versions 8 and 9): its shape, what an
 // invalid one is called, a value's fields in order, the value they make,
 // and what makes one valid. Encoding and decoding both check it.
 type fieldCodec[T any] struct {

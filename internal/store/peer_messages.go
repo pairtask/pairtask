@@ -13,14 +13,16 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
 
-// peerMessagesSchema keeps messages between paired workspaces (#210), both
-// directions, one row each. A message's ID, sequence, time and hash never
-// change; its text is collected within the bounds, and an inbound row is
-// the tombstone that stops a replay until the floor passes it.
-const peerMessagesSchema = `
-CREATE TABLE IF NOT EXISTS peer_messages (
+// peerMessagesColumns keeps messages between paired workspaces (#210),
+// both directions, one row each. A message's ID, sequence, time and hash
+// never change; its text is collected within the bounds, and an inbound row
+// is the tombstone that stops a replay until the floor passes it.
+// The transition creates it, or rebuilds a released one, with
+// pairing_epoch in its key (#276).
+const peerMessagesColumns = `(
     cursor       INTEGER PRIMARY KEY AUTOINCREMENT,
     contact      TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     direction    TEXT NOT NULL,
     message_id   TEXT NOT NULL,
     n            INTEGER NOT NULL,
@@ -37,19 +39,25 @@ CREATE TABLE IF NOT EXISTS peer_messages (
     read_at      TEXT,
     receipt      TEXT NOT NULL DEFAULT '',
     receipt_at   TEXT,
-    UNIQUE (contact, direction, message_id),
-    UNIQUE (contact, direction, n)
-);
-CREATE INDEX IF NOT EXISTS peer_messages_state ON peer_messages (contact, direction, state);
-CREATE TABLE IF NOT EXISTS peer_message_sequences (
-    contact TEXT PRIMARY KEY,
-    next    INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS peer_message_floors (
-    contact TEXT PRIMARY KEY,
-    floor   INTEGER NOT NULL
-);
-`
+    UNIQUE (contact, pairing_epoch, direction, message_id),
+    UNIQUE (contact, pairing_epoch, direction, n)
+)`
+
+// peerMessageSequencesColumns is peer_message_sequences with pairing_epoch in its key (#276).
+const peerMessageSequencesColumns = `(
+    contact TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
+    next    INTEGER NOT NULL,
+    PRIMARY KEY (contact, pairing_epoch)
+)`
+
+// peerMessageFloorsColumns is peer_message_floors with pairing_epoch in its key (#276).
+const peerMessageFloorsColumns = `(
+    contact TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
+    floor   INTEGER NOT NULL,
+    PRIMARY KEY (contact, pairing_epoch)
+)`
 
 // messagePageLimit bounds one Page.
 const messagePageLimit = 64
@@ -278,15 +286,15 @@ var sessionBudget = budget{messaging.SessionMessages, messaging.SessionBytes}
 // reused and never wraps.
 func nextSequence(ctx context.Context, tx *sql.Tx, contact contactKey) (uint64, error) {
 	var next int64 = 1
-	err := tx.QueryRowContext(ctx, `SELECT next FROM peer_message_sequences WHERE contact = ?`, string(contact)).Scan(&next)
+	err := tx.QueryRowContext(ctx, `SELECT next FROM peer_message_sequences WHERE contact = ? AND pairing_epoch = `+currentEpoch, string(contact), string(contact)).Scan(&next)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	if next < 1 || next == math.MaxInt64 {
 		return 0, errors.New("messaging: sequence exhausted for this contact")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_sequences (contact, next) VALUES (?, ?)
-ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, string(contact), next+1)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_sequences (contact, pairing_epoch, next) VALUES (?, `+currentEpoch+`, ?)
+ON CONFLICT(contact, pairing_epoch) DO UPDATE SET next = excluded.next`, string(contact), string(contact), next+1)
 	return uint64(next), err
 }
 

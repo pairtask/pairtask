@@ -156,8 +156,8 @@ func raiseFloor(ctx context.Context, tx *sql.Tx, contact string, now time.Time) 
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_floors (contact, floor) VALUES (?, ?)
-ON CONFLICT(contact) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact, run[len(run)-1].n+1)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_floors (contact, pairing_epoch, floor) VALUES (?, `+currentEpoch+`, ?)
+ON CONFLICT(contact, pairing_epoch) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact, contact, run[len(run)-1].n+1)
 	return err
 }
 

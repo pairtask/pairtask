@@ -19,9 +19,10 @@ import (
 // not yet answered waits to be sent, so what waits is bounded by the
 // requests admitted. Every outcome is written in its cause's transaction.
 
-const reviewOutcomesSchema = `
-CREATE TABLE IF NOT EXISTS review_outcome_seq (
+// reviewOutcomeSeqColumns is review_outcome_seq with pairing_epoch in its key (#276).
+const reviewOutcomeSeqColumns = `(
     contact      TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     ask_id       TEXT NOT NULL,
     reviewer     TEXT NOT NULL,
     seq          INTEGER NOT NULL DEFAULT 0,
@@ -29,17 +30,19 @@ CREATE TABLE IF NOT EXISTS review_outcome_seq (
     acked_seq    INTEGER NOT NULL DEFAULT 0,
     refused      TEXT,
     created_at   TEXT NOT NULL,
-    PRIMARY KEY (contact, ask_id)
-);
-CREATE TABLE IF NOT EXISTS review_outcomes_out (
+    PRIMARY KEY (contact, pairing_epoch, ask_id)
+)`
+
+// reviewOutcomesOutColumns is review_outcomes_out with pairing_epoch in its key (#276).
+const reviewOutcomesOutColumns = `(
     contact   TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     ask_id    TEXT NOT NULL,
     seq       INTEGER NOT NULL,
     payload   TEXT NOT NULL,
     queued_at TEXT NOT NULL,
-    PRIMARY KEY (contact, ask_id)
-);
-`
+    PRIMARY KEY (contact, pairing_epoch, ask_id)
+)`
 
 // Bounds on requests whose outcomes are still owed.
 const (
@@ -91,9 +94,10 @@ func emitOutcome(ctx context.Context, tx *sql.Tx, e outcomeEvent) error {
 		}
 	}
 	payload, _ := json.Marshal(e.o) // a struct of strings and numbers always encodes
-	_, err = tx.ExecContext(ctx, `INSERT INTO review_outcomes_out (contact, ask_id, seq, payload, queued_at) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT (contact, ask_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload, queued_at = excluded.queued_at`,
-		e.contact, e.askID, seq, string(payload), msgStamp(e.at))
+	_, err = tx.ExecContext(ctx, `INSERT INTO review_outcomes_out (contact, pairing_epoch, ask_id, seq, payload, queued_at)
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?)
+ON CONFLICT (contact, pairing_epoch, ask_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload, queued_at = excluded.queued_at`,
+		e.contact, e.contact, e.askID, seq, string(payload), msgStamp(e.at))
 	return err
 }
 

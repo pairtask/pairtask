@@ -12,40 +12,31 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-// peerRoutingSchema keeps what messages to and from agents need (#222):
-// the agents this side shares with each contact, what each contact says it
-// shares (a hint only), agent acknowledgments both ways, and the messages
-// for this side's agents staged until the hub imports them.
-const peerRoutingSchema = `
-CREATE TABLE IF NOT EXISTS peer_grants (
+// peerAgentReadsColumns is peer_agent_reads with pairing_epoch in its key (#276).
+const peerAgentReadsColumns = `(
     contact    TEXT NOT NULL,
-    agent      TEXT NOT NULL,
-    granted_at TEXT NOT NULL,
-    PRIMARY KEY (contact, agent)
-);
-CREATE TABLE IF NOT EXISTS peer_directory (
-    contact TEXT NOT NULL,
-    agent   TEXT NOT NULL,
-    seen_at TEXT NOT NULL,
-    PRIMARY KEY (contact, agent)
-);
-CREATE TABLE IF NOT EXISTS peer_agent_reads (
-    contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     message_id TEXT NOT NULL,
     agent      TEXT NOT NULL,
     read_at    TEXT NOT NULL,
     state      TEXT NOT NULL,
-    PRIMARY KEY (contact, message_id, agent)
-);
-CREATE TABLE IF NOT EXISTS peer_agent_acks (
+    PRIMARY KEY (contact, pairing_epoch, message_id, agent)
+)`
+
+// peerAgentAcksColumns is peer_agent_acks with pairing_epoch in its key (#276).
+const peerAgentAcksColumns = `(
     contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     message_id TEXT NOT NULL,
     agent      TEXT NOT NULL,
     read_at    TEXT NOT NULL,
-    PRIMARY KEY (contact, message_id, agent)
-);
-CREATE TABLE IF NOT EXISTS remote_imports (
+    PRIMARY KEY (contact, pairing_epoch, message_id, agent)
+)`
+
+// remoteImportsColumns is remote_imports with pairing_epoch in its key (#276).
+const remoteImportsColumns = `(
     contact      TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     remote_id    TEXT NOT NULL,
     local_id     TEXT NOT NULL UNIQUE,
     sender       TEXT NOT NULL,
@@ -55,10 +46,33 @@ CREATE TABLE IF NOT EXISTS remote_imports (
     state        TEXT NOT NULL,
     staged_at    TEXT NOT NULL,
     settled_at   TEXT,
-    PRIMARY KEY (contact, remote_id)
-);
-CREATE INDEX IF NOT EXISTS remote_imports_pending ON remote_imports (state, staged_at);
-`
+    PRIMARY KEY (contact, pairing_epoch, remote_id)
+)`
+
+// The routing tables keep what messages to and from agents need (#222):
+// the agents this side shares with each contact, what each contact says it
+// shares (a hint only), agent acknowledgments both ways, and the messages
+// for this side's agents staged until the hub imports them. The transition
+// creates each, or rebuilds a released one, with pairing_epoch in its key
+// (#276).
+
+// peerGrantsColumns is peer_grants with pairing_epoch in its key (#276).
+const peerGrantsColumns = `(
+    contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
+    agent      TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    PRIMARY KEY (contact, pairing_epoch, agent)
+)`
+
+// peerDirectoryColumns is peer_directory with pairing_epoch in its key (#276).
+const peerDirectoryColumns = `(
+    contact TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
+    agent   TEXT NOT NULL,
+    seen_at TEXT NOT NULL,
+    PRIMARY KEY (contact, pairing_epoch, agent)
+)`
 
 var _ messaging.RoutingStore = (*PeerMessages)(nil)
 

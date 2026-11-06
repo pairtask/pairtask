@@ -166,7 +166,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameConsentOutcomeRefused
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameContactStateStored
 }
 
 // shape is a frame type and its exact number of fields.

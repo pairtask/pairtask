@@ -21,18 +21,19 @@ import (
 // and becomes a review only when the hub dispatches it under the grant
 // that holds then.
 
-// peerReviewsSchema keeps the review grants.
-const peerReviewsSchema = `
-CREATE TABLE IF NOT EXISTS peer_review_grants (
+// peerReviewGrantsColumns keeps the review grants.
+// The transition creates it, or rebuilds a released one, with
+// pairing_epoch in its key (#276).
+const peerReviewGrantsColumns = `(
     contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     agent      TEXT NOT NULL,
     mode       TEXT NOT NULL CHECK (mode IN ('ask', 'auto')),
     publish    INTEGER NOT NULL,
     formal     INTEGER NOT NULL,
     granted_at TEXT NOT NULL,
-    PRIMARY KEY (contact, agent)
-);
-`
+    PRIMARY KEY (contact, pairing_epoch, agent)
+)`
 
 // Review grant modes.
 const (
@@ -141,9 +142,10 @@ func setGrant(ctx context.Context, tx *sql.Tx, r grantRow) error {
 		}
 		return withholdAsks(ctx, tx, askScope{r.contact, r.agent, "unshared", g.Now})
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO peer_review_grants (contact, agent, mode, publish, formal, granted_at) VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT (contact, agent) DO UPDATE SET mode = excluded.mode, publish = excluded.publish, formal = excluded.formal, granted_at = excluded.granted_at`,
-		r.contact, r.agent, g.Mode, g.Publish, g.Formal, msgStamp(g.Now))
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_review_grants (contact, pairing_epoch, agent, mode, publish, formal, granted_at)
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, ?)
+ON CONFLICT (contact, pairing_epoch, agent) DO UPDATE SET mode = excluded.mode, publish = excluded.publish, formal = excluded.formal, granted_at = excluded.granted_at`,
+		r.contact, r.contact, r.agent, g.Mode, g.Publish, g.Formal, msgStamp(g.Now))
 	return err
 }
 
