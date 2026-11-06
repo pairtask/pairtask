@@ -78,8 +78,12 @@ type outcomeEvent struct {
 
 // emitOutcome numbers an outcome and makes it the one to send.
 func emitOutcome(ctx context.Context, tx *sql.Tx, e outcomeEvent) error {
+	retired, err := outcomeContactRetired(ctx, tx, e.contact)
+	if err != nil || retired {
+		return err
+	}
 	var seq uint64
-	err := tx.QueryRowContext(ctx, `UPDATE review_outcome_seq SET seq = seq + 1 WHERE contact = ? AND ask_id = ? RETURNING seq, reviewer`,
+	err = tx.QueryRowContext(ctx, `UPDATE review_outcome_seq SET seq = seq + 1 WHERE contact = ? AND ask_id = ? AND refused IS NULL RETURNING seq, reviewer`,
 		e.contact, e.askID).Scan(&seq, &e.o.Reviewer)
 	if err == sql.ErrNoRows {
 		return nil // no request owed outcomes: nothing to send
@@ -99,6 +103,16 @@ VALUES (?, `+currentEpoch+`, ?, ?, ?, ?)
 ON CONFLICT (contact, pairing_epoch, ask_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload, queued_at = excluded.queued_at`,
 		e.contact, e.contact, e.askID, seq, string(payload), msgStamp(e.at))
 	return err
+}
+
+// outcomeContactRetired lets local work finish without producing traffic
+// for a pairing this operator ended. Paused pairings still queue outcomes.
+func outcomeContactRetired(ctx context.Context, tx *sql.Tx, contact string) (bool, error) {
+	err := refuseUnpaired(ctx, tx, contact)
+	if errors.Is(err, ErrUnpaired) {
+		return true, nil
+	}
+	return false, err
 }
 
 // askOutcome is an outcome of a request before it is a review: its state,

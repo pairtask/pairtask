@@ -222,6 +222,9 @@ func publicationAllowed(ctx context.Context, tx *sql.Tx, before review.Record, c
 	if v.Remote == nil || v.Publication.Intent <= before.View.Publication.Intent {
 		return nil
 	}
+	if err := publicationContact(ctx, tx, v.Remote.Contact); err != nil {
+		return err
+	}
 	g, granted, err := reviewGrant(ctx, tx, v.Remote.Contact, v.Spec.Reviewer)
 	if err != nil {
 		return err
@@ -230,6 +233,16 @@ func publicationAllowed(ctx context.Context, tx *sql.Tx, before review.Record, c
 		return nil
 	}
 	return consentPublication(ctx, tx, v, owner)
+}
+
+// publicationContact denies new write intents once the requester unpaired.
+// Completion of an intent already reserved is handled before this check.
+func publicationContact(ctx context.Context, tx *sql.Tx, contact string) error {
+	err := refuseUnpaired(ctx, tx, contact)
+	if errors.Is(err, ErrUnpaired) {
+		return fmt.Errorf("%w: %w", review.ErrDenied, err)
+	}
+	return err
 }
 
 // ErrConsentEnded refuses a publication whose consent no longer holds: its
