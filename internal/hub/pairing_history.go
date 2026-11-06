@@ -81,13 +81,21 @@ func untaggedOutcomes(views []protocol.ReviewOutcomeView) {
 // reads them.
 func untaggedReviews(out *protocol.Message) {
 	if out.ReviewAsked != nil {
-		for i := range out.ReviewAsked.Items {
-			out.ReviewAsked.Items[i].PairingEpoch = 0
-		}
+		untaggedAsked(out.ReviewAsked.Items)
 	}
 	if out.ReviewFailed != nil {
-		for i := range out.ReviewFailed.Items {
-			out.ReviewFailed.Items[i].PairingEpoch = 0
-		}
+		untaggedFailed(out.ReviewFailed.Items)
+	}
+}
+
+func untaggedAsked(items []protocol.ReviewAskedItem) {
+	for i := range items {
+		items[i].PairingEpoch = 0
+	}
+}
+
+func untaggedFailed(items []protocol.ReviewFailedItem) {
+	for i := range items {
+		items[i].PairingEpoch = 0
 	}
 }
