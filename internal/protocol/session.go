@@ -24,7 +24,7 @@ const (
 )
 
 // SessionCapabilities are advertised in the operator_session response.
-var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityPairingContactSummary, CapabilityReviews, CapabilityContactMessages, CapabilityContactRouting, CapabilityContactReviews, CapabilityContactNames, CapabilityContactAddress, CapabilityContactPause, CapabilityAssignments, CapabilityContactAcks, CapabilityReviewCounts, CapabilityReviewFailures, CapabilityContactShareSync, CapabilityReviewAskRefs, CapabilityAskFindings, CapabilityReviewAdvisories, CapabilityPairedMentions}
+var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityPairingContactSummary, CapabilityReviews, CapabilityContactMessages, CapabilityContactRouting, CapabilityContactReviews, CapabilityContactNames, CapabilityContactAddress, CapabilityContactPause, CapabilityAssignments, CapabilityContactAcks, CapabilityReviewCounts, CapabilityReviewFailures, CapabilityContactShareSync, CapabilityReviewAskRefs, CapabilityAskFindings, CapabilityReviewAdvisories, CapabilityPairedMentions, CapabilityConsentPrompts}
 
 // CapabilityMentions: operator_send to a room or group may carry mentions
 // (#164); a broker without it would drop them, so the chat refuses such a
@@ -39,8 +39,11 @@ type Watermark struct {
 }
 
 type SessionInfo struct {
-	SessionID    string    `json:"session_id"`
-	Epoch        string    `json:"epoch,omitempty"`
+	SessionID string `json:"session_id"`
+	Epoch     string `json:"epoch,omitempty"`
+	// Gen is this operator connection's generation within the epoch (#293):
+	// a stale guard for decisions, never authority.
+	Gen          uint64    `json:"gen,omitempty"`
 	Capabilities []string  `json:"capabilities,omitempty"`
 	OpenedAt     time.Time `json:"opened_at"`
 }

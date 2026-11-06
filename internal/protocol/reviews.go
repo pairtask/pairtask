@@ -113,6 +113,11 @@ type ReviewAskedItem struct {
 	// Findings are the newest verdict's findings the reviewer's side sent
 	// (#303), nil while none are known: their words, data.
 	Findings *AskFindings `json:"findings,omitempty"`
+	// Consent is where the request stands with the contact's operator when
+	// it was held there (#293), and why it ended; State keeps the review's
+	// own lifecycle.
+	Consent       string `json:"consent,omitempty"`
+	ConsentReason string `json:"consent_reason,omitempty"`
 }
 
 // AskFindings are a request's findings as received: how many the verdict

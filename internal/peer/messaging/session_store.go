@@ -36,9 +36,15 @@ func (s sessionStore) Refused(ctx context.Context, contact string, r Refused) er
 }
 
 func (s sessionStore) Accept(ctx context.Context, contact string, m Message, now time.Time) (Answer, error) {
-	answer, err := s.Store.Accept(ctx, contact, m, now)
-	return answer, storeErr(err)
+	return markedAnswer(s.Store.Accept(ctx, contact, m, now))
 }
+
+func (s sessionStore) AcceptVersion(ctx context.Context, contact string, a Arrival) (Answer, error) {
+	return markedAnswer(acceptAt(ctx, s.Store, byte(a.Version), acceptCall{contact, a.Message, a.At}))
+}
+
+// markedAnswer is an answer with its store error marked.
+func markedAnswer(answer Answer, err error) (Answer, error) { return answer, storeErr(err) }
 
 func (s sessionStore) PendingReads(ctx context.Context, contact string, max int) ([]string, error) {
 	ids, err := s.Store.PendingReads(ctx, contact, max)

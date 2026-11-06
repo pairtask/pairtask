@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/review"
 )
@@ -73,8 +75,12 @@ var heldReasons = map[string]string{ImportWithheld: "unshared", ImportAwaiting: 
 
 // heldAsk is the grant a request is dispatched under, or where it goes
 // instead: withheld without a grant, back to waiting in ask mode without
-// the operator's approval.
+// the operator's approval. One the operator allowed from a hold goes under
+// that decision, at the ceiling it showed, even past a lower grant (#293).
 func heldAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport) (ReviewGrant, string, error) {
+	if imp.Consent.authorizes() {
+		return consentGrant(imp), "", nil
+	}
 	g, granted, err := reviewGrant(ctx, tx, imp.Contact, imp.Recipients[0])
 	switch {
 	case err != nil:
@@ -85,6 +91,12 @@ func heldAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport) (ReviewGrant, st
 		return g, ImportAwaiting, nil
 	}
 	return g, "", nil
+}
+
+// consentGrant is what a request the operator allowed from a hold is
+// dispatched under: this request only, published at most as it asked.
+func consentGrant(imp RemoteImport) ReviewGrant {
+	return ReviewGrant{Agent: imp.Recipients[0], Mode: ReviewAuto, Publish: imp.Review.Publish, Formal: imp.Review.Formal}
 }
 
 // heldOutcome settles a request held from dispatch, and tells its
@@ -202,8 +214,11 @@ func remotePolicyText(p *protocol.ReviewPolicy) string {
 // publicationAllowed refuses a new write intent on a review a paired
 // workspace asked for, unless the grant that holds now still allows its
 // policy: revoking or narrowing the grant stops what isn't written yet.
-func publicationAllowed(ctx context.Context, tx *sql.Tx, before, after review.Record) error {
-	v := after.View
+// Past what a grant allows, or without one, the consent its request was
+// allowed under decides, within the ceiling it showed (#293). A write
+// already reserved is never refused its result.
+func publicationAllowed(ctx context.Context, tx *sql.Tx, before review.Record, c reviewChange) error {
+	v, owner := c.rec.View, c.act.Owner
 	if v.Remote == nil || v.Publication.Intent <= before.View.Publication.Intent {
 		return nil
 	}
@@ -211,10 +226,101 @@ func publicationAllowed(ctx context.Context, tx *sql.Tx, before, after review.Re
 	if err != nil {
 		return err
 	}
-	if !granted || !g.allows(*v.Spec.Policy) {
+	if granted && g.allows(*v.Spec.Policy) {
+		return nil
+	}
+	return consentPublication(ctx, tx, v, owner)
+}
+
+// ErrConsentEnded refuses a publication whose consent no longer holds: its
+// session ended, or its scope was revoked. Nothing was written.
+var ErrConsentEnded = fmt.Errorf("%w: consent_ended: the consent this review was allowed under no longer covers publishing it; nothing was written", review.ErrDenied)
+
+// LiveOwner is the operator connection that owns the broker now: this
+// incarnation's epoch and that connection's generation, zero when none
+// does. Only the hub knows it.
+type LiveOwner struct {
+	Epoch string
+	Gen   uint64
+}
+
+// Holds: e is session evidence of this very connection.
+func (o LiveOwner) Holds(e ConsentEvidence) bool {
+	if o.Gen == 0 || e.Kind != protocol.ConsentSession {
+		return false
+	}
+	return o.Epoch == e.Epoch && o.Gen == e.Gen
+}
+
+// consentAuthority is what a review's request was allowed under: the
+// decision's evidence and the publication it asked for.
+type consentAuthority struct {
+	evidence ConsentEvidence
+	ask      *messaging.ReviewAsk
+}
+
+// consentPublication allows a write intent under the consent its request
+// was allowed under: once, or the session that owns the broker now, within
+// the asked ceiling, and never past an explicit denial since.
+func consentPublication(ctx context.Context, tx *sql.Tx, v protocol.ReviewView, owner LiveOwner) error {
+	a, found, err := reviewConsent(ctx, tx, v.Remote.Contact, v.RemoteRequest)
+	switch {
+	case err != nil:
+		return err
+	case !found:
 		return review.ErrDenied
 	}
+	denied, err := publishDenied(ctx, tx, v.Remote.Contact, v.Spec.Reviewer)
+	switch {
+	case err != nil:
+		return err
+	case denied || !a.live(owner) || !a.covers(*v.Spec.Policy):
+		return ErrConsentEnded
+	}
 	return nil
+}
+
+// live: once holds for good; a session only while its connection owns the
+// broker; always only through its grant, which is gone.
+func (a consentAuthority) live(owner LiveOwner) bool {
+	return a.evidence.Kind == protocol.ConsentOnce || owner.Holds(a.evidence)
+}
+
+// covers: the policy is within what the request asked to publish.
+func (a consentAuthority) covers(p protocol.ReviewPolicy) bool {
+	switch {
+	case a.ask == nil:
+		return false
+	case p.Publish && !a.ask.Publish:
+		return false
+	}
+	return !p.Formal || a.ask.Formal
+}
+
+// reviewConsent is the allowed request a review was made from, if any.
+func reviewConsent(ctx context.Context, tx *sql.Tx, contact, requestID string) (consentAuthority, bool, error) {
+	var a consentAuthority
+	var ask sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(evidence_kind, ''), COALESCE(evidence_epoch, ''), COALESCE(evidence_gen, 0), review_ask
+FROM consent_requests WHERE contact = ? AND message_id = ? AND state = 'allowed'`, contact, requestID).Scan(
+		&a.evidence.Kind, &a.evidence.Epoch, &a.evidence.Gen, &ask)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, false, nil
+	}
+	if err != nil {
+		return a, false, err
+	}
+	a.ask, err = scanReviewAsk(ask)
+	return a, err == nil, err
+}
+
+// publishDenied: the operator explicitly denied the reviewer's review or
+// publication for contact since.
+func publishDenied(ctx context.Context, tx *sql.Tx, contact, agent string) (bool, error) {
+	var denied bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM consent_decisions WHERE contact = ? AND agent = ?
+    AND operation IN ('review', 'publish') AND state = 'denied')`, contact, agent).Scan(&denied)
+	return denied, err
 }
 
 // allows: the grant still lets a verdict be published as the policy says.

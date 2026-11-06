@@ -55,16 +55,16 @@ func recordRefusal(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer,
 	return messaging.Answer{Refusal: refusal, Recorded: true}, true, nil
 }
 
-// noticesFull: the unread recorded refusals, or the remembered messages,
+// noticesFull: the unread recorded refusals, or the remembered identities,
 // are at their bounds.
 func noticesFull(ctx context.Context, tx *sql.Tx, contact string) (bool, error) {
-	var unread, held int
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(state = 'refused' AND read_at IS NULL), 0), COUNT(*)
-FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unread, &held)
-	if err != nil {
-		return false, err
+	var unread int
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(state = 'refused' AND read_at IS NULL), 0)
+FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unread)
+	if err != nil || unread >= messaging.RefusedNotices {
+		return true, err
 	}
-	return unread >= messaging.RefusedNotices || held >= messaging.Tombstones, nil
+	return identitiesFull(ctx, tx, contact)
 }
 
 // insertRefused stores the refused request without its text: the hashes

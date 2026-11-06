@@ -57,6 +57,10 @@ type Answer struct {
 	Stored bool
 	Refusal
 	Recorded bool
+	// Held: the receiver holds the request for its operator's decision
+	// (#293, ConsentPeerVersion and later); HeldID names the hold.
+	Held   bool
+	HeldID string
 }
 
 // Store keeps both directions of every contact's messages durably. Every

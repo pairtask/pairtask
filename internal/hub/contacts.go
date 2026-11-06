@@ -37,30 +37,54 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	protocol.ContactOpResume: (*Hub).contactPause,
 	// The operator's acknowledgment (#287).
 	protocol.ContactOpAck: (*Hub).contactAck,
+	// Pending consent (#293).
+	protocol.ContactOpConsentDecide: (*Hub).contactConsentDecide,
+	protocol.ContactOpConsentOpt:    (*Hub).contactConsentOpt,
+	protocol.ContactOpConsentReset:  (*Hub).contactConsentReset,
 }
 
 // operatorContact serves operator_contact.
 func (h *Hub) operatorContact(ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message {
 	msg := req.msg
 	req.clients = clients
-	if err := protocol.ValidateContactRequest(msg); err != nil {
-		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
-	}
-	if rerr := checkNoConversation(msg); rerr != nil {
+	if rerr := contactFrameError(msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}
+	if consentOps[msg.ContactOp] {
+		return h.operatorConsent(ctx, req)
+	}
+	if rerr := h.contactRefused(ctx, clients, msg); rerr != nil {
+		return rerr.frame(msg.MessageID)
+	}
+	return h.contactOperation(ctx, req)
+}
+
+// contactFrameError refuses a malformed contact request or one that names
+// a conversation.
+func contactFrameError(msg protocol.Message) *routingError {
+	if err := protocol.ValidateContactRequest(msg); err != nil {
+		return &routingError{protocol.ErrMalformedFrame, err.Error()}
+	}
+	return checkNoConversation(msg)
+}
+
+// contactRefused refuses a request whose home recipients, contact or ack
+// bound don't hold.
+func (h *Hub) contactRefused(ctx context.Context, clients map[string]*Client, msg protocol.Message) *routingError {
 	if _, err := h.homeRecipients(ctx, clients, msg.ContactHere); err != nil {
-		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
+		return &routingError{protocol.ErrMalformedFrame, err.Error()}
 	}
 	if rerr := h.readableContact(ctx, msg); rerr != nil {
-		return rerr.frame(msg.MessageID)
+		return rerr
 	}
-	if rerr := h.ackBound(ctx, msg); rerr != nil {
-		return rerr.frame(msg.MessageID)
-	}
-	switch msg.ContactOp {
+	return h.ackBound(ctx, msg)
+}
+
+// contactOperation runs a checked contact operation.
+func (h *Hub) contactOperation(ctx context.Context, req operatorRequest) protocol.Message {
+	switch req.msg.ContactOp {
 	case protocol.ContactOpList:
-		return h.contactList(ctx, msg)
+		return h.contactList(ctx, req.msg)
 	case protocol.ContactOpAddress:
 		return h.contactAddress(ctx, req)
 	}
@@ -315,6 +339,9 @@ func (h *Hub) routingViews(ctx context.Context, page *protocol.ContactMessagePag
 			return err
 		}
 		if err := h.reviewView(ctx, &view, r); err != nil {
+			return err
+		}
+		if err := h.consentView(ctx, &view, r); err != nil {
 			return err
 		}
 		page.Messages = append(page.Messages, view)

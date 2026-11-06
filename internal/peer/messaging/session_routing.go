@@ -159,6 +159,10 @@ func replaceDirectory(ctx context.Context, rs RoutingStore, u directoryUpdate) (
 // wrapStore marks every store error of a session, keeping the routing half
 // when the store has one.
 func wrapStore(st Store) Store {
+	if consentCapable(st) {
+		os, cs := st.(OutcomeStore), st.(ConsentStore)
+		return consentSessionStore{outcomeSessionStore{routingSessionStore{sessionStore{st}, os}, os}, cs}
+	}
 	switch s := st.(type) {
 	case OutcomeStore:
 		return outcomeSessionStore{routingSessionStore{sessionStore{s}, s}, s}

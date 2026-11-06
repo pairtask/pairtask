@@ -21,7 +21,7 @@ func (m *Model) reviewRows() []string {
 	if d := m.sections.detail; d != nil {
 		return append(rows, m.askedDetailRows(d)...)
 	}
-	if m.pendingAvailable() {
+	if m.sectionsShown() {
 		rows[0] = titleStyle.Render("Reviews") + mutedStyle.Render("  (/reviews open REF · /reviews more needs|asked|failed · Esc closes)")
 		return append(rows, m.sectionRows()...)
 	}

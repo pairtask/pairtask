@@ -166,9 +166,11 @@ func (h *Hub) requestMark(fingerprint string) string {
 
 // beginPairing runs at Run's start. With pairing wired, loading the
 // identity now lets inbound pairing work before any operator request;
-// otherwise the first pairing request loads it.
+// otherwise the first pairing request loads it. Requests a contact had
+// held here before a restart are where the operator's view starts (#293).
 func (h *Hub) beginPairing(ctx context.Context) {
 	h.pair.runCtx = ctx
+	h.noteConsent(ctx)
 	if h.pair.cfg.Exchanger != nil {
 		h.loadIdentity(ctx)
 	}

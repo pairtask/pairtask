@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // Review requests from a paired workspace (#235). This side's operator
@@ -133,6 +134,11 @@ func setGrant(ctx context.Context, tx *sql.Tx, r grantRow) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_review_grants WHERE contact = ? AND agent = ?`, r.contact, r.agent); err != nil {
 			return err
 		}
+		// Off is an explicit decision: it never reads as undecided (#293).
+		reviewOps := []string{protocol.ConsentReview, protocol.ConsentPublish}
+		if err := denyScopes(ctx, tx, denial{r.contact, []string{r.agent}, reviewOps, g.Now}); err != nil {
+			return err
+		}
 		return withholdAsks(ctx, tx, askScope{r.contact, r.agent, "unshared", g.Now})
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_review_grants (contact, agent, mode, publish, formal, granted_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -153,6 +159,9 @@ func withholdAsks(ctx context.Context, tx *sql.Tx, s askScope) error {
 WHERE contact = ?3 AND kind = 'review' AND state IN ('pending', 'awaiting') AND (?4 = '' OR recipients = json_array(?4)) RETURNING remote_id`,
 		s.reason, msgStamp(s.at), s.contact, s.agent)
 	if err != nil {
+		return err
+	}
+	if err := settleConsentOutcomes(ctx, tx, s.contact); err != nil { // an allowed hold withheld is told so (#293)
 		return err
 	}
 	return askOutcomes(ctx, tx, askScope{s.contact, "", "withheld", s.at}, ids)
@@ -221,13 +230,26 @@ func askState(g ReviewGrant) string {
 	return ImportAwaiting
 }
 
-// asksFull: the requests not yet dispatched or decided are at a bound: for
-// this agent from this contact, from this contact, or in all.
-func asksFull(ctx context.Context, tx *sql.Tx, contact, agent string) (bool, error) {
+// asksFull: the requests not yet dispatched or decided, held ones
+// included (#293), are at a bound: for this agent from this contact, from
+// this contact, or in all; or one more of this request's size would pass
+// the shared byte bounds, for the contact or in all.
+func asksFull(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
+	full, err := askCountsFull(ctx, tx, contact, m.To[0])
+	if full || err != nil {
+		return full, err
+	}
+	use, err := readHeldUse(ctx, tx, contact)
+	return !use.bytesWithin(heldSize(m)), err
+}
+
+// askCountsFull: the requests not yet dispatched or decided are at a count
+// bound.
+func askCountsFull(ctx context.Context, tx *sql.Tx, contact, agent string) (bool, error) {
 	var mine, theirs, total int
-	err := tx.QueryRowContext(ctx, `SELECT
-    COALESCE(SUM(contact = ?1 AND recipients = json_array(?2)), 0), COALESCE(SUM(contact = ?1), 0), COUNT(*)
-FROM remote_imports WHERE kind = 'review' AND state IN ('pending', 'awaiting')`, contact, agent).Scan(&mine, &theirs, &total)
+	err := tx.QueryRowContext(ctx, heldNow+`SELECT
+    COALESCE(SUM(contact = ?1 AND EXISTS (SELECT 1 FROM json_each(held.recipients) j WHERE j.value = ?2)), 0),
+    COALESCE(SUM(contact = ?1), 0), COUNT(*) FROM held`, contact, agent).Scan(&mine, &theirs, &total)
 	if err != nil {
 		return false, err
 	}

@@ -77,8 +77,9 @@ func (h *Hub) openSession(ctx context.Context, req operatorRequest) protocol.Mes
 	h.gen++
 	req.sess.gen = h.gen
 	h.owner = req.sess
+	h.consentOwned(ctx, req.sess)
 	return protocol.Message{Type: protocol.TypeOperatorSession, RequestID: req.msg.RequestID, Session: &protocol.SessionInfo{
-		SessionID: req.sess.ID, Epoch: h.epoch, Capabilities: protocol.SessionCapabilities, OpenedAt: req.sess.OpenedAt}}
+		SessionID: req.sess.ID, Epoch: h.epoch, Gen: req.sess.gen, Capabilities: protocol.SessionCapabilities, OpenedAt: req.sess.OpenedAt}}
 }
 
 // closeSession releases only the matching generation, never a newer owner.
@@ -88,6 +89,7 @@ func (h *Hub) closeSession(ctx context.Context, sess *OperatorSession) {
 		return
 	}
 	h.owner = nil
+	h.consentReleased(ctx, sess)
 	if err := h.store.RecordSessionAudit(ctx, "session_close", sess.UID, sess.ID); err != nil {
 		h.log.Error("operator session close audit failed; ownership released", "error", err)
 	}
@@ -132,6 +134,7 @@ func (h *Hub) sessionSnapshot(ctx context.Context, clients map[string]*Client, r
 		return
 	}
 	req.sess.cut(protocol.Message{Type: protocol.TypeOperatorSnapshot, RequestID: req.msg.RequestID, Snapshot: &snap})
+	h.consentBaseline(ctx, req.sess)
 }
 
 func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (protocol.OperatorSnapshot, error) {

@@ -70,7 +70,7 @@ func (p *PeerMessages) Admit(ctx context.Context, contact string) (*PeerMessages
 	case s.paused:
 		return nil, ErrPaused
 	}
-	return &PeerMessages{db: p.db, fence: &linkFence{contact: contact, generation: s.generation}}, nil
+	return &PeerMessages{db: p.db, fence: &linkFence{contact: contact, generation: s.generation}, gate: p.gate}, nil
 }
 
 // Fence is the contact and generation this store is bound to; bound is
@@ -274,8 +274,7 @@ func changePause(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseR
 	if changed {
 		generation++
 		pausedAt = pausedStamp(r)
-		if _, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET paused_at = ?, generation = ? WHERE identity_key = ?`,
-			pausedAt, generation, r.Contact); err != nil {
+		if err := applyPause(ctx, tx, r, generation); err != nil {
 			return ContactPauseResult{}, "", err
 		}
 	}
@@ -285,6 +284,19 @@ func changePause(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseR
 	}
 	out, err := pauseResultOf(changed, generation, pausedAt)
 	return out, pauseDetail(r.Paused, changed), err
+}
+
+// applyPause writes a pause or resume at its generation; a pause also ends
+// the contact's session consent (#293).
+func applyPause(ctx context.Context, tx *sql.Tx, r ContactPause, generation int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET paused_at = ?, generation = ? WHERE identity_key = ?`,
+		pausedStamp(r), generation, r.Contact); err != nil {
+		return err
+	}
+	if !r.Paused {
+		return nil
+	}
+	return pauseSessions(ctx, tx, r.Contact, r.At)
 }
 
 // pausedStamp is paused_at as a change to r writes it: "" for a resume.

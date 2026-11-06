@@ -132,12 +132,16 @@ func (m *Model) replyRows(s contactSides, v protocol.ContactMessageView, thread 
 	return m.mutedRows([]string{text})
 }
 
-// messageStatusRows are the review, the outbound state, each acknowledgment
-// and the review's IDs on either side: one muted line each, in that order.
+// messageStatusRows are the review, the hold there (#293), the outbound
+// state, each acknowledgment and the review's IDs on either side: one muted
+// line each, in that order.
 func (m *Model) messageStatusRows(s contactSides, v protocol.ContactMessageView) []string {
 	var rows []string
 	if review := strings.TrimPrefix(reviewHead(s.ws, v, m.look(m.reviewSig.dotOff)), " · "); review != "" {
 		rows = append(rows, review)
+	}
+	if consent := consentSummary(v.Consent, v.ConsentReason); consent != "" {
+		rows = append(rows, consent)
 	}
 	if v.Direction == "out" {
 		rows = append(rows, m.outboundState(v))

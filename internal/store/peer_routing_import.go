@@ -47,6 +47,9 @@ type RemoteImport struct {
 	Kind       string               // importMessage or importReview
 	Review     *messaging.ReviewAsk // a review request's ask, frozen at Accept
 	Approved   bool                 // this side's operator approved the request
+	// Consent is the evidence of the operator's decision on the hold it
+	// was staged from (#293); empty for one staged under a grant.
+	Consent ConsentEvidence
 	// Sessions are the recipients connected now, by agent; not frozen, and
 	// the others are enrolled as offline durable recipients are.
 	Sessions map[string]string
@@ -81,9 +84,9 @@ func stageImport(ctx context.Context, tx *sql.Tx, r newRow) error {
 	}
 	recipients, _ := json.Marshal(r.m.To) // a []string always encodes
 	_, err = tx.ExecContext(ctx, `INSERT INTO remote_imports
-(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.key.contact, r.m.ID, localID, r.m.From, string(recipients),
-		r.m.ReplyTo.ID, int(r.m.ReplyTo.Author), state, msgStamp(r.now), kind)
+(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, approved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.key.contact, r.m.ID, localID, r.m.From, string(recipients),
+		r.m.ReplyTo.ID, int(r.m.ReplyTo.Author), state, msgStamp(r.now), kind, r.approvedAt())
 	if err != nil || kind != importReview {
 		return err
 	}
@@ -99,12 +102,24 @@ func stagedAsk(ctx context.Context, tx *sql.Tx, r newRow, state string) error {
 	return askOutcome(ctx, tx, RemoteImport{Contact: r.key.contact, RemoteID: r.m.ID}, askEnd{"waiting", "", r.now})
 }
 
+// approvedAt is when this side's operator approved a staged review
+// request: as it is staged, for one allowed from a hold; NULL otherwise.
+func (r newRow) approvedAt() sql.NullString {
+	if !r.consented || r.m.Review == nil {
+		return sql.NullString{}
+	}
+	return nullString(msgStamp(r.now))
+}
+
 // stagedAs is what a staged message is and where it starts: a message
 // waits for import; a review request for its operator or for dispatch, by
-// the grant it came under.
+// the grant it came under, or by the operator's consent.
 func stagedAs(ctx context.Context, tx *sql.Tx, r newRow) (string, string, error) {
 	if r.m.Review == nil {
 		return importMessage, ImportPending, nil
+	}
+	if r.consented {
+		return importReview, ImportPending, nil
 	}
 	g, _, err := reviewGrant(ctx, tx, r.key.contact, r.m.To[0])
 	return importReview, askState(g), err
@@ -123,19 +138,16 @@ func importedBefore(ctx context.Context, tx *sql.Tx, contact string, m messaging
 }
 
 // importBacklogFull: the contact's messages staged and not yet imported are
-// at their bound, or the remembered ones are.
+// at their bound, or the remembered identities are.
 func importBacklogFull(ctx context.Context, tx *sql.Tx, contact string, size int) (bool, error) {
-	var staged, stagedBytes, held int
+	var staged, stagedBytes int
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(text_bytes), 0) FROM peer_messages
 WHERE contact = ? AND direction = 'in' AND `+pendingImport, contact).Scan(&staged, &stagedBytes)
-	if err != nil {
-		return false, err
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&held); err != nil {
-		return false, err
-	}
 	backlog := budget{messaging.ImportBacklog, messaging.UnreadBytes}
-	return !backlog.holds(budget{staged, stagedBytes + size}) || held >= messaging.Tombstones, nil
+	if err != nil || !backlog.holds(budget{staged, stagedBytes + size}) {
+		return true, err
+	}
+	return identitiesFull(ctx, tx, contact)
 }
 
 // localIDBase is an import's local ID: derived from the contact and the
@@ -177,17 +189,20 @@ func freeLocalID(ctx context.Context, tx *sql.Tx, contact, remoteID string) (str
 
 const importColumns = `ri.contact, ri.remote_id, ri.local_id, ri.sender, ri.recipients, ri.reply_id, ri.reply_author,
     ri.staged_at, ri.state, COALESCE(pm.text, ri.body, ''), COALESCE(pm.created_at, ri.staged_at), ri.rowid,
-    COALESCE(ri.kind, 'message'), pm.review_ask, ri.approved_at IS NOT NULL`
+    COALESCE(ri.kind, 'message'), pm.review_ask, ri.approved_at IS NOT NULL,
+    COALESCE(cr.evidence_kind, ''), COALESCE(cr.evidence_epoch, ''), COALESCE(cr.evidence_gen, 0)`
 
 const importFrom = ` FROM remote_imports ri LEFT JOIN peer_messages pm
-    ON pm.contact = ri.contact AND pm.direction = 'in' AND pm.message_id = ri.remote_id`
+    ON pm.contact = ri.contact AND pm.direction = 'in' AND pm.message_id = ri.remote_id
+    LEFT JOIN consent_requests cr ON cr.contact = ri.contact AND cr.message_id = ri.remote_id AND cr.state = 'allowed'`
 
 func scanImport(row rowScanner) (RemoteImport, string, error) {
 	var imp RemoteImport
 	var recipients, staged, state, created string
 	var ask sql.NullString
 	err := row.Scan(&imp.Contact, &imp.RemoteID, &imp.LocalID, &imp.Sender, &recipients, &imp.ReplyTo.ID, &imp.ReplyTo.Author,
-		&staged, &state, &imp.Text, &created, &imp.Order, &imp.Kind, &ask, &imp.Approved)
+		&staged, &state, &imp.Text, &created, &imp.Order, &imp.Kind, &ask, &imp.Approved,
+		&imp.Consent.Kind, &imp.Consent.Epoch, &imp.Consent.Gen)
 	if err != nil {
 		return imp, "", err
 	}
@@ -263,6 +278,10 @@ WHERE ri.contact = ? AND ri.remote_id = ?`, imp.Contact, imp.RemoteID))
 	if err != nil {
 		return ImportResult{}, err
 	}
+	// The dispatch boundary of a request allowed from a hold (#293).
+	if err := settleConsentOutcomes(ctx, tx, imp.Contact); err != nil {
+		return ImportResult{}, err
+	}
 	return result, tx.Commit()
 }
 
@@ -272,8 +291,12 @@ type importSlot struct {
 	ts  time.Time
 }
 
-// importIn settles a pending import inside its transaction.
+// importIn settles a pending import inside its transaction; one allowed
+// from a hold whose scope was explicitly denied since is withheld (#293).
 func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
+	if result, withheld, err := dispatchDenied(ctx, tx, imp, at); withheld || err != nil {
+		return result, err
+	}
 	switch imp.Kind {
 	case importReview:
 		return dispatchReview(ctx, tx, imp, at)
@@ -284,14 +307,15 @@ func importIn(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) 
 }
 
 // importPlain settles a pending message: withheld unless every recipient
-// is shared with the contact, else the durable message it becomes.
+// is shared with the contact, or the operator allowed this one message,
+// else the durable message it becomes.
 func importPlain(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
 	ts := at.ts
 	shared, err := allGranted(ctx, tx, imp.Contact, imp.Recipients)
 	if err != nil {
 		return ImportResult{}, err
 	}
-	if !shared {
+	if !shared && !imp.Consent.authorizes() {
 		_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', settled_at = ? WHERE contact = ? AND remote_id = ?`,
 			msgStamp(ts), imp.Contact, imp.RemoteID)
 		return ImportResult{State: ImportWithheld, Changed: true}, err

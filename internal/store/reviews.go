@@ -59,6 +59,9 @@ type ReviewAction struct {
 	// (#220): stored with the review or not at all. A retry of a request
 	// already stored writes no new one.
 	Notice *ReviewNotice
+	// Owner is the operator connection that owns the broker now (#293): a
+	// publication under session consent is reserved only while it holds it.
+	Owner LiveOwner
 }
 
 // ReviewNotice is the message that tells a reviewer about a request, and
@@ -204,7 +207,7 @@ func (s *Store) ChangeReview(ctx context.Context, id string, act ReviewAction, s
 // intent only the grants still allow, the review if it changed, and its
 // record.
 func applyChange(ctx context.Context, tx *sql.Tx, before review.Record, c reviewChange) error {
-	if err := publicationAllowed(ctx, tx, before, c.rec); err != nil {
+	if err := publicationAllowed(ctx, tx, before, c); err != nil {
 		return err
 	}
 	if c.changed {

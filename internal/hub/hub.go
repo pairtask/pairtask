@@ -47,6 +47,7 @@ type Hub struct {
 	importAt   int64       // where the next import pass goes on; owned by Run
 	rescan     atomic.Bool // an import pass was asked for since the scan began
 	importDue  atomic.Bool // an import pass is due; signalled on pair.changed (#222)
+	consent    hubConsent  // held requests and session authority (#293)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger

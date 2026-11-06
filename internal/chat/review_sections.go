@@ -398,7 +398,14 @@ func (m *Model) stopNav() bool {
 
 // reviewsPanelOpen: /reviews shows its sections now.
 func (m *Model) reviewsPanelOpen() bool {
-	return m.panel != nil && m.panel.kind == panelReviews && m.pendingAvailable()
+	return m.panel != nil && m.panel.kind == panelReviews && m.sectionsShown()
+}
+
+// sectionsShown: /reviews shows its sections, as the broker pages pending
+// reviews, or as requests are held for the operator (#293), which only a
+// broker that pages them holds.
+func (m *Model) sectionsShown() bool {
+	return m.pendingAvailable() || m.held.total() > 0
 }
 
 // pendingTarget is where an identity's item is, if a section still holds it.
@@ -433,7 +440,7 @@ func (m *Model) sectionRows() []string {
 	if m.failedShown() {
 		rows = append([]string{m.heading(needStyle, "Failed", dotRed)}, m.failedRows()...)
 	}
-	rows = append(rows, m.heading(needStyle, "Needs you", itemsDot(m.sections.needs.items, func(protocol.ReviewAwaitingItem) reviewDot { return dotYellow })))
+	rows = append(rows, m.heading(needStyle, "Needs you", m.needsDot()))
 	rows = append(rows, m.needRows()...)
 	rows = append(rows, m.heading(titleStyle, "Running here", itemsDot(m.runningReviews(), reviewHereDot)))
 	rows = append(rows, m.runningRows()...)
@@ -443,12 +450,20 @@ func (m *Model) sectionRows() []string {
 	return append(rows, m.listRows()...)
 }
 
+// needsDot is yellow while a review request or a held request waits.
+func (m *Model) needsDot() reviewDot {
+	if m.held.total() > 0 {
+		return dotYellow
+	}
+	return itemsDot(m.sections.needs.items, func(protocol.ReviewAwaitingItem) reviewDot { return dotYellow })
+}
+
 func (m *Model) needRows() []string {
 	s := &m.sections.needs
-	if len(s.items) == 0 {
+	rows := m.heldNeedRows()
+	if len(s.items) == 0 && len(rows) == 0 {
 		return []string{mutedStyle.Render("  none")}
 	}
-	var rows []string
 	for _, it := range s.items {
 		rows = append(rows, fmt.Sprintf("%s%s  %s  from %s  %s", m.rowMark(dotYellow), m.sections.ref(needKey(it)), askLabel(it.Ask),
 			safe(it.Sender)+"@"+safe(m.contactTitle(contactKey(it.Contact))), mutedStyle.Render(age(it.ReceivedAt))))
@@ -471,6 +486,9 @@ func (m *Model) askedRows() []string {
 		}
 		row += m.findingsCount(it.Findings)
 		rows = append(rows, row+"  "+mutedStyle.Render(theirReviewID(it.ReviewID)))
+		if consent := consentSummary(it.Consent, it.ConsentReason); consent != "" {
+			rows = append(rows, "    "+mutedStyle.Render(consent))
+		}
 		if it.State == "refused" {
 			rows = append(rows, fixRows(it.Reason, it.Reviewer)...)
 		}

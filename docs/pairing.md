@@ -206,6 +206,51 @@ workspace. Both sides need a pairtask
 with findings (peer messaging v7); otherwise the verdict comes back without
 them.
 
+## 9. Decide requests you never decided
+
+By default a paired workspace's message or review request for something you
+never allowed is refused. Turn on consent prompts for that workspace and such
+requests wait for your decision instead:
+
+```text
+/pair consent on Office      hold its undecided requests for you
+/pair consent off Office     refuse them again, as before
+/pair consent                who has requests waiting, one line each
+/pair consent contact:Office list Office's waiting requests
+/pair consent ID             open one waiting request
+```
+
+`NAME` is what `/pair status` calls the workspace, or the start of its key
+when two share a name; a name that matches no workspace, or more than one, is
+refused. A waiting request shows under Needs you in `/reviews`, in
+`/pair status` and in the footer, with the command that opens it. Nothing
+opens on its own and your draft stays as it was.
+
+In the list, ↑/↓ highlight a request and Enter shows it in full: who sent it
+(the workspace's key, apart from the name it claims), the agents it is for,
+what it asks of each, and when it expires. Nothing is chosen at first. Press
+1 to allow this request only, 2 to allow it for this session, 3 to always
+allow exactly this, 4 to decline and stop asking for it, or 5 to decide later;
+then Ctrl+Y confirms. Enter, Tab and paste never choose or confirm, and Esc
+closes without deciding. If the request changes, or the connection is
+refreshed, the choice is dropped and you choose again on what is shown now.
+
+What you turned off before, or declined, stays denied. To ask again for one
+agent's operation, reset it to undecided:
+
+```text
+/pair consent reset Office claude-1 review
+```
+
+The operation is `message`, `review` or `publish`. `/pair consent reset
+Office` or `/pair consent reset Office claude-1` sends nothing: it lists the
+scopes you can reset and the exact command for each. A scope shows as
+allowed when the workspace is shared or granted it; otherwise its state is
+unavailable, since the broker doesn't say whether it is denied or undecided. A
+workspace paired before consent prompts existed treats everything you never
+decided as denied until you reset it this way. A broker without consent
+prompts says `consent prompts need a newer broker` and nothing is sent.
+
 ## Names
 
 A paired workspace has a key and up to two names:

@@ -86,7 +86,8 @@ func (h *Hub) agentReview(ctx context.Context, in Inbound) protocol.Message {
 	}
 	var step review.Step
 	now := h.reviewNow()
-	act := store.ReviewAction{Actor: in.From.ID, Action: msg.Type}
+	// The reservation is fenced here, on the loop, against the owner now (#293).
+	act := store.ReviewAction{Actor: in.From.ID, Action: msg.Type, Owner: h.liveOwner()}
 	rec, changed, err := h.store.ChangeReview(ctx, msg.ReviewID, act, func(r review.Record) (review.Record, bool, error) {
 		if r.View.Spec.Reviewer != in.From.ID {
 			return r, false, review.ErrNotFound

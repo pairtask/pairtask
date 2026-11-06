@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = PairedMentionsVersion
+	Version                 = ConsentVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -275,6 +275,14 @@ type Message struct {
 	Code                string              `json:"code,omitempty"`                  // error
 	Detail              string              `json:"detail,omitempty"`                // error
 	TS                  *time.Time          `json:"ts,omitempty"`                    // msg (broker -> client), UTC; pointer so zero is omitted
+	// Pending consent (#293).
+	ContactConsentBefore int64                 `json:"contact_consent_before,omitempty"` // consent_list: page before this cursor
+	ConsentDecide        *ConsentDecideRequest `json:"consent_decide,omitempty"`
+	ConsentPage          *ConsentPage          `json:"consent_page,omitempty"`
+	ConsentResult        *ConsentResult        `json:"consent_result,omitempty"`
+	ConsentOn            *bool                 `json:"consent_on,omitempty"`        // consent_opt
+	ConsentAgent         string                `json:"consent_agent,omitempty"`     // consent_reset
+	ConsentOperation     string                `json:"consent_operation,omitempty"` // consent_reset
 }
 
 // Operator inbox paging limits.
