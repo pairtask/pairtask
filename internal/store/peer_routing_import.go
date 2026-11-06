@@ -35,6 +35,7 @@ var ErrNoImport = errors.New("no message staged for import under that contact an
 // RemoteImport is a message staged for this side's agents.
 type RemoteImport struct {
 	Contact    string             // the peer's identity key
+	Epoch      int64              // the pairing epoch it was staged under; 0 is the legacy 1
 	RemoteID   string             // the message's ID on the peer
 	LocalID    string             // reserved at Accept; ImportRemote may move it
 	Sender     string             // the remote agent, "" for their operator
