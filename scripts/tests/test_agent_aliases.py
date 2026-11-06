@@ -24,6 +24,7 @@ class AgentAliasTests(unittest.TestCase):
         output = self.shell('function /usr/local/bin/claude() { printf "%s\\n" "$@"; }\n'
                             'claude --resume "session with spaces"')
         self.assertEqual(output, ["--strict-mcp-config", "--mcp-config", "/etc/pairtask/claude-mcp.json",
+                                  "--settings", "/etc/pairtask/claude-settings.json",
                                   "--dangerously-load-development-channels", "server:pairtask",
                                   "--resume", "session with spaces"])
 
