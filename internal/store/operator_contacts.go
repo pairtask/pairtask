@@ -39,10 +39,12 @@ type ContactSend struct {
 	Now                        time.Time
 	// Here are this side's agents the send tags, and OperatorHere whether it
 	// tags this side's operator (#278); Seq is the order its message here
-	// takes, 0 for the next.
+	// takes, 0 for the next. Recipients are the tagged agents as the hub
+	// resolved them, with the session each is bound to, if any.
 	Here         []string
 	OperatorHere bool
 	Seq          uint64
+	Recipients   []protocol.Recipient
 }
 
 // ContactRead is one operator read of messages shown to the operator.

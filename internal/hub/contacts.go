@@ -155,7 +155,7 @@ func (h *Hub) contactSend(ctx context.Context, req operatorRequest, auditID int6
 	if err != nil {
 		return protocol.Message{}, err
 	}
-	send := h.contactSendRow(msg, auditID)
+	send := h.contactSendRow(msg, auditID, home)
 	sent, err := h.store.OperatorContactSent(ctx, send)
 	if err != nil {
 		return protocol.Message{}, err

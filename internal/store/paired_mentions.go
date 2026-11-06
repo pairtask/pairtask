@@ -110,6 +110,19 @@ func (c ContactSend) homeTargets() []string {
 	return slices.Compact(targets)
 }
 
+// homeRecipients are the targets as persisted: each tagged agent with the
+// session the hub resolved it to, if any, and this side's operator.
+func (c ContactSend) homeRecipients(targets []string) []protocol.Recipient {
+	recipients := make([]protocol.Recipient, len(targets))
+	for i, id := range targets {
+		recipients[i] = protocol.Recipient{AgentID: id}
+		if j := slices.IndexFunc(c.Recipients, func(r protocol.Recipient) bool { return r.AgentID == id }); j >= 0 {
+			recipients[i] = c.Recipients[j]
+		}
+	}
+	return recipients
+}
+
 // shareHere delivers a ⇄ send to the agents and operator it tags here, in
 // the send's transaction: one operator message, the tagged agents' replies
 // assigned to them, bound to the conversation.
@@ -126,11 +139,7 @@ func shareHere(ctx context.Context, tx *sql.Tx, c ContactSend, peer messaging.Me
 	ts := c.Now.UTC()
 	msg := protocol.Message{Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: protocol.OperatorID, To: "group:" + c.OperationID,
 		Origin: protocol.OriginOperator, Payload: payload, MessageID: c.OperationID, AckRequested: true, Durable: true, Group: targets}
-	recipients := make([]protocol.Recipient, len(targets))
-	for i, id := range targets {
-		recipients[i] = protocol.Recipient{AgentID: id}
-	}
-	if err := persistMessage(ctx, tx, routedMessage{msg: msg, recipients: recipients}); err != nil {
+	if err := persistMessage(ctx, tx, routedMessage{msg: msg, recipients: c.homeRecipients(targets)}); err != nil {
 		return err
 	}
 	if err := insertAssignments(ctx, tx, OperatorMessage{Msg: msg, Assignees: c.Here}); err != nil {

@@ -89,10 +89,11 @@ func (h *Hub) deliverHere(ctx context.Context, clients map[string]*Client, s hom
 }
 
 // contactSendRow is what the store keeps of a ⇄ send: with the order its
-// message here takes, when it tags someone here.
-func (h *Hub) contactSendRow(msg protocol.Message, auditID int64) store.ContactSend {
+// message here takes, when it tags someone here, and the tagged agents as
+// resolved for delivery, so the store keeps the sessions they go to.
+func (h *Hub) contactSendRow(msg protocol.Message, auditID int64, home []protocol.Recipient) store.ContactSend {
 	send := store.ContactSend{OperationID: msg.MessageID, Contact: msg.ContactKey, Text: msg.ContactText, To: peerRecipients(msg),
-		AuditID: auditID, Now: h.contactNow(), Here: msg.ContactHere, OperatorHere: msg.ContactOperatorHere}
+		AuditID: auditID, Now: h.contactNow(), Here: msg.ContactHere, OperatorHere: msg.ContactOperatorHere, Recipients: home}
 	if sendsHere(msg) {
 		send.Seq = h.seq + 1
 	}
