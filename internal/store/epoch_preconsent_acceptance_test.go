@@ -107,3 +107,18 @@ func TestEpochMigrationPreConsentFailureCanReopen(t *testing.T) {
 	epochOpen(t, path)
 	pairEqual(t, epochCount(t, raw, "SELECT count(*) FROM schema_steps WHERE name=?", store.EpochSchemaStep), 1)
 }
+
+func TestEpochMigrationPreConsentEarlierAckCallbackHasItsTable(t *testing.T) {
+	path, raw := epochPreConsent(t)
+	// Reconstruct the earlier ACK-less shape to exercise the retained
+	// addedColumns callback, which seeds peer_ack_floors when acked_at is
+	// first added. This is a deliberate fixture variation, not an untouched
+	// database claimed to have been emitted by release 836.1.
+	_, err := raw.Exec(`ALTER TABLE peer_messages DROP COLUMN acked_at;
+ALTER TABLE peer_messages DROP COLUMN ack_expired_at;
+DROP TABLE peer_ack_floors;`)
+	pairOK(t, err)
+	epochOpen(t, path)
+	pairEqual(t, epochCount(t, raw, "SELECT count(*) FROM pragma_table_info('peer_ack_floors') WHERE name='pairing_epoch'"), 1)
+	epochNoForeignKeyErrors(t, raw)
+}
