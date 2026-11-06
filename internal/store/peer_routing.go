@@ -399,13 +399,13 @@ type agentRead struct {
 
 // queueAgentReadIn is QueueAgentRead inside a transaction, the agent's
 // acknowledgment's own: it answers the contact the read is queued for, ""
-// when the message isn't an import of the contact's current pairing. An
-// earlier pairing's import owes the contact nothing now (#276).
+// when the message isn't an import of the contact's current pairing or
+// that pairing ended. An ended pairing's import owes the contact nothing
+// now; the local acknowledgment still stands (#276).
 func queueAgentReadIn(ctx context.Context, tx *sql.Tx, r agentRead) (string, error) {
 	var contact, remoteID, recipients string
 	err := tx.QueryRowContext(ctx, `SELECT ri.contact, ri.remote_id, ri.recipients FROM remote_imports ri
-WHERE ri.local_id = ? AND ri.state = 'imported'
-    AND ri.pairing_epoch = COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WHERE ce.identity_key = ri.contact), 1)`,
+WHERE ri.local_id = ? AND ri.state = 'imported' AND `+livePairingImport,
 		r.localID).Scan(&contact, &remoteID, &recipients)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
