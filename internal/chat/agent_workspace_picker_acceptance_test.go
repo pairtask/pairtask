@@ -12,7 +12,7 @@ import (
 func TestAgentWorkspacePickerAcceptanceLabelDoesNotChangeAddress(t *testing.T) {
 	h, key := sharePickerHarness(t, "remote-only")
 	v2Type(h, "@")
-	contactRecipientItems(t, h, "remote-only")
+	contactRecipientItems(t, h, "remote-only", "operator@Office", "remote-only@here", "operator")
 	v3Contains(t, ansi.Strip(h.m.View().Content), "@remote-only@Office")
 	h.input(chatKey(tea.KeyEnter, 0))
 	chatEqual(t, "canonical insertion", h.m.State().Draft, "@remote-only ")
