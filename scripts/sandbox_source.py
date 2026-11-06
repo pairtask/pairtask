@@ -16,7 +16,7 @@ OPTIONAL_APP_PATHS = ["testdata"]
 APP_PATHS = REQUIRED_APP_PATHS + OPTIONAL_APP_PATHS
 RECIPE_PATHS = ["infra/image/" + name for name in (
     "install.sh", "install-build-go.py", "install-layout.py", "layout_schema.py", "layout-v2.json", "sshd_config", "pairtask-broker.service",
-    "pairtask-secured-setup.service", "pairtask-supervised-codex", "claude-mcp.json",
+    "pairtask-secured-setup.service", "pairtask-supervised-codex", "claude-mcp.json", "claude-settings.json",
     "pairtask-secured-broker.service", "pairtask-dev-setup.service", "pairtask-dev-executor.socket",
     "pairtask-dev-executor@.service", "secured-codex.toml", "secured-environments.toml", "pairtask-executor-connect",
     "pairtask-client-setup.service", "pairtask-broker-setup",
