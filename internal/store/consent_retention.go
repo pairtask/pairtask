@@ -46,21 +46,42 @@ type tombstone struct {
 	old       bool
 }
 
-// tombstonesQuery lists the contact's (?2) remembered inbound identities
-// by sequence: rows and held requests, each with whether it may be
-// forgotten at ?1.
+// tombstonesQuery lists one pairing's (contact ?2, epoch ?3) remembered
+// inbound identities by sequence: rows and held requests, each with
+// whether it may be forgotten at ?1. Each pairing numbers its own (#276).
 const tombstonesQuery = `SELECT cursor, n, kind, old FROM (
     SELECT cursor, n, 0 AS kind, stored_at < ?1 AND (state = 'read' AND receipt != 'pending'
         OR state = 'routed' AND NOT ` + pendingImport + ` OR state = 'refused' AND read_at IS NOT NULL) AND NOT (` + needsAck + `) AS old
-    FROM peer_messages WHERE contact = ?2 AND direction = 'in'
+    FROM peer_messages WHERE contact = ?2 AND pairing_epoch = ?3 AND direction = 'in'
     UNION ALL
-    SELECT cursor, n, 1, ` + consentForgettable + ` FROM consent_requests WHERE contact = ?2
+    SELECT cursor, n, 1, ` + consentForgettable + ` FROM consent_requests WHERE contact = ?2 AND pairing_epoch = ?3
 ) ORDER BY n, kind`
 
-// forgettableRun is the leading run of the contact's remembered identities,
-// by sequence, that may be forgotten; it stops at the first that must stay.
-func forgettableRun(ctx context.Context, tx *sql.Tx, contact string, now time.Time) ([]tombstone, error) {
-	rows, err := tx.QueryContext(ctx, tombstonesQuery, msgStamp(now.Add(-messaging.TombstoneAge)), contact)
+// rememberedEpochs are the pairings of the contact with inbound identities
+// still remembered.
+func rememberedEpochs(ctx context.Context, tx *sql.Tx, contact string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT pairing_epoch FROM peer_messages WHERE contact = ?1 AND direction = 'in'
+UNION SELECT pairing_epoch FROM consent_requests WHERE contact = ?1 ORDER BY 1`, contact)
+	if err != nil {
+		return nil, err
+	}
+	var out []int64
+	for rows.Next() {
+		var epoch int64
+		if err := rows.Scan(&epoch); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, epoch)
+	}
+	return out, closeRows(rows)
+}
+
+// forgettableRun is the leading run of one pairing's remembered
+// identities, by sequence, that may be forgotten; it stops at the first
+// that must stay.
+func forgettableRun(ctx context.Context, tx *sql.Tx, k pairingKey, now time.Time) ([]tombstone, error) {
+	rows, err := tx.QueryContext(ctx, tombstonesQuery, msgStamp(now.Add(-messaging.TombstoneAge)), k.contact, k.epoch)
 	if err != nil {
 		return nil, err
 	}
@@ -106,19 +127,21 @@ func reclaimConsentRate(ctx context.Context, tx *sql.Tx, contact string, now tim
 // fullAt: the bucket would be full again at now.
 func (b rateBucket) fullAt(now time.Time) bool { return b.refilled(now).tokens >= ConsentBurst }
 
-// rememberedIdentities is how many of the contact's inbound identities
-// this side still remembers: its rows, and its held requests that have no
-// row (an allowed one has the row it became).
+// rememberedIdentities is how many of the inbound identities of the
+// contact's current pairing this side still remembers: its rows, and its
+// held requests that have no row (an allowed one has the row it became).
+// An earlier pairing's are history, never counted against this one (#276).
 func rememberedIdentities(ctx context.Context, q rowQuerier, contact string) (int, error) {
 	var n int
-	err := q.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM peer_messages WHERE contact = ?1 AND direction = 'in')
-    + (SELECT COUNT(*) FROM consent_requests cr WHERE cr.contact = ?1 AND NOT EXISTS (
-        SELECT 1 FROM peer_messages pm WHERE pm.contact = ?1 AND pm.direction = 'in' AND pm.message_id = cr.message_id))`, contact).Scan(&n)
+	err := q.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM peer_messages WHERE `+currentInbound+`)
+    + (SELECT COUNT(*) FROM consent_requests cr WHERE cr.contact = ?1 AND cr.pairing_epoch = `+currentEpochOf1+` AND NOT EXISTS (
+        SELECT 1 FROM peer_messages pm WHERE pm.contact = ?1 AND pm.pairing_epoch = cr.pairing_epoch AND pm.direction = 'in'
+            AND pm.message_id = cr.message_id))`, contact).Scan(&n)
 	return n, err
 }
 
-// identitiesFull: the contact's remembered identities are at their bound,
-// so nothing new can be told from a replay.
+// identitiesFull: the remembered identities of the contact's current
+// pairing are at their bound, so nothing new can be told from a replay.
 func identitiesFull(ctx context.Context, q rowQuerier, contact string) (bool, error) {
 	n, err := rememberedIdentities(ctx, q, contact)
 	return n >= messaging.Tombstones, err

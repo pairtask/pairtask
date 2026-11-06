@@ -28,7 +28,8 @@ const failedSet = `SELECT 'ask' AS kind, a.contact AS contact, a.ask_id AS id, C
     a.reviewer AS reviewer, COALESCE(json_extract(a.ask, '$.Repository'), '') AS repository,
     COALESCE(json_extract(a.ask, '$.Change'), '') AS change, a.reason AS reason, a.updated_at AS updated_at,
     'ask' || char(0) || a.contact || char(0) || a.ask_id || char(0) || a.seq || char(0) || a.state || char(0) || a.updated_at AS fkey
-FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
+FROM review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.pairing_epoch = a.pairing_epoch
+    AND pm.direction = 'out' AND pm.message_id = a.ask_id
 WHERE a.state IN ` + failedAskStates + `
 UNION ALL
 SELECT 'review', '', r.review_id, 0, json_extract(r.doc, '$.publication.state'), r.reviewer,
@@ -61,11 +62,12 @@ func failures(ctx context.Context, q rowsQuerier) (int, string, error) {
 	return len(keys), hex.EncodeToString(h.Sum(nil))[:32], nil
 }
 
-// activeAsks counts this side's open requests still in progress: open,
-// and not failed.
+// activeAsks counts this side's open requests still in progress, each in
+// its contact's current pairing (#276): open, and not failed.
 func activeAsks(ctx context.Context, q rowQuerier) (int, error) {
 	var n int
-	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out WHERE settled_at IS NULL AND state NOT IN `+failedAskStates).Scan(&n)
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out WHERE settled_at IS NULL AND state NOT IN `+failedAskStates+`
+    AND pairing_epoch = `+currentEpochFor("review_asks_out.contact")).Scan(&n)
 	return n, err
 }
 

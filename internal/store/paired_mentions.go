@@ -64,7 +64,8 @@ func (s *Store) PairedThread(ctx context.Context, id string) (PairedBinding, boo
 }
 
 // KeepsConversations: this side keeps a shared conversation with contact,
-// whether or not the contact is still there.
+// whether or not the contact is still there, under any of its pairings:
+// it admits reading history alone, which spans them all (#276).
 func (s *Store) KeepsConversations(ctx context.Context, contact string) (bool, error) {
 	var ok bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM paired_threads WHERE contact = ?)`, contact).Scan(&ok)

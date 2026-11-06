@@ -181,8 +181,11 @@ func (s *Store) OperatorContactRead(ctx context.Context, c ContactRead) (int, er
 		if replay {
 			return nil
 		}
-		var err error
-		marked, err = markReadIn(ctx, tx, readSet{c.Contact, ids, c.Now})
+		r, err := currentMark(ctx, tx, ReadMark{Contact: c.Contact, IDs: ids, At: c.Now})
+		if err != nil {
+			return err
+		}
+		marked, err = markReadIn(ctx, tx, r)
 		return err
 	})
 	if err != nil {

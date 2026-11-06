@@ -269,11 +269,12 @@ func askCountsFull(ctx context.Context, tx *sql.Tx, contact, agent string) (bool
 	return mine >= ReviewAsksPerAgent || theirs >= ReviewAsksPerContact || total >= ReviewAsksTotal, nil
 }
 
-// AwaitingReviewCounts are, by contact, the review requests waiting for
-// this side's operator; a contact with none is absent.
+// AwaitingReviewCounts are, by contact, the review requests of its current
+// pairing waiting for this side's operator (#276); a contact with none is
+// absent.
 func (s *PeerMessages) AwaitingReviewCounts(ctx context.Context) (map[string]int, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT contact, COUNT(*) FROM remote_imports
-WHERE kind = 'review' AND state = 'awaiting' GROUP BY contact`)
+WHERE kind = 'review' AND state = 'awaiting' AND pairing_epoch = `+currentEpochFor("remote_imports.contact")+` GROUP BY contact`)
 	if err != nil {
 		return nil, err
 	}

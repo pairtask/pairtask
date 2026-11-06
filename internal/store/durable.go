@@ -227,9 +227,11 @@ func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error
 const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, ` + remoteColumns
 
 // groupColumn is a group send's canonical members (JSON), or NULL: an
-// operator group's, or a paired workspace's message to several agents.
+// operator group's, or a paired workspace's message to several agents, as
+// the import it became, in the pairing it came under, named them (#276).
 const groupColumn = `COALESCE((SELECT o.members FROM operator_requests o WHERE o.message_id = mm.message_id AND o.scope_kind = 'group'),
-    (SELECT ri.recipients FROM remote_imports ri WHERE ri.local_id = mm.message_id AND mm.origin = 'remote' AND json_array_length(ri.recipients) > 1))`
+    (SELECT ri.recipients FROM remote_imports ri WHERE ri.local_id = mm.message_id AND ri.pairing_epoch = COALESCE(mm.remote_epoch, 1)
+        AND mm.origin = 'remote' AND json_array_length(ri.recipients) > 1))`
 
 // remoteColumns are where a message from a paired workspace came from.
 const remoteColumns = `mm.remote_contact, (SELECT pc.name FROM peer_contacts pc WHERE pc.identity_key = mm.remote_contact),

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
 
 // currentEpoch is a contact's current pairing epoch, from its one
@@ -20,6 +22,13 @@ const currentEpochOf1 = `COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce
 // parameters, the contact its nth.
 func currentEpochAt(n int) string {
 	return fmt.Sprintf(`COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WHERE ce.identity_key = ?%d), 1)`, n)
+}
+
+// currentEpochFor is the current pairing epoch of the contact a row
+// names in column, for a statement over many contacts' rows: a cap counts
+// each contact's current pairing alone (#276).
+func currentEpochFor(column string) string {
+	return `COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WHERE ce.identity_key = ` + column + `), 1)`
 }
 
 // errPairingEnded refuses work from a pairing the contact has since ended
@@ -43,6 +52,26 @@ func contactEpoch(ctx context.Context, q rowQuerier, contact string) (int64, err
 func currentPairing(ctx context.Context, q rowQuerier, contact string) (pairingKey, error) {
 	epoch, err := contactEpoch(ctx, q, contact)
 	return pairingKey{contact, epoch}, err
+}
+
+// errNoSuchPairing names, for history, a pairing epoch the contact never
+// had: none before 1, none past the current one.
+var errNoSuchPairing = fmt.Errorf("%w: no such pairing with the contact", messaging.ErrInvalid)
+
+// heldPairing checks k names one of its contact's pairings, the current
+// one or an earlier, and reports whether it is the current one (#276).
+func heldPairing(ctx context.Context, q rowQuerier, k pairingKey) (bool, error) {
+	if k.epoch <= 0 {
+		return false, errNoSuchPairing
+	}
+	current, err := contactEpoch(ctx, q, k.contact)
+	if err != nil {
+		return false, err
+	}
+	if k.epoch > current {
+		return false, errNoSuchPairing
+	}
+	return k.epoch == current, nil
 }
 
 // remoteEpoch is the pairing epoch a review a paired workspace asked for

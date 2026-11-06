@@ -171,7 +171,7 @@ func settleHeldAsk(ctx context.Context, tx *sql.Tx, e heldEnd) error {
 	if e.o.State == consentAllowed {
 		return nil
 	}
-	return settleAsks(ctx, tx, askEnd{e.o.State, e.o.Reason, e.at}, oneAsk(e.contact, e.o.ID))
+	return settleAsks(ctx, tx, askEnd{e.o.State, e.o.Reason, e.at}, currentAsk(e.contact, e.o.ID))
 }
 
 // heldOutFor is the hold of this side's message id, if the contact held it.

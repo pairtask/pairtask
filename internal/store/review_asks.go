@@ -136,9 +136,16 @@ type askMatch struct {
 	args  []any
 }
 
-// oneAsk matches one request of a contact.
-func oneAsk(contact, askID string) askMatch {
-	return askMatch{`contact = ? AND ask_id = ?`, []any{contact, askID}}
+// oneAsk matches one request of a pairing: the same ID asked under
+// another pairing with the contact is another request (#276).
+func oneAsk(k pairingKey, askID string) askMatch {
+	return askMatch{`contact = ? AND pairing_epoch = ? AND ask_id = ?`, []any{k.contact, k.epoch, askID}}
+}
+
+// currentAsk matches one request of the contact's current pairing: what
+// the contact's answers, and this side's own ends of its messages, name.
+func currentAsk(contact, askID string) askMatch {
+	return askMatch{`contact = ? AND pairing_epoch = ` + currentEpoch + ` AND ask_id = ?`, []any{contact, contact, askID}}
 }
 
 // askEnd is a final state this side gives a request, and why.
@@ -147,16 +154,18 @@ type askEnd struct {
 	at            time.Time
 }
 
-func loadAsk(ctx context.Context, q rowQuerier, contact, askID string) (AskOut, []byte, bool, error) {
+// loadAsk is the request askID of pairing k, with the digest of its
+// newest outcome; another pairing's request of the same ID is not it.
+func loadAsk(ctx context.Context, q rowQuerier, k pairingKey, askID string) (AskOut, []byte, bool, error) {
 	var a AskOut
 	var ask, updated string
 	var digest []byte
 	var settled, reviewID sql.NullString
 	var f keptFindings
-	err := q.QueryRowContext(ctx, `SELECT contact, ask_id, reviewer, requester_agent, local_id, ask, state, seq, digest, attempt, intent,
+	err := q.QueryRowContext(ctx, `SELECT pairing_epoch, contact, ask_id, reviewer, requester_agent, local_id, ask, state, seq, digest, attempt, intent,
     verdict, summary, url, reason, review_id, updated_at, settled_at, findings, findings_seq, findings_attempt
-FROM review_asks_out WHERE contact = ? AND ask_id = ?`, contact, askID).Scan(
-		&a.Contact, &a.AskID, &a.Reviewer, &a.RequesterAgent, &a.LocalID, &ask, &a.State, &a.Seq, &digest, &a.Attempt, &a.Intent,
+FROM review_asks_out WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`, k.contact, k.epoch, askID).Scan(
+		&a.Epoch, &a.Contact, &a.AskID, &a.Reviewer, &a.RequesterAgent, &a.LocalID, &ask, &a.State, &a.Seq, &digest, &a.Attempt, &a.Intent,
 		&a.Verdict, &a.Summary, &a.URL, &a.Reason, &reviewID, &updated, &settled, &f.envelope, &f.seq, &f.attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, nil, false, nil
@@ -170,6 +179,19 @@ FROM review_asks_out WHERE contact = ? AND ask_id = ?`, contact, askID).Scan(
 	}
 	return a, digest, true, json.Unmarshal([]byte(ask), &a.Ask)
 }
+
+// loadCurrentAsk is the request askID of the contact's current pairing:
+// the one its answers name (#276).
+func loadCurrentAsk(ctx context.Context, q rowQuerier, contact, askID string) (AskOut, []byte, bool, error) {
+	k, err := currentPairing(ctx, q, contact)
+	if err != nil {
+		return AskOut{}, nil, false, err
+	}
+	return loadAsk(ctx, q, k, askID)
+}
+
+// pairing is the pairing a request was asked under.
+func (a AskOut) pairing() pairingKey { return pairingKey{a.Contact, a.Epoch} }
 
 // outcomeVerdicts are how AcceptOutcome takes an outcome.
 type outcomeVerdict int
@@ -334,13 +356,15 @@ func applyOutcome(ctx context.Context, tx *sql.Tx, t takenOutcome) error {
 		settled = msgStamp(at)
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE review_asks_out SET state = ?, seq = ?, digest = ?, attempt = ?, intent = ?, verdict = ?, summary = ?,
-    url = ?, reason = ?, updated_at = ?, outcome_at = ?, settled_at = COALESCE(?, settled_at) WHERE contact = ? AND ask_id = ?`,
-		o.State, o.Seq, sum[:], o.Attempt, o.Intent, o.Verdict, o.Summary, o.URL, o.Reason, msgStamp(at), msgStamp(at), settled, a.Contact, a.AskID)
+    url = ?, reason = ?, updated_at = ?, outcome_at = ?, settled_at = COALESCE(?, settled_at) WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`,
+		o.State, o.Seq, sum[:], o.Attempt, o.Intent, o.Verdict, o.Summary, o.URL, o.Reason, msgStamp(at), msgStamp(at), settled,
+		a.Contact, a.Epoch, a.AskID)
 	return err
 }
 
-// AcceptOutcome takes the contact's outcome of a request this side sent.
-// An outcome for no request of this contact, from another reviewer, or
+// AcceptOutcome takes the contact's outcome of a request this side sent,
+// in the contact's current pairing (#276). An outcome for no request of
+// that pairing, one only an earlier pairing asked too, from another reviewer, or
 // going back is refused for good; a conflicting one too. One a requesting
 // agent can't be told of yet, its inbox full, is held back.
 func (p *PeerMessages) AcceptOutcome(ctx context.Context, contact string, o messaging.ReviewOutcome, at time.Time) (messaging.OutcomeAnswer, error) {
@@ -369,7 +393,7 @@ type inboundOutcome struct {
 // acceptOutcomeIn is AcceptOutcome inside its transaction.
 func acceptOutcomeIn(ctx context.Context, tx *sql.Tx, in inboundOutcome) (messaging.OutcomeAnswer, error) {
 	o, at := in.o, in.at
-	a, digest, found, err := loadAsk(ctx, tx, in.contact, o.AskID)
+	a, digest, found, err := loadCurrentAsk(ctx, tx, in.contact, o.AskID)
 	if err != nil || !found {
 		return refusedOutcome(messaging.ReasonInvalid), err
 	}
@@ -394,8 +418,9 @@ func keepReviewID(ctx context.Context, tx *sql.Tx, a AskOut, o messaging.ReviewO
 	if a.ReviewID != "" || o.ReviewID == "" {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE review_asks_out SET review_id = ? WHERE contact = ? AND ask_id = ? AND reviewer = ? AND review_id IS NULL`,
-		o.ReviewID, a.Contact, a.AskID, a.Reviewer)
+	_, err := tx.ExecContext(ctx, `UPDATE review_asks_out SET review_id = ?
+WHERE contact = ? AND pairing_epoch = ? AND ask_id = ? AND reviewer = ? AND review_id IS NULL`,
+		o.ReviewID, a.Contact, a.Epoch, a.AskID, a.Reviewer)
 	return err
 }
 
@@ -436,10 +461,7 @@ const NoticesPerAgent = 16
 // message, and replacing one of the same request still waiting. It reports
 // full when that agent's notices are at their bound.
 func stageOutcomeNotice(ctx context.Context, tx *sql.Tx, t takenOutcome) (bool, error) {
-	src, err := currentPairing(ctx, tx, t.a.Contact)
-	if err != nil {
-		return false, err
-	}
+	src := t.a.pairing()
 	if err := supersedeNotice(ctx, tx, src, t); err != nil {
 		return false, err
 	}
@@ -520,7 +542,8 @@ func outcomeFollowUp(a AskOut) string {
 }
 
 // collectAsks ends a removed contact's open requests, and forgets settled
-// ones past AskRetention whose notice was acknowledged, or that had none.
+// ones past AskRetention whose notice, staged in the request's own
+// pairing (#276), was acknowledged, or that had none.
 func collectAsks(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
 	confirmed, err := confirmedContact(ctx, tx, contactKey(contact))
 	if err != nil {
@@ -533,9 +556,10 @@ func collectAsks(ctx context.Context, tx *sql.Tx, contact string, now time.Time)
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM review_asks_out WHERE contact = ?1 AND settled_at IS NOT NULL AND settled_at < ?2
     AND NOT EXISTS (SELECT 1 FROM remote_imports ri JOIN durable_inbox d ON d.message_id = ri.local_id
-        WHERE ri.contact = ?1 AND ri.kind = 'outcome' AND ri.reply_id = review_asks_out.ask_id AND d.acknowledged_at IS NULL)
-    AND NOT EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = ?1 AND ri.kind = 'outcome'
-        AND ri.reply_id = review_asks_out.ask_id AND ri.state = 'pending')`, contact, msgStamp(now.Add(-AskRetention)))
+        WHERE ri.contact = ?1 AND ri.pairing_epoch = review_asks_out.pairing_epoch AND ri.kind = 'outcome'
+            AND ri.reply_id = review_asks_out.ask_id AND d.acknowledged_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = ?1 AND ri.pairing_epoch = review_asks_out.pairing_epoch
+        AND ri.kind = 'outcome' AND ri.reply_id = review_asks_out.ask_id AND ri.state = 'pending')`, contact, msgStamp(now.Add(-AskRetention)))
 	return err
 }
 
@@ -548,7 +572,7 @@ func dispatchOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, at impor
 	if imp.ReplyTo.ID == "" {
 		return persistImport(ctx, tx, imp, at) // a summary of refusals (#302): from the workspace, answering no request
 	}
-	a, _, found, err := loadAsk(ctx, tx, imp.Contact, imp.ReplyTo.ID)
+	a, _, found, err := loadAsk(ctx, tx, imp.source(), imp.ReplyTo.ID)
 	if err != nil || !found {
 		return ImportResult{}, errors.Join(err, ErrNoImport)
 	}
@@ -593,9 +617,10 @@ type AsksPage struct {
 	More    bool
 }
 
-// AsksBy are the requests an agent here sent, newest first, from the one
-// after before ("" for the newest): at most AsksLimit, in an order that
-// stays put (#303), each with counts of its findings only.
+// AsksBy are the requests an agent here sent, under every pairing, newest
+// first, from the one after before ("" for the newest): at most AsksLimit,
+// in an order that stays put (#303), each with its pairing's epoch (#276)
+// and counts of its findings only.
 func (s *Store) AsksBy(ctx context.Context, agent, before string) (AsksPage, error) {
 	where, args, err := asksAfter(agent, before)
 	if err != nil {
@@ -606,8 +631,9 @@ func (s *Store) AsksBy(ctx context.Context, agent, before string) (AsksPage, err
 		return AsksPage{}, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT contact, ask_id, created_at FROM review_asks_out
-WHERE requester_agent = :agent AND requester_agent != ''`+where+` ORDER BY created_at DESC, contact DESC, ask_id DESC LIMIT :limit`, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT contact, pairing_epoch, ask_id, created_at FROM review_asks_out
+WHERE requester_agent = :agent AND requester_agent != ''`+where+`
+ORDER BY created_at DESC, contact DESC, pairing_epoch DESC, ask_id DESC LIMIT :limit`, args...)
 	if err != nil {
 		return AsksPage{}, err
 	}
@@ -619,22 +645,33 @@ WHERE requester_agent = :agent AND requester_agent != ''`+where+` ORDER BY creat
 	return page, page.load(ctx, tx, keys[:min(len(keys), AsksLimit)], cursors)
 }
 
-// asksAfter is the condition and arguments of the page after before.
+// asksAfter is the condition and arguments of the page after before; a
+// cursor without an epoch reads as the first pairing's.
 func asksAfter(agent, before string) (string, []any, error) {
 	cur, err := decodeCursor(before)
 	args := []any{sql.Named("agent", agent), sql.Named("limit", AsksLimit+1)}
 	if err != nil || cur == nil {
 		return "", args, err
 	}
-	return ` AND (created_at < :t OR created_at = :t AND (contact < :c OR contact = :c AND ask_id < :i))`,
-		append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID)), nil
+	return afterAsk, append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("e", max(cur.Epoch, 1)),
+		sql.Named("i", cur.ID)), nil
+}
+
+// afterAsk is the requests past a cursor in AsksBy's order.
+const afterAsk = ` AND (created_at < :t OR created_at = :t AND (contact < :c OR contact = :c
+    AND (pairing_epoch < :e OR pairing_epoch = :e AND ask_id < :i)))`
+
+// askRef names one request: its pairing and ID.
+type askRef struct {
+	k  pairingKey
+	id string
 }
 
 // load reads the page's requests, with counts of their findings only; one
 // gone since is left out with its cursor.
-func (page *AsksPage) load(ctx context.Context, tx *sql.Tx, keys [][2]string, cursors []string) error {
+func (page *AsksPage) load(ctx context.Context, tx *sql.Tx, keys []askRef, cursors []string) error {
 	for i, k := range keys {
-		a, _, found, err := loadAsk(ctx, tx, k[0], k[1])
+		a, _, found, err := loadAsk(ctx, tx, k.k, k.id)
 		if err != nil {
 			return err
 		}
@@ -647,24 +684,25 @@ func (page *AsksPage) load(ctx context.Context, tx *sql.Tx, keys [][2]string, cu
 }
 
 // askPageKeys are a page's requests, as keys and cursors.
-func askPageKeys(rows *sql.Rows) ([][2]string, []string, error) {
+func askPageKeys(rows *sql.Rows) ([]askRef, []string, error) {
 	defer rows.Close()
-	var keys [][2]string
+	var keys []askRef
 	var cursors []string
 	for rows.Next() {
 		var c pendingCursor
-		if err := rows.Scan(&c.Contact, &c.ID, &c.At); err != nil {
+		if err := rows.Scan(&c.Contact, &c.Epoch, &c.ID, &c.At); err != nil {
 			return nil, nil, err
 		}
-		keys, cursors = append(keys, [2]string{c.Contact, c.ID}), append(cursors, c.encode())
+		keys, cursors = append(keys, askRef{pairingKey{c.Contact, c.Epoch}, c.ID}), append(cursors, c.encode())
 	}
 	return keys, cursors, rows.Err()
 }
 
-// AskBy is one request an agent here sent, with every finding received
-// (#303); another agent's request is not found.
+// AskBy is one request an agent here sent, in the contact's current
+// pairing, with every finding received (#303); another agent's request is
+// not found.
 func (s *Store) AskBy(ctx context.Context, agent string, ref protocol.ReviewAskRef) (AskOut, bool, error) {
-	a, _, found, err := loadAsk(ctx, s.db, ref.Contact, ref.AskID)
+	a, _, found, err := loadCurrentAsk(ctx, s.db, ref.Contact, ref.AskID)
 	if err != nil {
 		return AskOut{}, false, err
 	}
@@ -674,9 +712,10 @@ func (s *Store) AskBy(ctx context.Context, agent string, ref protocol.ReviewAskR
 // sentBy: an agent here sent the request, and it is this one.
 func sentBy(a AskOut, agent string) bool { return agent != "" && a.RequesterAgent == agent }
 
-// AskOutFor is a request this side sent contact, when the ID is one.
+// AskOutFor is a request this side sent contact in its current pairing,
+// when the ID is one (#276).
 func (p *PeerMessages) AskOutFor(ctx context.Context, contact, askID string) (AskOut, bool, error) {
-	a, _, found, err := loadAsk(ctx, p.db, contact, askID)
+	a, _, found, err := loadCurrentAsk(ctx, p.db, contact, askID)
 	return a, found, err
 }
 

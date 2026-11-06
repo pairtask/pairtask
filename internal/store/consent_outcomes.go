@@ -98,13 +98,15 @@ func (s *Store) ConsentMark(ctx context.Context) (ConsentMark, error) {
 	return m, err
 }
 
-// PendingConsentOutcomes is the oldest outcomes of the contact's held
-// requests its requester hasn't answered yet, each as it was settled.
+// PendingConsentOutcomes is the oldest outcomes of the held requests of
+// the contact's current pairing its requester hasn't answered yet, each as
+// it was settled; an earlier pairing's are never sent (#276).
 func (p *PeerMessages) PendingConsentOutcomes(ctx context.Context, contact string, max int) ([]messaging.ConsentOutcome, error) {
 	var out []messaging.ConsentOutcome
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT message_id, state, outcome_reason FROM consent_requests
-WHERE contact = ? AND outcome = 'pending' ORDER BY decided_at, cursor LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND outcome = 'pending' ORDER BY decided_at, cursor LIMIT ?2`,
+			contact, sessionBudget.clamp(budget{max, 0}).count)
 		if err != nil {
 			return err
 		}
@@ -121,9 +123,10 @@ WHERE contact = ? AND outcome = 'pending' ORDER BY decided_at, cursor LIMIT ?`, 
 	return out, err
 }
 
-// ConsentOutcomeAnswered records the requester's answer to an outcome; one
-// it never had, or answered before, changes nothing.
+// ConsentOutcomeAnswered records the requester's answer to an outcome of
+// the contact's current pairing; one it never had, or answered before, or
+// only an earlier pairing had, changes nothing (#276).
 func (p *PeerMessages) ConsentOutcomeAnswered(ctx context.Context, contact string, s messaging.ConsentOutcomeStored) error {
 	return p.exec(ctx, contact, `UPDATE consent_requests SET outcome = 'answered'
-WHERE contact = ? AND message_id = ? AND outcome = 'pending'`, contact, s.ID)
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND message_id = ?2 AND outcome = 'pending'`, contact, s.ID)
 }

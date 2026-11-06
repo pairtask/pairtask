@@ -162,8 +162,12 @@ func declineHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, er
 
 // allowHeld settles the request allowed, installing the grant always
 // asks for, and stages its delivery or review as an arrival under a grant
-// would have been.
+// would have been. A request held under a pairing that has since ended is
+// never allowed into the new one (#276).
 func allowHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, error) {
+	if err := refuseRetired(ctx, tx, c.held.pairing()); err != nil {
+		return ConsentOutcome{}, err
+	}
 	if err := grantChoice(ctx, tx, c); err != nil {
 		return ConsentOutcome{}, err
 	}

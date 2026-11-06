@@ -450,7 +450,7 @@ RETURNING message_id`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
 	}
 	for _, id := range ids {
 		// A review request never sent ends unsent.
-		if err := settleAsks(ctx, tx, askEnd{"unsent", "", now}, oneAsk(contact, id)); err != nil {
+		if err := settleAsks(ctx, tx, askEnd{"unsent", "", now}, currentAsk(contact, id)); err != nil {
 			return err
 		}
 	}

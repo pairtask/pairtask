@@ -61,11 +61,12 @@ VALUES (?, `+currentEpoch+`, ?, ?, ?) ON CONFLICT DO NOTHING`, r.key.contact, r.
 	return err
 }
 
-// outcomesFull: a contact's requests with outcomes owed, or all of them,
-// are at their bound.
+// outcomesFull: the requests of a contact's current pairing with outcomes
+// owed, or all contacts' current ones, are at their bound (#276).
 func outcomesFull(ctx context.Context, tx *sql.Tx, contact string) (bool, error) {
 	var theirs, total int
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(contact = ?), 0), COUNT(*) FROM review_outcome_seq WHERE `+owed, contact).Scan(&theirs, &total)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(contact = ?), 0), COUNT(*) FROM review_outcome_seq
+WHERE `+owed+` AND pairing_epoch = `+currentEpochFor("review_outcome_seq.contact"), contact).Scan(&theirs, &total)
 	return theirs >= OutcomesOwedPerContact || total >= OutcomesOwedTotal, err
 }
 
@@ -334,11 +335,12 @@ func verdictFindings(v *protocol.Verdict) *messaging.FindingsEnvelope {
 
 // pruneOutcomes forgets the outcome numbering of requests whose outcomes
 // are all answered, or refused, once their import is forgotten too, each
-// pairing's by its own outcomes. An import of the same ask ID in any
-// pairing still keeps it.
+// pairing's by its own import and outcomes: another pairing's import of
+// the same ask ID never keeps it (#276).
 func pruneOutcomes(ctx context.Context, tx *sql.Tx, contact string, _ time.Time) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM review_outcome_seq WHERE contact = ?1 AND NOT (`+owed+`)
-    AND NOT EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = ?1 AND ri.remote_id = review_outcome_seq.ask_id)
+    AND NOT EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = ?1 AND ri.pairing_epoch = review_outcome_seq.pairing_epoch
+        AND ri.remote_id = review_outcome_seq.ask_id)
     AND NOT EXISTS (SELECT 1 FROM review_outcomes_out o WHERE o.contact = ?1 AND o.pairing_epoch = review_outcome_seq.pairing_epoch
         AND o.ask_id = review_outcome_seq.ask_id)`, contact)
 	return err

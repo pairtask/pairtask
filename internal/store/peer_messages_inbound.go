@@ -295,10 +295,47 @@ FROM peer_messages WHERE `+currentInbound, contact).Scan(&unread, &unreadBytes)
 	return identitiesFull(ctx, tx, contact)
 }
 
-// MarkRead marks inbound messages read as shown here, and queues a receipt
-// for each one newly read; the oldest pending receipts past the bound are
-// dropped.
+// MarkRead marks inbound messages of the contact's current pairing read as
+// shown here, and queues a receipt for each one newly read; the oldest
+// pending receipts past the bound are dropped.
 func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []string, at time.Time) (int, error) {
+	return p.markRead(ctx, ReadMark{Contact: contact, IDs: ids, At: at}, currentMark)
+}
+
+// ReadMark is messages of one of the contact's pairings, named by its
+// epoch, shown to the operator at a time (#276).
+type ReadMark struct {
+	Contact string
+	Epoch   int64
+	IDs     []string
+	At      time.Time
+}
+
+// MarkReadIn marks inbound messages of the pairing r names read as shown
+// here: the current one as MarkRead does, an earlier one, or any of an
+// unpaired contact, as history read here alone, with no receipt for the
+// peer (#276). An epoch the contact never had is messaging.ErrInvalid,
+// marking nothing.
+func (p *PeerMessages) MarkReadIn(ctx context.Context, r ReadMark) (int, error) {
+	return p.markRead(ctx, r, explicitMark)
+}
+
+// markScope is the pairing a mark is read in: as named, or the current one.
+type markScope func(ctx context.Context, tx *sql.Tx, r ReadMark) (ReadMark, error)
+
+// explicitMark is the mark as named.
+func explicitMark(_ context.Context, _ *sql.Tx, r ReadMark) (ReadMark, error) { return r, nil }
+
+// currentMark is the mark in its contact's current pairing.
+func currentMark(ctx context.Context, tx *sql.Tx, r ReadMark) (ReadMark, error) {
+	var err error
+	r.Epoch, err = contactEpoch(ctx, tx, r.Contact)
+	return r, err
+}
+
+// markRead marks a mark read, in the pairing scope picks, in one
+// transaction.
+func (p *PeerMessages) markRead(ctx context.Context, r ReadMark, scope markScope) (int, error) {
 	if err := p.localOnly(); err != nil {
 		return 0, err
 	}
@@ -307,7 +344,10 @@ func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []strin
 		return 0, err
 	}
 	defer tx.Rollback()
-	marked, err := markReadIn(ctx, tx, readSet{contact, ids, at})
+	if r, err = scope(ctx, tx, r); err != nil {
+		return 0, err
+	}
+	marked, err := markReadIn(ctx, tx, r)
 	if err != nil {
 		return 0, err
 	}
@@ -317,37 +357,36 @@ func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []strin
 	return marked, nil
 }
 
-// readSet is received messages shown to the operator at a time.
-type readSet struct {
-	contact string
-	ids     []string
-	at      time.Time
-}
-
-// markReadIn is MarkRead inside a transaction.
-func markReadIn(ctx context.Context, tx *sql.Tx, r readSet) (int, error) {
-	receipt, err := readReceipt(ctx, tx, r.contact)
+// markReadIn is MarkReadIn inside a transaction.
+func markReadIn(ctx context.Context, tx *sql.Tx, r ReadMark) (int, error) {
+	k := pairingKey{r.Contact, r.Epoch}
+	receipt, err := readReceipt(ctx, tx, k)
 	if err != nil {
 		return 0, err
 	}
 	marked := 0
-	for _, id := range r.ids {
-		n, err := markOneRead(ctx, tx, readOne{r.contact, id, r.at, receipt})
+	for _, id := range r.IDs {
+		n, err := markOneRead(ctx, tx, readOne{k, id, r.At, receipt})
 		if err != nil {
 			return 0, err
 		}
 		marked += n
 	}
-	if err := dropReceiptsOver(ctx, tx, r.contact); err != nil {
+	if err := dropReceiptsOver(ctx, tx, r.Contact); err != nil {
 		return 0, err
 	}
 	return marked, nil
 }
 
-// readReceipt is the receipt a read owes the peer: pending, or local only
-// for an unpaired contact, whose history is read here alone (#276).
-func readReceipt(ctx context.Context, tx *sql.Tx, contact string) (string, error) {
-	switch err := refuseUnpaired(ctx, tx, contact); {
+// readReceipt is the receipt a read in pairing k owes the peer: pending in
+// the current pairing; local only in an earlier one, or for an unpaired
+// contact, whose history is read here alone (#276).
+func readReceipt(ctx context.Context, tx *sql.Tx, k pairingKey) (string, error) {
+	current, err := heldPairing(ctx, tx, k)
+	if err != nil || !current {
+		return "local", err
+	}
+	switch err := refuseUnpaired(ctx, tx, k.contact); {
 	case errors.Is(err, ErrUnpaired):
 		return "local", nil
 	case err != nil:
@@ -356,25 +395,26 @@ func readReceipt(ctx context.Context, tx *sql.Tx, contact string) (string, error
 	return "pending", nil
 }
 
-// readOne is one inbound message shown to the operator at a time, and the
-// receipt its read owes.
+// readOne is one inbound message of a pairing shown to the operator at a
+// time, and the receipt its read owes.
 type readOne struct {
-	contact, id string
-	at          time.Time
-	receipt     string
+	k       pairingKey
+	id      string
+	at      time.Time
+	receipt string
 }
 
-// markOneRead marks a received message of the contact's current pairing
-// read with a receipt for the peer, or a refusal recorded here read once,
-// with none: the peer already knows. An earlier pairing's message with the
-// same ID is history, never read for this one (#276).
+// markOneRead marks a received message of the pairing read, with the
+// receipt its read owes, or a refusal recorded here read once, with none:
+// the peer already knows. Another pairing's message with the same ID is
+// never touched (#276).
 func markOneRead(ctx context.Context, tx *sql.Tx, r readOne) (int, error) {
 	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET
-    state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?2,
-    receipt = CASE WHEN state = 'received' THEN ?3 ELSE receipt END,
-    receipt_at = CASE WHEN state = 'received' THEN ?2 ELSE receipt_at END
-WHERE `+currentInbound+` AND message_id = ?4
-    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, r.contact, msgStamp(r.at), r.receipt, r.id)
+    state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?3,
+    receipt = CASE WHEN state = 'received' THEN ?4 ELSE receipt END,
+    receipt_at = CASE WHEN state = 'received' THEN ?3 ELSE receipt_at END
+WHERE contact = ?1 AND pairing_epoch = ?2 AND direction = 'in' AND message_id = ?5
+    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, r.k.contact, r.k.epoch, msgStamp(r.at), r.receipt, r.id)
 	if err != nil {
 		return 0, err
 	}
@@ -414,23 +454,3 @@ WHERE `+currentInbound+` AND message_id = ?2 AND receipt = 'pending'`, contact, 
 // currentInbound is the messages from contact ?1 in its current pairing
 // (#276).
 const currentInbound = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND direction = 'in'`
-
-// ReadMark marks messages of one of the contact's pairings read here
-// (#276).
-type ReadMark struct {
-	Contact string
-	Epoch   int64
-	IDs     []string
-	At      time.Time
-}
-
-// MarkReadIn is MarkRead for the marked pairing; a compile-only seam until
-// history reads are scoped (#276).
-func (p *PeerMessages) MarkReadIn(ctx context.Context, r ReadMark) (int, error) {
-	return p.MarkRead(ctx, r.Contact, r.IDs, r.At)
-}
-
-// AgentAcksIn is AgentAcks for one pairing; a compile-only seam (#276).
-func (p *PeerMessages) AgentAcksIn(ctx context.Context, contact string, epoch int64, id string) ([]string, error) {
-	return p.AgentAcks(ctx, contact, id)
-}

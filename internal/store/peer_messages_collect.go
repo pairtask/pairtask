@@ -146,8 +146,24 @@ func beyondRetention(texts []heldText) []int64 {
 // forgotten, so their sequences are refused as too old rather than taken
 // as new. It stops at the first that must stay, so it never passes a
 // retained message or an undecided request.
+// Each pairing's run and floor are its own: sequences of one never pass
+// or raise another's (#276).
 func raiseFloor(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
-	run, err := forgettableRun(ctx, tx, contact, now)
+	epochs, err := rememberedEpochs(ctx, tx, contact)
+	if err != nil {
+		return err
+	}
+	for _, epoch := range epochs {
+		if err := raiseFloorIn(ctx, tx, pairingKey{contact, epoch}, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// raiseFloorIn is raiseFloor for one pairing.
+func raiseFloorIn(ctx context.Context, tx *sql.Tx, k pairingKey, now time.Time) error {
+	run, err := forgettableRun(ctx, tx, k, now)
 	if err != nil || len(run) == 0 {
 		return err // an incomplete read forgets nothing
 	}
@@ -156,8 +172,8 @@ func raiseFloor(ctx context.Context, tx *sql.Tx, contact string, now time.Time) 
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_floors (contact, pairing_epoch, floor) VALUES (?, `+currentEpoch+`, ?)
-ON CONFLICT(contact, pairing_epoch) DO UPDATE SET floor = MAX(floor, excluded.floor)`, contact, contact, run[len(run)-1].n+1)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_floors (contact, pairing_epoch, floor) VALUES (?, ?, ?)
+ON CONFLICT(contact, pairing_epoch) DO UPDATE SET floor = MAX(floor, excluded.floor)`, k.contact, k.epoch, run[len(run)-1].n+1)
 	return err
 }
 
@@ -172,7 +188,8 @@ func closeRows(rows *sql.Rows) error {
 
 // pruneRouting keeps routing's tables within the messages' bounds: agent
 // acknowledgments pending past ReceiptAge drop, settled ones go, and a
-// settled import goes once the replay floor forgot its message and no
+// settled import goes once the replay floor forgot its message, in the
+// pairing it came under, never another's of the same ID (#276), and no
 // recipient still holds it unacknowledged. Grants and the directory are
 // bounded by MaxAgents; the peer's agent acknowledgments by the recipients
 // of this side's messages.
@@ -185,7 +202,8 @@ func pruneRouting(ctx context.Context, tx *sql.Tx, contact string, now time.Time
 			[]any{contact, msgStamp(now.Add(-messaging.ReceiptAge))}},
 		{`DELETE FROM peer_agent_reads WHERE contact = ? AND state != 'pending'`, []any{contact}},
 		{`DELETE FROM remote_imports WHERE contact = ? AND state != 'pending'
-    AND NOT EXISTS (SELECT 1 FROM peer_messages pm WHERE pm.contact = remote_imports.contact AND pm.direction = 'in' AND pm.message_id = remote_imports.remote_id)
+    AND NOT EXISTS (SELECT 1 FROM peer_messages pm WHERE pm.contact = remote_imports.contact
+        AND pm.pairing_epoch = remote_imports.pairing_epoch AND pm.direction = 'in' AND pm.message_id = remote_imports.remote_id)
     AND NOT EXISTS (SELECT 1 FROM durable_inbox d WHERE d.message_id = remote_imports.local_id AND d.acknowledged_at IS NULL)`, []any{contact}},
 	} {
 		if _, err := tx.ExecContext(ctx, step.query, step.args...); err != nil {

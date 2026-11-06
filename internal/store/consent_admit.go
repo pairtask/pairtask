@@ -216,14 +216,17 @@ func heldAnswer(id string) messaging.Answer {
 	return messaging.Answer{Stored: true, Held: true, HeldID: id}
 }
 
-// heldNow are the requests waiting for this side's operator: held ones,
-// and review requests staged and not yet dispatched or decided.
-const heldNow = `WITH held AS (
-    SELECT contact, recipients, bytes FROM consent_requests WHERE state = 'pending'
+// heldNow are the requests waiting for this side's operator, in each
+// contact's current pairing (#276): held ones, and review requests staged
+// and not yet dispatched or decided, each with its own message.
+var heldNow = `WITH held AS (
+    SELECT contact, recipients, bytes FROM consent_requests
+    WHERE state = 'pending' AND pairing_epoch = ` + currentEpochFor("consent_requests.contact") + `
     UNION ALL
     SELECT ri.contact, ri.recipients, COALESCE(pm.text_bytes, 0) + COALESCE(LENGTH(CAST(pm.review_ask AS BLOB)), 0)
-    FROM remote_imports ri LEFT JOIN peer_messages pm ON pm.contact = ri.contact AND pm.direction = 'in' AND pm.message_id = ri.remote_id
-    WHERE ri.kind = 'review' AND ri.state IN ('pending', 'awaiting'))
+    FROM remote_imports ri LEFT JOIN peer_messages pm ON pm.contact = ri.contact AND pm.pairing_epoch = ri.pairing_epoch
+        AND pm.direction = 'in' AND pm.message_id = ri.remote_id
+    WHERE ri.kind = 'review' AND ri.state IN ('pending', 'awaiting') AND ri.pairing_epoch = ` + currentEpochFor("ri.contact") + `)
 `
 
 // heldUse is how much is held: for the contact, in all, and the bytes of each.
