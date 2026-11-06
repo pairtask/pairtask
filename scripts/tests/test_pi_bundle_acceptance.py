@@ -163,8 +163,8 @@ class PiBundleInputsAcceptance(unittest.TestCase):
         package = json.loads((ROOT / "infra/image/pi/package.json").read_text())
         lock = json.loads((ROOT / "infra/image/pi/package-lock.json").read_text())
         for name in ("@earendil-works/pi-coding-agent", "@earendil-works/pi-mcp"):
-            self.assertEqual(package["dependencies"][name], "1.4.0")
-            self.assertEqual(lock["packages"]["node_modules/" + name]["version"], "1.4.0")
+            self.assertEqual(package["dependencies"][name], "1.5.0")
+            self.assertEqual(lock["packages"]["node_modules/" + name]["version"], "1.5.0")
         required = {"infra/image/pi/package.json", "infra/image/pi/package-lock.json",
                     "infra/image/build-pi-bundle.py", "integrations/pi/index.ts"}
         self.assertTrue(required <= set(release.INPUT_FILES), "Pi inputs must invalidate bundle reuse")
