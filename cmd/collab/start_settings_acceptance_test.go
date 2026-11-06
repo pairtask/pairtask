@@ -68,22 +68,7 @@ func TestStartSettingsInvalidInstallationFailsBeforeLaunch(t *testing.T) {
 	for _, kind := range []string{"directory", "unreadable"} {
 		t.Run(kind, func(t *testing.T) {
 			layout := startSettingsFixture(t)
-			if kind == "directory" {
-				if err := os.Remove(layout.ClaudeSettings); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Mkdir(layout.ClaudeSettings, 0700); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if err := os.Chmod(layout.ClaudeSettings, 0000); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = os.Chmod(layout.ClaudeSettings, 0600) })
-				if _, err := os.ReadFile(layout.ClaudeSettings); err == nil {
-					t.Skip("privileged runner can read mode-000 files")
-				}
-			}
+			startSettingsInvalidFixture(t, layout.ClaudeSettings, kind)
 			var out, stderr bytes.Buffer
 			calls := 0
 			code := runStart([]string{"claude"}, startRuntime{Layout: layout, Stdout: &out, Stderr: &stderr, Exec: func(string, []string, []string) error { calls++; return nil }})
@@ -97,6 +82,26 @@ func TestStartSettingsInvalidInstallationFailsBeforeLaunch(t *testing.T) {
 				t.Errorf("invalid installation wrote generated config: %v", err)
 			}
 		})
+	}
+}
+
+func startSettingsInvalidFixture(t *testing.T, path, kind string) {
+	t.Helper()
+	if kind == "directory" {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err := os.Chmod(path, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0600) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("privileged runner can read mode-000 files")
 	}
 }
 
