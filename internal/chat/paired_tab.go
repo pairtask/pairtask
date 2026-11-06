@@ -30,17 +30,9 @@ func (m *Model) contactCandidates(q pickQuery) []string {
 	return append(theirs, m.untyped(m.homeTags(), q)...)
 }
 
-// offersBothSides: the picker offers ours too, once something is typed or
-// from a bare @ when an agent here can take a tag.
-func (m *Model) offersBothSides(q pickQuery) bool {
-	if !m.pairedMentions() {
-		return false
-	}
-	return q.fragment != "" || slices.ContainsFunc(m.agents.list, taggable)
-}
-
-// taggable: the agent can take an operator message, as a tag here makes.
-func taggable(a protocol.AgentPresence) bool { return a.ProtocolVersion >= protocol.OriginVersion }
+// offersBothSides: on a broker that takes tags here, the picker offers
+// ours and both operators from the first @, whoever is online (#327).
+func (m *Model) offersBothSides(q pickQuery) bool { return m.pairedMentions() }
 
 // theirTags are their agents qualified, once the typing names a scope, and
 // their operator: AGENT@WS, operator@WS. A workspace this side calls "here",
