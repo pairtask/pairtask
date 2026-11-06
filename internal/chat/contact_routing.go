@@ -203,8 +203,12 @@ func (m *Model) localOnlyProblem(a address) string {
 
 // recipientSegments is who a ⇄ tab's draft goes to: that workspace's
 // operator, or the agents of theirs it starts with, and any tagged here; or
-// why it is held. Never the agents here untagged.
+// why it is held; or, while a leading tag is unfinished, that it is being
+// written (#327). Never the agents here untagged.
 func (m *Model) recipientSegments(key viewKey) []hintSegment {
+	if word, editing := m.editingTag(); editing {
+		return editingSegments(word)
+	}
 	ws := safe(m.contactTitle(key))
 	a := m.resolveAddress(contactAddress(m.compose.editor.Value()))
 	if problem := m.heldProblem(a); problem != "" {

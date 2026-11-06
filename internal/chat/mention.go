@@ -20,10 +20,8 @@ func lastMentionToken(value string) (string, bool) {
 	if len(fields) == 0 || !openToken(value) {
 		return "", false // also Unicode-only whitespace, which Fields drops
 	}
-	for _, f := range fields {
-		if !strings.HasPrefix(f, "@") {
-			return "", false // the prefix already ended
-		}
+	if !leadingMentions(fields) {
+		return "", false // the prefix already ended
 	}
 	return strings.TrimPrefix(fields[len(fields)-1], "@"), true
 }

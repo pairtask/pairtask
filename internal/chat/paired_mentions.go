@@ -154,31 +154,6 @@ func homeScope(a address) string {
 	return strings.Join(parts, ", ")
 }
 
-// scopedMentions are the @ picker's choices beyond their bare agents: ours
-// as AGENT@here once something is typed, and theirs qualified once the
-// typing names a scope; a workspace this side calls "here" is named by its
-// key.
-func (m *Model) scopedMentions(contact, fragment string) []string {
-	if fragment == "" || !m.session.HasCapability(protocol.CapabilityPairedMentions) {
-		return nil
-	}
-	var scoped []string
-	for _, id := range m.localAgents("") {
-		scoped = append(scoped, id+"@"+hereScope)
-	}
-	if strings.Contains(fragment, "@") {
-		qualifier := m.contactTitle(contactKey(contact))
-		if qualifier == hereScope || !mentionID.MatchString(qualifier) {
-			qualifier = contact
-		}
-		for _, id := range m.sharedByContact(contact) {
-			scoped = append(scoped, id+"@"+qualifier)
-		}
-	}
-	slices.Sort(scoped)
-	return withPrefix(scoped, fragment)
-}
-
 // writableMention: an ID a mention carries, plain or scoped.
 func writableMention(id string) bool { return mentionID.MatchString(id) || parseTag(id).qualified() }
 
