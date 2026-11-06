@@ -115,6 +115,7 @@ def evidence(case, directory):
     """Print the raw evidence the container's cleanup would lose: argv, MCP
     calls, and the stream's init tools, tool uses, tool results and denials."""
     print(f"BEGIN settings-proof {case} argv", json.dumps(json.loads((directory / "argv.json").read_text())), flush=True)
+    print(f"settings-proof {case} run", (directory / "run.json").read_text().strip(), flush=True)
     for line in (directory / "calls.jsonl").read_text().splitlines():
         print(f"settings-proof {case} mcp-call", line, flush=True)
     for line in (directory / "stdout.jsonl").read_text().splitlines():
@@ -141,7 +142,8 @@ def system_event(event):
     """Init's MCP inventory and mode, and any permission denial notice."""
     if event.get("subtype") == "init":
         return {"init_tools": sorted(t for t in event.get("tools", []) if t.startswith("mcp__")),
-                "mcp_servers": event.get("mcp_servers"), "permission_mode": event.get("permissionMode")}
+                "mcp_servers": event.get("mcp_servers"), "permission_mode": event.get("permissionMode"),
+                "claude_code_version": event.get("claude_code_version")}
     return event if event.get("subtype") == "permission_denied" else None
 
 
@@ -154,10 +156,21 @@ def tool_blocks(event):
     return {"type": event.get("type"), "blocks": blocks} if blocks else None
 
 
-def main(root):
+MARKER = ".settings-proof"
+
+
+def fresh(root):
+    """An empty evidence root: only one this runner made is ever replaced."""
     if root.exists():
+        if not (root / MARKER).is_file():
+            raise SystemExit(f"settings proof: refusing to replace {root}, which this runner didn't create")
         shutil.rmtree(root)
     root.mkdir(mode=0o700, parents=True)
+    (root / MARKER).touch()
+
+
+def main(root):
+    fresh(root)
     failed = []
     for case in ("allow", "none", "deny"):
         directory, code = run_case(case, root)
