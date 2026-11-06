@@ -269,11 +269,12 @@ func sameAsk(a, b *messaging.ReviewAsk) bool {
 	return *a == *b
 }
 
-// outboxRoom refuses a message the contact's queued messages leave no room for.
+// outboxRoom refuses a message the contact's queued messages, in its
+// current pairing, leave no room for.
 func outboxRoom(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	var held budget
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(text_bytes), 0) FROM peer_messages
-WHERE contact = ? AND direction = 'out' AND state = 'queued'`, o.key.contact).Scan(&held.count, &held.bytes)
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = 'out' AND state = 'queued'`, o.key.contact).Scan(&held.count, &held.bytes)
 	if err != nil {
 		return err
 	}
@@ -368,13 +369,14 @@ func replyAuthor(m messaging.Message) sql.NullInt64 {
 }
 
 // holdForUpgrade says why queued messages a session's peer can't carry
-// stay queued; a delivery clears it.
+// stay queued; a delivery clears it. Only the current pairing's are offered.
 func holdForUpgrade(ctx context.Context, tx *sql.Tx, contact, carried string) error {
 	if carried == carriedAll {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET class = ?, reason = ?
-WHERE contact = ? AND direction = 'out' AND state = 'queued' AND NOT (`+carried+`)`, messaging.Transient, messaging.ReasonPeerUpgrade, contact)
+	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET class = ?2, reason = ?3
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = 'out' AND state = 'queued' AND NOT (`+carried+`)`,
+		contact, messaging.Transient, messaging.ReasonPeerUpgrade)
 	return err
 }
 
@@ -397,7 +399,8 @@ func carriedAt(version byte) string {
 	return unroutedRow
 }
 
-// Offer is the oldest queued messages that fit the session bounds; queued
+// Offer is the oldest queued messages, in the contact's current pairing
+// (#276), that fit the session bounds; queued
 // messages past QueuedExpiry are expired first and never offered.
 // Before RoutingVersion, messages to or from agents stay queued.
 func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
@@ -411,7 +414,8 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 		if err := holdForUpgrade(ctx, tx, contact, carried); err != nil {
 			return err
 		}
-		rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
+		rows, err := queryRows(ctx, tx, `WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
 		out = within(rows, budget{limit.count + 1, limit.bytes})
 		return err
 	})
@@ -435,9 +439,12 @@ func within(rows []storedRow, b budget) []messaging.Row {
 	return out
 }
 
+// expireQueued expires the current pairing's queued messages past
+// QueuedExpiry; an earlier pairing's are history.
 func expireQueued(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
 	ids, err := queryStrings(ctx, tx, `UPDATE peer_messages SET state = 'expired'
-WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ? RETURNING message_id`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = 'out' AND state = 'queued' AND created_at < ?2
+RETURNING message_id`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
 	if err != nil {
 		return err
 	}
@@ -451,16 +458,22 @@ WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ? 
 }
 
 // Delivered records the peer's Stored: a queued or expired message is
-// delivered; a read one stays read, and the time is kept once set.
+// delivered; a read one stays read, and the time is kept once set. The ID
+// names a message of the contact's current pairing: one only an earlier
+// pairing used is unknown here (#276).
 func (p *PeerMessages) Delivered(ctx context.Context, contact, id string, at time.Time) error {
 	return p.exec(ctx, contact, `UPDATE peer_messages SET
-    delivered_at = COALESCE(delivered_at, ?),
+    delivered_at = COALESCE(delivered_at, ?3),
     state = CASE WHEN state IN ('queued', 'expired') THEN 'delivered' ELSE state END,
     class = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE class END,
     reason = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE reason END
-WHERE contact = ? AND direction = 'out' AND message_id = ? AND state IN ('queued', 'expired', 'delivered', 'read')`,
-		msgStamp(at), contact, id)
+WHERE `+currentOutbound+` AND state IN ('queued', 'expired', 'delivered', 'read')`,
+		contact, id, msgStamp(at))
 }
+
+// currentOutbound is this side's message ?2 to contact ?1 in its current
+// pairing: the peer's answers name only those (#276).
+const currentOutbound = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND direction = 'out' AND message_id = ?2`
 
 // exec runs one statement for contact in a fenced transaction.
 func (p *PeerMessages) exec(ctx context.Context, contact, query string, args ...any) error {
@@ -482,27 +495,36 @@ func (p *PeerMessages) Refused(ctx context.Context, contact string, refused mess
 		state = messaging.StateRefused
 	}
 	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = ?, class = ?, reason = ?
-WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`, state, r.Class, r.Reason, contact, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = ?3, class = ?4, reason = ?5
+WHERE `+currentOutbound+` AND state = 'queued'`, contact, id, state, r.Class, r.Reason); err != nil {
 			return err
 		}
 		if state != messaging.StateRefused {
 			return nil
 		}
-		// A review request refused for good ends there, and the agent that
-		// sent it is told (#302); a held one waits.
-		return settleRefusedAsk(ctx, tx, contact, refused)
+		return settleCurrentRefusal(ctx, tx, contact, refused)
 	})
 }
 
-// PeerRead records the peer's Read of one of this side's messages to it; a
-// read message was stored, so it is delivered too. Refused messages and
-// anything else are left alone.
+// settleCurrentRefusal ends a review request refused for good, and tells the
+// agent that sent it (#302); a held one waits. An ID the contact's current
+// pairing doesn't hold refuses nothing (#276).
+func settleCurrentRefusal(ctx context.Context, tx *sql.Tx, contact string, refused messaging.Refused) error {
+	_, found, err := messageRow(ctx, tx, messageKey{contact, messaging.DirOut, refused.ID})
+	if err != nil || !found {
+		return err
+	}
+	return settleRefusedAsk(ctx, tx, contact, refused)
+}
+
+// PeerRead records the peer's Read of one of this side's messages to it,
+// in the contact's current pairing; a read message was stored, so it is
+// delivered too. Refused messages and anything else are left alone.
 func (p *PeerMessages) PeerRead(ctx context.Context, contact, id string, at time.Time) error {
 	return p.exec(ctx, contact, `UPDATE peer_messages SET state = 'read',
-    read_at = COALESCE(read_at, ?1), delivered_at = COALESCE(delivered_at, ?1), class = '', reason = ''
-WHERE contact = ?2 AND direction = 'out' AND message_id = ?3 AND state IN ('queued', 'expired', 'delivered', 'read')`,
-		msgStamp(at), contact, id)
+    read_at = COALESCE(read_at, ?3), delivered_at = COALESCE(delivered_at, ?3), class = '', reason = ''
+WHERE `+currentOutbound+` AND state IN ('queued', 'expired', 'delivered', 'read')`,
+		contact, id, msgStamp(at))
 }
 
 // Page is a contact's messages, both directions, newest first, before a

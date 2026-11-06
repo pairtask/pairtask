@@ -598,13 +598,18 @@ func replyOutgoing(ctx context.Context, tx *sql.Tx, r RemoteReply) (outgoing, er
 	return outgoing{key: messageKey{parent.Contact, messaging.DirOut, reply.ID}, m: reply, now: r.Now, localID: r.Msg.MessageID}, nil
 }
 
-// replyParent is the import a reply answers: imported, with the reply's
-// sender among its recipients and the reply to its sender.
+// replyParent is the import a reply answers: imported under the contact's
+// current pairing, which hasn't ended, with the reply's sender among its
+// recipients and the reply to its sender. One an earlier pairing imported
+// is ErrUnpaired: the new pairing never carries a reply to it (#276).
 func replyParent(ctx context.Context, tx *sql.Tx, r RemoteReply) (RemoteImport, error) {
 	parent, state, err := scanImport(tx.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
 WHERE ri.local_id = ?`, r.Parent))
 	if err != nil || state != ImportImported {
 		return RemoteImport{}, errors.Join(err, ErrNoImport)
+	}
+	if err := refuseRetired(ctx, tx, parent.source()); err != nil {
+		return RemoteImport{}, err
 	}
 	if !slices.Contains(parent.Recipients, r.Msg.From) || r.Msg.To != parent.RemoteSender() {
 		return RemoteImport{}, messaging.ErrNotRecipient

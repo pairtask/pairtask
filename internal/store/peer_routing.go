@@ -246,10 +246,22 @@ func allGranted(ctx context.Context, q rowQuerier, contact string, agents []stri
 	return true, nil
 }
 
-// PeerDirectory is the agents contact last said it shares, sorted; a hint
-// for addressing, never a permission.
+// PeerDirectory is the agents contact last said it shares in its current
+// pairing, sorted; a hint for addressing, never a permission. A session
+// the contact's pairing has moved past reads nothing (#276).
 func (p *PeerMessages) PeerDirectory(ctx context.Context, contact string) ([]string, error) {
-	return queryStrings(ctx, p.db, `SELECT agent FROM peer_directory WHERE contact = ? ORDER BY agent`, contact)
+	var agents []string
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		agents, err = storedDirectory(ctx, tx, contact)
+		return err
+	})
+	return agents, err
+}
+
+// storedDirectory is the directory stored for the contact's current
+// pairing, sorted: empty after a new pairing until the contact sends one.
+func storedDirectory(ctx context.Context, q rowsQuerier, contact string) ([]string, error) {
+	return queryStrings(ctx, q, `SELECT agent FROM peer_directory WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` ORDER BY agent`, contact)
 }
 
 // SetPeerDirectory replaces what contact says it shares: at most MaxAgents
@@ -288,7 +300,7 @@ func directorySeen(ctx context.Context, tx *sql.Tx, contact string, at time.Time
 
 // directoryDiffers: the agents listed aren't the ones stored.
 func directoryDiffers(ctx context.Context, tx *sql.Tx, contact string, agents []string) (bool, error) {
-	before, err := queryStrings(ctx, tx, `SELECT agent FROM peer_directory WHERE contact = ? ORDER BY agent`, contact)
+	before, err := storedDirectory(ctx, tx, contact)
 	if err != nil {
 		return false, err
 	}
@@ -304,13 +316,14 @@ type peerDirectory struct {
 	at      time.Time
 }
 
-// writeDirectory replaces the stored directory.
+// writeDirectory replaces the stored directory of the contact's current
+// pairing; an earlier pairing's stays as it was.
 func writeDirectory(ctx context.Context, tx *sql.Tx, d peerDirectory) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?`, d.contact); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM peer_directory WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1, d.contact); err != nil {
 		return err
 	}
 	for _, agent := range d.agents {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO peer_directory (contact, agent, seen_at) VALUES (?, ?, ?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO peer_directory (contact, pairing_epoch, agent, seen_at) VALUES (?1, `+currentEpochOf1+`, ?2, ?3)
 ON CONFLICT DO NOTHING`, d.contact, agent, msgStamp(d.at)); err != nil {
 			return err
 		}
@@ -323,8 +336,9 @@ func validDirectory(agents []string) bool {
 }
 
 // PeerAgentRead records that one of contact's agents acknowledged a routed
-// message this side sent it. An ID this side doesn't hold is answered and
-// dropped; an agent the message wasn't to is ErrNotRecipient.
+// message this side sent it, in the contact's current pairing. An ID this
+// side doesn't hold there is answered and dropped; an agent the message
+// wasn't to is ErrNotRecipient.
 func (p *PeerMessages) PeerAgentRead(ctx context.Context, contact string, r messaging.AgentRead, at time.Time) error {
 	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
 		return peerAgentReadIn(ctx, tx, agentReadAt{contact, r, at})
@@ -343,8 +357,7 @@ type agentReadAt struct {
 func peerAgentReadIn(ctx context.Context, tx *sql.Tx, a agentReadAt) error {
 	contact, r, at := a.contact, a.r, a.at
 	var to sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT to_agents FROM peer_messages WHERE contact = ? AND direction = 'out' AND message_id = ?`,
-		contact, r.ID).Scan(&to)
+	err := tx.QueryRowContext(ctx, `SELECT to_agents FROM peer_messages WHERE `+currentOutbound, contact, r.ID).Scan(&to)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -358,8 +371,8 @@ func peerAgentReadIn(ctx context.Context, tx *sql.Tx, a agentReadAt) error {
 	if !slices.Contains(agents, r.Agent) {
 		return messaging.ErrNotRecipient
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_agent_acks (contact, message_id, agent, read_at) VALUES (?, ?, ?, ?)
-ON CONFLICT DO NOTHING`, contact, r.ID, r.Agent, msgStamp(at))
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_agent_acks (contact, pairing_epoch, message_id, agent, read_at)
+VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4) ON CONFLICT DO NOTHING`, contact, r.ID, r.Agent, msgStamp(at))
 	return err
 }
 
@@ -386,10 +399,13 @@ type agentRead struct {
 
 // queueAgentReadIn is QueueAgentRead inside a transaction, the agent's
 // acknowledgment's own: it answers the contact the read is queued for, ""
-// when the message isn't an import.
+// when the message isn't an import of the contact's current pairing. An
+// earlier pairing's import owes the contact nothing now (#276).
 func queueAgentReadIn(ctx context.Context, tx *sql.Tx, r agentRead) (string, error) {
 	var contact, remoteID, recipients string
-	err := tx.QueryRowContext(ctx, `SELECT contact, remote_id, recipients FROM remote_imports WHERE local_id = ? AND state = 'imported'`,
+	err := tx.QueryRowContext(ctx, `SELECT ri.contact, ri.remote_id, ri.recipients FROM remote_imports ri
+WHERE ri.local_id = ? AND ri.state = 'imported'
+    AND ri.pairing_epoch = COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WHERE ce.identity_key = ri.contact), 1)`,
 		r.localID).Scan(&contact, &remoteID, &recipients)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -404,24 +420,34 @@ func queueAgentReadIn(ctx context.Context, tx *sql.Tx, r agentRead) (string, err
 	if !slices.Contains(agents, r.agent) {
 		return "", messaging.ErrNotRecipient
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_agent_reads (contact, message_id, agent, read_at, state) VALUES (?, ?, ?, ?, 'pending')
-ON CONFLICT DO NOTHING`, contact, remoteID, r.agent, msgStamp(r.at)); err != nil {
-		return "", err
-	}
-	// The oldest pending past the bound are dropped, as read receipts are.
-	_, err = tx.ExecContext(ctx, `UPDATE peer_agent_reads SET state = 'dropped'
-WHERE rowid IN (SELECT rowid FROM peer_agent_reads WHERE contact = ?1 AND state = 'pending'
-    ORDER BY read_at DESC, rowid DESC LIMIT -1 OFFSET ?2)`, contact, messaging.Receipts)
-	return contact, err
+	return contact, pendAgentRead(ctx, tx, agentReadAt{contact, messaging.AgentRead{ID: remoteID, Agent: r.agent}, r.at})
 }
 
-// PendingAgentReads is the oldest agent acknowledgments not yet confirmed
-// by the contact.
+// pendAgentRead queues an agent's read for the contact in its current
+// pairing; the oldest pending past the bound are dropped, as read receipts
+// are.
+func pendAgentRead(ctx context.Context, tx *sql.Tx, a agentReadAt) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_agent_reads (contact, pairing_epoch, message_id, agent, read_at, state)
+VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4, 'pending') ON CONFLICT DO NOTHING`, a.contact, a.r.ID, a.r.Agent, msgStamp(a.at)); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE peer_agent_reads SET state = 'dropped'
+WHERE rowid IN (SELECT rowid FROM peer_agent_reads WHERE `+currentAgentReads+` AND state = 'pending'
+    ORDER BY read_at DESC, rowid DESC LIMIT -1 OFFSET ?2)`, a.contact, messaging.Receipts)
+	return err
+}
+
+// currentAgentReads is the agent reads owed contact ?1 in its current
+// pairing (#276).
+const currentAgentReads = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1
+
+// PendingAgentReads is the oldest agent acknowledgments, in the contact's
+// current pairing, not yet confirmed by it.
 func (p *PeerMessages) PendingAgentReads(ctx context.Context, contact string, max int) ([]messaging.AgentRead, error) {
 	var out []messaging.AgentRead
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT message_id, agent FROM peer_agent_reads WHERE contact = ? AND state = 'pending'
-ORDER BY read_at, rowid LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
+		rows, err := tx.QueryContext(ctx, `SELECT message_id, agent FROM peer_agent_reads WHERE `+currentAgentReads+` AND state = 'pending'
+ORDER BY read_at, rowid LIMIT ?2`, contact, sessionBudget.clamp(budget{max, 0}).count)
 		if err != nil {
 			return err
 		}
@@ -438,10 +464,11 @@ ORDER BY read_at, rowid LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).c
 	return out, err
 }
 
-// AgentReadConfirmed records the contact's AgentReadStored.
+// AgentReadConfirmed records the contact's AgentReadStored, for a read of
+// its current pairing.
 func (p *PeerMessages) AgentReadConfirmed(ctx context.Context, contact string, r messaging.AgentRead) error {
 	return p.exec(ctx, contact, `UPDATE peer_agent_reads SET state = 'confirmed'
-WHERE contact = ? AND message_id = ? AND agent = ? AND state = 'pending'`, contact, r.ID, r.Agent)
+WHERE `+currentAgentReads+` AND message_id = ?2 AND agent = ?3 AND state = 'pending'`, contact, r.ID, r.Agent)
 }
 
 // queryStrings is one text column of every row a query returns.

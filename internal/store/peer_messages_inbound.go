@@ -282,13 +282,13 @@ func replayFloor(ctx context.Context, q rowQuerier, contact string) (int64, erro
 	return floor, err
 }
 
-// peerInboxFull: the unread messages or the remembered identities are at
-// their bounds.
+// peerInboxFull: the unread messages of the contact's current pairing, or
+// the remembered identities, are at their bounds.
 func peerInboxFull(ctx context.Context, tx *sql.Tx, contact string, size int) (bool, error) {
 	var unread, unreadBytes int
 	err := tx.QueryRowContext(ctx, `SELECT
     COALESCE(SUM(state = 'received'), 0), COALESCE(SUM(CASE WHEN state = 'received' THEN text_bytes END), 0)
-FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unread, &unreadBytes)
+FROM peer_messages WHERE `+currentInbound, contact).Scan(&unread, &unreadBytes)
 	if err != nil || !unreadBudget.holds(budget{unread, unreadBytes + size}) {
 		return true, err
 	}
@@ -364,15 +364,17 @@ type readOne struct {
 	receipt     string
 }
 
-// markOneRead marks a received message read with a receipt for the peer,
-// or a refusal recorded here read once, with none: the peer already knows.
+// markOneRead marks a received message of the contact's current pairing
+// read with a receipt for the peer, or a refusal recorded here read once,
+// with none: the peer already knows. An earlier pairing's message with the
+// same ID is history, never read for this one (#276).
 func markOneRead(ctx context.Context, tx *sql.Tx, r readOne) (int, error) {
 	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET
-    state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?1,
-    receipt = CASE WHEN state = 'received' THEN ?4 ELSE receipt END,
-    receipt_at = CASE WHEN state = 'received' THEN ?1 ELSE receipt_at END
-WHERE contact = ?2 AND direction = 'in' AND message_id = ?3
-    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, msgStamp(r.at), r.contact, r.id, r.receipt)
+    state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?2,
+    receipt = CASE WHEN state = 'received' THEN ?3 ELSE receipt END,
+    receipt_at = CASE WHEN state = 'received' THEN ?2 ELSE receipt_at END
+WHERE `+currentInbound+` AND message_id = ?4
+    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, r.contact, msgStamp(r.at), r.receipt, r.id)
 	if err != nil {
 		return 0, err
 	}
@@ -380,28 +382,35 @@ WHERE contact = ?2 AND direction = 'in' AND message_id = ?3
 	return int(n), err
 }
 
-// dropReceiptsOver drops the oldest pending receipts beyond the bound.
+// dropReceiptsOver drops the oldest pending receipts of the contact's
+// current pairing beyond the bound.
 func dropReceiptsOver(ctx context.Context, tx *sql.Tx, contact string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET receipt = 'dropped'
-WHERE cursor IN (SELECT cursor FROM peer_messages WHERE contact = ?1 AND direction = 'in' AND receipt = 'pending'
+WHERE cursor IN (SELECT cursor FROM peer_messages WHERE `+currentInbound+` AND receipt = 'pending'
     ORDER BY receipt_at DESC, cursor DESC LIMIT -1 OFFSET ?2)`, contact, messaging.Receipts)
 	return err
 }
 
-// PendingReads is the oldest receipts not yet confirmed by the peer.
+// PendingReads is the oldest receipts of the contact's current pairing not
+// yet confirmed by the peer.
 func (p *PeerMessages) PendingReads(ctx context.Context, contact string, max int) ([]string, error) {
 	var ids []string
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
 		ids, err = queryStrings(ctx, tx, `SELECT message_id FROM peer_messages
-WHERE contact = ? AND direction = 'in' AND receipt = 'pending' ORDER BY receipt_at, cursor LIMIT ?`,
+WHERE `+currentInbound+` AND receipt = 'pending' ORDER BY receipt_at, cursor LIMIT ?2`,
 			contact, sessionBudget.clamp(budget{max, 0}).count)
 		return err
 	})
 	return ids, err
 }
 
-// ReadConfirmed records the peer's ReadStored for a pending receipt.
+// ReadConfirmed records the peer's ReadStored for a pending receipt of the
+// contact's current pairing.
 func (p *PeerMessages) ReadConfirmed(ctx context.Context, contact, id string) error {
 	return p.exec(ctx, contact, `UPDATE peer_messages SET receipt = 'confirmed'
-WHERE contact = ? AND direction = 'in' AND message_id = ? AND receipt = 'pending'`, contact, id)
+WHERE `+currentInbound+` AND message_id = ?2 AND receipt = 'pending'`, contact, id)
 }
+
+// currentInbound is the messages from contact ?1 in its current pairing
+// (#276).
+const currentInbound = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND direction = 'in'`

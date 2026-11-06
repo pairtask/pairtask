@@ -136,8 +136,8 @@ func (h *Hub) importOne(ctx context.Context, clients map[string]*Client, imp sto
 	}
 }
 
-// importHeld logs why an import waits, unless a full inbox or taken IDs
-// hold it, which a later pass retries.
+// importHeld logs why an import waits, unless a full inbox, taken IDs or
+// an ended pairing hold it, which a later pass retries or settles.
 func (h *Hub) importHeld(err error) {
 	if slices.ContainsFunc(retriedImports, func(r error) bool { return errors.Is(err, r) }) {
 		return
@@ -146,8 +146,10 @@ func (h *Hub) importHeld(err error) {
 }
 
 // retriedImports hold an import back for a later pass: a full inbox, IDs
-// all taken, or the open reviews at their bound.
-var retriedImports = []error{store.ErrInboxFull, store.ErrLocalIDsTaken, review.ErrFull, store.ErrPaused}
+// all taken, the open reviews at their bound, a paused contact, or one
+// unpaired or paired again since the import was staged, which the unpair
+// settles (#276): a race, not a fault.
+var retriedImports = []error{store.ErrInboxFull, store.ErrLocalIDsTaken, review.ErrFull, store.ErrPaused, store.ErrUnpaired}
 
 // deliverImport hands an imported message to its recipients connected now.
 func (h *Hub) deliverImport(clients map[string]*Client, result store.ImportResult) {
