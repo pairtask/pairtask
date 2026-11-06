@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,6 +31,7 @@ type startOptions struct {
 // startLayout is where the launchers and configs live; tests point it elsewhere.
 type startLayout struct {
 	CodexLauncher, CodexBinary, ClaudeBinary, BaseConfig, ConfigDir string
+	ClaudeSettings                                                  string // installed tool permissions; absent on a native host
 	PiBinary, PiExtension, MCPBinary                                string // pi and its extension; the bridge it runs
 	StateDir, CodexHome                                             string // resume bindings; Codex's saved conversations
 }
@@ -40,16 +42,17 @@ func defaultStartLayout() startLayout {
 		dir = filepath.Join(os.Getenv("HOME"), ".config")
 	}
 	return startLayout{
-		CodexLauncher: "/usr/local/lib/pairtask/pairtask-codex",
-		CodexBinary:   "/usr/local/bin/codex",
-		ClaudeBinary:  "/usr/local/bin/claude",
-		BaseConfig:    "/etc/pairtask/claude-mcp.json",
-		ConfigDir:     filepath.Join(dir, "pairtask"),
-		StateDir:      stateDir(),
-		PiBinary:      "/usr/local/bin/pi",
-		PiExtension:   cmp.Or(os.Getenv("PAIRTASK_PI_EXTENSION"), "/usr/local/lib/pairtask/pi-extension/index.ts"),
-		MCPBinary:     "/usr/local/lib/pairtask/pairtask-mcp",
-		CodexHome:     cmp.Or(os.Getenv("CODEX_HOME"), filepath.Join(os.Getenv("HOME"), ".codex")),
+		CodexLauncher:  "/usr/local/lib/pairtask/pairtask-codex",
+		CodexBinary:    "/usr/local/bin/codex",
+		ClaudeBinary:   "/usr/local/bin/claude",
+		BaseConfig:     "/etc/pairtask/claude-mcp.json",
+		ClaudeSettings: "/etc/pairtask/claude-settings.json",
+		ConfigDir:      filepath.Join(dir, "pairtask"),
+		StateDir:       stateDir(),
+		PiBinary:       "/usr/local/bin/pi",
+		PiExtension:    cmp.Or(os.Getenv("PAIRTASK_PI_EXTENSION"), "/usr/local/lib/pairtask/pi-extension/index.ts"),
+		MCPBinary:      "/usr/local/lib/pairtask/pairtask-mcp",
+		CodexHome:      cmp.Or(os.Getenv("CODEX_HOME"), filepath.Join(os.Getenv("HOME"), ".codex")),
 	}
 }
 
@@ -211,6 +214,10 @@ func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, 
 	case "pi":
 		return piPlan(opts, layout), nil
 	}
+	settings, err := layout.settingsArgs()
+	if err != nil {
+		return startPlan{}, err
+	}
 	config, err := claudeConfig(base, serverIdentity{ID: opts.ID, Socket: opts.Socket, Rooms: opts.Rooms})
 	if err != nil {
 		return startPlan{}, err
@@ -223,7 +230,41 @@ func buildStart(opts startOptions, layout startLayout, base []byte) (startPlan, 
 	if opts.Effort != "" {
 		argv = append(argv, "--effort", opts.Effort)
 	}
+	argv = append(argv, settings...)
 	return startPlan{Argv: append(argv, opts.Native...), ConfigPath: path, Config: config}, nil
+}
+
+// settingsArgs pass Claude the installed tool permissions (#116), the same
+// file the shell launcher passes: nothing on a host without one, and an
+// error naming it when it is there but isn't a file Claude can read.
+func (l startLayout) settingsArgs() ([]string, error) {
+	if l.ClaudeSettings == "" {
+		return nil, nil
+	}
+	info, err := os.Stat(l.ClaudeSettings)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err == nil && !info.Mode().IsRegular() {
+		err = fmt.Errorf("claude permissions %s: not a regular file", l.ClaudeSettings)
+	}
+	if err == nil {
+		err = readable(l.ClaudeSettings)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []string{"--settings", l.ClaudeSettings}, nil
+}
+
+// readable opens the file once, so a permissions file Claude couldn't read
+// stops the start instead of being skipped.
+func readable(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 func codexPlan(opts startOptions, layout startLayout) startPlan {

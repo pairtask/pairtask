@@ -240,7 +240,7 @@ See the trust section in the design archive for the full rules.
 
 **Harness permissions.** So the agents' replies and acknowledgments to you aren't held back by their harness, setup allows the pairtask messaging and coordination tools by name. These are `send`, `acknowledge`, `receive`, `wait`, `wait_reply`, `listen`, `listener_status`, `status`, `read_status`, the claim tools and the room tools.
 
-- **Claude Code:** `/etc/pairtask/claude-settings.json`, passed to agent sessions by the `claude` launcher.
+- **Claude Code:** `/etc/pairtask/claude-settings.json`, passed to agent sessions by the `claude` launcher and by `pairtask start claude`. Without the file, `pairtask start` runs Claude as before; a file there that isn't readable stops the start.
 - **Codex:** the managed launcher already sets `approval_mode = "approve"` on the collaboration tools its runtime server serves, and since #201 on the review tools. `wait`, `listen` and the listener delegation tools aren't on that list.
 
 In Claude Code the review tools and every other tool keep their usual approval. Neither harness changes its permission mode. Your own deny rules, organization policy and the harness's own checks still apply, so this is not a blanket bypass.
