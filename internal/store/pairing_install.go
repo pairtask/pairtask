@@ -143,7 +143,7 @@ func crossed(x peer.ExchangeRecord, c contactAuthority) bool {
 }
 
 // endRejected records a rejection's delivery: the candidate is retired,
-// having installed nothing.
+// having installed nothing, so the result reports no install.
 func endRejected(ctx context.Context, tx *sql.Tx, in installing) (peer.InstallResult, error) {
 	if _, err := tx.ExecContext(ctx, `UPDATE pairing_exchanges SET state = 'retired', reason = 'rejected', delivered_at = ?2, retired_at = ?2
 WHERE operation_id = ?1`, in.x.OperationID, stamp(in.at)); err != nil {
@@ -152,7 +152,8 @@ WHERE operation_id = ?1`, in.x.OperationID, stamp(in.at)); err != nil {
 	if err := mirrorDelivery(ctx, tx, in); err != nil {
 		return peer.InstallResult{}, err
 	}
-	return installedRow(ctx, tx, in.x.OperationID, 0)
+	x, _, err := exchangeRow(ctx, tx, in.x.OperationID)
+	return peer.InstallResult{Exchange: x}, err
 }
 
 // install retires the epoch a repair replaces, makes or merges the

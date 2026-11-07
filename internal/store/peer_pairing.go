@@ -230,21 +230,19 @@ type rowQuerier interface {
 func pairingOutcome(ctx context.Context, q rowQuerier, operationID string) (peer.PairingOutcome, bool, error) {
 	var o peer.PairingOutcome
 	var at string
-	var x peer.ExchangeRecord
 	var mark int64
 	err := q.QueryRowContext(ctx, `SELECT o.operation_id, o.invitation_id, o.identity_key, o.name, o.transcript_id, o.at,
-    COALESCE(x.mode, ''), COALESCE(x.begun_mark, 0), COALESCE(x.kind, ''), COALESCE(x.reason, '')
+    COALESCE(x.mode, ''), COALESCE(x.begun_mark, 0), COALESCE(x.repair_key, '')
 FROM peer_pairing_outcomes o LEFT JOIN pairing_exchanges x ON x.operation_id = o.operation_id AND x.role = 'inviter'
 WHERE o.operation_id = ?`, operationID).
-		Scan(&o.OperationID, &o.InvitationID, &o.IdentityKey, &o.Name, &o.TranscriptID, &at, &o.Mode, &mark, &x.Kind, &x.Reason)
+		Scan(&o.OperationID, &o.InvitationID, &o.IdentityKey, &o.Name, &o.TranscriptID, &at, &o.Mode, &mark, &o.Repair)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.PairingOutcome{}, false, nil
 	}
 	if err != nil {
 		return peer.PairingOutcome{}, false, err
 	}
-	x.IdentityKey = o.IdentityKey
-	o.BegunMark, o.Repair, o.TranscriptID = uint64(mark), repairOf(x), bytes.Clone(o.TranscriptID)
+	o.BegunMark, o.TranscriptID = uint64(mark), bytes.Clone(o.TranscriptID)
 	if o.Mode == peer.ModeLegacy {
 		o.Mode = ""
 	}

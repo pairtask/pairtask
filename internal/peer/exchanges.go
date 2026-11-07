@@ -67,6 +67,7 @@ type ExchangeRecord struct {
 	OperationID, IdentityKey string
 	Role                     string // "inviter" | "joiner"
 	Kind                     ExchangeKind
+	Repair                   string // the identity the exchange declared it repairs, "" for none
 	Mode                     ExchangeMode
 	TranscriptID             []byte
 	BegunMark                uint64 // the global authority mark when the exchange began

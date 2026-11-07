@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS pairing_exchanges (
     identity_key    TEXT NOT NULL,
     role            TEXT NOT NULL CHECK (role IN ('inviter', 'joiner')),
     kind            TEXT NOT NULL CHECK (kind IN ('pair', 'repair', 'address_move')),
+    repair_key      TEXT NOT NULL DEFAULT '', -- the declared repair, written once at commit
     transcript_id   BLOB NOT NULL,
     begun_mark      INTEGER NOT NULL,
     state           TEXT NOT NULL CHECK (state IN ('open', 'installed', 'retired', 'refused', 'legacy')),

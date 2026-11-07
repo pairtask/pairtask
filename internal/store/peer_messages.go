@@ -96,11 +96,13 @@ func knownContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, 
 	return ok, err
 }
 
-// pairingConfirmed is the confirmed pairing of contact row c, identity ?1.
+// pairingConfirmed is the confirmed pairing of contact row c, identity ?1:
+// a pairing ID is confirmed only by the installed row its pairing_op
+// names; a legacy pairing, with none, by its decision.
 const pairingConfirmed = `(
-    (c.pairing_op != '' AND EXISTS (SELECT 1 FROM pairing_exchanges x
+    (c.pairing_id IS NOT NULL AND EXISTS (SELECT 1 FROM pairing_exchanges x
         WHERE x.operation_id = c.pairing_op AND x.identity_key = ?1 AND x.state = 'installed'))
-    OR (c.pairing_op = '' AND ` + pairingDecided + `))`
+    OR (c.pairing_id IS NULL AND ` + pairingDecided + `))`
 
 // pairingDecided is the legacy confirmed decision for identity ?1.
 const pairingDecided = `(

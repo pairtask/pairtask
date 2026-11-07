@@ -35,7 +35,7 @@ func (s *Store) Exchange(ctx context.Context, operationID string) (peer.Exchange
 	return exchangeRow(ctx, s.db, operationID)
 }
 
-const exchangeSelect = `SELECT xseq, operation_id, identity_key, role, kind, mode, transcript_id, begun_mark, state, decision,
+const exchangeSelect = `SELECT xseq, operation_id, identity_key, role, kind, repair_key, mode, transcript_id, begun_mark, state, decision,
     COALESCE(decided_at, ''), COALESCE(delivered_at, ''), COALESCE(installed_at, ''), COALESCE(retired_at, ''),
     COALESCE(installed_epoch, 0), reason FROM pairing_exchanges`
 
@@ -48,7 +48,7 @@ func scanExchange(row rowScanner) (peer.ExchangeRecord, bool, error) {
 	var mark int64
 	var decision string
 	times := make([]string, 4)
-	err := row.Scan(&x.XSeq, &x.OperationID, &x.IdentityKey, &x.Role, &x.Kind, &x.Mode, &x.TranscriptID, &mark, &x.State, &decision,
+	err := row.Scan(&x.XSeq, &x.OperationID, &x.IdentityKey, &x.Role, &x.Kind, &x.Repair, &x.Mode, &x.TranscriptID, &mark, &x.State, &decision,
 		&times[0], &times[1], &times[2], &times[3], &x.InstalledEpoch, &x.Reason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.ExchangeRecord{}, false, nil
@@ -109,17 +109,18 @@ func joinExchange(r peer.JoinRecord) exchangeInput {
 		mark: r.BegunMark, repair: r.Repair, at: r.UpdatedAt}
 }
 
-// kind is the exchange's intent against this side's contact: a declared
-// repair, an undeclared exchange with an active contact (an address move),
-// or a first or fresh pairing.
+// kind is the exchange's intent against this side's contact: with an
+// active contact, a declared repair or an undeclared exchange (an address
+// move); with an unknown or unpaired one, a first or fresh pairing, which
+// awaits acceptance whatever it declared.
 func (in exchangeInput) kind(c contactAuthority) peer.ExchangeKind {
+	if !c.active() {
+		return peer.KindPair
+	}
 	if in.repair != "" {
 		return peer.KindRepair
 	}
-	if c.active() {
-		return peer.KindAddressMove
-	}
-	return peer.KindPair
+	return peer.KindAddressMove
 }
 
 // refusal is why the exchange can't become a candidate, "" if it can: a
@@ -139,7 +140,7 @@ func (in exchangeInput) refusal(c contactAuthority) string {
 
 // record is the ledger row the exchange commits as.
 func (in exchangeInput) record(c contactAuthority) peer.ExchangeRecord {
-	x := peer.ExchangeRecord{OperationID: in.operationID, IdentityKey: in.identity, Role: in.role, Kind: in.kind(c),
+	x := peer.ExchangeRecord{OperationID: in.operationID, IdentityKey: in.identity, Role: in.role, Kind: in.kind(c), Repair: in.repair,
 		Mode: in.mode.Stored(), TranscriptID: in.transcript, BegunMark: in.mark, State: peer.ExchangeOpen, Decision: peer.PairingPending}
 	if reason := in.refusal(c); reason != "" {
 		x.State, x.Reason = peer.ExchangeRefused, reason
@@ -148,31 +149,11 @@ func (in exchangeInput) record(c contactAuthority) peer.ExchangeRecord {
 }
 
 // matches reports a replay of the exchange recorded as x: every authority
-// input the same.
+// input the same, the declared repair exactly as it was recorded.
 func (in exchangeInput) matches(x peer.ExchangeRecord) bool {
 	same := []bool{x.IdentityKey == in.identity, x.Role == in.role, x.Mode == in.mode.Stored(), x.BegunMark == in.mark,
-		bytes.Equal(x.TranscriptID, in.transcript), repairMatches(x, in.repair)}
+		bytes.Equal(x.TranscriptID, in.transcript), x.Repair == in.repair}
 	return !slices.Contains(same, false)
-}
-
-// repairMatches reports a declared repair the same as the one x recorded:
-// a refused mismatch declared some other identity, a repair its own.
-func repairMatches(x peer.ExchangeRecord, repair string) bool {
-	switch {
-	case x.Reason == peer.RefusedMismatch:
-		return repair != "" && repair != x.IdentityKey
-	case x.Kind == peer.KindRepair:
-		return repair == x.IdentityKey
-	}
-	return repair == ""
-}
-
-// repairOf is the declared repair a ledger row stands for.
-func repairOf(x peer.ExchangeRecord) string {
-	if x.Kind == peer.KindRepair && x.Reason != peer.RefusedMismatch {
-		return x.IdentityKey
-	}
-	return ""
 }
 
 // contactAuthority is this side's contact for an identity as the ledger
@@ -272,8 +253,8 @@ func refuseCrossing(ctx context.Context, tx *sql.Tx, x peer.ExchangeRecord) (pee
 
 func insertExchange(ctx context.Context, tx *sql.Tx, x peer.ExchangeRecord, at time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO pairing_exchanges
-(operation_id, identity_key, role, kind, transcript_id, begun_mark, state, mode, decision, reason, recorded_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, x.OperationID, x.IdentityKey, x.Role, string(x.Kind), x.TranscriptID,
+(operation_id, identity_key, role, kind, repair_key, transcript_id, begun_mark, state, mode, decision, reason, recorded_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, x.OperationID, x.IdentityKey, x.Role, string(x.Kind), x.Repair, x.TranscriptID,
 		int64(x.BegunMark), x.State, string(x.Mode), x.Reason, stamp(at))
 	return err
 }
