@@ -142,12 +142,7 @@ func pairHandler(fields pairWords) func(*Model, pairWords) tea.Cmd {
 // pairCommand is /pair: list by default, or one operation. Accept and reject
 // resolve a typed prefix to a full identity key here, never on the broker.
 func (m *Model) pairCommand(arg argument) tea.Cmd {
-	if !m.session.HasCapability(protocol.CapabilityPairing) {
-		m.status = "this broker doesn't support pairing; upgrade it to use /pair"
-		return nil
-	}
-	if !m.ready() {
-		m.status = "not connected; /pair again once reconnected"
+	if m.pairUnavailable() {
 		return nil
 	}
 	fields := pairWords(strings.Fields(string(arg)))
@@ -171,6 +166,20 @@ func (m *Model) pairCommand(arg argument) tea.Cmd {
 	}
 	m.status = "pairing " + fields[0] + "…"
 	return m.request(kindPairing, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: fields[0], PairingTarget: target}, fields[0])
+}
+
+// pairUnavailable says, in the status line, why /pair can't run now: a
+// broker without pairing, or no connection.
+func (m *Model) pairUnavailable() bool {
+	if !m.session.HasCapability(protocol.CapabilityPairing) {
+		m.status = "this broker doesn't support pairing; upgrade it to use /pair"
+		return true
+	}
+	if !m.ready() {
+		m.status = "not connected; /pair again once reconnected"
+		return true
+	}
+	return false
 }
 
 func (m *Model) pairingTarget(fields pairWords) (string, string) {
