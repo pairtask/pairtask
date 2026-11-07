@@ -51,9 +51,22 @@ func identityProblem(err error) string {
 	return "identity_unavailable"
 }
 
+// pairingCodes are the refusals with a code of their own (#276).
+var pairingCodes = []struct {
+	err  error
+	code routingError
+}{
+	{peer.ErrPeerTooOld, routingError{protocol.ErrPairingPeerTooOld, "the other side must update to pair again"}},
+	{peer.ErrCrossedTransition, routingError{protocol.ErrPairingCrossed, "the pairing changed meanwhile; use a fresh code"}},
+	{peer.ErrAmbiguousPairing, routingError{protocol.ErrPairingAmbiguousCode, "two pairings crossed; start one fresh repair"}},
+}
+
 func pairingError(err error) *routingError {
-	if errors.Is(err, peer.ErrPeerTooOld) {
-		return &routingError{protocol.ErrPairingPeerTooOld, "the other side must update to pair again"}
+	for _, known := range pairingCodes {
+		if errors.Is(err, known.err) {
+			rerr := known.code
+			return &rerr
+		}
 	}
 	for known, reason := range pairingRefusals {
 		if errors.Is(err, known) {
@@ -259,6 +272,7 @@ func (h *Hub) applyPairing(ctx context.Context, op pairingOp, args pairingArgs) 
 	}
 	snapshot.IdentityError, snapshot.SelfName, snapshot.NamesAvailable = problem, h.pair.cfg.Name, true
 	snapshot.PauseAvailable, snapshot.AcksAvailable = true, true
+	snapshot.UnpairAvailable, snapshot.RepairAvailable = true, true
 	if h.identity != nil {
 		snapshot.SelfIdentity = h.identity.Fingerprint()
 	}

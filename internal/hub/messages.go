@@ -47,7 +47,10 @@ const (
 	SyncProtocol    = "protocol"
 	SyncClosed      = "closed" // the peer ended the session; the wire carries no reason
 	SyncStore       = "store"  // this side's own store failed
-	SyncOther       = "other"
+	// SyncOtherPairing: the other side holds another pairing with this
+	// one (#276); a repair (/pair invite --repair) pairs them again.
+	SyncOtherPairing = "other_pairing"
+	SyncOther        = "other"
 )
 
 // MessageSync is what this side knows of syncing with one contact.
@@ -205,6 +208,7 @@ var syncClasses = []struct {
 	match func(error) bool
 }{
 	{SyncStore, func(err error) bool { return errors.As(err, new(messaging.StoreError)) }},
+	{SyncOtherPairing, func(err error) bool { return errors.Is(err, messaging.ErrOtherPairing) }},
 	{SyncTimeout, timedOut}, // a dial that timed out is a timeout, not merely unreachable
 	{SyncUnreachable, func(err error) bool { return errors.As(err, new(errUnreachable)) }},
 	{SyncUnsupported, func(err error) bool {

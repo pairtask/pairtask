@@ -16,7 +16,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorRedeemUsage = "usage: pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] [--socket PATH] [--json] [--timeout 5s]\n" +
+const operatorRedeemUsage = "usage: pairtask operator pair redeem DESTINATION [--name NAME] [--repair KEY] [--wait 45s] [--socket PATH] [--json] [--timeout 5s]\n" +
 	"       the code is read from the terminal, or from stdin when piped; never pass it as an argument"
 
 // redeemPoll is how often redeem checks the redemption's state.
@@ -29,6 +29,7 @@ type redeemArgs struct {
 	call        operatorCall
 	destination string
 	name        string
+	repair      string // the contact's full identity key the pairing repairs (#276)
 	wait        time.Duration
 }
 
@@ -41,7 +42,7 @@ func runOperatorPairRedeem(ctx context.Context, args []string, stdout, stderr io
 	if code != -1 {
 		return code
 	}
-	if !redeemSupported(ctx, a.call, stderr) {
+	if !redeemSupported(ctx, a, stderr) {
 		return 1
 	}
 	req, err := redeemRequest(a, stderr)
@@ -68,20 +69,25 @@ func parseRedeem(args []string, stderr io.Writer) (redeemArgs, int) {
 	a.call.register(flags)
 	flags.StringVar(&a.name, "name", "", "the name to pair under (default: the broker's)")
 	flags.DurationVar(&a.wait, "wait", 45*time.Second, "how long to follow the redemption")
+	flags.StringVar(&a.repair, "repair", "", "the contact's full identity key this pairing repairs")
 	code := parseFlags(flags, args[1:], operatorRedeemUsage, stderr, func(rest []string) error {
 		if len(rest) != 0 {
 			return errors.New("pair redeem takes one destination; the code is read from stdin")
+		}
+		if err := repairArgument(protocol.PairingOpRedeem, a.repair); err != nil {
+			return err
 		}
 		return a.call.validate()
 	})
 	return a, code
 }
 
-// redeemSupported asks before any code is read: an older broker, or one
-// without redemption wired, is refused locally.
-func redeemSupported(ctx context.Context, call operatorCall, stderr io.Writer) bool {
+// redeemSupported asks before any code is read: an older broker, one
+// without redemption wired, or one that can't take a declared repair is
+// refused locally.
+func redeemSupported(ctx context.Context, a redeemArgs, stderr io.Writer) bool {
 	probe := protocol.Message{Type: protocol.TypeOperatorPairing, MessageID: uuid.NewString(), PairingOp: protocol.PairingOpStatus}
-	resp, err := call.expect(ctx, probe, expectation{protocol.TypeOperatorPairingResult, "operator pair status"}, stderr)
+	resp, err := a.call.expect(ctx, probe, expectation{protocol.TypeOperatorPairingResult, "operator pair status"}, stderr)
 	if err != nil {
 		return false
 	}
@@ -89,7 +95,7 @@ func redeemSupported(ctx context.Context, call operatorCall, stderr io.Writer) b
 		fmt.Fprintln(stderr, "this broker cannot redeem codes: it is older, or redemption is not configured")
 		return false
 	}
-	return true
+	return repairServed(a.repair, resp.PairingResult, stderr)
 }
 
 // redeemRequest reads the code and checks the whole request locally.
@@ -100,7 +106,7 @@ func redeemRequest(a redeemArgs, stderr io.Writer) (protocol.Message, error) {
 		return protocol.Message{}, err
 	}
 	id := uuid.NewString()
-	check := peer.JoinRequest{OperationID: id, Destination: a.destination, Name: a.name, Code: []byte(code)}
+	check := peer.JoinRequest{OperationID: id, Destination: a.destination, Name: a.name, Code: []byte(code), Repair: a.repair}
 	if check.Name == "" {
 		check.Name = "workspace" // the broker's own default is checked there
 	}
@@ -109,7 +115,7 @@ func redeemRequest(a redeemArgs, stderr io.Writer) (protocol.Message, error) {
 		return protocol.Message{}, err
 	}
 	return protocol.Message{Type: protocol.TypeOperatorPairing, MessageID: id, PairingOp: protocol.PairingOpRedeem,
-		PairingDestination: a.destination, PairingCode: code, PairingName: a.name}, nil
+		PairingDestination: a.destination, PairingCode: code, PairingName: a.name, PairingRepair: a.repair}, nil
 }
 
 // readCode reads one line: prompting on a terminal, plainly from a pipe.

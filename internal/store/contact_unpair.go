@@ -293,3 +293,11 @@ func unpairResultOf(changed bool, generation, epoch int64, unpairedAt string) (C
 	at, err := time.Parse(time.RFC3339Nano, unpairedAt)
 	return ContactUnpairResult{Changed: changed, Generation: generation, Epoch: epoch, UnpairedAt: at}, err
 }
+
+// Unpaired reports a contact this side unpaired: its history is kept and
+// readable, and nothing more is sent or taken under it (#276).
+func (p *PeerMessages) Unpaired(ctx context.Context, contact string) (bool, error) {
+	var ok bool
+	err := p.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ? AND unpaired_at != '')`, contact).Scan(&ok)
+	return ok, err
+}

@@ -23,7 +23,7 @@ func pauseServed(req protocol.Message, snapshot *protocol.PairingSnapshot, stder
 // opServed: an operation goes only to a broker that serves it; an older
 // one is refused here, before anything is sent.
 func opServed(req protocol.Message, snapshot *protocol.PairingSnapshot, stderr io.Writer) bool {
-	return namesServed(req, snapshot, stderr) && pauseServed(req, snapshot, stderr)
+	return namesServed(req, snapshot, stderr) && pauseServed(req, snapshot, stderr) && unpairServed(req, snapshot, stderr)
 }
 
 // writeSnapshotResult says what an operation answered with a pairing

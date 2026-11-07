@@ -25,12 +25,18 @@ func historyCapable(version int) bool { return version >= protocol.PairingHistor
 var errHistoryVersion = &routingError{protocol.ErrMalformedFrame, "naming a pairing requires protocol_version 25"}
 
 // contactEpochRefused refuses a contact request naming a pairing from a
-// client that can't.
+// client that can't. An unpair's epoch names no history: it is the
+// current pairing the operator was shown (#276).
 func contactEpochRefused(msg protocol.Message) *routingError {
-	if msg.ContactEpoch == 0 || historyCapable(msg.ProtocolVersion) {
+	if !namesHistory(msg) || historyCapable(msg.ProtocolVersion) {
 		return nil
 	}
 	return errHistoryVersion
+}
+
+// namesHistory: the request names a pairing to read or acknowledge.
+func namesHistory(msg protocol.Message) bool {
+	return msg.ContactEpoch != 0 && msg.ContactOp != protocol.ContactOpUnpair
 }
 
 // refsEpochRefused refuses refs naming a pairing from a client at version

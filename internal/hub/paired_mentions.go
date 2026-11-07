@@ -132,12 +132,19 @@ func homeTargets(msg protocol.Message) []string {
 	return slices.Compact(targets)
 }
 
-// readableContact admits an operation on a confirmed contact, and a list of
-// one no longer there whose shared conversations this side keeps: read
-// only, the contact never recreated.
+// readableContact admits an operation on a confirmed contact, a tombstone
+// operation on one this side unpaired (#276), and a list of one no longer
+// there whose shared conversations this side keeps: read only, the contact
+// never recreated.
 func (h *Hub) readableContact(ctx context.Context, msg protocol.Message) *routingError {
 	rerr := h.confirmedContact(ctx, msg.ContactKey)
-	if rerr == nil || msg.ContactOp != protocol.ContactOpList {
+	if rerr == nil {
+		return nil
+	}
+	if unpaired, ok := h.unpairedContact(ctx, msg); ok {
+		return unpaired
+	}
+	if msg.ContactOp != protocol.ContactOpList {
 		return rerr
 	}
 	if kept, err := h.store.KeepsConversations(ctx, msg.ContactKey); err == nil && kept {

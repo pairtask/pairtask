@@ -12,7 +12,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorPairUsage = "usage: pairtask operator pair [list | open | status [OPERATION_ID] | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] (the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [OPERATION_ID]"
+const operatorPairUsage = "usage: pairtask operator pair [list | open [--repair KEY] | status [OPERATION_ID] | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator pair redeem DESTINATION [--name NAME] [--repair KEY] [--wait 45s] (the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [OPERATION_ID]"
 
 // pairVerbs are the pairing operations, how many positional arguments each
 // takes, and the read that resolves a missing or prefixed target first.
@@ -45,7 +45,7 @@ func runOperatorPair(ctx context.Context, args []string, stdout, stderr io.Write
 	if code != -1 {
 		return code
 	}
-	if resolvePairTarget(ctx, call, &req, stderr) != nil {
+	if resolvePairTarget(ctx, call, &req, stderr) != nil || !probeRepair(ctx, call, req, stderr) {
 		return 1
 	}
 	resp, err := call.expect(ctx, req, expectation{protocol.TypeOperatorPairingResult, "operator pair " + req.PairingOp}, stderr)
@@ -96,10 +96,14 @@ func parseOperatorPair(args []string, stderr io.Writer) (operatorCall, protocol.
 	req := protocol.Message{Type: protocol.TypeOperatorPairing, MessageID: uuid.NewString(), PairingOp: op}
 	flags := flag.NewFlagSet("operator pair", flag.ContinueOnError)
 	call.register(flags)
+	flags.StringVar(&req.PairingRepair, "repair", "", "open: the contact's full identity key this pairing repairs")
 	// Positional arguments may come before or after the flags.
 	leading, args := splitLeading(args)
 	code := parseFlags(flags, args, operatorPairUsage, stderr, func(rest []string) error {
 		rest = append(leading, rest...)
+		if err := repairArgument(op, req.PairingRepair); err != nil {
+			return err
+		}
 		if !slices.Contains(verb.args, len(rest)) {
 			return fmt.Errorf("pair %s: wrong number of arguments", op)
 		}

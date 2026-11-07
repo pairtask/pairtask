@@ -79,6 +79,10 @@ type PairingSnapshot struct {
 	NamesAvailable bool `json:"names_available,omitempty"`
 	// PauseAvailable: the broker serves contact ops pause and resume (#276).
 	PauseAvailable bool `json:"pause_available,omitempty"`
+	// UnpairAvailable: the broker serves contact op unpair; RepairAvailable,
+	// pairing_repair on open and redeem (#276).
+	UnpairAvailable bool `json:"unpair_available,omitempty"`
+	RepairAvailable bool `json:"repair_available,omitempty"`
 	// AcksAvailable: the broker serves contact op ack (#287).
 	AcksAvailable     bool                 `json:"acks_available,omitempty"`
 	IdentityError     string               `json:"identity_error,omitempty"`
@@ -115,6 +119,13 @@ type PairingContactView struct {
 	// PausedAt is when this side's operator paused it (#276): no traffic
 	// either way until resumed; nil while active.
 	PausedAt *time.Time `json:"paused_at,omitempty"`
+	// UnpairedAt is when this side's operator unpaired it (#276): its
+	// history stays readable, nothing more travels; nil while paired.
+	// PairingEpoch is its current or last pairing; Legacy, that the
+	// pairing was made by the legacy exchange, without a pairing ID.
+	UnpairedAt   *time.Time `json:"unpaired_at,omitempty"`
+	PairingEpoch int64      `json:"pairing_epoch"`
+	Legacy       bool       `json:"legacy,omitempty"`
 	// Summary is nil from a broker that reports none: unknown, not idle.
 	Summary *PairingContactSummary `json:"summary,omitempty"`
 	// Acks are the operator's acknowledgments of its messages (#287), from

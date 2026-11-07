@@ -13,7 +13,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorPeerUsage = "usage: pairtask operator peer send CONTACT TEXT [--message-id ID] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator peer messages CONTACT [--before CURSOR] [--socket PATH] [--json]\n       pairtask operator peer sync CONTACT [--socket PATH] [--json]\n       pairtask operator peer name CONTACT (NAME... | --clear) [--socket PATH] [--json]\n       pairtask operator peer pause|resume CONTACT [--message-id ID] [--socket PATH] [--json]\nCONTACT is a paired workspace's identity key, a unique prefix of it, or its unique name: what this side calls it, or what it calls itself."
+const operatorPeerUsage = "usage: pairtask operator peer send CONTACT TEXT [--message-id ID] [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator peer messages CONTACT [--before CURSOR] [--socket PATH] [--json]\n       pairtask operator peer sync CONTACT [--socket PATH] [--json]\n       pairtask operator peer name CONTACT (NAME... | --clear) [--socket PATH] [--json]\n       pairtask operator peer pause|resume CONTACT [--message-id ID] [--socket PATH] [--json]\n       pairtask operator peer unpair sha256:KEY --confirm sha256:KEY [--epoch N] [--message-id ID] [--socket PATH] [--json]\nCONTACT is a paired workspace's identity key, a unique prefix of it, or its unique name: what this side calls it, or what it calls itself."
 
 // peerVerbs are the contact operations the CLI offers (#210), with how many
 // positional arguments each takes after CONTACT; send joins the rest as
@@ -25,11 +25,12 @@ var peerVerbs = map[string]int{
 	"name":     -1,
 	"pause":    0,
 	"resume":   0,
+	"unpair":   0,
 }
 
 // peerOps map a verb to its contact_op.
 var peerOps = map[string]string{"send": protocol.ContactOpSend, "messages": protocol.ContactOpList, "sync": protocol.ContactOpSync,
-	"name": protocol.ContactOpName, "pause": protocol.ContactOpPause, "resume": protocol.ContactOpResume}
+	"name": protocol.ContactOpName, "pause": protocol.ContactOpPause, "resume": protocol.ContactOpResume, "unpair": protocol.ContactOpUnpair}
 
 // runOperatorPeer sends to, lists or syncs with a paired workspace. Its
 // messages are text from that workspace's operator, printed quoted: never
@@ -43,10 +44,10 @@ func runOperatorPeer(ctx context.Context, args []string, stdout, stderr io.Write
 	if err != nil {
 		return 1
 	}
-	if !opServed(req, snapshot, stderr) {
+	req.ContactKey = key
+	if !opServed(req, snapshot, stderr) || !unpairEpoch(&req, snapshot, stderr) {
 		return 1
 	}
-	req.ContactKey = key
 	resp, err := call.expect(ctx, req, expectation{protocol.TypeOperatorContactResult, "operator peer " + req.ContactOp}, stderr)
 	if err != nil {
 		return 1
@@ -76,6 +77,8 @@ func parseOperatorPeer(args []string, stderr io.Writer) (operatorCall, protocol.
 	messageID := flags.String("message-id", "", "the message's ID, to retry a send safely")
 	before := flags.Int64("before", 0, "list messages older than this cursor")
 	clearName := flags.Bool("clear", false, "name: forget what this side calls the workspace")
+	var unpair unpairFlags
+	unpair.register(flags)
 	var contact string
 	leading, args := splitLeading(args)
 	code := parseFlags(flags, args, operatorPeerUsage, stderr, func(rest []string) error {
@@ -86,6 +89,9 @@ func parseOperatorPeer(args []string, stderr io.Writer) (operatorCall, protocol.
 			return err
 		}
 		if err := nameArguments(verb, *clearName, req.ContactText); err != nil {
+			return err
+		}
+		if err := unpair.apply(contact, &req); err != nil {
 			return err
 		}
 		if *messageID != "" {
@@ -131,6 +137,7 @@ func writeContactResult(w io.Writer, resp protocol.Message) {
 	if s := resp.ContactSync; s != nil {
 		writeContactSync(w, *s)
 	}
+	writeContactUnpair(w, resp)
 	writeSnapshotResult(w, resp)
 }
 

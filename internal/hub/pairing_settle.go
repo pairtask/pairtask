@@ -431,7 +431,33 @@ func (h *Hub) settleTarget(ctx context.Context, target string) ([]string, *routi
 	case r.Destination == "" || r.Peer == "":
 		return nil, &routingError{protocol.ErrPairing, "no_destination"}
 	}
+	if rerr := h.settleEnded(ctx, r); rerr != nil {
+		return nil, rerr
+	}
 	return []string{target}, nil
+}
+
+// endedExchanges are the ledger states nothing settles any more (#276).
+var endedExchanges = map[string]routingError{
+	peer.ExchangeRetired: {protocol.ErrPairing, "join_retired"},
+	peer.ExchangeRefused: {protocol.ErrPairing, "join_refused"},
+}
+
+// settleEnded refuses a join an unpair retired, or whose ledger exchange
+// was retired or refused, before any network work (#276).
+func (h *Hub) settleEnded(ctx context.Context, r peer.JoinRecord) *routingError {
+	if !r.RetiredAt.IsZero() {
+		rerr := endedExchanges[peer.ExchangeRetired]
+		return &rerr
+	}
+	x, found, err := h.store.Exchange(ctx, r.OperationID)
+	if err != nil {
+		return &routingError{protocol.ErrInternal, "pairing state unavailable"}
+	}
+	if rerr, ended := endedExchanges[x.State]; found && ended {
+		return &rerr
+	}
+	return nil
 }
 
 // contactsSnapshot lists contacts newest first, each confirmed from the full
@@ -486,6 +512,17 @@ func noticeView(view *protocol.PairingContactView, n store.ContactNoticeState) {
 	}
 	if n.Notice == "pending" || n.Notice == "undelivered" {
 		view.Notice, view.NoticeAttempts = n.Notice, n.NoticeAttempts
+	}
+	pairingView(view, n)
+}
+
+// pairingView is the pairing the contact stands for (#276): its epoch,
+// whether it is legacy, and when this side unpaired it.
+func pairingView(view *protocol.PairingContactView, n store.ContactNoticeState) {
+	view.PairingEpoch, view.Legacy = n.PairingEpoch, n.Legacy
+	if !n.UnpairedAt.IsZero() {
+		at := n.UnpairedAt
+		view.UnpairedAt = &at
 	}
 }
 

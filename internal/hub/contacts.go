@@ -35,6 +35,8 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	// Pausing a contact (#276).
 	protocol.ContactOpPause:  (*Hub).contactPause,
 	protocol.ContactOpResume: (*Hub).contactPause,
+	// Unpairing a contact (#276).
+	protocol.ContactOpUnpair: (*Hub).contactUnpair,
 	// The operator's acknowledgment (#287).
 	protocol.ContactOpAck: (*Hub).contactAck,
 	// Pending consent (#293).

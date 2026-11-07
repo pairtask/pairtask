@@ -42,6 +42,7 @@ var operatorCommands = map[string]operatorCommand{
 	"inbox":   runOperatorInbox,
 	"room":    runOperatorRoom,
 	"pair":    runOperatorPair,
+	"pairing": runOperatorPair, // the name the pairing docs use
 	"contact": runOperatorContact,
 	"review":  runOperatorReview,
 	"peer":    runOperatorPeer,

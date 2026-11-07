@@ -331,6 +331,8 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpPause:        {key: true, id: true},
 	ContactOpResume:       {key: true, id: true},
 	ContactOpAck:          {key: true, id: true, ack: true, epoch: true},
+	// Unpairing a contact (#276).
+	ContactOpUnpair: {key: true, id: true, epoch: true, confirm: true},
 	// Pending consent (#293): the list spans every contact without a key.
 	ContactOpConsentList:   {anyKey: true, consentBefore: true},
 	ContactOpConsentDecide: {key: true, id: true, decide: true},
@@ -340,7 +342,7 @@ var contactFields = map[string]contactFieldSet{
 
 type contactFieldSet struct {
 	key, text, note, read, before, id, to, agents, grant, ask, approve, ack bool
-	anyKey, consentBefore, decide, consentOn, scope, epoch                  bool
+	anyKey, consentBefore, decide, consentOn, scope, epoch, confirm         bool
 }
 
 // ValidateContactRequest checks an operator_contact frame before anything
@@ -349,7 +351,7 @@ type contactFieldSet struct {
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, " +
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, unpair, " +
 			"consent_list, consent_decide, consent_opt or consent_reset")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
@@ -358,7 +360,7 @@ func ValidateContactRequest(msg Message) error {
 	return errors.Join(validKeyFor(msg, allowed), validContactID(msg, allowed), validContactText(msg, allowed),
 		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
 		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed), validConsent(msg, allowed),
-		validContactEpoch(msg))
+		validContactEpoch(msg), validContactUnpair(msg, allowed))
 }
 
 // validContactEpoch refuses a pairing epoch below 0; 0 is the current
@@ -405,6 +407,8 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"contact_ack", msg.ContactAck != nil, allowed.ack},
 		{"contact_ack_upto", msg.ContactAckUpto != 0, allowed.ack},
 		{"contact_epoch", msg.ContactEpoch != 0, allowed.epoch},
+		{"contact_confirm", msg.ContactConfirm != "", allowed.confirm},
+		{"contact_unpaired", msg.ContactUnpaired != nil, false},
 		{"contact_acked", msg.ContactAcked != nil, false},
 		{"contact_acks", msg.ContactAcks != nil, false},
 		{"contact_consent_before", msg.ContactConsentBefore != 0, allowed.consentBefore},

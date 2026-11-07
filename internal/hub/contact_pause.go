@@ -64,6 +64,8 @@ func pauseRefusal(err error) (*routingError, bool) {
 	switch {
 	case errors.Is(err, store.ErrPaused):
 		return &routingError{protocol.ErrContactPaused, "paused: /pair resume to send"}, true
+	case errors.Is(err, store.ErrUnpaired):
+		return errContactUnpaired, true
 	case errors.Is(err, store.ErrUnpairedByThem):
 		return &routingError{protocol.ErrContactUnpairedByThem, "the other side unpaired: unpair here or pair again"}, true
 	case errors.Is(err, store.ErrFenced):
