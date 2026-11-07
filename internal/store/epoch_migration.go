@@ -139,8 +139,9 @@ CREATE TABLE IF NOT EXISTS contact_notices_out (
     pairing_id    BLOB,
     gen           INTEGER NOT NULL,
     contact_state TEXT NOT NULL CHECK (contact_state IN ('paused', 'resumed', 'unpaired')), -- the state the notice carries
-    state         TEXT NOT NULL, -- its delivery: pending, delivered or undelivered
-    attempts      INTEGER NOT NULL DEFAULT 0,
+    state         TEXT NOT NULL CHECK (state IN ('pending', 'delivered', 'undelivered', 'superseded')), -- its delivery
+    attempts      INTEGER NOT NULL DEFAULT 0, -- every attempt, the answered one included
+    next_attempt_at TEXT, -- when a pending notice is next due, NULL for now
     delivered_at  TEXT,
     PRIMARY KEY (contact, gen)
 );

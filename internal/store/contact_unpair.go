@@ -158,7 +158,7 @@ func unpairNow(ctx context.Context, tx *sql.Tx, r ContactUnpair, c *pairingRow) 
 	if err := refuseAddressMoves(ctx, tx, c.contact); err != nil {
 		return "", err
 	}
-	return detail, queueNotice(ctx, tx, *c)
+	return detail, queueNotice(ctx, tx, *c, noticeUnpaired)
 }
 
 // nextMark moves the global authority mark on and answers it; a mark or a
@@ -264,16 +264,6 @@ func refuseAddressMoves(ctx context.Context, tx *sql.Tx, contact string) error {
 		}
 	}
 	return nil
-}
-
-// queueNotice queues the unpaired notice for a peer that can take one.
-func queueNotice(ctx context.Context, tx *sql.Tx, c pairingRow) error {
-	if !c.notified() {
-		return nil
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO contact_notices_out (contact, pairing_id, gen, contact_state, state) VALUES (?, ?, ?, 'unpaired', 'pending')`,
-		c.contact, c.pairingID, c.generation)
-	return err
 }
 
 // recordUnpair keeps the unpair's result for a retry and answers it.

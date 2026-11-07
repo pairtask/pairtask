@@ -139,7 +139,8 @@ WHERE contact = ? AND pairing_id IS ? AND state = 'pending' ORDER BY gen LIMIT 1
 // NoticeStored marks this side's notice delivered on the peer's answer,
 // which must name exactly its pairing and generation: any other answer is
 // messaging.ErrProtocol and changes nothing. The same answer again, once
-// delivered, changes nothing either.
+// delivered, changes nothing either. Only the contact's newest delivered
+// notice is kept.
 func (c *controlStore) NoticeStored(ctx context.Context, a messaging.ContactStateStored) error {
 	if !bytes.Equal(a.PairingID, c.pairingID()) {
 		return fmt.Errorf("%w: an answer for another pairing", messaging.ErrProtocol)
@@ -152,7 +153,10 @@ WHERE contact = ?1 AND pairing_id IS ?2 AND gen = ?3`, c.fence.contact, idArg(a.
 		if err != nil {
 			return err
 		}
-		return requireOne(res, "an answer for no notice of this side's")
+		if err := requireOne(res, "an answer for no notice of this side's"); err != nil {
+			return err
+		}
+		return pruneDelivered(ctx, tx, c.fence.contact)
 	})
 }
 

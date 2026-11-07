@@ -125,6 +125,23 @@ func (c *controlStore) setPeerState(ctx context.Context, tx *sql.Tx, in peerNoti
 	return err
 }
 
+// ClearRemotePaused clears the peer's stored pause once a full message
+// session with it succeeded: the peer admitted this side, so it is no
+// longer paused. Only the display clears; the generation stays as the
+// watermark later notices are ordered against, and a remote unpair is
+// never cleared. Only a bound store clears, and only while its fence
+// holds, which it never refreshes.
+func (p *PeerMessages) ClearRemotePaused(ctx context.Context) error {
+	if p.fence == nil {
+		return ErrFenced
+	}
+	return p.inTx(ctx, p.fence.contact, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET peer_state = '', peer_state_at = NULL
+WHERE identity_key = ? AND peer_state = ?`, p.fence.contact, noticePaused)
+		return err
+	})
+}
+
 // unpairedByThem stores a remote unpair: the generation and the authority
 // mark move on, never past their maximum, and the contact's queued
 // messages of the current epoch end.

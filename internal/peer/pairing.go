@@ -54,6 +54,10 @@ var (
 	ErrOutcomeCapacity  = errors.New("peer: pairing outcome capacity reached")
 	ErrIdentityCapacity = errors.New("peer: pairing identity capacity reached")
 	ErrTooManyPending   = errors.New("peer: too many pairing requests awaiting a decision")
+	// ErrIdentityStorage refuses another identity to a store that retains
+	// as many as it can (#276, D4); ErrContactCapacity, one more active
+	// contact, is of the same family.
+	ErrIdentityStorage = errors.New("identity storage full; purge needed")
 )
 
 // Storage bounds. Pending requests fit one listing, so every request awaiting
@@ -61,6 +65,11 @@ var (
 const (
 	MaxPendingPairingRequests = 64
 	MaxPairingIdentities      = 1024
+	// MaxActiveContacts bounds the contacts not unpaired, and
+	// MaxRetainedIdentities every contact row kept, unpaired ones included
+	// (#276, D4).
+	MaxActiveContacts     = 1024
+	MaxRetainedIdentities = 2048
 	MaxPairingOutcomes        = 4096
 	MaxPairingNameBytes       = 64
 	MaxPairingIDBytes         = 128

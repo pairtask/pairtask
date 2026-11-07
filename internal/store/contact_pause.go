@@ -350,17 +350,28 @@ func changePause(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseR
 	return out, pauseDetail(r.Paused, changed), err
 }
 
-// applyPause writes a pause or resume at its generation; a pause also ends
-// the contact's session consent (#293).
+// applyPause writes a pause or resume at its generation and queues its
+// notice; a pause also ends the contact's session consent (#293).
 func applyPause(ctx context.Context, tx *sql.Tx, r ContactPause, generation int64) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET paused_at = ?, generation = ? WHERE identity_key = ?`,
 		pausedStamp(r), generation, r.Contact); err != nil {
+		return err
+	}
+	if err := queueChangeNotice(ctx, tx, r.Contact, pauseNotice(r.Paused)); err != nil {
 		return err
 	}
 	if !r.Paused {
 		return nil
 	}
 	return pauseSessions(ctx, tx, r.Contact, r.At)
+}
+
+// pauseNotice is the state a pause or resume notice carries.
+func pauseNotice(paused bool) string {
+	if paused {
+		return noticePaused
+	}
+	return noticeResumed
 }
 
 // pausedStamp is paused_at as a change to r writes it: "" for a resume.

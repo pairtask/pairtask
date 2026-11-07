@@ -163,6 +163,9 @@ func install(ctx context.Context, tx *sql.Tx, in installing, c contactAuthority)
 	if err := retireReplaced(ctx, tx, in, c); err != nil {
 		return peer.InstallResult{}, err
 	}
+	if err := admitReactivation(ctx, tx, c); err != nil {
+		return peer.InstallResult{}, err
+	}
 	if err := upsertContact(ctx, tx, in.contact, in.x.OperationID); err != nil {
 		return peer.InstallResult{}, err
 	}
@@ -181,6 +184,20 @@ func install(ctx context.Context, tx *sql.Tx, in installing, c contactAuthority)
 		return peer.InstallResult{}, err
 	}
 	return installedRow(ctx, tx, in.x.OperationID, epoch)
+}
+
+// admitReactivation refuses to pair an unpaired contact again beyond the
+// active bound; its retained row is reused, so only that bound applies. A
+// new contact is weighed as upsertContact makes it.
+func admitReactivation(ctx context.Context, tx *sql.Tx, c contactAuthority) error {
+	if !c.found || c.active() {
+		return nil
+	}
+	slots, err := contactSlots(ctx, tx)
+	if err != nil {
+		return err
+	}
+	return peer.AdmitActive(slots)
 }
 
 // nextEpoch is the epoch an install makes: the next one of a known
