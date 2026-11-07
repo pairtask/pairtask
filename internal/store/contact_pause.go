@@ -26,17 +26,25 @@ var (
 	ErrFenced = errors.New("the contact was paused or resumed since this session was admitted")
 )
 
-// linkFence is the contact and generation a session was admitted under.
+// sessionAuthority is what a session is admitted under, and what each of
+// its transactions compares (#276): the contact's generation, its pairing
+// epoch and its pairing ID ("" for a legacy contact).
+type sessionAuthority struct {
+	generation, epoch int64
+	pairingID         string
+}
+
+// linkFence is the contact and authority a session was admitted under.
 type linkFence struct {
-	contact    string
-	generation int64
+	contact string
+	sessionAuthority
 }
 
 // contactState is what admission and the fence check: whether the contact
-// was confirmed, whether it is paused or unpaired, and its generation.
+// was confirmed, whether it is paused or unpaired, and its authority.
 type contactState struct {
 	confirmed, paused, unpaired bool
-	generation                  int64
+	sessionAuthority
 }
 
 func readContactState(ctx context.Context, q rowQuerier, contact string) (contactState, error) {
@@ -46,13 +54,15 @@ func readContactState(ctx context.Context, q rowQuerier, contact string) (contac
 	}
 	s := contactState{confirmed: true}
 	var pausedAt, unpairedAt string
-	err = q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, generation FROM peer_contacts WHERE identity_key = ?`, contact).
-		Scan(&pausedAt, &unpairedAt, &s.generation)
-	s.paused, s.unpaired = pausedAt != "", unpairedAt != ""
+	var id []byte
+	err = q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, generation, pairing_epoch, pairing_id FROM peer_contacts WHERE identity_key = ?`, contact).
+		Scan(&pausedAt, &unpairedAt, &s.generation, &s.epoch, &id)
+	s.paused, s.unpaired, s.pairingID = pausedAt != "", unpairedAt != "", string(id)
 	return s, err
 }
 
-// Admit binds a session to a confirmed, active contact at its generation.
+// Admit binds a session to a confirmed, active contact at its generation,
+// pairing epoch and pairing ID.
 // Only the root store admits: a bound one can't refresh or move its own.
 func (p *PeerMessages) Admit(ctx context.Context, contact string) (*PeerMessages, error) {
 	if p.fence != nil {
@@ -73,7 +83,7 @@ func (p *PeerMessages) Admit(ctx context.Context, contact string) (*PeerMessages
 	case s.paused:
 		return nil, ErrPaused
 	}
-	return &PeerMessages{db: p.db, fence: &linkFence{contact: contact, generation: s.generation}, gate: p.gate}, nil
+	return &PeerMessages{db: p.db, fence: &linkFence{contact: contact, sessionAuthority: s.sessionAuthority}, gate: p.gate}, nil
 }
 
 // Fence is the contact and generation this store is bound to; bound is
@@ -86,8 +96,8 @@ func (p *PeerMessages) Fence() (contact string, generation int64, bound bool) {
 }
 
 // checkFence, inside tx, lets a bound store act only for its contact while
-// it is confirmed, active and at the admitted generation. The root store
-// passes.
+// it is confirmed, active and at the admitted generation, epoch and
+// pairing ID. The root store passes.
 func (p *PeerMessages) checkFence(ctx context.Context, tx *sql.Tx, contact string) error {
 	if p.fence == nil {
 		return nil
@@ -99,16 +109,17 @@ func (p *PeerMessages) checkFence(ctx context.Context, tx *sql.Tx, contact strin
 	if err != nil {
 		return err
 	}
-	if !s.admits(p.fence.generation) {
+	if !s.admits(p.fence.sessionAuthority) {
 		return ErrFenced
 	}
 	return nil
 }
 
-// admits: a session admitted at generation may still act, the contact
-// confirmed, active and not paused or resumed since.
-func (s contactState) admits(generation int64) bool {
-	return s.active() && s.generation == generation
+// admits: a session admitted under authority may still act, the contact
+// confirmed, active, not paused or resumed since, and still the same
+// pairing.
+func (s contactState) admits(authority sessionAuthority) bool {
+	return s.active() && s.sessionAuthority == authority
 }
 
 func (s contactState) active() bool {

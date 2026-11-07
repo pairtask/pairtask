@@ -22,7 +22,7 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 8
+	MaxVersion byte = 9 // PairingVersion
 )
 
 // LiveVersion is the first version whose sessions can stay open;

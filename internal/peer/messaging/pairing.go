@@ -5,8 +5,9 @@ import (
 	"errors"
 )
 
-// Pairing epochs and contact notices (#276): the version 9 frames. Sessions
-// don't send them yet; MaxVersion stays below PairingVersion until they do.
+// Pairing epochs and contact notices (#276): the version 9 frames. Every
+// v9 message session exchanges FramePairingEpoch (pairing_session.go);
+// contact notices travel only in control sessions.
 
 // PairingVersion is the first version with FramePairingEpoch; non-legacy
 // contacts need it.
