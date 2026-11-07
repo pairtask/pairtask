@@ -52,7 +52,7 @@ jobs:
 
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,11 +67,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      # Each package gets 1200s under -race: internal/server reached 592s and
-      # internal/store 568s on hosted runners (#242), about 2x the 293s this
-      # budget was first set for; 1200s restores that 2x margin. Tests keep
-      # their own deadlines, so a hang still fails within the budget.
-      - run: go test -race ./... -timeout=1200s
+      # Each package gets 1800s under -race: internal/store took 820s and
+      # internal/server 810s on main, and a runner about 30% slower took
+      # store past the earlier 1200s (#276); 1800s restores about a 2x
+      # margin. Tests keep their own deadlines, so a hang still fails within
+      # the budget.
+      - run: go test -race ./... -timeout=1800s
       - run: python3 -m unittest discover -s scripts/tests -v
       - name: Test the Pi extension
         working-directory: integrations/pi

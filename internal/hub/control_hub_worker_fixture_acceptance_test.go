@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,8 @@ func newControlWorkerFixture(t *testing.T) *controlWorkerFixture {
 	t.Helper()
 	f := newAddressFixture(t)
 	f.joined(t)
-	raw, err := sql.Open("sqlite", strings.TrimSuffix(f.h.store.PeerDir(), ".peer"))
+	uri := url.URL{Scheme: "file", Path: strings.TrimSuffix(f.h.store.PeerDir(), ".peer"), RawQuery: "_pragma=busy_timeout(5000)"}
+	raw, err := sql.Open("sqlite", uri.String())
 	messageWorkerOK(t, err)
 	t.Cleanup(func() { raw.Close() })
 	// This side holds an address but is not the ordinary dialer.
