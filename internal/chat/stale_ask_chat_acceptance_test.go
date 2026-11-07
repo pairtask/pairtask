@@ -62,6 +62,11 @@ func TestStaleAskChatAcceptanceOldBrokerRefusesAndKeepsDraft(t *testing.T) {
 	v2Type(h, draft)
 	h.input(chatKey(tea.KeyEnter, 0))
 	chatEqual(t, "unsupported replacement sends nothing", h.m.State().InFlight, 0)
-	chatEqual(t, "input preserved", h.m.State().Draft, draft)
+	line := h.m.State().CommandLine
+	if line == nil {
+		t.Fatal("refused replacement closed the command line")
+	}
+	chatEqual(t, "command input preserved", "/"+line.Text, draft)
+	chatEqual(t, "message editor unchanged", h.m.State().Draft, "")
 	v3Contains(t, strings.ToLower(h.m.State().Status+" "+h.m.State().Hint), "upgrade")
 }
