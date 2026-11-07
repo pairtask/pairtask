@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/pairtask/pairtask/internal/hub"
 	"github.com/pairtask/pairtask/internal/peer"
@@ -132,9 +131,7 @@ func (p *PairingServer) handshake(netCtx context.Context, raw net.Conn, ep hub.P
 	}
 	defer release(p.handshakes)
 	opts := firstcontact.ServerOptions{ContactPins: ep.ContactPins, MessagePins: ep.MessagePins, ControlPins: ep.ControlPins}
-	// Certificates are made and checked by the wall clock: the hub's clock
-	// schedules, and a peer checks this side's certificate by its own.
-	conn, err := firstcontact.ServerWith(netCtx, raw, ep.Identity, time.Now, opts)
+	conn, err := firstcontact.ServerWith(netCtx, raw, ep.Identity, ep.Clock, opts)
 	if err != nil {
 		p.log.Info("pairing first contact failed", "cause", hub.PairingCause(err))
 		return nil, false
