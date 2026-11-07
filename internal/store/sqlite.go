@@ -158,6 +158,11 @@ var addedColumns = []struct{ table, column, decl string }{
 	// why the requester refused its outcome, '' unless it did.
 	{"consent_requests", "outcome_reason", "TEXT NOT NULL DEFAULT ''"},
 	{"consent_requests", "refused_reason", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// laterColumns are added once the epoch transition has committed, so a
+// failed transition leaves a released database exactly as it was.
+var laterColumns = []struct{ table, column, decl string }{
 	// When an offline archive replaced the message's body (#119); NULL
 	// while it is kept. An archived ID stays reserved.
 	{"message_metadata", "archived_at", "TEXT"},
@@ -212,7 +217,25 @@ func migrate(db *sql.DB, existing map[string]bool) error {
 			return err
 		}
 	}
-	return epochTransition(db, existing)
+	if err := epochTransition(db, existing); err != nil {
+		return err
+	}
+	return addLaterColumns(db)
+}
+
+func addLaterColumns(db *sql.DB) error {
+	for _, c := range laterColumns {
+		missing, err := columnMissing(db, c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if missing {
+			if err := addColumn(db, c.table, c.column, c.decl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func columnMissing(db *sql.DB, table, column string) (bool, error) {
