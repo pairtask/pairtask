@@ -33,6 +33,7 @@ type reviewProgress struct {
 	cancelled bool                      // the lookup was left: nothing sent
 	pins      *protocol.Revisions       // what it was sent pinned to
 	askID     string                    // its request's ID, once the broker queued it
+	epoch     int64                     // the pairing it was queued under (#276), 0 untagged
 	reviewID  string                    // a review here's ID, once the broker took it
 	item      *protocol.ReviewAskedItem // the request as last read
 	readSeq   uint64                    // the newest read applied to it
@@ -73,14 +74,14 @@ func (m *Model) cardFails(id, why string) {
 	}
 }
 
-// remoteQueued binds a card to its request, now queued, and reads it at
-// once if something changed meanwhile.
-func (m *Model) remoteQueued(id, askID string) tea.Cmd {
+// remoteQueued binds a card to its request, now queued under its pairing,
+// and reads it at once if something changed meanwhile.
+func (m *Model) remoteQueued(id string, queued protocol.ReviewAskRef) tea.Cmd {
 	c := m.card(id)
 	if c == nil {
 		return nil
 	}
-	c.id, c.review.askID = askID, askID
+	c.id, c.review.askID, c.review.epoch = queued.AskID, queued.AskID, queued.PairingEpoch
 	if c.review.readDue {
 		c.review.readDue = false
 		return m.readCardAsks()
@@ -112,7 +113,7 @@ func (m *Model) readCardAsks() tea.Cmd {
 	var refs []protocol.ReviewAskRef
 	for _, c := range m.cards.list {
 		if c.activeRemote() && c.review.askID != "" {
-			refs = append(refs, protocol.ReviewAskRef{Contact: c.contact, AskID: c.review.askID})
+			refs = append(refs, c.askRef())
 		}
 	}
 	var cmds []tea.Cmd
@@ -131,7 +132,7 @@ func (m *Model) readCardAsks() tea.Cmd {
 func refKeys(refs []protocol.ReviewAskRef) []string {
 	keys := make([]string, len(refs))
 	for i, r := range refs {
-		keys[i] = r.Contact + "\x00" + r.AskID
+		keys[i] = askRefKey(r)
 	}
 	return keys
 }
@@ -147,14 +148,14 @@ func (m *Model) cardAsksResult(req pendingRequest, resp protocol.Message) tea.Cm
 	ok := resp.Type == protocol.TypeOperatorReviewResult && resp.ReviewAsked != nil
 	if ok {
 		for _, it := range resp.ReviewAsked.Items {
-			found[it.Contact+"\x00"+it.AskID] = it
+			found[askRefKey(askedItemRef(it))] = it // under its own pairing: another's is not this card's
 		}
 	}
 	seq, _ := strconv.ParseUint(req.ids[1], 10, 64)
 	for _, key := range req.ids[2:] {
-		contact, askID, _ := strings.Cut(key, "\x00")
+		ref, _ := parseAskRefKey(key)
 		it, has := found[key]
-		m.cardReadAnswer(protocol.ReviewAskRef{Contact: contact, AskID: askID}, readAnswer{it, seq, has, ok})
+		m.cardReadAnswer(ref, readAnswer{it, seq, has, ok})
 	}
 	return nil
 }
@@ -186,9 +187,14 @@ func (m *Model) cardReadAnswer(ref protocol.ReviewAskRef, a readAnswer) {
 	}
 }
 
-// asks: the paired request's card for this request.
+// asks: the paired request's card for this request, under its pairing.
 func (c *actionCard) asks(ref protocol.ReviewAskRef) bool {
-	return c.kind == cardRemoteReview && c.contact == ref.Contact && c.review.askID == ref.AskID
+	return c.kind == cardRemoteReview && c.askRef() == ref
+}
+
+// askRef is the request a paired request's card reads.
+func (c *actionCard) askRef() protocol.ReviewAskRef {
+	return protocol.ReviewAskRef{Contact: c.contact, AskID: c.review.askID, PairingEpoch: c.review.epoch}
 }
 
 // bumpCardReads fences reads in flight and, with active cards left, reads

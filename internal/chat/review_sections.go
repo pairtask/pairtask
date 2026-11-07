@@ -23,7 +23,8 @@ const kindReviewPending = "review pending"
 
 // sectionOp names a section by its operator_review operation; sectionRef
 // is an item's ref in the panel (n1, a2…); itemKey is an item's identity,
-// its contact and message or ask ID.
+// its contact and message or ask ID, and for a request sent the pairing it
+// was asked under (#276): an ID reused by two pairings is two items.
 type (
 	sectionOp  string
 	sectionRef string
@@ -80,10 +81,31 @@ func needKey(it protocol.ReviewAwaitingItem) itemKey {
 	return itemKey("n" + it.Contact + "\x00" + it.MessageID)
 }
 func askedKey(it protocol.ReviewAskedItem) itemKey {
-	return itemKey("a" + it.Contact + "\x00" + it.AskID)
+	return itemKey("a" + askRefKey(askedItemRef(it)))
 }
 func failedKey(it protocol.ReviewFailedItem) itemKey {
-	return itemKey("f" + it.Kind + "\x00" + it.Contact + "\x00" + it.ID)
+	return itemKey("f" + it.Kind + "\x00" + askRefKey(protocol.ReviewAskRef{Contact: it.Contact, AskID: it.ID, PairingEpoch: it.PairingEpoch}))
+}
+
+// askedItemRef is the request an asked item is, under its own pairing: 0
+// only for an item the broker didn't tag.
+func askedItemRef(it protocol.ReviewAskedItem) protocol.ReviewAskRef {
+	return protocol.ReviewAskRef{Contact: it.Contact, AskID: it.AskID, PairingEpoch: it.PairingEpoch}
+}
+
+// askRefKey is a request's identity as text: its contact, pairing and ask
+// ID; parseAskRefKey reads one back.
+func askRefKey(r protocol.ReviewAskRef) string {
+	return r.Contact + "\x00" + strconv.FormatInt(r.PairingEpoch, 10) + "\x00" + r.AskID
+}
+
+func parseAskRefKey(key string) (protocol.ReviewAskRef, bool) {
+	parts := strings.SplitN(key, "\x00", 3)
+	if len(parts) != 3 {
+		return protocol.ReviewAskRef{}, false
+	}
+	epoch, err := strconv.ParseInt(parts[1], 10, 64)
+	return protocol.ReviewAskRef{Contact: parts[0], AskID: parts[2], PairingEpoch: epoch}, err == nil
 }
 
 // ref is an identity's ref, given on first sight and kept.
