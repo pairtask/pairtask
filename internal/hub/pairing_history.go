@@ -70,16 +70,22 @@ func untaggedMessage(view *protocol.ContactMessageView) {
 
 // versionedView is a message view as a client at version reads it.
 func versionedView(view protocol.ContactMessageView, version int) protocol.ContactMessageView {
+	view.ReviewOutcome = protocol.OutcomeFor(view.ReviewOutcome, version)
 	if !historyCapable(version) {
 		untaggedMessage(&view)
 	}
 	return view
 }
 
-// untaggedOutcomes are requests' outcomes as an older client reads them.
-func untaggedOutcomes(views []protocol.ReviewOutcomeView) {
+// versionedOutcomes are requests' outcomes as a client at version reads
+// them: untagged below PairingHistoryVersion, and without what came after
+// its version (#259).
+func versionedOutcomes(views []protocol.ReviewOutcomeView, version int) {
 	for i := range views {
-		views[i].PairingEpoch = 0
+		views[i] = views[i].ForVersion(version)
+		if !historyCapable(version) {
+			views[i].PairingEpoch = 0
+		}
 	}
 }
 

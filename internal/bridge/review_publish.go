@@ -351,6 +351,9 @@ func checkReview(ctx context.Context, c reviewClient, id string) (ReviewResult, 
 	if err != nil {
 		return ReviewResult{}, err
 	}
+	if checksPins(c, v) {
+		return checkPins(ctx, c, v, f) // before a verdict: has the change kept its pins? (#259)
+	}
 	if v.Verdict == nil || v.Revisions == nil {
 		return ReviewResult{}, errors.New("there is no verdict to check yet")
 	}

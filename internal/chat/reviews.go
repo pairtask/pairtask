@@ -20,7 +20,7 @@ const (
 	kindReview      = "review"
 	kindReviewQuiet = "review quiet"
 	panelReviews    = "reviews"
-	reviewUsage     = "usage: /review [--publish|--no-publish] [--formal|--no-formal] [--pin BASE..HEAD] TARGET AGENT|@AGENT|AGENT@WORKSPACE [SCOPE] | /review status [ID] | /review cancel [ID [REASON]]"
+	reviewUsage     = "usage: /review [--publish|--no-publish] [--formal|--no-formal] [--pin BASE..HEAD] [--replaces ASK_ID] TARGET AGENT|@AGENT|AGENT@WORKSPACE [SCOPE] | /review status [ID] | /review cancel [ID [REASON]]"
 )
 
 // reviewState is what chat knows of reviews: the last list, the selected
@@ -94,6 +94,8 @@ func parseReviewRequest(fields []string) (protocol.ReviewSpec, string, error) {
 		return protocol.ReviewSpec{}, "", err
 	case flags.pin != nil:
 		return protocol.ReviewSpec{}, "", errors.New("--pin is for a paired workspace's agent: AGENT@WORKSPACE")
+	case flags.replaces != "":
+		return protocol.ReviewSpec{}, "", errors.New("--replaces is for a paired workspace's agent: AGENT@WORKSPACE")
 	}
 	policy := flags.localPolicy()
 	if len(fields) < 2 {

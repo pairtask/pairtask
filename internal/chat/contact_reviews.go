@@ -207,6 +207,25 @@ func outcomeHead(ws workspaceLabel, o *protocol.ReviewOutcomeView, l dotLook) st
 	if o.URL != "" {
 		head += " " + safe(o.URL)
 	}
+	return head + replacementHead(o)
+}
+
+// replacementHead is where a request's change moved, as the reviewer
+// reported it, and what it replaces or was replaced by (#259), escaped.
+func replacementHead(o *protocol.ReviewOutcomeView) string {
+	var head string
+	if o.MovedTo != nil {
+		head += " · moved to " + safe(shortSHA(o.MovedTo.Base)) + ".." + safe(shortSHA(o.MovedTo.Head)) + " (as reported)"
+		if o.SupersededBy == "" {
+			head += ": ask again with /review --replaces " + safe(o.AskID)
+		}
+	}
+	if o.Supersedes != "" {
+		head += " · replaces " + safe(o.Supersedes)
+	}
+	if o.SupersededBy != "" {
+		head += " · replaced by " + safe(o.SupersededBy)
+	}
 	return head
 }
 

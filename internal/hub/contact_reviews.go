@@ -31,12 +31,15 @@ func (h *Hub) contactReviewGrant(ctx context.Context, req operatorRequest, audit
 func (h *Hub) contactReviewAsk(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
 	msg := req.msg
 	ask := msg.ReviewAsk
+	if rerr := supersedesID(ask.Supersedes); rerr != nil {
+		return protocol.Message{}, rerr
+	}
 	text := msg.ContactText
 	if text == "" {
 		text = "Review request: " + ask.Repository + "#" + ask.Change
 	}
 	row, advice, err := h.store.OperatorReviewAsk(ctx, store.ContactSend{OperationID: msg.MessageID, Contact: msg.ContactKey, Text: text,
-		To: msg.ContactTo, Review: wireAsk(ask), AuditID: auditID, Now: h.contactNow()})
+		To: msg.ContactTo, Review: wireAsk(ask), Supersedes: ask.Supersedes, AuditID: auditID, Now: h.contactNow()})
 	if err != nil {
 		return protocol.Message{}, err
 	}
@@ -84,6 +87,9 @@ var reviewRefusals = []struct {
 }
 
 func reviewRefusal(err error) (*routingError, bool) {
+	if errors.Is(err, store.ErrNotSupersedable) {
+		return &routingError{protocol.ErrNotSupersedable, store.ErrNotSupersedable.Error()}, true
+	}
 	for _, r := range reviewRefusals {
 		if errors.Is(err, r.err) {
 			return &routingError{protocol.ErrContactRefused, r.detail}, true

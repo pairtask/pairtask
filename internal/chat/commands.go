@@ -34,16 +34,27 @@ var errTarget = errors.New("expects #n, a message number")
 // runs, so a malformed command never acts partly; available hides commands
 // that can't apply now.
 type command struct {
-	name      string
-	aliases   []string
-	usage     string
-	help      string
-	check     func(argument) error
+	name    string
+	aliases []string
+	usage   string
+	help    string
+	check   func(argument) error
+	// gate refuses what this session's broker can't take, keeping the line.
+	gate      func(m *Model, arg argument) error
 	run       func(m *Model, arg argument) tea.Cmd
 	available func(m *Model) bool
 	// secret commands may carry a secret: the command line is cleared
 	// however the command ends, a refused check included.
 	secret bool
+}
+
+// checkFor is why the line can't run as it is: its words, then what the
+// broker takes.
+func (c command) checkFor(m *Model, arg argument) error {
+	if err := c.check(arg); err != nil || c.gate == nil {
+		return err
+	}
+	return c.gate(m, arg)
 }
 
 func noArgs(a argument) error {
@@ -133,7 +144,7 @@ var commands = []command{
 	{name: "chat", usage: `all|id|@a @b|"id"|["a","b"]`, help: "switch conversation: all, an agent, a group of agents, or JSON for any IDs", check: chatArg, run: (*Model).chatCommand},
 	{name: "room", aliases: []string{"rooms"}, usage: "[NAME | add NAME @a | remove NAME @a | delete NAME]", help: "rooms: list, open (creating) a room's tab, add or remove members, delete a room", check: roomArg, run: (*Model).roomsCommand},
 	{name: "pair", usage: "[open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [ID]]", help: "experimental pairing: open or cancel an invitation code, decide requests, redeem another workspace's code", check: pairArg, run: (*Model).pairCommand, secret: true},
-	{name: "review", usage: "[--no-publish] [--no-formal] TARGET AGENT [SCOPE] | status [ID] | cancel [ID [REASON]]", help: "ask an agent to review a pull request (OWNER/REPO#N or its link), or follow or cancel one (no ID picks it)", check: reviewArg, run: (*Model).reviewCommand},
+	{name: "review", usage: "[--no-publish] [--no-formal] TARGET AGENT [SCOPE] | status [ID] | cancel [ID [REASON]]", help: "ask an agent to review a pull request (OWNER/REPO#N or its link), or follow or cancel one (no ID picks it)", check: reviewArg, gate: (*Model).replacesGate, run: (*Model).reviewCommand},
 	{name: "cards", usage: "clear", help: "clear this conversation's finished action cards; active ones stay", check: cardsArg, run: (*Model).cardsCommand},
 	{name: "reviews", help: "review requests: those needing you, running, asked, and all; /reviews open REF, /reviews more needs|asked", check: reviewsArg, run: (*Model).reviewsCommand},
 	{name: "close", help: "hide this conversation from the bar (nothing is deleted; new messages reopen it)", check: noArgs, run: (*Model).closeCommand},
@@ -230,7 +241,7 @@ func (m *Model) runCommand(name, arg argument) tea.Cmd {
 }
 
 func (m *Model) runChecked(c command, arg argument) tea.Cmd {
-	if err := c.check(arg); err != nil {
+	if err := c.checkFor(m, arg); err != nil {
 		m.status = "/" + c.name + " " + err.Error()
 		if c.secret {
 			m.closeCommandLine()

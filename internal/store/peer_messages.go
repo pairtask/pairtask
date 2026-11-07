@@ -184,6 +184,9 @@ type outgoing struct {
 	// conversation (#278), which the caller found it holds; it speaks
 	// there without being shared.
 	assigned bool
+	// supersedes is the sender's earlier request a review request replaces
+	// (#259), kept on this side only; "" for none.
+	supersedes string
 }
 
 // queueIn is Queue inside its transaction: the existing row for a replay,
@@ -195,7 +198,7 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	}
 	row, found, err := messageRow(ctx, tx, key)
 	if err != nil || found {
-		return replayed(row, o, err)
+		return o.replayedAsk(ctx, tx, row, err)
 	}
 	// A paused contact takes nothing new; a retry above still answers (#276).
 	if err := requireActive(ctx, tx, key.contact); err != nil {
@@ -251,6 +254,16 @@ func senderShared(ctx context.Context, tx *sql.Tx, contact, from string) error {
 		err = messaging.ErrNotShared
 	}
 	return err
+}
+
+// replayedAsk is replayed, for a review request also naming the same
+// request it replaces as first (#259).
+func (o outgoing) replayedAsk(ctx context.Context, tx *sql.Tx, row storedRow, err error) (messaging.Row, error) {
+	held, err := replayed(row, o, err)
+	if err != nil {
+		return held, err
+	}
+	return held, sameSupersedes(ctx, tx, o)
 }
 
 // replayed answers a Queue of an ID already queued: the same text and

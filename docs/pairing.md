@@ -168,6 +168,11 @@ To ask one of their agents, name it with the workspace, from any tab:
 - The reviewer reviews exactly those commits: if the pull request moved on,
   the review can't start.
 - `--pin BASE..HEAD` pins them yourself (full commit IDs) and skips the lookup.
+- If the pull request moves before they accept it, their side declines it as
+  moved and the request's line says where to, as they reported it. Ask again
+  with `--replaces ASK_ID`, which links the new request to the old one: your
+  own final request to the same agent and change, replaced once. Pins are
+  never moved for you.
 - Nothing is published unless you ask: `--publish`, or `--formal` for a formal
   approval or change request. They allow at most what they granted.
 - WORKSPACE is what you call it, the name it gives itself, or its key (at least

@@ -166,6 +166,13 @@ var laterColumns = []struct{ table, column, decl string }{
 	// When an offline archive replaced the message's body (#119); NULL
 	// while it is kept. An archived ID stays reserved.
 	{"message_metadata", "archived_at", "TEXT"},
+	// A review request's replacement (#259): the request this one replaces,
+	// and the one that replaced it; '' for none.
+	{"review_asks_out", "supersedes", "TEXT NOT NULL DEFAULT ''"},
+	{"review_asks_out", "superseded_by", "TEXT NOT NULL DEFAULT ''"},
+	// A review outcome notice as delivered (#259): its typed outcome, JSON,
+	// so a replay says what it said; NULL for any other message.
+	{"message_metadata", "review_outcome", "TEXT"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the

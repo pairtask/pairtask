@@ -22,7 +22,7 @@ import (
 var reviewFrames = map[string]bool{
 	protocol.TypeReviewGet: true, protocol.TypeReviewPrepare: true, protocol.TypeReviewAccept: true,
 	protocol.TypeReviewDecline: true, protocol.TypeReviewRestart: true, protocol.TypeReviewSubmit: true,
-	protocol.TypeReviewPublication: true, protocol.TypeReviewObserve: true,
+	protocol.TypeReviewPublication: true, protocol.TypeReviewObserve: true, protocol.TypeReviewCheckPins: true,
 }
 
 // reviewErrors maps lifecycle outcomes to the answer an agent or the
@@ -37,6 +37,7 @@ var reviewErrors = []struct {
 	{review.ErrLimit, protocol.ErrInvalidReview},
 	{review.ErrConflict, protocol.ErrReviewConflict},
 	{review.ErrMoved, protocol.ErrReviewConflict},
+	{errMovedDeclined, protocol.ErrReviewConflict},
 	{review.ErrDenied, protocol.ErrInvalidReview},
 }
 
@@ -103,6 +104,15 @@ func (h *Hub) agentReview(ctx context.Context, in Inbound) protocol.Message {
 		h.emit(protocol.SessionEvent{Kind: protocol.EventReviewsChanged, ReviewID: msg.ReviewID})
 		h.remoteReviewChanged(rec)
 	}
+	return h.reviewAnswer(msg, rec, step)
+}
+
+// reviewAnswer is a committed step's answer: the review as it stands, or
+// for a prepare that declined it as moved, the refusal of its pins.
+func (h *Hub) reviewAnswer(msg protocol.Message, rec review.Record, step review.Step) protocol.Message {
+	if step.Moved && msg.Type == protocol.TypeReviewPrepare {
+		return h.reviewFailure(msg.RequestID, errMovedDeclined) // declined and kept; the pins it named are refused
+	}
 	view := rec.View
 	answer := protocol.Message{Type: protocol.TypeReviewResult, RequestID: msg.RequestID, ReviewID: msg.ReviewID, Review: &view}
 	if msg.Type == protocol.TypeReviewPublication {
@@ -111,28 +121,63 @@ func (h *Hub) agentReview(ctx context.Context, in Inbound) protocol.Message {
 	return answer
 }
 
+// plainSteps are the agent frames whose step says only whether it changed
+// the review.
+var plainSteps = map[string]func(review.Record, protocol.Message, time.Time) (review.Record, bool, error){
+	protocol.TypeReviewAccept: func(r review.Record, _ protocol.Message, now time.Time) (review.Record, bool, error) {
+		return review.Accept(r, now)
+	},
+	protocol.TypeReviewDecline: func(r review.Record, msg protocol.Message, now time.Time) (review.Record, bool, error) {
+		return review.Decline(r, msg.ReviewReason, now)
+	},
+	protocol.TypeReviewRestart: func(r review.Record, msg protocol.Message, now time.Time) (review.Record, bool, error) {
+		return review.Restart(r, msg.Attempt, now)
+	},
+	protocol.TypeReviewSubmit: func(r review.Record, msg protocol.Message, now time.Time) (review.Record, bool, error) {
+		return review.Submit(r, msg.Attempt, *msg.Verdict, now)
+	},
+	protocol.TypeReviewObserve: func(r review.Record, msg protocol.Message, now time.Time) (review.Record, bool, error) {
+		return review.Observe(r, msg.Attempt, *msg.Revisions, now)
+	},
+}
+
 // agentStep applies one agent frame to its review.
 func agentStep(r review.Record, msg protocol.Message, now time.Time) (review.Record, review.Step, error) {
-	var changed bool
-	var err error
 	switch msg.Type {
 	case protocol.TypeReviewPrepare:
-		r, changed, err = review.Prepare(r, *msg.Revisions, now)
-	case protocol.TypeReviewAccept:
-		r, changed, err = review.Accept(r, now)
-	case protocol.TypeReviewDecline:
-		r, changed, err = review.Decline(r, msg.ReviewReason, now)
-	case protocol.TypeReviewRestart:
-		r, changed, err = review.Restart(r, msg.Attempt, now)
-	case protocol.TypeReviewSubmit:
-		r, changed, err = review.Submit(r, msg.Attempt, *msg.Verdict, now)
+		return prepareStep(r, *msg.Revisions, now)
+	case protocol.TypeReviewCheckPins:
+		r, changed, err := review.CheckPins(r, *msg.Revisions, now)
+		return r, review.Step{Changed: changed, Moved: changed}, err
 	case protocol.TypeReviewPublication:
 		return review.Publish(r, msg.Attempt, *msg.PublicationStep, now)
-	case protocol.TypeReviewObserve:
-		r, changed, err = review.Observe(r, msg.Attempt, *msg.Revisions, now)
 	}
+	step, ok := plainSteps[msg.Type]
+	if !ok {
+		return r, review.Step{}, nil
+	}
+	r, changed, err := step(r, msg, now)
 	return r, review.Step{Changed: changed}, err
 }
+
+// prepareStep pins the revisions a requested review's change has now. One
+// whose change moved off its pins is declined as moved and the decline kept
+// (#259): the side that asked is told, whichever client prepared it.
+func prepareStep(r review.Record, revisions protocol.Revisions, now time.Time) (review.Record, review.Step, error) {
+	next, changed, err := review.Prepare(r, revisions, now)
+	if !errors.Is(err, review.ErrMoved) {
+		return next, review.Step{Changed: changed}, err
+	}
+	next, changed, err = review.CheckPins(r, revisions, now)
+	if err != nil {
+		return r, review.Step{}, review.ErrMoved
+	}
+	return next, review.Step{Changed: changed, Moved: true}, nil
+}
+
+// errMovedDeclined answers a prepare whose change moved: the request was
+// declined, and the side that asked told.
+var errMovedDeclined = errors.New("the change moved since the request pinned it; the review was declined and the requester told")
 
 // reviewGet answers one review of this agent's, or all of them.
 func (h *Hub) reviewGet(ctx context.Context, in Inbound) protocol.Message {
@@ -198,11 +243,11 @@ func (h *Hub) reviewPreflight(in Inbound) *protocol.Message {
 		frame := statusError(msg.RequestID, code, detail)
 		return &frame
 	}
-	switch {
-	case msg.RequestID == "" || len(msg.RequestID) > 128:
+	if msg.RequestID == "" || len(msg.RequestID) > 128 {
 		return refuse(protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
-	case in.From.ProtocolVersion < protocol.ReviewVersion:
-		return refuse(protocol.ErrMalformedFrame, fmt.Sprintf("review requests require protocol_version %d", protocol.ReviewVersion))
+	}
+	if detail := versionRefusal(msg.Type, in.From.ProtocolVersion); detail != "" {
+		return refuse(protocol.ErrMalformedFrame, detail)
 	}
 	if err := validReviewFrame(msg); err != nil {
 		return refuse(protocol.ErrInvalidReview, err.Error())
@@ -213,9 +258,22 @@ func (h *Hub) reviewPreflight(in Inbound) *protocol.Message {
 	return nil
 }
 
+// versionRefusal is why a frame of this type needs a newer protocol, "" when
+// the version takes it.
+func versionRefusal(kind string, version int) string {
+	switch {
+	case version < protocol.ReviewVersion:
+		return fmt.Sprintf("review requests require protocol_version %d", protocol.ReviewVersion)
+	case kind == protocol.TypeReviewCheckPins && version < protocol.ReviewSupersedeVersion:
+		return fmt.Sprintf("review_check_pins requires protocol_version %d", protocol.ReviewSupersedeVersion)
+	}
+	return ""
+}
+
 // reviewFieldChecks validate what each agent frame carries beyond its ID.
 var reviewFieldChecks = map[string]func(protocol.Message) error{
-	protocol.TypeReviewPrepare: func(m protocol.Message) error { return protocol.ValidateRevisions(m.Revisions) },
+	protocol.TypeReviewPrepare:   func(m protocol.Message) error { return protocol.ValidateRevisions(m.Revisions) },
+	protocol.TypeReviewCheckPins: func(m protocol.Message) error { return protocol.ValidateRevisions(m.Revisions) },
 	protocol.TypeReviewObserve: func(m protocol.Message) error {
 		return errors.Join(validAttempt(m), protocol.ValidateRevisions(m.Revisions))
 	},

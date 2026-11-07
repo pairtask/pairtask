@@ -163,9 +163,13 @@ func (o *OfflineDatabase) apply(ctx context.Context, report *ArchiveReport, back
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
+	snapshots, err := hasOutcomeSnapshots(ctx, tx)
+	if err != nil {
+		return err
+	}
+	run := archiveRun{tx: tx, now: time.Now().UTC(), snapshots: snapshots}
 	for _, c := range plan.eligible {
-		if err := archiveMessage(ctx, tx, c, now); err != nil {
+		if err := run.message(ctx, c); err != nil {
 			return err
 		}
 	}
@@ -177,13 +181,36 @@ func (o *OfflineDatabase) apply(ctx context.Context, report *ArchiveReport, back
 	return tx.Commit()
 }
 
-func archiveMessage(ctx context.Context, tx *sql.Tx, c archiveCandidate, now time.Time) error {
+// hasOutcomeSnapshots: the database keeps outcome notices as delivered
+// (#259); one a broker before that left has nothing of the kind to clear.
+func hasOutcomeSnapshots(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var has bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pragma_table_info('message_metadata') WHERE name = 'review_outcome')`).Scan(&has)
+	return has, err
+}
+
+// archiveRun is one archive's transaction, its time, and whether the
+// database keeps outcome notices as delivered.
+type archiveRun struct {
+	tx        *sql.Tx
+	now       time.Time
+	snapshots bool
+}
+
+// message replaces a message's body, and the outcome told with it, which
+// repeats what the body said.
+func (a archiveRun) message(ctx context.Context, c archiveCandidate) error {
+	tx, now := a.tx, a.now
+	marked := `UPDATE message_metadata SET archived_at = ? WHERE message_id = ?`
+	if a.snapshots {
+		marked = `UPDATE message_metadata SET archived_at = ?, review_outcome = NULL WHERE message_id = ?`
+	}
 	steps := []struct {
 		query string
 		args  []any
 	}{
 		{`UPDATE messages SET payload = ? WHERE seq = ?`, []any{ArchivedPayload, c.seq}},
-		{`UPDATE message_metadata SET archived_at = ? WHERE message_id = ?`, []any{stamp(now), c.id}},
+		{marked, []any{stamp(now), c.id}},
 		{`DELETE FROM durable_messages WHERE message_id = ?`, []any{c.id}},
 	}
 	for _, step := range steps {

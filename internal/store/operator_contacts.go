@@ -35,6 +35,7 @@ type ContactSend struct {
 	OperationID, Contact, Text string
 	To                         []string             // the contact's agents, none for its operator (#222)
 	Review                     *messaging.ReviewAsk // a review request for the one agent in To (#235)
+	Supersedes                 string               // the operator's earlier request it replaces (#259), "" for none
 	AuditID                    int64
 	Now                        time.Time
 	// Here are this side's agents the send tags, and OperatorHere whether it
@@ -149,7 +150,7 @@ func (s *Store) contactSend(ctx context.Context, c ContactSend) (ContactSent, er
 		if sent.Advice, err = askAdvice(ctx, tx, c.Contact, m); err != nil {
 			return err
 		}
-		if sent.Row, err = queueIn(ctx, tx, outgoing{key: key, m: m, now: c.Now}); err != nil {
+		if sent.Row, err = queueIn(ctx, tx, outgoing{key: key, m: m, now: c.Now, supersedes: c.Supersedes}); err != nil {
 			return err
 		}
 		return shareHere(ctx, tx, c, m)
@@ -163,6 +164,7 @@ func (s *Store) contactSend(ctx context.Context, c ContactSend) (ContactSent, er
 // fingerprint is what the send's operation ID stands for. A send tagging
 // here is fingerprinted apart, its lists counted, so no name can move
 // between them unnoticed; any other send keeps the fingerprint it always had.
+// A replacement (#259) adds the request it replaces last.
 func (c ContactSend) fingerprint() []byte {
 	review := reviewAskJSON(c.Review)
 	here := c.homeTargets()
@@ -171,11 +173,20 @@ func (c ContactSend) fingerprint() []byte {
 		if review.Valid {
 			parts = append(parts, "review", review.String)
 		}
-		return operationFingerprint("send", c.Contact, parts...)
+		return operationFingerprint("send", c.Contact, c.withSupersedes(parts)...)
 	}
 	parts := append([]string{c.Text, review.String, strconv.Itoa(len(c.To))}, c.To...)
 	parts = append(append(parts, strconv.Itoa(len(here))), here...)
-	return operationFingerprint("send here", c.Contact, parts...)
+	return operationFingerprint("send here", c.Contact, c.withSupersedes(parts)...)
+}
+
+// withSupersedes ends a fingerprint's parts with the request a replacement
+// replaces; any other send's parts stay as they were.
+func (c ContactSend) withSupersedes(parts []string) []string {
+	if c.Supersedes == "" {
+		return parts
+	}
+	return append(parts, "supersedes", c.Supersedes)
 }
 
 // askAdvice is a review request's advisories, read before it is queued;

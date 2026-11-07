@@ -76,9 +76,7 @@ func (h *Hub) reviewsAskedPage(ctx context.Context, in Inbound) protocol.Message
 		return statusError(msg.RequestID, protocol.ErrInternal, "review requests unavailable")
 	}
 	out := askedFrame(msg.RequestID, page)
-	if !history {
-		untaggedOutcomes(out.ReviewsAsked)
-	}
+	versionedOutcomes(out.ReviewsAsked, in.From.ProtocolVersion)
 	return out
 }
 
@@ -136,8 +134,6 @@ func (h *Hub) reviewAskedDetail(ctx context.Context, in Inbound) protocol.Messag
 	if found {
 		views = append(views, a.View())
 	}
-	if !historyCapable(in.From.ProtocolVersion) {
-		untaggedOutcomes(views)
-	}
+	versionedOutcomes(views, in.From.ProtocolVersion)
 	return protocol.Message{Type: protocol.TypeReviewsAskedResult, RequestID: msg.RequestID, ReviewsAsked: views}
 }

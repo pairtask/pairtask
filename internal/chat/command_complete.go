@@ -104,7 +104,7 @@ func reviewAgentWord(words []string) bool {
 	positional := 0
 	for i := 0; i < len(words); i++ {
 		switch {
-		case words[i] == "--pin":
+		case flagWords[words[i]]:
 			i++ // its value is no position
 		case !strings.HasPrefix(words[i], "--"):
 			positional++

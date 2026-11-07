@@ -155,7 +155,9 @@ var retriedImports = []error{store.ErrInboxFull, store.ErrLocalIDsTaken, review.
 func (h *Hub) deliverImport(clients map[string]*Client, result store.ImportResult) {
 	for _, r := range result.Recipients {
 		if c := sessionOwner(clients, r); c != nil {
-			h.enqueue(clients, c, result.Msg)
+			msg := result.Msg
+			msg.ReviewOutcome = protocol.OutcomeFor(msg.ReviewOutcome, c.ProtocolVersion)
+			h.enqueue(clients, c, msg)
 		}
 	}
 }
@@ -244,7 +246,7 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 	if in.Msg.InReplyTo == "" {
 		return remoteRoute{contact, func(ctx context.Context, out protocol.Message, text string, at time.Time) (store.RemoteReplyResult, error) {
 			return h.store.QueueWorkspaceSend(ctx, store.WorkspaceSend{Msg: out, SenderSession: in.From.SessionID, Contact: contact, Text: text,
-				Review: wireAsk(in.Msg.ReviewAsk), Now: at})
+				Review: wireAsk(in.Msg.ReviewAsk), Supersedes: askSupersedes(in.Msg.ReviewAsk), Now: at})
 		}}, nil
 	}
 	parent, rerr := h.workspaceParent(ctx, contact, in.Msg.InReplyTo)
@@ -364,6 +366,7 @@ var remoteReplyErrors = []struct {
 	{messaging.ErrInvalid, protocol.ErrMalformedFrame, "a message to a paired workspace has a printable ID up to 128 bytes and 1 to 16 KiB of text"},
 	{messaging.ErrConflict, protocol.ErrDuplicateMessage, "message ID already used for another message to that workspace"},
 	{store.ErrDuplicateMessage, protocol.ErrDuplicateMessage, store.ErrDuplicateMessage.Error()},
+	{store.ErrNotSupersedable, protocol.ErrNotSupersedable, store.ErrNotSupersedable.Error()},
 }
 
 func remoteReplyError(err error) *routingError {

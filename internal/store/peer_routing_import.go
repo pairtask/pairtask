@@ -686,7 +686,7 @@ var ErrOutcomeNotice = errors.New("a refusal notice is not a chat reply target")
 // repeatedReply answers a reply whose ID is queued already: the same text
 // and routing, queued from the same agent's message, is the same reply.
 func repeatedReply(ctx context.Context, tx *sql.Tx, held storedRow, o outgoing) (RemoteReplyResult, error) {
-	row, err := replayed(held, o, nil)
+	row, err := o.replayedAsk(ctx, tx, held, nil)
 	if err != nil {
 		return RemoteReplyResult{}, err
 	}
