@@ -363,10 +363,23 @@ func verifyJoin(ctx context.Context, tx *sql.Tx, v verified) (peer.JoinRecord, e
 	if err != nil || !changed {
 		return next, err
 	}
+	if err := admitRetained(ctx, tx, v.res.Peer); err != nil {
+		return peer.JoinRecord{}, err
+	}
 	if v.res.Mode.Epoch() {
 		return verifyEpoch(ctx, tx, next)
 	}
 	return verifyLegacy(ctx, tx, next)
+}
+
+// admitRetained refuses to retain a new identity beyond the retained bound
+// before a verified join stores it; a retained one reuses its slot (#276).
+func admitRetained(ctx context.Context, tx *sql.Tx, identity string) error {
+	c, err := pairingCounts(ctx, tx, identity)
+	if err != nil {
+		return err
+	}
+	return peer.AdmitRetained(c)
 }
 
 // verifyLegacy commits a legacy join's ledger row, then, if Amendment A3

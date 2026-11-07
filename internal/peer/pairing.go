@@ -243,7 +243,7 @@ func AdmitOutcome(c PairingCounts) error {
 	case c.KnownIdentity:
 		return nil
 	}
-	if err := admitIdentity(c); err != nil {
+	if err := AdmitRetained(c); err != nil {
 		return err
 	}
 	if c.Pending >= MaxPendingPairingRequests {
@@ -252,8 +252,10 @@ func AdmitOutcome(c PairingCounts) error {
 	return nil
 }
 
-// admitIdentity refuses a new identity beyond MaxRetainedIdentities.
-func admitIdentity(c PairingCounts) error {
+// AdmitRetained refuses a new identity beyond MaxRetainedIdentities; one
+// already retained reuses its slot. The inviter's outcome and the joiner's
+// verified exchange both pass it before storing an identity.
+func AdmitRetained(c PairingCounts) error {
 	if c.Retained || c.Identities < MaxRetainedIdentities {
 		return nil
 	}
