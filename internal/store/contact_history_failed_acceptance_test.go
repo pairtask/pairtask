@@ -28,6 +28,11 @@ func TestContactHistoryAcceptanceFailedPagesKeepTiedEpochs(t *testing.T) {
 		before = page.Next
 	}
 	pairEqual(t, len(items), protocol.ReviewPendingPage+1)
+	failedEpochsUnique(t, items)
+}
+
+func failedEpochsUnique(t *testing.T, items []protocol.ReviewFailedItem) {
+	t.Helper()
 	seen := map[int64]bool{}
 	for _, item := range items {
 		if item.PairingEpoch <= 0 {
