@@ -116,6 +116,8 @@ func (j *Joiner) Join(ctx context.Context, f Frames, in JoinInput) (JoinRecord, 
 // OperationID is the operator's stable request ID; the code is never
 // formatted, encoded or stored.
 type JoinRequest struct {
+	Repair string
+
 	OperationID, Destination, Name string
 	Code                           []byte `json:"-"`
 }

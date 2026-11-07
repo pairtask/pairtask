@@ -60,6 +60,8 @@ func (p InvitationPolicy) validate() error {
 // Invitation is a newly opened invitation. Code exists only here: it is meant
 // for the operator's own UI response and must never become a broker message.
 type Invitation struct {
+	Repair string
+
 	ID        string
 	Code      string `json:"-"` // grouped for reading, e.g. "482-913"; never serialized
 	ExpiresAt time.Time

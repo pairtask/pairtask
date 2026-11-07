@@ -41,6 +41,8 @@ type Frames interface {
 // fingerprints as presented on this connection, both operation IDs, the
 // invitation, the joiner's name and the connection's channel binding.
 type ExchangeBinding struct {
+	Mode ExchangeMode
+
 	InvitationID, JoinerOperationID, InviterOperationID string
 	Inviter, Joiner                                     string
 	JoinerName                                          string
@@ -100,6 +102,8 @@ type Exchanger interface {
 // Connection is what the caller's connection established: the fingerprint
 // of the leaf certificate the peer presented, and the channel binding.
 type Connection struct {
+	Mode ExchangeMode
+
 	PeerLeaf       string
 	ChannelBinding []byte
 }

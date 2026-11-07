@@ -78,6 +78,8 @@ type Conn struct {
 // offers contact connections, accepting one only from an identity it
 // reports true for.
 type ServerOptions struct {
+	PairingProtocols []string
+
 	ContactPins func(fingerprint string) bool
 	// MessagePins, when set, also offers message sessions, accepting one
 	// only from an identity it reports true for: a confirmed contact.
