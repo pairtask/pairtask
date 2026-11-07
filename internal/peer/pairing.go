@@ -69,6 +69,10 @@ const (
 // or a restart can find what was committed. Every field is immutable once
 // committed.
 type PairingOutcome struct {
+	Mode      ExchangeMode
+	BegunMark uint64
+	Repair    string
+
 	OperationID  string
 	InvitationID string
 	IdentityKey  string
@@ -79,6 +83,9 @@ type PairingOutcome struct {
 
 // PairingRequest is the current decision state for one identity.
 type PairingRequest struct {
+	OperationID string
+	Kind        ExchangeKind
+
 	IdentityKey   string
 	Name          string
 	State         PairingState

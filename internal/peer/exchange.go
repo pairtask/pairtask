@@ -79,6 +79,8 @@ func validChannelBinding(cb []byte) error {
 // ExchangeResult is what the exchange authenticated: the peer's identity and
 // the exchange's own transcript ID.
 type ExchangeResult struct {
+	Mode ExchangeMode
+
 	Peer         string
 	TranscriptID []byte
 }

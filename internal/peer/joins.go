@@ -67,6 +67,11 @@ var (
 // JoinRecord is one join. Every field but State and UpdatedAt is written
 // once.
 type JoinRecord struct {
+	Mode      ExchangeMode
+	BegunMark uint64
+	Repair    string
+	RetiredAt time.Time
+
 	OperationID        string // ours
 	Joiner             string // our own fingerprint
 	JoinerName         string
@@ -168,6 +173,8 @@ func JoinerContact(r JoinRecord) Contact {
 // JoinStart is a join's intent: our operation ID, our own fingerprint, the
 // name we pair under and, for an operator's redemption, the destination.
 type JoinStart struct {
+	Repair string
+
 	OperationID, Joiner, Name, Destination string
 	At                                     time.Time
 }
