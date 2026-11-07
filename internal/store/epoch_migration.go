@@ -91,6 +91,8 @@ var epochColumns = []struct{ table, column, decl string }{
 	{"peer_pairing_requests", "operation_id", "TEXT NOT NULL DEFAULT ''"},
 	{"peer_joins", "retired_at", "TEXT"},
 	{"peer_joins", "begun_mark", "INTEGER NOT NULL DEFAULT 0"},
+	// The identity the operator declared a join repairs, '' for none.
+	{"peer_joins", "repair", "TEXT NOT NULL DEFAULT ''"},
 	{"reviews", "remote_epoch", "INTEGER"},          // NULL is 1
 	{"message_metadata", "remote_epoch", "INTEGER"}, // NULL is 1
 	{"paired_threads", "pairing_epoch", "INTEGER NOT NULL DEFAULT 1"},

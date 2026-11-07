@@ -161,9 +161,13 @@ func (s *settleState) due(id string, now time.Time) bool {
 	return a.passes < SettleMaxAttempts && !now.Before(a.next)
 }
 
-// settleCandidate is a join that still needs settling and can be.
+// settleCandidate is a join that still needs settling and can be; one an
+// unpair retired never does.
 func settleCandidate(r peer.JoinRecord) bool {
 	if r.Destination == "" || r.Peer == "" {
+		return false
+	}
+	if !r.RetiredAt.IsZero() {
 		return false
 	}
 	switch r.State {
@@ -215,7 +219,7 @@ func (h *Hub) queueAutomatic(ctx context.Context) {
 	now := h.pair.cfg.Clock()
 	var ids []string
 	for _, r := range joins {
-		if h.automaticDue(r, now) {
+		if h.automaticDue(ctx, r, now) {
 			ids = append(ids, r.OperationID)
 		}
 	}
@@ -224,11 +228,28 @@ func (h *Hub) queueAutomatic(ctx context.Context) {
 
 // automaticDue reports a candidate within SettleWindow, its budget and its
 // backoff.
-func (h *Hub) automaticDue(r peer.JoinRecord, now time.Time) bool {
-	if !settleCandidate(r) || now.Sub(r.CreatedAt) > SettleWindow {
+func (h *Hub) automaticDue(ctx context.Context, r peer.JoinRecord, now time.Time) bool {
+	if !h.liveCandidate(ctx, r) || now.Sub(r.CreatedAt) > SettleWindow {
 		return false
 	}
 	return h.pair.settle.due(r.OperationID, now)
+}
+
+// liveCandidate is a candidate whose exchange can still install: one
+// the ledger retired or refused, an address move included, is settled
+// already (#276), and no ack loop retries it.
+func (h *Hub) liveCandidate(ctx context.Context, r peer.JoinRecord) bool {
+	if !r.Mode.Epoch() {
+		return settleCandidate(r)
+	}
+	if !settleCandidate(r) {
+		return false
+	}
+	x, found, err := h.store.Exchange(ctx, r.OperationID)
+	if err != nil || !found {
+		return false
+	}
+	return x.State == peer.ExchangeOpen || x.State == peer.ExchangeInstalled
 }
 
 func (h *Hub) drainSettle(ctx context.Context) {
@@ -391,7 +412,7 @@ func (h *Hub) settleTargets(ctx context.Context, target string) ([]string, *rout
 	}
 	var ids []string
 	for _, r := range joins {
-		if settleCandidate(r) {
+		if h.liveCandidate(ctx, r) {
 			ids = append(ids, r.OperationID)
 		}
 	}

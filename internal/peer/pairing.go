@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -69,23 +71,24 @@ const (
 // or a restart can find what was committed. Every field is immutable once
 // committed.
 type PairingOutcome struct {
-	Mode      ExchangeMode
-	BegunMark uint64
-	Repair    string
-
 	OperationID  string
 	InvitationID string
 	IdentityKey  string
 	Name         string
 	TranscriptID []byte
 	At           time.Time
+	// Mode is what the exchange can install (#276); "" is legacy.
+	Mode ExchangeMode
+	// BegunMark is the global authority mark when the attempt began: an
+	// authority transition of the identity since then refuses the commit.
+	BegunMark uint64
+	// Repair is the identity the operator declared this exchange repairs,
+	// "" for none.
+	Repair string
 }
 
 // PairingRequest is the current decision state for one identity.
 type PairingRequest struct {
-	OperationID string
-	Kind        ExchangeKind
-
 	IdentityKey   string
 	Name          string
 	State         PairingState
@@ -93,6 +96,11 @@ type PairingRequest struct {
 	// DeliveredAt is when the joiner acknowledged the decision; until then
 	// an accepted request is not yet a contact.
 	DeliveredAt time.Time
+	// OperationID names the identity's current epoch-capable candidate, and
+	// Kind what it is; display only, never authority (#276). Both are empty
+	// for a legacy request.
+	OperationID string
+	Kind        ExchangeKind
 }
 
 // PairingStore keeps pairing outcomes and requests durably.
@@ -116,7 +124,20 @@ type PairingStore interface {
 	// Deliver records that the joiner acknowledged the request's decision,
 	// once; an accepted one becomes a contact in the same write. The
 	// request must hold that decision.
+	// An identity whose candidate is epoch-capable is ErrOperationRequired:
+	// its delivery goes through DeliverExchange.
 	Deliver(ctx context.Context, identityKey string, decision PairingState, at time.Time) (PairingRequest, error)
+	// PairingMark is the global authority mark, captured as an attempt
+	// begins (#276).
+	PairingMark(ctx context.Context) (uint64, error)
+	// Exchange is one exchange's ledger row, if any; legacy exchanges have
+	// none.
+	Exchange(ctx context.Context, operationID string) (ExchangeRecord, bool, error)
+	// DeliverExchange records the joiner's acknowledgement of one
+	// epoch-capable exchange, by its operation: a replay answers what was
+	// recorded, then the authority mark is checked, then an acceptance
+	// installs the pairing atomically.
+	DeliverExchange(ctx context.Context, d ExchangeDelivery) (InstallResult, error)
 }
 
 // DeliverDecision is Deliver's transition for one request: it changes it
@@ -146,6 +167,15 @@ func ValidOutcome(o PairingOutcome) error {
 	present := []bool{o.OperationID != "", o.InvitationID != "", o.IdentityKey != "", len(o.TranscriptID) > 0, !o.At.IsZero()}
 	if slices.Contains(present, false) {
 		return errors.New("peer: pairing outcome is missing a required field")
+	}
+	return ValidMark(o.BegunMark)
+}
+
+// ValidMark refuses an authority mark beyond what the store's signed
+// counter holds: it is never wrapped (#276, Amendment B).
+func ValidMark(mark uint64) error {
+	if mark > math.MaxInt64 {
+		return fmt.Errorf("%w: authority mark beyond its range", ErrInvalidPairingOutcome)
 	}
 	return nil
 }
@@ -266,6 +296,20 @@ func (s *MemPairingStore) Deliver(_ context.Context, identityKey string, decisio
 		return request, err
 	}
 	return next, nil
+}
+
+// PairingMark is always 0: a memory store has no authority transitions.
+func (s *MemPairingStore) PairingMark(context.Context) (uint64, error) { return 0, nil }
+
+// Exchange finds nothing: a memory store keeps legacy pairings only.
+func (s *MemPairingStore) Exchange(context.Context, string) (ExchangeRecord, bool, error) {
+	return ExchangeRecord{}, false, nil
+}
+
+// DeliverExchange has no exchange to deliver: a memory store keeps legacy
+// pairings only.
+func (s *MemPairingStore) DeliverExchange(context.Context, ExchangeDelivery) (InstallResult, error) {
+	return InstallResult{}, ErrNoPairingRequest
 }
 
 func cloneOutcome(o PairingOutcome) PairingOutcome {

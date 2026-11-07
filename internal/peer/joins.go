@@ -67,11 +67,6 @@ var (
 // JoinRecord is one join. Every field but State and UpdatedAt is written
 // once.
 type JoinRecord struct {
-	Mode      ExchangeMode
-	BegunMark uint64
-	Repair    string
-	RetiredAt time.Time
-
 	OperationID        string // ours
 	Joiner             string // our own fingerprint
 	JoinerName         string
@@ -86,6 +81,15 @@ type JoinRecord struct {
 	// DecisionConfirmedAt is when the inviter acknowledged our receipt of
 	// its decision; until then a final join still settles again.
 	DecisionConfirmedAt time.Time
+	// Repair is the identity the operator declared the join repairs, ""
+	// for none; BegunMark the global authority mark when it began (#276).
+	Repair    string
+	BegunMark uint64
+	// Mode is what the verified exchange can install, "" before it
+	// verified or for a legacy one; RetiredAt when an unpair retired the
+	// join, which then takes no decision.
+	Mode      ExchangeMode
+	RetiredAt time.Time
 }
 
 // JoinReceipt is the inviter's word that it committed this join.
@@ -106,9 +110,14 @@ type JoinStore interface {
 	// It runs once at startup, while no join can be live.
 	RecoverJoins(ctx context.Context, at time.Time) (int, error)
 	// RecordDecision records the inviter's decision on a join awaiting it;
-	// an acceptance makes the contact in the same write.
+	// an acceptance makes the contact in the same write, but for an
+	// epoch-capable join, which installs only at its confirmation (#276).
+	// A join an unpair retired is ErrJoinRetired.
 	RecordDecision(ctx context.Context, opID string, decision PairingState, at time.Time) (JoinRecord, error)
-	// RecordDecisionConfirmed records, once, that the inviter confirmed it.
+	// RecordDecisionConfirmed records, once, that the inviter confirmed it;
+	// for an epoch-capable join it delivers the exchange: a replay answers
+	// what was recorded, then the authority mark is checked, then an
+	// acceptance installs. A retired join is ErrJoinRetired.
 	RecordDecisionConfirmed(ctx context.Context, opID string, decision PairingState, at time.Time) (JoinRecord, error)
 	GetJoin(ctx context.Context, opID string) (JoinRecord, bool, error)
 	Joins(ctx context.Context) ([]JoinRecord, error)
@@ -173,10 +182,11 @@ func JoinerContact(r JoinRecord) Contact {
 // JoinStart is a join's intent: our operation ID, our own fingerprint, the
 // name we pair under and, for an operator's redemption, the destination.
 type JoinStart struct {
-	Repair string
-
 	OperationID, Joiner, Name, Destination string
 	At                                     time.Time
+	// Repair is the identity the operator declares this join repairs, ""
+	// for none (#276).
+	Repair string
 }
 
 // JoinCounts is what admitting a new join depends on.
@@ -196,7 +206,7 @@ func NewJoin(s JoinStart, c JoinCounts) (JoinRecord, error) {
 		return JoinRecord{}, ErrTooManyOpenJoins
 	}
 	return JoinRecord{OperationID: s.OperationID, Joiner: s.Joiner, JoinerName: s.Name, Destination: s.Destination,
-		State: JoinIntent, CreatedAt: s.At, UpdatedAt: s.At}, nil
+		State: JoinIntent, CreatedAt: s.At, UpdatedAt: s.At, Repair: s.Repair}, nil
 }
 
 func (s JoinStart) validate() error {
@@ -204,6 +214,14 @@ func (s JoinStart) validate() error {
 		return ErrInvalidJoin
 	}
 	if ValidIdentityKey(s.Joiner) != nil || validDestination(s.Destination) != nil {
+		return ErrInvalidJoin
+	}
+	return validRepair(s.Repair)
+}
+
+// validRepair accepts no declared repair, or an identity key.
+func validRepair(key string) error {
+	if key != "" && ValidIdentityKey(key) != nil {
 		return ErrInvalidJoin
 	}
 	return nil
@@ -272,7 +290,7 @@ func validPairingID(id string) bool {
 
 // ReplayJoin answers BeginJoin for a known operation.
 func ReplayJoin(r JoinRecord, s JoinStart) (JoinRecord, error) {
-	same := []bool{r.Joiner == s.Joiner, r.JoinerName == s.Name, r.Destination == s.Destination}
+	same := []bool{r.Joiner == s.Joiner, r.JoinerName == s.Name, r.Destination == s.Destination, r.Repair == s.Repair}
 	if slices.Contains(same, false) {
 		return JoinRecord{}, ErrJoinConflict
 	}

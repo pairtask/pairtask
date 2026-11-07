@@ -74,13 +74,15 @@ var _ messaging.Store = (*PeerMessages)(nil)
 // PeerMessages is the messaging store over this database.
 func (s *Store) PeerMessages() *PeerMessages { return &PeerMessages{db: s.db, gate: s.gate} }
 
-// confirmedContact: a contact row and a confirmed decision, as the inviter
-// (a delivered acceptance) or as the joiner (a confirmed contact join),
-// whose pairing wasn't ended since (#276). A pending or rejected pairing
-// never counts.
+// confirmedContact: a contact row whose pairing wasn't ended since (#276)
+// and whose pairing is confirmed: one installed through the exchange
+// ledger by the installed row its pairing_op names, nothing else; a legacy
+// one by its decision, as the inviter (a delivered acceptance) or as the
+// joiner (a confirmed contact join). A pending or rejected pairing never
+// counts.
 func confirmedContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, error) {
 	var ok bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1 AND unpaired_at = '') AND `+pairingDecided,
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts c WHERE c.identity_key = ?1 AND c.unpaired_at = '' AND `+pairingConfirmed+`)`,
 		string(contact)).Scan(&ok)
 	return ok, err
 }
@@ -89,13 +91,18 @@ func confirmedContact(ctx context.Context, q rowQuerier, contact contactKey) (bo
 // has ended since; an unpaired contact keeps its history (#276).
 func knownContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, error) {
 	var ok bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1 AND unpaired_at != '') OR (
-    EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1) AND `+pairingDecided+`)`,
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts c WHERE c.identity_key = ?1 AND (c.unpaired_at != '' OR `+pairingConfirmed+`))`,
 		string(contact)).Scan(&ok)
 	return ok, err
 }
 
-// pairingDecided is the confirmed decision for identity ?1.
+// pairingConfirmed is the confirmed pairing of contact row c, identity ?1.
+const pairingConfirmed = `(
+    (c.pairing_op != '' AND EXISTS (SELECT 1 FROM pairing_exchanges x
+        WHERE x.operation_id = c.pairing_op AND x.identity_key = ?1 AND x.state = 'installed'))
+    OR (c.pairing_op = '' AND ` + pairingDecided + `))`
+
+// pairingDecided is the legacy confirmed decision for identity ?1.
 const pairingDecided = `(
     EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?1 AND state = 'accepted' AND delivered_at IS NOT NULL)
     OR EXISTS (SELECT 1 FROM peer_joins WHERE peer = ?1 AND state = 'contact' AND decision_confirmed_at IS NOT NULL))`

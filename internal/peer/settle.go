@@ -173,15 +173,18 @@ func (i *Inviter) ServeSettle(ctx context.Context, f Frames, c Connection) error
 	if reply.Receipt != ReceiptMatched || reply.Decision == PairingPending {
 		return nil
 	}
-	return i.recordAck(ctx, f, servedDecision{joinerOperationID: request.JoinerOperationID, decision: reply.Decision, peer: c.PeerLeaf})
+	return i.recordAck(ctx, f, servedDecision{joinerOperationID: request.JoinerOperationID, decision: reply.Decision, peer: c.PeerLeaf,
+		operationID: request.InviterOperationID})
 }
 
 // servedDecision is the one decision this connection answered, and so the
-// only one its ack may name.
+// only one its ack may name; operationID is the inviter's operation it
+// answered for.
 type servedDecision struct {
 	joinerOperationID string
 	decision          PairingState
 	peer              string
+	operationID       string
 }
 
 func readSettle(f Frames) (Settle, error) {
@@ -202,21 +205,40 @@ func readSettle(f Frames) (Settle, error) {
 	return m, nil
 }
 
-// answer reads durable state only: the exact outcome for this peer, and its
-// request's decision.
+// answer reads durable state only: the exact outcome for this peer, and
+// the decision its ledger row holds, or for a legacy one its request's.
 func (i *Inviter) answer(ctx context.Context, m Settle, peer string) (SettleReply, error) {
-	unknown := SettleReply{Receipt: ReceiptUnknown, Decision: PairingPending}
 	store := i.inv.store
 	matched, err := MatchReceipt(ctx, store, JoinReceipt{InvitationID: m.InvitationID, InviterOperationID: m.InviterOperationID,
 		Joiner: peer, TranscriptID: m.TranscriptID})
 	if err != nil || !matched {
-		return unknown, err
+		return unknownReply, err
+	}
+	x, found, err := store.Exchange(ctx, m.InviterOperationID)
+	if err != nil || found {
+		return exchangeReply(x), err
 	}
 	request, found, err := store.Request(ctx, peer)
 	if err != nil || !found {
-		return unknown, err
+		return unknownReply, err
 	}
 	return SettleReply{Receipt: ReceiptMatched, Decision: request.State}, nil
+}
+
+// unknownReply carries no authority.
+var unknownReply = SettleReply{Receipt: ReceiptUnknown, Decision: PairingPending}
+
+// exchangeReply answers from a ledger row (#276): an open exchange with its
+// decision, an installed one as accepted, so the joiner's confirmation
+// replays; a retired or refused one is unknown.
+func exchangeReply(x ExchangeRecord) SettleReply {
+	switch x.State {
+	case ExchangeOpen:
+		return SettleReply{Receipt: ReceiptMatched, Decision: x.Decision}
+	case ExchangeInstalled:
+		return SettleReply{Receipt: ReceiptMatched, Decision: PairingAccepted}
+	}
+	return unknownReply
 }
 
 func sendReply(f Frames, reply SettleReply) error {
@@ -241,7 +263,7 @@ func (i *Inviter) recordAck(ctx context.Context, f Frames, served servedDecision
 	if ack != (Ack{JoinerOperationID: served.joinerOperationID, Decision: served.decision}) {
 		return fmt.Errorf("%w: ack for another join or decision", ErrPairingProtocol)
 	}
-	if _, err := i.inv.store.Deliver(ctx, served.peer, ack.Decision, i.inv.clock()); err != nil {
+	if err := i.deliver(ctx, served); err != nil {
 		return errors.Join(errors.New("peer: delivery not recorded"), err)
 	}
 	frame, err = EncodeAckReceipt(AckReceipt(ack))
@@ -249,4 +271,20 @@ func (i *Inviter) recordAck(ctx context.Context, f Frames, served servedDecision
 		return err
 	}
 	return f.Send(frame)
+}
+
+// deliver records the delivery: pinned to its exchange for an
+// epoch-capable outcome (#276), else by identity as before.
+func (i *Inviter) deliver(ctx context.Context, served servedDecision) error {
+	store, at := i.inv.store, i.inv.clock()
+	x, found, err := store.Exchange(ctx, served.operationID)
+	if err != nil {
+		return err
+	}
+	if found && x.Mode.Epoch() {
+		_, err = store.DeliverExchange(ctx, ExchangeDelivery{IdentityKey: served.peer, OperationID: served.operationID, Decision: served.decision, At: at})
+		return err
+	}
+	_, err = store.Deliver(ctx, served.peer, served.decision, at)
+	return err
 }

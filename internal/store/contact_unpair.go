@@ -151,7 +151,7 @@ func unpairNow(ctx context.Context, tx *sql.Tx, r ContactUnpair, c *pairingRow) 
 	if err := retireContact(ctx, tx, *c, mark); err != nil {
 		return "", err
 	}
-	detail, err := retireEpoch(ctx, tx, retirement{c.contact, c.unpairedAt, c.epoch})
+	detail, err := retireEpoch(ctx, tx, retirement{contact: c.contact, at: c.unpairedAt, epoch: c.epoch, reason: "unpaired"})
 	if err != nil {
 		return "", err
 	}
@@ -188,33 +188,37 @@ WHERE identity_key = ?1`, c.contact, c.unpairedAt, c.generation, mark)
 	return err
 }
 
-// retirement is a contact's pairing epoch ending, and when.
+// retirement is a contact's pairing epoch ending, when and why: unpaired,
+// or replaced by a repair, whose own exchange (except) it leaves.
 type retirement struct {
-	contact, at string
-	epoch       int64
+	contact, at    string
+	epoch          int64
+	reason, except string
 }
 
 // retireStep is one statement ending what the pairing left open, over
-// the contact (?1), the time (?2) and the epoch (?3), each as it needs; a
-// labelled step's count goes in the audit.
+// the contact (?1), the time (?2), the epoch (?3), the reason (?4) and the
+// operation left alone (?5), each as it needs; a labelled step's count
+// goes in the audit.
 type retireStep struct{ label, query string }
 
 var retireSteps = []retireStep{
-	{"", `UPDATE pairing_exchanges SET state = 'retired', retired_at = ?2 WHERE identity_key = ?1 AND state IN ('open', 'installed')`},
-	{"", `UPDATE peer_joins SET retired_at = ?2 WHERE peer = ?1 AND retired_at IS NULL`},
-	{"queued ended", `UPDATE peer_messages SET state = 'expired', reason = 'unpaired'
+	{"", `UPDATE pairing_exchanges SET state = 'retired', retired_at = ?2, reason = ?4
+WHERE identity_key = ?1 AND state IN ('open', 'installed') AND operation_id != ?5`},
+	{"", `UPDATE peer_joins SET retired_at = ?2 WHERE peer = ?1 AND retired_at IS NULL AND operation_id != ?5`},
+	{"queued ended", `UPDATE peer_messages SET state = 'expired', reason = ?4
 WHERE contact = ?1 AND pairing_epoch = ?3 AND direction = 'out' AND state = 'queued'`},
 	{"", `UPDATE peer_messages SET receipt = 'dropped'
 WHERE contact = ?1 AND pairing_epoch = ?3 AND direction = 'in' AND receipt = 'pending'`},
-	{"imports withheld", `UPDATE remote_imports SET state = 'withheld', reason = 'unpaired', settled_at = ?2
+	{"imports withheld", `UPDATE remote_imports SET state = 'withheld', reason = ?4, settled_at = ?2
 WHERE contact = ?1 AND pairing_epoch = ?3 AND state IN ('pending', 'awaiting')`},
-	{"prompts withheld", `UPDATE consent_requests SET state = 'withheld', outcome = 'withheld', outcome_reason = 'unpaired',
+	{"prompts withheld", `UPDATE consent_requests SET state = 'withheld', outcome = 'withheld', outcome_reason = ?4,
     decided_at = ?2, revision = revision + 1 WHERE contact = ?1 AND pairing_epoch = ?3 AND state = 'pending'`},
-	{"", `UPDATE consent_held_out SET state = 'ended', reason = 'unpaired', decided_at = ?2
+	{"", `UPDATE consent_held_out SET state = 'ended', reason = ?4, decided_at = ?2
 WHERE contact = ?1 AND pairing_epoch = ?3 AND state = 'held'`},
-	{"asks ended", `UPDATE review_asks_out SET state = 'contact_removed', reason = 'unpaired', updated_at = ?2, settled_at = ?2
+	{"asks ended", `UPDATE review_asks_out SET state = 'contact_removed', reason = ?4, updated_at = ?2, settled_at = ?2
 WHERE contact = ?1 AND pairing_epoch = ?3 AND settled_at IS NULL`},
-	{"", `UPDATE review_outcome_seq SET refused = 'unpaired', terminal_seq = COALESCE(terminal_seq, seq)
+	{"", `UPDATE review_outcome_seq SET refused = ?4, terminal_seq = COALESCE(terminal_seq, seq)
 WHERE contact = ?1 AND pairing_epoch = ?3 AND ` + owed + ``},
 }
 
@@ -236,7 +240,7 @@ func retireEpoch(ctx context.Context, tx *sql.Tx, r retirement) (string, error) 
 
 // run is the step for r, and how many rows it ended.
 func (s retireStep) run(ctx context.Context, tx *sql.Tx, r retirement) (int64, error) {
-	res, err := tx.ExecContext(ctx, s.query, r.contact, r.at, r.epoch)
+	res, err := tx.ExecContext(ctx, s.query, r.contact, r.at, r.epoch, r.reason, r.except)
 	if err != nil {
 		return 0, err
 	}

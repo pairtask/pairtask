@@ -421,7 +421,7 @@ func (i *Inviter) Serve(ctx context.Context, f Frames, c Connection) (PairingReq
 	if err != nil {
 		return PairingRequest{}, err
 	}
-	attempt, invitationID, err := i.begin(f, hello)
+	attempt, invitationID, err := i.begin(ctx, f, hello)
 	if err != nil {
 		return PairingRequest{}, err
 	}
@@ -432,7 +432,7 @@ func (i *Inviter) Serve(ctx context.Context, f Frames, c Connection) (PairingReq
 		_ = attempt.Fail()
 		return PairingRequest{}, err
 	}
-	request, err := confirm(ctx, attempt, PairedPeer{IdentityKey: res.Peer, Name: b.JoinerName, TranscriptID: res.TranscriptID})
+	request, err := confirm(ctx, attempt, PairedPeer{IdentityKey: res.Peer, Name: b.JoinerName, TranscriptID: res.TranscriptID, Mode: res.Mode})
 	if err != nil {
 		return PairingRequest{}, err
 	}
@@ -474,16 +474,22 @@ func readJoinerHello(f Frames) (JoinerHello, error) {
 }
 
 // begin charges an attempt at the open invitation and answers the hello; a
-// refusal is sent with its reason and charges nothing.
-func (i *Inviter) begin(f Frames, hello JoinerHello) (*Attempt, string, error) {
+// refusal is sent with its reason and charges nothing. The attempt carries
+// the authority mark read before it began (#276).
+func (i *Inviter) begin(ctx context.Context, f Frames, hello JoinerHello) (*Attempt, string, error) {
 	status, ok := i.inv.Status()
 	if !ok {
 		return nil, "", i.refuse(f, ErrNoInvitation)
+	}
+	mark, err := i.inv.store.PairingMark(ctx)
+	if err != nil {
+		return nil, "", err
 	}
 	attempt, err := i.inv.Begin(status.ID)
 	if err != nil {
 		return nil, "", i.refuse(f, err)
 	}
+	attempt.begunMark = mark
 	frame, err := EncodeInviterHello(InviterHello{InvitationID: status.ID, OperationID: attempt.ID()})
 	if err == nil {
 		err = f.Send(frame)

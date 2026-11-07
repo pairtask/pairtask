@@ -276,7 +276,13 @@ type Attempt struct {
 	deadline time.Time
 	state    attemptState
 	outcome  *PairingOutcome // frozen at the first Confirm, so a retry can't change it
+	// begunMark is the global authority mark the attempt began under
+	// (#276), set by the inviter before the exchange runs.
+	begunMark uint64
 }
+
+// BegunMark is the global authority mark the attempt began under.
+func (a *Attempt) BegunMark() uint64 { return a.begunMark }
 
 // ID is the attempt's operation ID, the key of its durable outcome.
 func (a *Attempt) ID() string { return a.id }
@@ -307,10 +313,12 @@ type PairedPeer struct {
 	IdentityKey  string
 	Name         string
 	TranscriptID []byte
+	Mode         ExchangeMode // what the exchange can install (#276)
 }
 
 func (p PairedPeer) matches(o PairingOutcome) bool {
-	return p.IdentityKey == o.IdentityKey && p.Name == o.Name && bytes.Equal(p.TranscriptID, o.TranscriptID)
+	same := []bool{p.IdentityKey == o.IdentityKey, p.Name == o.Name, bytes.Equal(p.TranscriptID, o.TranscriptID), p.Mode == o.Mode}
+	return !slices.Contains(same, false)
 }
 
 // Confirm commits the pairing and consumes the invitation, in that order and
@@ -334,7 +342,7 @@ func (a *Attempt) Confirm(ctx context.Context, p PairedPeer) (PairingRequest, er
 	}
 	if a.outcome == nil {
 		a.outcome = &PairingOutcome{OperationID: a.id, InvitationID: a.inv.id, IdentityKey: p.IdentityKey,
-			Name: p.Name, TranscriptID: bytes.Clone(p.TranscriptID), At: now}
+			Name: p.Name, TranscriptID: bytes.Clone(p.TranscriptID), At: now, Mode: p.Mode, BegunMark: a.begunMark}
 	} else if !p.matches(*a.outcome) {
 		return PairingRequest{}, ErrOutcomeConflict
 	}

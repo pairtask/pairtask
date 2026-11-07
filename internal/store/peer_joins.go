@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
@@ -31,12 +32,17 @@ CREATE TABLE IF NOT EXISTS peer_joins (
 
 var _ peer.JoinStore = (*Store)(nil)
 
-const joinInsertColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, destination, decision_confirmed_at`
+const joinInsertColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, destination, decision_confirmed_at, repair, begun_mark`
 
+// joinSelect reads joins, with the mode of their ledger row (#276).
 // destination came later: older rows have NULL, read as empty.
-const joinColumns = `operation_id, joiner, joiner_name, invitation_id, inviter_operation_id, peer, transcript_id, state, created_at, updated_at, COALESCE(destination, ''), COALESCE(decision_confirmed_at, '')`
+const joinSelect = `SELECT j.operation_id, j.joiner, j.joiner_name, j.invitation_id, j.inviter_operation_id, j.peer, j.transcript_id,
+    j.state, j.created_at, j.updated_at, COALESCE(j.destination, ''), COALESCE(j.decision_confirmed_at, ''), j.repair, j.begun_mark,
+    COALESCE(j.retired_at, ''), COALESCE(x.mode, '')
+FROM peer_joins j LEFT JOIN pairing_exchanges x ON x.operation_id = j.operation_id AND x.role = 'joiner'`
 
-// BeginJoin records a join's intent; see peer.JoinStore.
+// BeginJoin records a join's intent, with the authority mark it begins
+// under, read in the same transaction; see peer.JoinStore.
 func (s *Store) BeginJoin(ctx context.Context, start peer.JoinStart) (peer.JoinRecord, error) {
 	return s.inJoinTx(ctx, func(tx *sql.Tx) (peer.JoinRecord, error) {
 		known, found, err := getJoin(ctx, tx, start.OperationID)
@@ -51,6 +57,11 @@ func (s *Store) BeginJoin(ctx context.Context, start peer.JoinStart) (peer.JoinR
 		if err != nil {
 			return peer.JoinRecord{}, err
 		}
+		mark, err := readMark(ctx, tx)
+		if err != nil {
+			return peer.JoinRecord{}, err
+		}
+		r.BegunMark = uint64(mark)
 		return r, putJoin(ctx, tx, r)
 	})
 }
@@ -77,10 +88,20 @@ func (s *Store) SetCorrelation(ctx context.Context, opID string, h peer.InviterH
 	})
 }
 
+// RecordVerified records the authenticated inviter; an epoch-capable
+// exchange writes its ledger row first, and a refusal keeps only that row
+// (#276). See peer.JoinStore.
 func (s *Store) RecordVerified(ctx context.Context, opID string, res peer.ExchangeResult, at time.Time) (peer.JoinRecord, error) {
-	return s.updateJoin(ctx, opID, func(r peer.JoinRecord) (peer.JoinRecord, bool, error) {
-		return peer.Verify(r, res, at)
-	})
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	defer tx.Rollback()
+	r, err := verifyJoin(ctx, tx, verified{opID, res, at})
+	if err = commitKept(tx, err); err != nil {
+		return peer.JoinRecord{}, err
+	}
+	return r, nil
 }
 
 func (s *Store) RecordReceipt(ctx context.Context, opID string, receipt peer.JoinReceipt, at time.Time) (peer.JoinRecord, error) {
@@ -112,7 +133,7 @@ func (s *Store) GetJoin(ctx context.Context, opID string) (peer.JoinRecord, bool
 
 // Joins lists every join by operation ID.
 func (s *Store) Joins(ctx context.Context) ([]peer.JoinRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+joinColumns+` FROM peer_joins ORDER BY operation_id`)
+	rows, err := s.db.QueryContext(ctx, joinSelect+` ORDER BY j.operation_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -163,12 +184,12 @@ func (s *Store) inJoinTx(ctx context.Context, apply func(*sql.Tx) (peer.JoinReco
 }
 
 func putJoin(ctx context.Context, tx *sql.Tx, r peer.JoinRecord) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO peer_joins (`+joinInsertColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_joins (`+joinInsertColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(operation_id) DO UPDATE SET invitation_id = excluded.invitation_id, inviter_operation_id = excluded.inviter_operation_id,
     peer = excluded.peer, transcript_id = excluded.transcript_id, state = excluded.state, updated_at = excluded.updated_at,
     decision_confirmed_at = excluded.decision_confirmed_at`,
 		r.OperationID, r.Joiner, r.JoinerName, r.InvitationID, r.InviterOperationID, r.Peer, r.TranscriptID,
-		string(r.State), stamp(r.CreatedAt), stamp(r.UpdatedAt), r.Destination, optionalStamp(r.DecisionConfirmedAt))
+		string(r.State), stamp(r.CreatedAt), stamp(r.UpdatedAt), r.Destination, optionalStamp(r.DecisionConfirmedAt), r.Repair, int64(r.BegunMark))
 	if err != nil {
 		return fmt.Errorf("store join: %w", err)
 	}
@@ -176,57 +197,205 @@ ON CONFLICT(operation_id) DO UPDATE SET invitation_id = excluded.invitation_id, 
 }
 
 func getJoin(ctx context.Context, q rowQuerier, opID string) (peer.JoinRecord, bool, error) {
-	return scanJoin(q.QueryRowContext(ctx, `SELECT `+joinColumns+` FROM peer_joins WHERE operation_id = ?`, opID))
+	return scanJoin(q.QueryRowContext(ctx, joinSelect+` WHERE j.operation_id = ?`, opID))
 }
 
 func scanJoin(row rowScanner) (peer.JoinRecord, bool, error) {
 	var r peer.JoinRecord
-	var state, created, updated, confirmed string
+	var state, mode string
+	var mark int64
+	times := make([]string, 4)
 	err := row.Scan(&r.OperationID, &r.Joiner, &r.JoinerName, &r.InvitationID, &r.InviterOperationID, &r.Peer,
-		&r.TranscriptID, &state, &created, &updated, &r.Destination, &confirmed)
+		&r.TranscriptID, &state, &times[0], &times[1], &r.Destination, &times[2], &r.Repair, &mark, &times[3], &mode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.JoinRecord{}, false, nil
 	}
 	if err != nil {
 		return peer.JoinRecord{}, false, err
 	}
-	r.State, r.TranscriptID = peer.JoinState(state), bytes.Clone(r.TranscriptID)
-	if r.DecisionConfirmedAt, err = optionalTime(confirmed); err != nil {
+	r.State, r.TranscriptID, r.BegunMark = peer.JoinState(state), bytes.Clone(r.TranscriptID), uint64(mark)
+	if mode == string(peer.ModeEpoch) {
+		r.Mode = peer.ModeEpoch
+	}
+	if err := scanTimes(times[2:], &r.DecisionConfirmedAt, &r.RetiredAt); err != nil {
 		return peer.JoinRecord{}, false, err
 	}
-	if r.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
+	if r.CreatedAt, err = time.Parse(time.RFC3339Nano, times[0]); err != nil {
 		return peer.JoinRecord{}, false, err
 	}
-	r.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
+	r.UpdatedAt, err = time.Parse(time.RFC3339Nano, times[1])
 	return r, err == nil, err
 }
 
 // RecordDecision records the inviter's decision on a join awaiting it; an
-// acceptance makes the contact in the same transaction. See peer.JoinStore.
+// acceptance of a legacy join makes the contact in the same transaction,
+// while an epoch-capable one installs only at its confirmation. A retired
+// join takes no decision. See peer.JoinStore.
 func (s *Store) RecordDecision(ctx context.Context, opID string, decision peer.PairingState, at time.Time) (peer.JoinRecord, error) {
 	return s.inJoinTx(ctx, func(tx *sql.Tx) (peer.JoinRecord, error) {
-		r, found, err := getJoin(ctx, tx, opID)
+		r, err := liveJoin(ctx, tx, opID)
 		if err != nil {
 			return peer.JoinRecord{}, err
-		}
-		if !found {
-			return peer.JoinRecord{}, peer.ErrNoJoin
 		}
 		next, changed, err := peer.Decide(r, decision, at)
 		if err != nil || !changed {
 			return next, err
 		}
-		if next.State == peer.JoinContact {
-			if err := upsertContact(ctx, tx, peer.JoinerContact(next), next.OperationID); err != nil {
-				return peer.JoinRecord{}, err
-			}
+		if err := decideJoin(ctx, tx, next, decision); err != nil {
+			return peer.JoinRecord{}, err
 		}
 		return next, putJoin(ctx, tx, next)
 	})
 }
 
+// knownJoin is the join, or peer.ErrNoJoin.
+func knownJoin(ctx context.Context, tx *sql.Tx, opID string) (peer.JoinRecord, error) {
+	r, found, err := getJoin(ctx, tx, opID)
+	if err == nil && !found {
+		err = peer.ErrNoJoin
+	}
+	return r, err
+}
+
+// liveJoin is a known join no unpair retired.
+func liveJoin(ctx context.Context, tx *sql.Tx, opID string) (peer.JoinRecord, error) {
+	r, err := knownJoin(ctx, tx, opID)
+	if err == nil && !r.RetiredAt.IsZero() {
+		err = peer.ErrJoinRetired
+	}
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	return r, nil
+}
+
+// decideJoin records a decision where it has authority: on the ledger row
+// of an epoch-capable join, else as the legacy contact an acceptance makes.
+func decideJoin(ctx context.Context, tx *sql.Tx, next peer.JoinRecord, decision peer.PairingState) error {
+	if next.Mode.Epoch() {
+		return decideExchange(ctx, tx, exchangeDecision{next.OperationID, decision, next.UpdatedAt})
+	}
+	if next.State != peer.JoinContact {
+		return nil
+	}
+	return upsertContact(ctx, tx, peer.JoinerContact(next), next.OperationID)
+}
+
+// RecordDecisionConfirmed records, once, that the inviter confirmed the
+// decision; for an epoch-capable join it delivers the exchange, which
+// installs an acceptance (#276). A retired join is peer.ErrJoinRetired.
 func (s *Store) RecordDecisionConfirmed(ctx context.Context, opID string, decision peer.PairingState, at time.Time) (peer.JoinRecord, error) {
-	return s.updateJoin(ctx, opID, func(r peer.JoinRecord) (peer.JoinRecord, bool, error) {
-		return peer.ConfirmDecision(r, decision, at)
-	})
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	defer tx.Rollback()
+	r, err := confirmJoin(ctx, tx, confirmation{opID, decision, at})
+	if err = commitKept(tx, err); err != nil {
+		return peer.JoinRecord{}, err
+	}
+	return r, nil
+}
+
+// confirmation is the inviter's confirmation of one join's decision.
+type confirmation struct {
+	opID     string
+	decision peer.PairingState
+	at       time.Time
+}
+
+// confirmJoin is RecordDecisionConfirmed inside its transaction: the
+// exchange's delivery replays or installs first, then the join records it.
+func confirmJoin(ctx context.Context, tx *sql.Tx, c confirmation) (peer.JoinRecord, error) {
+	r, err := liveJoin(ctx, tx, c.opID)
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	next, changed, err := peer.ConfirmDecision(r, c.decision, c.at)
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	if err := deliverJoin(ctx, tx, next, c); err != nil {
+		return peer.JoinRecord{}, err
+	}
+	if !changed {
+		return next, nil
+	}
+	return next, putJoin(ctx, tx, next)
+}
+
+// deliverJoin delivers an epoch-capable join's exchange.
+func deliverJoin(ctx context.Context, tx *sql.Tx, next peer.JoinRecord, c confirmation) error {
+	if !next.Mode.Epoch() {
+		return nil
+	}
+	x, found, err := exchangeRow(ctx, tx, next.OperationID)
+	if err != nil || !found {
+		return err
+	}
+	_, err = settleExchange(ctx, tx, installing{x: x, decision: c.decision, at: c.at, contact: peer.JoinerContact(next)})
+	return err
+}
+
+// verified is the exchange a join authenticated, and when.
+type verified struct {
+	opID string
+	res  peer.ExchangeResult
+	at   time.Time
+}
+
+// verifyJoin is RecordVerified inside its transaction: a replay of a
+// committed exchange answers it, a legacy one records as before, an
+// epoch-capable one commits its ledger row first.
+func verifyJoin(ctx context.Context, tx *sql.Tx, v verified) (peer.JoinRecord, error) {
+	r, err := knownJoin(ctx, tx, v.opID)
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	x, committed, err := exchangeRow(ctx, tx, v.opID)
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	if committed {
+		return replayVerified(r, x, v)
+	}
+	next, changed, err := peer.Verify(r, v.res, v.at)
+	if err != nil || !changed {
+		return next, err
+	}
+	if v.res.Mode.Epoch() {
+		return verifyEpoch(ctx, tx, next)
+	}
+	return next, putJoin(ctx, tx, next)
+}
+
+// replayVerified answers a join whose exchange the ledger holds: the same
+// exchange answers the join, or its refusal; another conflicts.
+func replayVerified(r peer.JoinRecord, x peer.ExchangeRecord, v verified) (peer.JoinRecord, error) {
+	same := []bool{x.IdentityKey == v.res.Peer, bytes.Equal(x.TranscriptID, v.res.TranscriptID), x.Mode == v.res.Mode.Stored()}
+	if slices.Contains(same, false) {
+		return peer.JoinRecord{}, peer.ErrJoinConflict
+	}
+	if x.State == peer.ExchangeRefused {
+		if err := peer.RefusalError(x.Reason); err != nil {
+			return peer.JoinRecord{}, err
+		}
+	}
+	return r, nil
+}
+
+// verifyEpoch commits the join's ledger row, then the join; an address
+// move merges the contact's new destination now, as it never installs.
+func verifyEpoch(ctx context.Context, tx *sql.Tx, next peer.JoinRecord) (peer.JoinRecord, error) {
+	x, err := commitExchange(ctx, tx, joinExchange(next))
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	next.Mode = peer.ModeEpoch
+	if x.Kind == peer.KindAddressMove {
+		if err := upsertContact(ctx, tx, peer.JoinerContact(next), next.OperationID); err != nil {
+			return peer.JoinRecord{}, err
+		}
+	}
+	return next, putJoin(ctx, tx, next)
 }
