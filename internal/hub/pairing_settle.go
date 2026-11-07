@@ -9,6 +9,7 @@ import (
 
 	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -460,13 +461,32 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 		own = h.identity.Fingerprint()
 	}
 	for _, c := range contacts {
-		snapshot.Contacts = append(snapshot.Contacts, protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
+		view := protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
 			Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
 			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own), PausedAt: pausedAt(c),
 			Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: counts.awaiting[c.IdentityKey]},
-			Acks:    ackView(counts.acks, c.IdentityKey)})
+			Acks:    ackView(counts.acks, c.IdentityKey)}
+		noticeView(&view, counts.notices[c.IdentityKey])
+		snapshot.Contacts = append(snapshot.Contacts, view)
 	}
 	return nil
+}
+
+// noticeView adds the contact's notice state to its view (#276): the
+// peer's stored state, unavailable only once a version without notices is
+// known, and this side's notice while the peer hasn't answered it.
+func noticeView(view *protocol.PairingContactView, n store.ContactNoticeState) {
+	view.PeerState = n.PeerState
+	if !n.PeerStateAt.IsZero() {
+		at := n.PeerStateAt
+		view.PeerStateAt = &at
+	}
+	if n.PeerVersion > 0 && n.PeerVersion < int(messaging.PairingVersion) {
+		view.PeerStateAvailable = "unavailable"
+	}
+	if n.Notice == "pending" || n.Notice == "undelivered" {
+		view.Notice, view.NoticeAttempts = n.Notice, n.NoticeAttempts
+	}
 }
 
 // pausedAt is when this side paused the contact, nil while active (#276).

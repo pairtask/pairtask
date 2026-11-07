@@ -83,10 +83,11 @@ func (h *Hub) ackBound(ctx context.Context, msg protocol.Message) *routingError 
 }
 
 // contactCounts are what each contact's snapshot row counts: its review
-// requests awaiting the operator, and its acknowledgments.
+// requests awaiting the operator, its acknowledgments and its notices.
 type contactCounts struct {
 	awaiting map[string]int
 	acks     map[string]protocol.ContactAckSummary
+	notices  map[string]store.ContactNoticeState
 }
 
 func (h *Hub) contactCounts(ctx context.Context) (contactCounts, error) {
@@ -95,6 +96,9 @@ func (h *Hub) contactCounts(ctx context.Context) (contactCounts, error) {
 	if c.awaiting, err = h.store.PeerMessages().AwaitingReviewCounts(ctx); err != nil {
 		return c, err
 	}
-	c.acks, err = h.store.PeerMessages().AckSummaries(ctx)
+	if c.acks, err = h.store.PeerMessages().AckSummaries(ctx); err != nil {
+		return c, err
+	}
+	c.notices, err = h.store.ContactNoticeStates(ctx)
 	return c, err
 }

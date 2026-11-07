@@ -177,8 +177,24 @@ func ControlClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity
 // identity. crypto/tls reports a peer's alert as a "remote error" OpError
 // whose error is the alert's text.
 func NoCommonProtocol(err error) bool {
+	return remoteAlert(err, "tls: no application protocol")
+}
+
+// RefusedCertificate reports a peer that refused this side's certificate
+// by its TLS alert, as a server refuses an identity its pins don't admit.
+// Under TLS 1.3 the client's handshake has finished by then, so the alert
+// arrives on its first read, not from the handshake.
+func RefusedCertificate(err error) bool {
+	return remoteAlert(err, "tls: bad certificate")
+}
+
+// remoteAlert: err is the peer's TLS alert of that text.
+func remoteAlert(err error, text string) bool {
 	var op *net.OpError
-	return errors.As(err, &op) && op.Op == "remote error" && op.Err != nil && op.Err.Error() == "tls: no application protocol"
+	if !errors.As(err, &op) || op.Op != "remote error" {
+		return false
+	}
+	return op.Err != nil && op.Err.Error() == text
 }
 
 func handshake(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, role tlsRole) (*Conn, error) {

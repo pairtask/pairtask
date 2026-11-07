@@ -60,6 +60,10 @@ func pairingError(err error) *routingError {
 			return &routingError{protocol.ErrPairing, reason}
 		}
 	}
+	// Only after the refusals: identity_capacity is a storage error too.
+	if errors.Is(err, peer.ErrIdentityStorage) {
+		return &routingError{protocol.ErrIdentityStorage, "identity_storage"}
+	}
 	return &routingError{protocol.ErrInternal, "pairing state unavailable"}
 }
 

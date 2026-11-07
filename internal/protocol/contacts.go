@@ -95,6 +95,9 @@ const (
 	CapabilityContactAcks = "contact_acks"
 	// ErrContactPaused refuses a send to a paused contact.
 	ErrContactPaused = "contact_paused"
+	// ErrContactUnpairedByThem refuses a send to a contact the other side
+	// unpaired (#276): unpair here or pair again.
+	ErrContactUnpairedByThem = "contact_unpaired_by_them"
 
 	// CapabilityContactRouting: the broker serves share and unshare, a send
 	// to the contact's agents (contact_to), and routing in the views.

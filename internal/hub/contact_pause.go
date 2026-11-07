@@ -42,6 +42,7 @@ func (h *Hub) afterPause(contact string, paused bool) {
 		h.SyncMessages(contact)
 		h.importsDue()
 	}
+	h.noticesDue() // the notice the change queued leaves at once (#276)
 	h.PairingChanged()
 	h.MessagesChanged(contact)
 }
@@ -63,6 +64,8 @@ func pauseRefusal(err error) (*routingError, bool) {
 	switch {
 	case errors.Is(err, store.ErrPaused):
 		return &routingError{protocol.ErrContactPaused, "paused: /pair resume to send"}, true
+	case errors.Is(err, store.ErrUnpairedByThem):
+		return &routingError{protocol.ErrContactUnpairedByThem, "the other side unpaired: unpair here or pair again"}, true
 	case errors.Is(err, store.ErrFenced):
 		return &routingError{protocol.ErrContactPaused, "paused or resumed meanwhile; try again"}, true
 	}

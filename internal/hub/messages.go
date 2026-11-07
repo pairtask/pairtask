@@ -75,6 +75,10 @@ type messageWiring struct {
 	pending map[string]bool // contacts whose change the Run goroutine hasn't announced yet
 	epoch   uint64          // moves on with each pairing change: dials from before read their contact again
 	changed chan struct{}   // the hub's background announcement signal, shared with pairing
+	// lastControl is when each contact's last control session was admitted,
+	// either role (#276); notices asks the worker for a notice pass.
+	lastControl map[string]time.Time
+	notices     chan struct{}
 }
 
 // init readies the wiring with the hub's announcement signal; New calls it.
@@ -88,6 +92,7 @@ func (w *messageWiring) init(changed ...chan struct{}) {
 	if w.busy == nil {
 		w.busy, w.syncs, w.traffic = map[string]bool{}, map[string]*MessageSync{}, map[string]time.Time{}
 		w.wake, w.pending = make(chan string, 64), map[string]bool{}
+		w.lastControl, w.notices = map[string]time.Time{}, make(chan struct{}, 1)
 	}
 }
 
@@ -210,7 +215,9 @@ var syncClasses = []struct {
 		return errors.Is(err, messaging.ErrProtocol) || errors.Is(err, peer.ErrPairingProtocol)
 	}},
 	{SyncClosed, closedByPeer},
-	{SyncRefused, func(err error) bool { return errors.Is(err, firstcontact.ErrFirstContact) }},
+	{SyncRefused, func(err error) bool {
+		return errors.Is(err, firstcontact.ErrFirstContact) || firstcontact.RefusedCertificate(err)
+	}},
 }
 
 // classifySync names why a session failed.

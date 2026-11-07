@@ -41,14 +41,18 @@ func (h *Hub) messageLoop(ctx context.Context, tick <-chan time.Time) {
 	pool := syncPool{slots: make(chan struct{}, messageSyncs)}
 	defer pool.wg.Wait()
 	h.syncDue(ctx, &pool, true)
+	h.noticePass(ctx, &pool) // notices left from before a restart
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case contact := <-h.msgs.wake:
 			h.spawnSync(ctx, &pool, contact)
+		case <-h.msgs.notices:
+			h.noticePass(ctx, &pool)
 		case <-tick:
 			h.syncDue(ctx, &pool, false)
+			h.noticePass(ctx, &pool)
 			collected = h.collectMessages(ctx, collected)
 		}
 	}
@@ -60,19 +64,26 @@ type syncPool struct {
 	wg    sync.WaitGroup
 }
 
-// spawnSync starts a session with contact when a slot is free; otherwise
-// the contact is due at once, and the next tick starts it.
-func (h *Hub) spawnSync(ctx context.Context, pool *syncPool, contact string) {
+// spawn runs one session in a free slot, or reports none free.
+func (pool *syncPool) spawn(run func()) bool {
 	if !take(pool.slots) {
-		h.markDue(contact)
-		return
+		return false
 	}
 	pool.wg.Add(1)
 	go func() {
 		defer pool.wg.Done()
 		defer func() { <-pool.slots }()
-		h.syncContact(ctx, contact)
+		run()
 	}()
+	return true
+}
+
+// spawnSync starts a session with contact when a slot is free; otherwise
+// the contact is due at once, and the next tick starts it.
+func (h *Hub) spawnSync(ctx context.Context, pool *syncPool, contact string) {
+	if !pool.spawn(func() { h.syncContact(ctx, contact) }) {
+		h.markDue(contact)
+	}
 }
 
 func take(slots chan struct{}) bool {
@@ -135,6 +146,9 @@ func (h *Hub) syncContact(ctx context.Context, contact string) {
 		return // a session with this contact is running already; it isn't a failure
 	}
 	result, live, err := h.dialSession(ctx, c)
+	if refusedAtTLS(err) {
+		h.controlDial(ctx, c, 0) // D9: the peer may hold no address for this side (#276)
+	}
 	end(result.Moved())
 	h.ConsentConflicts(contact, result.ConsentConflicts)
 	if err != nil {
@@ -217,6 +231,9 @@ func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result
 	counted := &messaging.Counted{Frames: conn.MessageFrames(netCtx)}
 	s := messaging.Session{Frames: counted, Store: admitted, Contact: c.IdentityKey, Now: h.pair.cfg.Clock}
 	r, version, err := s.OpenDial(storeCtx)
+	if err == nil {
+		h.clearRemotePause(storeCtx, admitted, version)
+	}
 	if err != nil || version < messaging.LiveVersion {
 		conn.Close()
 		return r, nil, err

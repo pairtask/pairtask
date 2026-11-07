@@ -71,6 +71,13 @@ type PairingEndpoint struct {
 	MessagePins   func(fingerprint string) bool
 	Admit         func(ctx context.Context, contact string) (messaging.Store, error)
 	BeginMessages func(contact string) (end func(moved bool), ok bool)
+	// ControlPins accepts a control session from any contact row this side
+	// retains, paused or unpaired included (#276); AdmitControl binds its
+	// store within the contact's bound on control sessions, and
+	// ControlDone records what the session did.
+	ControlPins  func(fingerprint string) bool
+	AdmitControl func(ctx context.Context, contact string) (messaging.ControlStore, error)
+	ControlDone  func(ctx context.Context, s messaging.ControlStore, r messaging.ControlResult)
 	// ClaimLink claims a serving live link for contact after a first round
 	// agreed to stay open, replacing one still open for it (#222).
 	ClaimLink func(contact string) (*LiveClaim, bool)
@@ -141,6 +148,7 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 		h.pair.endpoint.Store(&PairingEndpoint{Identity: id, Inviter: inviter, Joiner: h.pair.joiner, Clock: cfg.Clock,
 			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark,
 			MessagePins: h.messagePins, Admit: h.admit, BeginMessages: h.beginMessages,
+			ControlPins: h.controlPins, AdmitControl: h.admitControl, ControlDone: h.controlDone,
 			ClaimLink: h.ClaimLink})
 	}
 }

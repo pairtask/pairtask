@@ -37,6 +37,9 @@ const (
 	// exchange, which can't pair an identity this side retains or a
 	// declared repair (#276); it must update to pair again.
 	ErrPairingPeerTooOld = "pairing_peer_too_old"
+	// ErrIdentityStorage: this side's store holds as many identities as it
+	// retains, so it can't take another (#276).
+	ErrIdentityStorage = "identity_storage"
 
 	// CapabilityPairing: the broker serves operator_pairing.
 	CapabilityPairing = "pairing"
@@ -117,6 +120,19 @@ type PairingContactView struct {
 	// Acks are the operator's acknowledgments of its messages (#287), from
 	// a broker serving contact_acks.
 	Acks *ContactAckSummary `json:"acks,omitempty"`
+	// PeerState is what the other side last told this one of itself
+	// (#276): paused or unpaired, empty while active or unknown, with
+	// PeerStateAt when it was stored. PeerStateAvailable is unavailable
+	// only once the peer is known to speak a version without notices.
+	PeerState          string     `json:"peer_state,omitempty"`
+	PeerStateAt        *time.Time `json:"peer_state_at,omitempty"`
+	PeerStateAvailable string     `json:"peer_state_available,omitempty"`
+	// Notice is this side's newest notice of the current pairing while the
+	// peer hasn't answered it: pending, or undelivered after its last
+	// attempt; NoticeAttempts counts its attempts. Neither claims the peer
+	// knows.
+	Notice         string `json:"notice,omitempty"`
+	NoticeAttempts int    `json:"notice_attempts,omitempty"`
 }
 
 // PairingContactSummary is how a contact stands now: its sync as this broker
