@@ -62,22 +62,38 @@ var pairingCodes = []struct {
 }
 
 func pairingError(err error) *routingError {
-	for _, known := range pairingCodes {
-		if errors.Is(err, known.err) {
-			rerr := known.code
-			return &rerr
-		}
+	if rerr, ok := codedPairingError(err); ok {
+		return rerr
 	}
-	for known, reason := range pairingRefusals {
-		if errors.Is(err, known) {
-			return &routingError{protocol.ErrPairing, reason}
-		}
+	if rerr, ok := pairingRefusal(err); ok {
+		return rerr
 	}
 	// Only after the refusals: identity_capacity is a storage error too.
 	if errors.Is(err, peer.ErrIdentityStorage) {
 		return &routingError{protocol.ErrIdentityStorage, "identity_storage"}
 	}
 	return &routingError{protocol.ErrInternal, "pairing state unavailable"}
+}
+
+// codedPairingError is a pairing error with a wire code of its own.
+func codedPairingError(err error) (*routingError, bool) {
+	for _, known := range pairingCodes {
+		if errors.Is(err, known.err) {
+			rerr := known.code
+			return &rerr, true
+		}
+	}
+	return nil, false
+}
+
+// pairingRefusal is a refusal answered as pairing_refused with its reason.
+func pairingRefusal(err error) (*routingError, bool) {
+	for known, reason := range pairingRefusals {
+		if errors.Is(err, known) {
+			return &routingError{protocol.ErrPairing, reason}, true
+		}
+	}
+	return nil, false
 }
 
 // pairingOp checks a request's target and applies it; open returns the code.
