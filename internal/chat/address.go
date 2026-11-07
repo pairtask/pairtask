@@ -78,7 +78,7 @@ func (m *Model) resolveAudience() audience {
 	}
 	p := parsePrefix(c.editor.Value())
 	if p.partial != "" {
-		return audience{err: "not an agent mention: " + safe(p.partial) + " (use /to for other IDs, \\@ for a literal @)"}
+		return audience{err: m.partialProblem(p.partial)}
 	}
 	if len(p.tokens) == 0 {
 		return m.explicitAudience()
@@ -90,6 +90,15 @@ func (m *Model) resolveAudience() audience {
 		return audience{err: "use either /to or @mentions, not both"}
 	}
 	return m.viewMentions(p.tokens)
+}
+
+// partialProblem is why a leading @word isn't an agent mention: a paired
+// workspace's agent, written in its ⇄ tab, or no agent ID at all.
+func (m *Model) partialProblem(word string) string {
+	if problem := m.remoteTagProblem(word); problem != "" {
+		return problem
+	}
+	return "not an agent mention: " + safe(word) + " (use /to for other IDs, \\@ for a literal @)"
 }
 
 // viewMentions resolves leading mentions in the selected conversation: any

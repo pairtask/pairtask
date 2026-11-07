@@ -28,6 +28,13 @@ a broker too old to assign, a tag in All is refused, the draft kept, rather
 than sent privately. In a group, a leading `@a @b` still only marks the named
 members as **addressed**. `@` opens a picker (Tab/Enter completes); later `@`
 is plain text, pasted text stays literal, and a leading `\@` escapes it.
+A paired workspace's agent is written to from that workspace's `⇄` tab: a
+leading `@AGENT@WORKSPACE` here (the workspace by its name or full key) holds
+the draft and says which tab, or why that workspace can't be written to
+(unknown, ambiguous, not confirmed, paused). A bare `@AGENT` is always your
+agent; when a paired workspace shares one of that name, the line above the
+draft says so: `codex-1 is your agent here; codex-1@Office is in the Office ⇄
+tab`. `/to` IDs stay this workspace's, as written.
 
 For pairing across hosts, start with the
 [pairing guide](pairing.md). Once both sides
