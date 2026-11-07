@@ -92,6 +92,8 @@ type ServerOptions struct {
 	// MessagePins, when set, also offers message sessions, accepting one
 	// only from an identity it reports true for: a confirmed contact.
 	MessagePins func(fingerprint string) bool
+	// ControlPins is a compile-only seam until control sessions exist (#276).
+	ControlPins func(fingerprint string) bool
 }
 
 // ClientOptions shape a pairing client's handshake.
