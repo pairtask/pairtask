@@ -49,15 +49,6 @@ func outcomeStoreReply(notice protocol.Message) store.RemoteReply {
 	return store.RemoteReply{Msg: protocol.Message{Type: protocol.TypeMsg, MessageID: "outcome-reply", Seq: 3, From: "sender", To: notice.From}, SenderSession: "session-sender", Parent: notice.MessageID, Text: "follow up", Now: messageAt}
 }
 
-func TestRemoteOutcomeNoticeAcceptanceRefusesSyntheticOutcomeParent(t *testing.T) {
-	f, notice := importedOutcomeNotice(t)
-	_, err := f.db.QueueRemoteReply(context.Background(), outcomeStoreReply(notice))
-	if err == nil || !strings.Contains(err.Error(), "a review outcome notice is not a chat reply target") {
-		t.Fatalf("outcome reply lacks dedicated refusal: %v", err)
-	}
-	pairEqual(t, errors.Is(err, store.ErrOutcomeNotice), true)
-}
-
 func TestRemoteOutcomeNoticeAcceptancePermissionChecksPrecedeNoticeKind(t *testing.T) {
 	for _, change := range []struct{ from, to string }{{"intruder", "target"}, {"sender", "someone-else"}} {
 		t.Run(change.from+"-"+change.to, func(t *testing.T) {
@@ -80,16 +71,17 @@ func TestRemoteOutcomeNoticeAcceptanceUnimportedParentKeepsExistingError(t *test
 	pairEqual(t, errors.Is(err, store.ErrOutcomeNotice), false)
 }
 
-func TestRemoteOutcomeNoticeAcceptanceFollowUpQuotesActualRoutingIdentity(t *testing.T) {
+func TestRemoteOutcomeNoticeAcceptanceReplyGuidanceQuotesActualRoutingIdentity(t *testing.T) {
 	reviewer := "reviewer/@\n\"name\""
 	f, notice := importedOutcomeNoticeFor(t, reviewer)
 	var body struct {
 		Text string `json:"text"`
 	}
 	pairOK(t, json.Unmarshal(notice.Payload, &body))
-	_, followUp, found := strings.Cut(body.Text, "Don't reply to this notice")
-	pairEqual(t, found, true)
-	for _, part := range []string{"send a new message", strconv.Quote(reviewer), strconv.Quote(f.key)} {
+	followUp := body.Text
+	pairEqual(t, strings.Contains(strings.ToLower(followUp), "reply"), true)
+	pairEqual(t, strings.Contains(strings.ToLower(followUp), "don't reply"), false)
+	for _, part := range []string{strconv.Quote(notice.MessageID), strconv.Quote(reviewer), strconv.Quote(f.key)} {
 		if !strings.Contains(followUp, part) {
 			t.Fatalf("outcome guidance lacks escaped routing %q: %s", part, followUp)
 		}

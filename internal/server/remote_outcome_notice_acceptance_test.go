@@ -75,27 +75,6 @@ func outcomeNoticeUnchanged(f *outcomeNoticeServer, before map[string]string) {
 	}
 }
 
-func TestRemoteOutcomeNoticeAcceptanceExplicitAndImplicitRepliesCannotMutate(t *testing.T) {
-	for _, explicit := range []bool{false, true} {
-		t.Run(map[bool]string{false: "implicit", true: "explicit"}[explicit], func(t *testing.T) {
-			f := newOutcomeNoticeServer(t)
-			workspace := ""
-			if explicit {
-				workspace = f.key
-			}
-			before := f.snapshot()
-			f.agent.write(outcomeNoticeReply(f.notice.MessageID, workspace))
-			response := f.agent.read()
-			operatorEqual(t, "outcome reply rejected", response.Code, protocol.ErrMalformedFrame)
-			operatorEqual(t, "dedicated follow-up guidance", response.Detail, outcomeReplyGuidance)
-			if strings.Contains(response.Detail, "request_review") {
-				t.Fatal("outcome refusal suggests requesting another review")
-			}
-			outcomeNoticeUnchanged(f, before)
-		})
-	}
-}
-
 func TestRemoteOutcomeNoticeAcceptanceUnauthorizedSenderKeepsPermissionReason(t *testing.T) {
 	f := newOutcomeNoticeServer(t)
 	intruder := f.peer("intruder", protocol.Version)
