@@ -23,6 +23,8 @@ type consentBridgeClient struct {
 	next   int
 }
 
+func (c *consentBridgeClient) ReviewProtocol() int { return 24 }
+
 func (c *consentBridgeClient) ReviewForges(context.Context) (forge.Registry, error) {
 	return c.forges, nil
 }

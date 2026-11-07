@@ -10,7 +10,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-func TestContactHistoryChatAcceptanceNegotiatesProtocol25(t *testing.T) {
+func TestContactHistoryChatAcceptanceNegotiatesProtocol26(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
@@ -36,11 +36,11 @@ func TestContactHistoryChatAcceptanceNegotiatesProtocol25(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := <-received
-	if req.ProtocolVersion != 25 {
-		t.Fatalf("session_open protocol_version=%d, want 25", req.ProtocolVersion)
+	if req.ProtocolVersion != 26 {
+		t.Fatalf("session_open protocol_version=%d, want 26", req.ProtocolVersion)
 	}
-	if protocol.Version != 25 {
-		t.Fatalf("current protocol=%d, want 25", protocol.Version)
+	if protocol.Version != 26 {
+		t.Fatalf("current protocol=%d, want 26", protocol.Version)
 	}
 	if protocol.ConsentVersion != 24 {
 		t.Fatalf("consent compatibility version changed to %d", protocol.ConsentVersion)
