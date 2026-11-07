@@ -13,7 +13,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const outcomeReplyGuidance = "a review outcome notice is not a chat reply target; send a new message to the reviewer in that workspace"
+const outcomeReplyGuidance = "a refusal notice is not a chat reply target; send a new message to that workspace"
 
 type outcomeNoticeServer struct {
 	*redeemOperatorFixture
