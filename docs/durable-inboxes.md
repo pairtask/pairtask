@@ -124,8 +124,10 @@ pairtask operator inbox archive PATH --database DB (--confirm | --dry-run) [--up
 - **Export** writes a full SQLite snapshot of the database to `PATH`: every
   table, including what the WAL holds. It is private (0600), checked, synced,
   and published under `PATH` only when complete; an existing `PATH` is never
-  replaced. The database is opened as it is and never migrated, so an older
-  database exports too. The snapshot holds the database only, not the
+  replaced. The database is opened read-only, as it is, and never migrated,
+  so an older database exports too. (A database someone switched to SQLite's
+  WAL mode, with its `-shm` file gone, can't be read that way; the export
+  then refuses rather than open it for writing.) The snapshot holds the database only, not the
   `<DB>.peer` directory beside it with the pairing keys.
 - **Archive** first exports to `PATH`, then, in one transaction, archives each
   retained message up to `--upper` (inclusive; the last message by default)
@@ -142,7 +144,8 @@ pairtask operator inbox archive PATH --database DB (--confirm | --dry-run) [--up
   failed archive changes nothing and leaves the backup. `--dry-run` writes
   nothing and reports what an archive would free and why each kept message
   stays (`kept_by_reason`). An archive refuses a database a current broker
-  hasn't opened yet: start the current broker once, stop it, then archive.
+  hasn't opened and migrated yet: start the current broker once, stop it,
+  then archive. Only the archive's own transaction writes to the database.
 
 In the sandbox the database lives in the secured runtime: stop
 `pairtask-secured-broker.service` there, run the command there, check the

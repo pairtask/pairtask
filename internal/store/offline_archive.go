@@ -104,13 +104,22 @@ func planReport(plan archivePlan, upper uint64, before ArchiveUsage, dryRun bool
 		Retained: RetainedUsage{Before: before, After: after, LimitMessages: MaxRetainedMessages, LimitBytes: MaxRetainedBytes}}
 }
 
+// archiveSchema requires what a current broker leaves: the committed epoch
+// transition and the archived marker.
 func archiveSchema(ctx context.Context, q queryer) error {
-	var columns int
-	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('message_metadata') WHERE name = 'archived_at'`).Scan(&columns)
+	var current bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pragma_table_info('message_metadata') WHERE name = 'archived_at')
+    AND EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_steps')`).Scan(&current)
 	if err != nil {
 		return err
 	}
-	if columns == 0 {
+	if current {
+		err = q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM schema_steps WHERE name = ?)`, epochSchemaStep).Scan(&current)
+	}
+	if err != nil {
+		return err
+	}
+	if !current {
 		return ErrArchiveSchema
 	}
 	return nil
@@ -140,7 +149,12 @@ func retainedUsage(ctx context.Context, q queryer) (ArchiveUsage, error) {
 
 // apply archives the plan, read again in the transaction, and audits it.
 func (o *OfflineDatabase) apply(ctx context.Context, report *ArchiveReport, backup Backup) error {
-	tx, err := o.db.BeginTx(ctx, nil)
+	db, err := o.writer()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

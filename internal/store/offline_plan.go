@@ -12,10 +12,10 @@ import (
 var archiveReasons = []string{"after_upper", "unacknowledged", "legacy_unacknowledged", "claim", "assignment",
 	"pending_audit", "paired", "peer_linked", "pending_import", "review", "unsettled_ask", "reply_child"}
 
-// archiveCandidates are the retained messages, each with the first reason
-// kept, "" for none. ?1 is the inclusive upper sequence.
-const archiveCandidates = `SELECT d.message_id, mm.seq, d.storage_bytes, mm.in_reply_to, CASE
-  WHEN mm.seq > ?1 THEN 'after_upper'
+// archiveCandidates are the retained messages, each with whether it is
+// after the inclusive upper sequence ?1, and the first unfinished reason it
+// is kept for, "" for none.
+const archiveCandidates = `SELECT d.message_id, mm.seq, d.storage_bytes, mm.in_reply_to, mm.seq > ?1, CASE
   WHEN EXISTS (SELECT 1 FROM durable_inbox i WHERE i.message_id = d.message_id AND i.acknowledged_at IS NULL) THEN 'unacknowledged'
   WHEN mm.ack_requested = 1 AND EXISTS (SELECT 1 FROM message_receipts r WHERE r.message_id = d.message_id AND r.agent_acknowledged_at IS NULL) THEN 'legacy_unacknowledged'
   WHEN EXISTS (SELECT 1 FROM claims c WHERE c.operator_message_id = d.message_id AND c.state = 'active') THEN 'claim'
@@ -29,11 +29,28 @@ const archiveCandidates = `SELECT d.message_id, mm.seq, d.storage_bytes, mm.in_r
   ELSE '' END
 FROM durable_messages d JOIN message_metadata mm USING(message_id) ORDER BY mm.seq`
 
-// archiveCandidate is one retained message and why it stays, if it does.
+// archiveCandidate is one retained message and why it stays, if it does:
+// after the upper bound, or for unfinished work, which also keeps the
+// messages it replies to wherever it is.
 type archiveCandidate struct {
-	id, parent, reason string
-	seq                uint64
-	bytes              int64
+	id, parent, unfinished string
+	seq                    uint64
+	bytes                  int64
+	afterUpper             bool
+}
+
+// reason is the first reason the message is kept, "" for none; context is
+// whether an unfinished reply needs it.
+func (c archiveCandidate) reason(context bool) string {
+	switch {
+	case c.afterUpper:
+		return "after_upper"
+	case c.unfinished != "":
+		return c.unfinished
+	case context:
+		return "reply_child"
+	}
+	return ""
 }
 
 // archivePlan is what an archive frees and what it keeps.
@@ -65,17 +82,14 @@ func planArchive(ctx context.Context, q queryer, upper uint64) (archivePlan, err
 		plan.kept[reason] = 0
 	}
 	for _, c := range candidates {
-		if c.reason == "" && needed[c.id] {
-			c.reason = "reply_child"
-		}
-		plan.add(c)
+		plan.add(c, c.reason(needed[c.id]))
 	}
 	return plan, nil
 }
 
-func (p *archivePlan) add(c archiveCandidate) {
-	if c.reason != "" {
-		p.kept[c.reason]++
+func (p *archivePlan) add(c archiveCandidate, reason string) {
+	if reason != "" {
+		p.kept[reason]++
 		return
 	}
 	p.eligible = append(p.eligible, c)
@@ -95,7 +109,7 @@ func readCandidates(ctx context.Context, q queryer, upper uint64) ([]archiveCand
 	var out []archiveCandidate
 	for rows.Next() {
 		var c archiveCandidate
-		if err := rows.Scan(&c.id, &c.seq, &c.bytes, &c.parent, &c.reason); err != nil {
+		if err := rows.Scan(&c.id, &c.seq, &c.bytes, &c.parent, &c.afterUpper, &c.unfinished); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -107,13 +121,13 @@ func readCandidates(ctx context.Context, q queryer, upper uint64) ([]archiveCand
 // can follow; it archives nothing rather than guess.
 var ErrArchiveContext = errors.New("unfinished replies name more context than an archive follows; nothing archived")
 
-// replyContext is every message an unfinished reply needs: its parent, that
-// parent's, and so on, up to an archived parent. A cycle ends where it
-// repeats.
+// replyContext is every message an unfinished reply needs, after the upper
+// bound or not: its parent, that parent's, and so on, up to an archived
+// parent. A cycle ends where it repeats.
 func replyContext(ctx context.Context, q queryer, candidates []archiveCandidate) (map[string]bool, error) {
 	walk := contextWalk{ctx: ctx, q: q, seen: map[string]bool{}}
 	for _, c := range candidates {
-		if c.reason == "" || c.reason == "after_upper" {
+		if c.unfinished == "" {
 			continue
 		}
 		if err := walk.from(c.parent); err != nil {
