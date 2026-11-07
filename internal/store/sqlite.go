@@ -225,17 +225,20 @@ func migrate(db *sql.DB, existing map[string]bool) error {
 
 func addLaterColumns(db *sql.DB) error {
 	for _, c := range laterColumns {
-		missing, err := columnMissing(db, c.table, c.column)
-		if err != nil {
+		if err := addMissingColumn(db, c); err != nil {
 			return err
-		}
-		if missing {
-			if err := addColumn(db, c.table, c.column, c.decl); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
+}
+
+// addMissingColumn adds a column the database doesn't have yet.
+func addMissingColumn(db *sql.DB, c struct{ table, column, decl string }) error {
+	missing, err := columnMissing(db, c.table, c.column)
+	if err != nil || !missing {
+		return err
+	}
+	return addColumn(db, c.table, c.column, c.decl)
 }
 
 func columnMissing(db *sql.DB, table, column string) (bool, error) {
