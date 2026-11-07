@@ -43,7 +43,7 @@ func (f *controlServerFixture) pinnedSession(t *testing.T, ctx context.Context, 
 	if control {
 		open = firstcontact.ControlClient
 	}
-	conn, err := open(ctx, raw, f.id, time.Now, f.route.pin)
+	conn, err := open(ctx, raw, f.id, func() time.Time { return time.Unix(f.now.Load(), 0) }, f.route.pin)
 	operatorNoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 	return conn
