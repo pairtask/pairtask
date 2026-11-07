@@ -442,7 +442,7 @@ func (m *Model) hintText() string {
 	if a.err != "" {
 		return "✗ " + a.err
 	}
-	text := m.audienceText(a)
+	text := m.audienceText(a) + m.collisionNote(a.mentions)
 	if len(a.notSeen) > 0 {
 		text += " (not seen: " + safe(strings.Join(a.notSeen, ", ")) + ")"
 	}
