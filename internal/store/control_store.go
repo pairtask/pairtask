@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -140,6 +141,9 @@ WHERE contact = ? AND pairing_id IS ? AND state = 'pending' ORDER BY gen LIMIT 1
 // messaging.ErrProtocol and changes nothing. The same answer again, once
 // delivered, changes nothing either.
 func (c *controlStore) NoticeStored(ctx context.Context, a messaging.ContactStateStored) error {
+	if !bytes.Equal(a.PairingID, c.pairingID()) {
+		return fmt.Errorf("%w: an answer for another pairing", messaging.ErrProtocol)
+	}
 	return c.inTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE contact_notices_out SET
     delivered_at = CASE WHEN state = 'pending' THEN ?4 ELSE delivered_at END,

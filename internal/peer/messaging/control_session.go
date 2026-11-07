@@ -93,7 +93,7 @@ func (c *control) serve() error {
 }
 
 // agree swaps pairing IDs in this side's order; different ones end the
-// session with End, before any notice is read or stored.
+// session with End from both sides, before any notice is read or stored.
 func (c *control) agree(dialer bool) error {
 	own, err := c.Store.PairingID(c.ctx)
 	if err != nil {
@@ -106,10 +106,35 @@ func (c *control) agree(dialer bool) error {
 	if bytes.Equal(own, theirs) {
 		return nil
 	}
-	if err := c.sendEnd(); err != nil {
+	if err := c.endBoth(dialer); err != nil {
 		return err
 	}
 	return ErrOtherPairing
+}
+
+// endBoth exchanges the two Ends of a mismatch in order, so neither side
+// blocks sending while the other sends too: the dialer sends its End and
+// reads the server's; the server reads the dialer's, then sends its own.
+func (c *control) endBoth(dialer bool) error {
+	if dialer {
+		if err := c.sendEnd(); err != nil {
+			return err
+		}
+		return c.receiveEnd()
+	}
+	if err := c.receiveEnd(); err != nil {
+		return err
+	}
+	return c.sendEnd()
+}
+
+// receiveEnd reads the peer's End: any other frame is a protocol error.
+func (c *control) receiveEnd() error {
+	frame, err := c.Frames.Recv()
+	if err != nil {
+		return err
+	}
+	return DecodeEnd(frame)
 }
 
 // swap sends own and reads the peer's ID, the dialer first.
