@@ -139,7 +139,7 @@ func (h *Hub) ownerBusy(req operatorRequest) *protocol.Message {
 
 // sessionSnapshot cuts the baseline and queues the response in one hub step.
 func (h *Hub) sessionSnapshot(ctx context.Context, clients map[string]*Client, req operatorRequest) {
-	snap, err := h.buildSnapshot(ctx, clients)
+	snap, err := h.buildSnapshot(ctx, clients, req.msg.ProtocolVersion)
 	if err != nil {
 		h.log.Error("operator snapshot failed", "error", err)
 		req.sess.pushResponse(protocol.Message{Type: protocol.TypeError, Code: protocol.ErrInternal, RequestID: req.msg.RequestID, Detail: "snapshot unavailable"})
@@ -149,7 +149,9 @@ func (h *Hub) sessionSnapshot(ctx context.Context, clients map[string]*Client, r
 	h.consentBaseline(ctx, req.sess)
 }
 
-func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (protocol.OperatorSnapshot, error) {
+// buildSnapshot is the snapshot for a session at version, the version it
+// negotiated (#276).
+func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client, version int) (protocol.OperatorSnapshot, error) {
 	snap := protocol.OperatorSnapshot{Watermark: h.watermark()}
 	snap.Agents, snap.AgentsTotal = presence(clients)
 	snap.AgentsTruncated = snap.AgentsTotal > len(snap.Agents)
@@ -176,7 +178,7 @@ func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client) (pr
 		return snap, err
 	}
 	snap.Rooms, snap.RoomsTotal, snap.RoomsTruncated = rooms.Rooms, rooms.Total, rooms.Truncated
-	counts, err := h.store.ReviewCounts(ctx)
+	counts, err := h.readReviewCounts(ctx, version)
 	if err != nil {
 		return snap, err
 	}

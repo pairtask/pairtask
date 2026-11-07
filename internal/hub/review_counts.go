@@ -112,11 +112,21 @@ func (h *Hub) reviewCounts(ctx context.Context, msg protocol.Message) protocol.M
 	if !sameJSON(msg, clean) {
 		return (&routingError{protocol.ErrMalformedFrame, "review_op counts takes no other field"}).frame(msg.MessageID)
 	}
-	counts, err := h.store.ReviewCounts(ctx)
+	counts, err := h.readReviewCounts(ctx, msg.ProtocolVersion)
 	if err != nil {
 		return (&routingError{protocol.ErrInternal, "reviews unavailable"}).frame(msg.MessageID)
 	}
 	return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp, ReviewCounts: &counts}
+}
+
+// readReviewCounts are the review counts a client at version reads: what
+// failed counted as its failed page lists it, every pairing's with
+// pairing history, else each contact's newest pairing's alone (#276).
+func (h *Hub) readReviewCounts(ctx context.Context, version int) (protocol.ReviewCounts, error) {
+	if historyCapable(version) {
+		return h.store.ReviewCounts(ctx)
+	}
+	return h.store.CurrentReviewCounts(ctx)
 }
 
 // readOnlyReviewOps are the operator's review reads added for #286.

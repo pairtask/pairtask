@@ -25,8 +25,21 @@ var ErrReviewCursor = errors.New("review_before is not a cursor this broker gave
 // ReviewCounts are the reviews pending: requests from paired workspaces
 // waiting for this operator, with a token naming that set; reviews running
 // here; and this side's requests to paired workspaces not yet settled, in
-// each contact's current pairing (#276).
+// each contact's current pairing (#276). What failed is counted under every
+// pairing, as FailedReviews lists it.
 func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error) {
+	return s.reviewCounts(ctx, allPairings)
+}
+
+// CurrentReviewCounts is ReviewCounts with what failed counted as
+// CurrentFailedReviews lists it (#276): what an operator without pairing
+// history reads, so its count and token match its failed page.
+func (s *Store) CurrentReviewCounts(ctx context.Context) (protocol.ReviewCounts, error) {
+	return s.reviewCounts(ctx, currentPairings)
+}
+
+// reviewCounts are the counts, what failed counted over the scope.
+func (s *Store) reviewCounts(ctx context.Context, scope pairingScope) (protocol.ReviewCounts, error) {
 	var c protocol.ReviewCounts
 	// One read, so what failed and what is in progress never disagree.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -44,13 +57,14 @@ func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error)
     AND pairing_epoch = `+currentEpochFor("review_asks_out.contact")).Scan(&c.AskedOpen); err != nil {
 		return c, err
 	}
-	return c, failureCounts(ctx, tx, &c)
+	return c, failureCounts(ctx, tx, &c, scope)
 }
 
-// failureCounts adds what failed and the asks still in progress (#298).
-func failureCounts(ctx context.Context, tx *sql.Tx, c *protocol.ReviewCounts) error {
+// failureCounts adds what failed in scope and the asks still in progress
+// (#298).
+func failureCounts(ctx context.Context, tx *sql.Tx, c *protocol.ReviewCounts, scope pairingScope) error {
 	var err error
-	if c.Failed, c.FailedToken, err = failures(ctx, tx, allPairings); err != nil {
+	if c.Failed, c.FailedToken, err = failures(ctx, tx, scope); err != nil {
 		return err
 	}
 	active, err := activeAsks(ctx, tx)
@@ -256,11 +270,18 @@ func (s *Store) askedReviews(ctx context.Context, before string, scope pairingSc
 	if err != nil {
 		return page, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out a`+scope.where()).Scan(&page.Total); err != nil {
+	// One read, so a pairing again between the total and the rows never
+	// changes which pairing scope names (#276).
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return page, err
+	}
+	defer tx.Rollback()
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out a`+scope.where()).Scan(&page.Total); err != nil {
 		return page, err
 	}
 	where, args := askedAfter(cur, scope)
-	rows, err := s.db.QueryContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
+	rows, err := tx.QueryContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
 		return page, err
 	}
