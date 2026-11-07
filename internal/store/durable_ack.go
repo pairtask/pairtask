@@ -9,10 +9,13 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
+// isDurable: a durable message, retained or archived (#119), which keeps its
+// durable receipts.
 func (s *Store) isDurable(ctx context.Context, id string) (bool, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM durable_messages WHERE message_id = ?`, id).Scan(&count)
-	return count != 0, err
+	var durable bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM durable_messages WHERE message_id = ?1)
+    OR EXISTS (SELECT 1 FROM message_metadata WHERE message_id = ?1 AND archived_at IS NOT NULL)`, id).Scan(&durable)
+	return durable, err
 }
 
 type durableReceipt struct {

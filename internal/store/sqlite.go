@@ -160,6 +160,14 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"consent_requests", "refused_reason", "TEXT NOT NULL DEFAULT ''"},
 }
 
+// laterColumns are added once the epoch transition has committed, so a
+// failed transition leaves a released database exactly as it was.
+var laterColumns = []struct{ table, column, decl string }{
+	// When an offline archive replaced the message's body (#119); NULL
+	// while it is kept. An archived ID stays reserved.
+	{"message_metadata", "archived_at", "TEXT"},
+}
+
 // columnAdded runs once, in the transaction that adds its column: what the
 // new column needs from the rows already there. A failure adds neither, so
 // the next open tries both again.
@@ -209,7 +217,28 @@ func migrate(db *sql.DB, existing map[string]bool) error {
 			return err
 		}
 	}
-	return epochTransition(db, existing)
+	if err := epochTransition(db, existing); err != nil {
+		return err
+	}
+	return addLaterColumns(db)
+}
+
+func addLaterColumns(db *sql.DB) error {
+	for _, c := range laterColumns {
+		if err := addMissingColumn(db, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addMissingColumn adds a column the database doesn't have yet.
+func addMissingColumn(db *sql.DB, c struct{ table, column, decl string }) error {
+	missing, err := columnMissing(db, c.table, c.column)
+	if err != nil || !missing {
+		return err
+	}
+	return addColumn(db, c.table, c.column, c.decl)
 }
 
 func columnMissing(db *sql.DB, table, column string) (bool, error) {

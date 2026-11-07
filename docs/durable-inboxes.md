@@ -100,10 +100,58 @@ receipt what the operator client hasn't adopted. `pairtask operator inbox
 status` shows usage against the per-sender, operator-inbox and
 retained-history bounds; the global pending bounds across all inboxes are
 reported only when they refuse a send.
-At the retained-history limit, operator-managed archival is required. Preserve
-unfinished work and stop the broker before any database maintenance; starting a
-fresh database resets registration and duplicate-detection scope. Message IDs
-should remain globally unique across such deliberate resets.
+At the retained-history limit, archive finished history (below). Starting a
+fresh database instead resets registration and duplicate-detection scope;
+message IDs should remain globally unique across such a deliberate reset.
+
+### Backup and archive
+
+Both commands run offline, on the broker's database file with the broker
+stopped. They take `--database`, never a socket, and there is no default
+path:
+
+```text
+pairtask operator inbox export PATH --database DB [--json]
+pairtask operator inbox archive PATH --database DB (--confirm | --dry-run) [--upper SEQ] [--json]
+```
+
+- **Ownership.** A broker holds `<DB>.lock` (next to the database's resolved
+  path, so a symlink names the same lock) for as long as it runs. Export and
+  archive take the same lock and refuse while a broker or another
+  maintenance holds it, or where the filesystem can't lock; they never run
+  unlocked. A database with more than one hard link is refused. Stop brokers
+  older than this release yourself: they don't take the lock.
+- **Export** writes a full SQLite snapshot of the database to `PATH`: every
+  table, including what the WAL holds. It is private (0600), checked, synced,
+  and published under `PATH` only when complete; an existing `PATH` is never
+  replaced. The database is opened read-only, as it is, and never migrated,
+  so an older database exports too. (A database someone switched to SQLite's
+  WAL mode, with its `-shm` file gone, can't be read that way; the export
+  then refuses rather than open it for writing.) The snapshot holds the database only, not the
+  `<DB>.peer` directory beside it with the pairing keys.
+- **Archive** first exports to `PATH`, then, in one transaction, archives each
+  retained message up to `--upper` (inclusive; the last message by default)
+  that is finished: every recipient acknowledged it, and no unfinished work
+  needs it. It keeps a message that an active claim, an assigned task, a
+  pending audit, a paired conversation, a paired workspace's message, a
+  pending import, an open review or an unsettled review request still names,
+  and every earlier message an unfinished reply answers. An archived message
+  keeps its ID, sequence, sender, recipients, receipts and audience: history
+  shows it with an `(archived)` body, replies to it follow the same rules, a
+  repeat of its ID is refused as `duplicate_message`, and it never comes back
+  to anyone's inbox. Only its body and its retained accounting go, so
+  retained capacity is freed; the database file doesn't shrink by itself. A
+  failed archive changes nothing and leaves the backup. `--dry-run` writes
+  nothing and reports what an archive would free and why each kept message
+  stays (`kept_by_reason`). An archive refuses a database a current broker
+  hasn't opened and migrated yet: start the current broker once, stop it,
+  then archive. Only the archive's own transaction writes to the database.
+
+In the sandbox the database lives in the secured runtime: stop
+`pairtask-secured-broker.service` there, run the command there, check the
+backup, then start the service again. To restore, stop the broker and put
+the backup in place of the database file, keeping the existing `<DB>.peer`
+directory.
 
 The replay bounds fit within the existing 64-frame connection queue and 4 MiB
 adapter inbox. Slow consumers still disconnect. Accepted durable messages remain

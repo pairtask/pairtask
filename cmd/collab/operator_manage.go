@@ -13,7 +13,9 @@ import (
 )
 
 const (
-	operatorInboxUsage       = "usage: pairtask operator inbox status [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json] [--timeout 5s]"
+	operatorInboxUsage = "usage: pairtask operator inbox status [--socket PATH] [--json] [--timeout 5s]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json] [--timeout 5s]\n" +
+		"       pairtask operator inbox export PATH --database DB [--json] (offline: stop the broker first)\n" +
+		"       pairtask operator inbox archive PATH --database DB (--confirm | --dry-run) [--upper SEQ] [--json] (offline: stop the broker first)"
 	operatorInboxStatusUsage = "usage: pairtask operator inbox status [--socket PATH] [--json] [--timeout 5s]"
 	operatorInboxAckUsage    = "usage: pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json] [--timeout 5s]"
 )
@@ -30,6 +32,10 @@ func runOperatorInbox(ctx context.Context, args []string, stdout, stderr io.Writ
 		return runInboxStatus(ctx, args[1:], stdout, stderr)
 	case "ack":
 		return runInboxAck(ctx, args[1:], stdout, stderr)
+	case "export":
+		return runInboxExport(ctx, args[1:], stdout, stderr)
+	case "archive":
+		return runInboxArchive(ctx, args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, operatorInboxUsage)
 	return 2
