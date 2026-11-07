@@ -140,7 +140,7 @@ func (s Session) agree(ctx context.Context, dialer bool) (Session, error) {
 	s.pairing = pairingOf(s.Store)
 	max := s.maxVersion()
 	s.Store = wrapStore(s.Store)
-	version, err := s.hello(dialer, max)
+	version, err := s.hello(helloSide{dialer, max})
 	if err != nil {
 		return s, err
 	}
@@ -151,12 +151,19 @@ func (s Session) agree(ctx context.Context, dialer bool) (Session, error) {
 	return s, s.pairing.record(ctx, version)
 }
 
+// helloSide is this side of the hellos: whether it dials, and the highest
+// version it speaks.
+type helloSide struct {
+	dialer bool
+	max    byte
+}
+
 // hello is this side's half of the hellos.
-func (s Session) hello(dialer bool, max byte) (byte, error) {
-	if dialer {
-		return s.offerHello(max)
+func (s Session) hello(h helloSide) (byte, error) {
+	if h.dialer {
+		return s.offerHello(h.max)
 	}
-	return s.answerHello(max)
+	return s.answerHello(h.max)
 }
 
 // OfferLive, after a LiveVersion first round, says whether the dialing side
