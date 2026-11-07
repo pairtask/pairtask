@@ -157,9 +157,9 @@ func (in exchangeInput) record(c contactAuthority) peer.ExchangeRecord {
 
 // legacyRecord is the ledger row a legacy exchange commits as: permitted,
 // or refused as peer_too_old when Amendment A3 refuses it.
-func (in exchangeInput) legacyRecord(c contactAuthority, settled bool) peer.ExchangeRecord {
+func (in exchangeInput) legacyRecord(c contactAuthority, retained bool) peer.ExchangeRecord {
 	x := in.row(c, peer.ExchangeLegacy)
-	if in.legacyRefused(c, settled) {
+	if in.legacyRefused(c, retained) {
 		x.State, x.Reason = peer.ExchangeRefused, peer.RefusedPeerTooOld
 	}
 	return x
@@ -167,10 +167,10 @@ func (in exchangeInput) legacyRecord(c contactAuthority, settled bool) peer.Exch
 
 // legacyRefused reports a legacy exchange Amendment A3 refuses, checked
 // before its allowances: an unpaired or remote-unpaired contact, one with
-// a pairing ID, an identity with a retired or installed ledger row (settled),
-// or a declared repair. Every re-pair needs the epoch-capable exchange.
-func (in exchangeInput) legacyRefused(c contactAuthority, settled bool) bool {
-	refused := []bool{c.unpairedAt != "", c.peerState == remoteUnpaired, c.pairingID != nil, settled, in.repair != ""}
+// a pairing ID, an identity the ledger retains (retained), or a declared
+// repair. Every re-pair needs the epoch-capable exchange.
+func (in exchangeInput) legacyRefused(c contactAuthority, retained bool) bool {
+	refused := []bool{c.unpairedAt != "", c.peerState == remoteUnpaired, c.pairingID != nil, retained, in.repair != ""}
 	return slices.Contains(refused, true)
 }
 
@@ -271,23 +271,34 @@ func commitLegacyExchange(ctx context.Context, tx *sql.Tx, in exchangeInput) (pe
 	if err != nil {
 		return peer.ExchangeRecord{}, err
 	}
-	settled, err := settledIdentity(ctx, tx, in.identity)
+	h, err := exchangeHistory(ctx, tx, in.identity)
 	if err != nil {
 		return peer.ExchangeRecord{}, err
 	}
-	x := in.legacyRecord(c, settled)
+	x := in.legacyRecord(c, h.retains(c))
 	if err := insertExchange(ctx, tx, x, in.at); err != nil {
 		return peer.ExchangeRecord{}, err
 	}
 	return x, refusalOf(x)
 }
 
-// settledIdentity: the identity has a retired or installed ledger row.
-func settledIdentity(ctx context.Context, q rowQuerier, identity string) (bool, error) {
-	var found bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pairing_exchanges WHERE identity_key = ? AND state IN ('retired', 'installed'))`,
-		identity).Scan(&found)
-	return found, err
+// ledgerHistory is what the ledger already holds for an identity: any row,
+// and any retired or installed one.
+type ledgerHistory struct{ any, settled bool }
+
+func exchangeHistory(ctx context.Context, q rowQuerier, identity string) (ledgerHistory, error) {
+	var h ledgerHistory
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pairing_exchanges WHERE identity_key = ?1),
+    EXISTS (SELECT 1 FROM pairing_exchanges WHERE identity_key = ?1 AND state IN ('retired', 'installed'))`,
+		identity).Scan(&h.any, &h.settled)
+	return h, err
+}
+
+// retains: the identity isn't genuinely new to a legacy exchange (A3): a
+// retired or installed row, or, with no contact row, any ledger history at
+// all (an open, legacy or refused exchange).
+func (h ledgerHistory) retains(c contactAuthority) bool {
+	return h.settled || (h.any && !c.found)
 }
 
 // refuseCrossing refuses x and every other open pairing of its identity as

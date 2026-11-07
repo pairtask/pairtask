@@ -134,10 +134,8 @@ func (r JoinRequest) GoString() string { return r.String() }
 // returns what will run it. A known operation ID is a replay: it returns the
 // existing record and no PendingJoin, whatever code was supplied, since the
 // code is never stored. A different destination or name is ErrJoinConflict.
-// A destination is required unless the request declares a repair, whose
-// contact the caller already knows how to reach.
 func (j *Joiner) Begin(ctx context.Context, req JoinRequest) (*PendingJoin, JoinRecord, error) {
-	if req.Destination == "" && req.Repair == "" {
+	if req.Destination == "" {
 		return nil, JoinRecord{}, ErrInvalidDestination
 	}
 	return j.begin(ctx, req)
