@@ -255,22 +255,49 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 }
 
 // workspaceParent is the message from that workspace a reply answers. A
-// review notice's ID names none there: its refusal says how to answer.
+// review notice's ID stands for the request it announced (#259); one that
+// names none there says how to answer.
 func (h *Hub) workspaceParent(ctx context.Context, contact, inReplyTo string) (store.RemoteImport, *routingError) {
 	parent, found, err := h.store.RemoteParent(ctx, inReplyTo)
-	switch {
-	case err == nil && !found && strings.HasPrefix(inReplyTo, reviewNoticePrefix):
-		return parent, errReviewNotice
-	case err != nil || !found || parent.Contact != contact:
-		return parent, errOtherWorkspace
+	if unknownNotice(inReplyTo, found, err) {
+		return h.noticeParent(ctx, contact, strings.TrimPrefix(inReplyTo, reviewNoticePrefix))
 	}
-	return parent, nil
+	return parent, fromWorkspace(parent, contact, found, err)
+}
+
+// unknownNotice: the ID names no import, and reads as a review notice's.
+func unknownNotice(inReplyTo string, found bool, err error) bool {
+	if err != nil || found {
+		return false
+	}
+	return strings.HasPrefix(inReplyTo, reviewNoticePrefix)
+}
+
+// noticeParent is the request a review notice stands for, in that workspace.
+func (h *Hub) noticeParent(ctx context.Context, contact, reviewID string) (store.RemoteImport, *routingError) {
+	parent, found, err := h.store.NoticeReview(ctx, reviewID)
+	if err == nil && !found {
+		return parent, errReviewNotice
+	}
+	return parent, fromWorkspace(parent, contact, found, err)
+}
+
+// fromWorkspace refuses a parent that was not found, or came from another
+// workspace.
+func fromWorkspace(parent store.RemoteImport, contact string, found bool, err error) *routingError {
+	if err != nil || !found {
+		return errOtherWorkspace
+	}
+	if parent.Contact != contact {
+		return errOtherWorkspace
+	}
+	return nil
 }
 
 var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
 
-// errReviewNotice answers a reply to a review notice, which names no
-// message of the workspace that asked: the review is answered through its
+// errReviewNotice answers a reply to a review notice that stands for no
+// request of that workspace: the review is answered through its
 // lifecycle, whose outcomes go back on their own.
 var errReviewNotice = &routingError{protocol.ErrMalformedFrame,
 	"a synthetic review notice is not a chat reply target; use its review_id with accept_review, decline_review or submit_review; review outcomes are queued to the requester"}
@@ -330,7 +357,7 @@ var remoteReplyErrors = []struct {
 }{
 	{messaging.ErrNotRecipient, protocol.ErrMalformedFrame, "a reply to a paired workspace's message comes from one of its recipients and goes to its sender"},
 	{store.ErrNoImport, protocol.ErrMalformedFrame, "in_reply_to names no message from a paired workspace"},
-	{store.ErrOutcomeNotice, protocol.ErrMalformedFrame, "a review outcome notice is not a chat reply target; send a new message to the reviewer in that workspace"},
+	{store.ErrOutcomeNotice, protocol.ErrMalformedFrame, "a refusal notice is not a chat reply target; send a new message to that workspace"},
 	{messaging.ErrNotShared, protocol.ErrRecipientUnavailable, "this agent is not shared with that workspace"},
 	{messaging.ErrUnknownContact, protocol.ErrRecipientUnavailable, "that workspace is no longer a confirmed contact"},
 	{messaging.ErrOutboxFull, protocol.ErrInboxFull, "too many messages to that workspace are waiting to leave"},

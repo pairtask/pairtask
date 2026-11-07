@@ -433,9 +433,7 @@ func contactLabel(ctx context.Context, tx *sql.Tx, contact string) (string, erro
 func localParent(ctx context.Context, tx *sql.Tx, imp RemoteImport) (string, error) {
 	switch imp.ReplyTo.Author {
 	case messaging.ReplyBySender:
-		src := imp.source()
-		return optionalString(tx.QueryRowContext(ctx, `SELECT local_id FROM remote_imports
-WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND state = 'imported'`, src.contact, src.epoch, imp.ReplyTo.ID))
+		return senderParent(ctx, tx, imp)
 	case messaging.ReplyByReceiver:
 		return answeredLocal(ctx, tx, imp)
 	}
@@ -481,6 +479,43 @@ func answers(imp RemoteImport, parent sentParent) bool {
 	return slices.Contains(parent.to, imp.Sender)
 }
 
+// senderParent is the import of theirs a reply by the sender names. A review
+// request is named only by a reply from the agent that asked, to the
+// reviewer it asked (#259); any other reply arrives unthreaded.
+func senderParent(ctx context.Context, tx *sql.Tx, imp RemoteImport) (string, error) {
+	src := imp.source()
+	var parent namedImport
+	err := tx.QueryRowContext(ctx, `SELECT local_id, COALESCE(kind, ''), sender, recipients FROM remote_imports
+WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND state = 'imported'`, src.contact, src.epoch, imp.ReplyTo.ID).
+		Scan(&parent.localID, &parent.kind, &parent.sender, &parent.recipients)
+	if err != nil {
+		return "", ignoreNoRows(err)
+	}
+	if parent.kind != importReview {
+		return parent.localID, nil
+	}
+	return parent.answeredBy(imp)
+}
+
+// namedImport is an import a reply by its sender names.
+type namedImport struct{ localID, kind, sender, recipients string }
+
+// answeredBy is the review request's local ID when the reply comes from the
+// agent that asked and goes to a reviewer it asked, else "".
+func (p namedImport) answeredBy(reply RemoteImport) (string, error) {
+	var reviewers []string
+	if err := json.Unmarshal([]byte(p.recipients), &reviewers); err != nil {
+		return "", fmt.Errorf("import recipients: %w", err)
+	}
+	if p.sender != reply.Sender {
+		return "", nil
+	}
+	if !slices.ContainsFunc(reviewers, func(r string) bool { return slices.Contains(reply.Recipients, r) }) {
+		return "", nil
+	}
+	return p.localID, nil
+}
+
 // optionalString is a row's one text column, "" for no row.
 func optionalString(row *sql.Row) (string, error) {
 	var s string
@@ -500,6 +535,14 @@ WHERE ri.local_id = ?`, localID))
 		return RemoteImport{}, false, nil
 	}
 	return imp, err == nil && state == ImportImported, err
+}
+
+// NoticeReview is the review request import a paired workspace's review
+// notice stands for, by the notice's review ID (#259): found only when
+// that import is a review, imported.
+func (s *Store) NoticeReview(ctx context.Context, reviewID string) (RemoteImport, bool, error) {
+	imp, found, err := s.RemoteParent(ctx, reviewID)
+	return imp, found && imp.Kind == importReview, err
 }
 
 // RemoteReply is a local agent's reply to an imported message.
@@ -587,8 +630,7 @@ func replyOutgoing(ctx context.Context, tx *sql.Tx, r RemoteReply) (outgoing, er
 	if err != nil {
 		return outgoing{}, err
 	}
-	reply := messaging.Message{ID: r.Msg.MessageID, Text: r.Text, From: r.Msg.From,
-		ReplyTo: messaging.ReplyRef{ID: parent.RemoteID, Author: messaging.ReplyByReceiver}}
+	reply := messaging.Message{ID: r.Msg.MessageID, Text: r.Text, From: r.Msg.From, ReplyTo: parent.answeredBy()}
 	if parent.Sender != "" {
 		reply.To = []string{parent.Sender}
 	}
@@ -614,16 +656,32 @@ WHERE ri.local_id = ?`, r.Parent))
 	if !slices.Contains(parent.Recipients, r.Msg.From) || r.Msg.To != parent.RemoteSender() {
 		return RemoteImport{}, messaging.ErrNotRecipient
 	}
-	if parent.Kind == importOutcome {
-		return RemoteImport{}, ErrOutcomeNotice // this side wrote the notice: nothing there to answer
+	if parent.Kind == importOutcome && !parent.requestOutcome() {
+		return RemoteImport{}, ErrOutcomeNotice // a refusal this side wrote: nothing there to answer
 	}
 	return parent, nil
 }
 
-// ErrOutcomeNotice refuses a reply to a review outcome notice: the notice
-// was written here from the outcome, so it names no message of the
-// workspace that sent the outcome.
-var ErrOutcomeNotice = errors.New("a review outcome notice is not a chat reply target")
+// requestOutcome: the import is the notice of an outcome of a review request
+// this side sent, which a reply answers as that request (#259). A refusal
+// notice or summary answers none.
+func (imp RemoteImport) requestOutcome() bool {
+	return imp.Kind == importOutcome && strings.HasPrefix(imp.RemoteID, outcomeKeyPrefix) && imp.ReplyTo.ID != ""
+}
+
+// answeredBy is what a reply to the import names on the wire: the message
+// the peer sent, or, for an outcome notice, the request this side sent.
+func (imp RemoteImport) answeredBy() messaging.ReplyRef {
+	if imp.requestOutcome() {
+		return messaging.ReplyRef{ID: imp.ReplyTo.ID, Author: messaging.ReplyBySender}
+	}
+	return messaging.ReplyRef{ID: imp.RemoteID, Author: messaging.ReplyByReceiver}
+}
+
+// ErrOutcomeNotice refuses a reply to a refusal notice or summary: this side
+// wrote it, and it answers no request of that workspace, so nothing there is
+// answered (#259). An outcome of a request this side sent is answerable.
+var ErrOutcomeNotice = errors.New("a refusal notice is not a chat reply target")
 
 // repeatedReply answers a reply whose ID is queued already: the same text
 // and routing, queued from the same agent's message, is the same reply.

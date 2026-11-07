@@ -702,6 +702,20 @@ identity key it went to, from v21); summary and URL are the other
 workspace's words. `reviews_asked_get` `{request_id}` (v15) answers
 `reviews_asked_result` with `reviews_asked`: the caller's own requests.
 
+Both notices can be answered with an ordinary chat reply (#259); a reply
+changes nothing in the review:
+
+- **A review notice** (`review:ID`, to the reviewer): `in_reply_to` its
+  `message_id`, with `workspace` the requesting workspace and `to` whoever
+  asked. The reply goes there threaded to the request. Without `workspace`, a
+  `review:` ID stays this workspace's, as before.
+- **An outcome notice** (to the requester): `in_reply_to` its `message_id`,
+  with or without `workspace`, to the reviewer. It answers the request there,
+  so the reviewer's side threads it to the review.
+- A reply threads to a review on the reviewer's side only from the agent that
+  asked, to its reviewer; any other is delivered unthreaded.
+- Refusal notices and their summaries still can't be answered.
+
 From message protocol v6, an outcome also carries the reviewer's side's
 own review ID once the request has become a review there, and nothing
 before that (#259). The requester keeps the first one it hears for good,

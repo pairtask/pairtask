@@ -138,15 +138,6 @@ func TestRemoteNoticeGuidanceAcceptanceLocalReplyWithPrefixRemainsLocal(t *testi
 	}
 }
 
-func TestRemoteNoticeGuidanceAcceptanceSyntheticReplyRefusedWithoutSideEffects(t *testing.T) {
-	f := newNoticeGuidanceServer(t)
-	before := f.snapshot()
-	response := f.reply(f.notice.MessageID, f.key)
-	operatorEqual(t, "synthetic reply rejected", response.Code, protocol.ErrMalformedFrame)
-	operatorEqual(t, "actionable lifecycle guidance", response.Detail, noticeReplyGuidance)
-	noticeGuidanceUnchanged(f, before)
-}
-
 func TestRemoteNoticeGuidanceAcceptanceNonReviewMissingParentKeepsExistingReason(t *testing.T) {
 	f := newNoticeGuidanceServer(t)
 	before := f.snapshot()
