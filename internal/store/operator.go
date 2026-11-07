@@ -194,17 +194,19 @@ func (m storedMessage) matches(request protocol.Message) bool {
 
 // LookupOperatorRetry returns nil when the ID is unused. A used ID matches only
 // a trusted operator message with the same scope, payload and correlation;
-// anything else, including legacy rows claiming the operator sender, is a duplicate.
+// anything else, including legacy rows claiming the operator sender, is a
+// duplicate, as is every archived message (#119), whatever its payload.
 func (s *Store) LookupOperatorRetry(ctx context.Context, request protocol.Message, scope OperatorScope) (*OperatorRetry, error) {
 	var stored storedMessage
-	err := s.db.QueryRowContext(ctx, `SELECT m.seq, mm.origin, mm.in_reply_to, m.payload, mm.room, mm.mentions FROM message_metadata mm JOIN messages m USING(seq) WHERE mm.message_id = ?`, request.MessageID).Scan(&stored.seq, &stored.origin, &stored.inReplyTo, &stored.payload, &stored.room, &stored.mentions)
+	var archived bool
+	err := s.db.QueryRowContext(ctx, `SELECT m.seq, mm.origin, mm.in_reply_to, m.payload, mm.room, mm.mentions, mm.archived_at IS NOT NULL FROM message_metadata mm JOIN messages m USING(seq) WHERE mm.message_id = ?`, request.MessageID).Scan(&stored.seq, &stored.origin, &stored.inReplyTo, &stored.payload, &stored.room, &stored.mentions, &archived)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !stored.matches(request) {
+	if archived || !stored.matches(request) {
 		return nil, ErrDuplicateMessage
 	}
 	return s.operatorRetry(ctx, request.MessageID, stored.seq, scope)

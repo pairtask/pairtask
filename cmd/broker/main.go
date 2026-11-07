@@ -110,6 +110,13 @@ func run(cfg config, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The broker owns its database for its lifetime (#119): no second broker,
+	// export or archive opens it meanwhile.
+	lock, err := store.LockDatabase(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("lock the database %s: %w", cfg.DBPath, err)
+	}
+	defer lock.Close()
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err

@@ -158,6 +158,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	// why the requester refused its outcome, '' unless it did.
 	{"consent_requests", "outcome_reason", "TEXT NOT NULL DEFAULT ''"},
 	{"consent_requests", "refused_reason", "TEXT NOT NULL DEFAULT ''"},
+	// When an offline archive replaced the message's body (#119); NULL
+	// while it is kept. An archived ID stays reserved.
+	{"message_metadata", "archived_at", "TEXT"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the
