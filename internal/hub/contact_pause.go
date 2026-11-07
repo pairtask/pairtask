@@ -25,7 +25,7 @@ func (h *Hub) contactPause(ctx context.Context, req operatorRequest, auditID int
 	if applied { // a retry changed nothing now, so acts on nothing (#276)
 		h.afterPause(msg.ContactKey, paused)
 	}
-	snapshot, rerr := h.applyPairing(ctx, pairingOps[protocol.PairingOpList], "")
+	snapshot, rerr := h.applyPairing(ctx, pairingOps[protocol.PairingOpList], pairingArgs{})
 	if rerr != nil {
 		return rerr.frame(msg.MessageID), nil
 	}

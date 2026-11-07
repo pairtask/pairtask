@@ -196,17 +196,37 @@ func (h *Hub) settlePairing() {
 }
 
 // redeemFields refuses the redemption fields on any other operation, before
-// its audit, so a code can never be carried into one.
+// its audit, so a code can never be carried into one; a declared repair
+// belongs to open and redeem only, and must be an identity key.
 func redeemFields(msg protocol.Message) *routingError {
 	fields := []string{msg.PairingDestination, msg.PairingCode, msg.PairingName}
 	if msg.PairingOp != protocol.PairingOpRedeem && slices.ContainsFunc(fields, func(f string) bool { return f != "" }) {
 		return &routingError{protocol.ErrMalformedFrame, "pairing_destination, pairing_code and pairing_name belong to redeem only"}
 	}
+	return repairField(msg)
+}
+
+// repairOps are the operations that may declare a repair.
+var repairOps = []string{protocol.PairingOpOpen, protocol.PairingOpRedeem}
+
+// repairField refuses a declared repair on another operation, or one that
+// names no identity key.
+func repairField(msg protocol.Message) *routingError {
+	if msg.PairingRepair == "" {
+		return nil
+	}
+	if !slices.Contains(repairOps, msg.PairingOp) {
+		return &routingError{protocol.ErrMalformedFrame, "pairing_repair belongs to open and redeem only"}
+	}
+	if peer.ValidIdentityKey(msg.PairingRepair) != nil {
+		return &routingError{protocol.ErrMalformedFrame, "pairing_repair must be a full identity key"}
+	}
 	return nil
 }
 
 func (h *Hub) redeemRequest(msg protocol.Message) (peer.JoinRequest, *routingError) {
-	req := peer.JoinRequest{OperationID: msg.MessageID, Destination: msg.PairingDestination, Name: msg.PairingName, Code: []byte(msg.PairingCode)}
+	req := peer.JoinRequest{OperationID: msg.MessageID, Destination: msg.PairingDestination, Name: msg.PairingName, Code: []byte(msg.PairingCode),
+		Repair: msg.PairingRepair}
 	if req.Name == "" {
 		req.Name = h.pair.cfg.Name
 	}
@@ -268,7 +288,8 @@ func (h *Hub) replayRedeem(known peer.JoinRecord, join peer.JoinRequest, err err
 	if err != nil {
 		return redeemReply{&routingError{protocol.ErrInternal, "pairing state unavailable"}}
 	}
-	if known.Destination != join.Destination || known.JoinerName != join.Name {
+	same := []bool{known.Destination == join.Destination, known.JoinerName == join.Name, known.Repair == join.Repair}
+	if slices.Contains(same, false) {
 		return redeemReply{&routingError{protocol.ErrPairing, "join_conflict"}}
 	}
 	return redeemReply{}
@@ -348,6 +369,7 @@ var pairingCauses = []struct {
 	err   error
 	cause string
 }{
+	{peer.ErrPeerTooOld, protocol.ErrPairingPeerTooOld}, // before exchange_failed, which wraps it on the joiner
 	{peer.ErrJoinOutcomeUnknown, "outcome_unknown"},
 	{peer.ErrJoinRefused, "refused"},
 	{peer.ErrExchangeFailed, "exchange_failed"},

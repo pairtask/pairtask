@@ -21,7 +21,12 @@ import (
 )
 
 const (
-	// ALPN names the pairing exchange; both ends must negotiate it.
+	// PairingALPN3 names the epoch-capable pairing exchange (#276): the
+	// exchange binds its mode, and an accepted pairing installs a pairing
+	// epoch with its own pairing ID.
+	PairingALPN3 = "pairtask-pairing/3"
+	// ALPN names the legacy pairing exchange, the only one a v8 peer speaks:
+	// its binding is unchanged, and it installs no pairing ID.
 	ALPN = "pairtask-pairing/2"
 	// ContactALPN names a connection between paired workspaces, each pinning
 	// the other's identity; no exchange runs on it.
@@ -78,6 +83,9 @@ type Conn struct {
 // offers contact connections, accepting one only from an identity it
 // reports true for.
 type ServerOptions struct {
+	// PairingProtocols are the pairing ALPNs offered, in preference order;
+	// nil offers PairingProtocols(). A compatibility knob: []string{ALPN}
+	// serves as a v8 build would.
 	PairingProtocols []string
 
 	ContactPins func(fingerprint string) bool
@@ -86,13 +94,36 @@ type ServerOptions struct {
 	MessagePins func(fingerprint string) bool
 }
 
-// Protocol is the negotiated ALPN: ALPN, ContactALPN or MessageALPN.
+// ClientOptions shape a pairing client's handshake.
+type ClientOptions struct {
+	// PairingProtocols are the pairing ALPNs offered; nil offers
+	// PairingProtocols(). A compatibility knob: []string{ALPN} joins as a v8
+	// build would.
+	PairingProtocols []string
+}
+
+// PairingProtocols are the pairing ALPNs a build offers by default, the
+// epoch-capable one first; a server's order decides.
+func PairingProtocols() []string { return []string{PairingALPN3, ALPN} }
+
+// Protocol is the negotiated ALPN: PairingALPN3, ALPN, ContactALPN or
+// MessageALPN.
 func (c *Conn) Protocol() string { return c.protocol }
+
+// ExchangeMode is the mode the negotiated pairing ALPN fixes for the
+// exchange: epoch on PairingALPN3, legacy on ALPN, and "" on any other
+// protocol, which runs no exchange.
+func (c *Conn) ExchangeMode() peer.ExchangeMode { return exchangeMode(c.protocol) }
+
+// pairingModes map each pairing ALPN to its exchange mode.
+var pairingModes = map[string]peer.ExchangeMode{PairingALPN3: peer.ModeEpoch, ALPN: peer.ModeLegacy}
+
+func exchangeMode(protocol string) peer.ExchangeMode { return pairingModes[protocol] }
 
 // Server runs the inviter's end over raw, which it owns: on any error raw is
 // closed.
 func Server(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time) (*Conn, error) {
-	return handshake(ctx, raw, id, clock, pairingRole(true))
+	return handshake(ctx, raw, id, clock, pairingRole(true, nil))
 }
 
 // ServerWith is Server with options, such as accepting contact connections.
@@ -103,7 +134,12 @@ func ServerWith(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, c
 // Client runs the joiner's end over raw, which it owns: on any error raw is
 // closed.
 func Client(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time) (*Conn, error) {
-	return handshake(ctx, raw, id, clock, pairingRole(false))
+	return ClientWith(ctx, raw, id, clock, ClientOptions{})
+}
+
+// ClientWith is Client with options, such as the pairing ALPNs it offers.
+func ClientWith(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, opts ClientOptions) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, pairingRole(false, opts.PairingProtocols))
 }
 
 // ContactClient opens a contact connection to the workspace whose identity
@@ -166,14 +202,15 @@ func established(t *tls.Conn) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: channel binding: %w", ErrFirstContact, err)
 	}
-	return &Conn{tls: t, conn: peer.Connection{PeerLeaf: peer.SPKIFingerprint(cs.PeerCertificates[0]), ChannelBinding: ekm},
-		protocol: cs.NegotiatedProtocol}, nil
+	return &Conn{tls: t, conn: peer.Connection{Mode: exchangeMode(cs.NegotiatedProtocol), PeerLeaf: peer.SPKIFingerprint(cs.PeerCertificates[0]),
+		ChannelBinding: ekm}, protocol: cs.NegotiatedProtocol}, nil
 }
 
 // Connection is what this connection fixes for the pairing exchange: the
-// peer's presented key and the exporter, as a copy.
+// exchange mode its ALPN negotiated, the peer's presented key and the
+// exporter, as a copy.
 func (c *Conn) Connection() peer.Connection {
-	return peer.Connection{PeerLeaf: c.conn.PeerLeaf, ChannelBinding: append([]byte(nil), c.conn.ChannelBinding...)}
+	return peer.Connection{Mode: c.conn.Mode, PeerLeaf: c.conn.PeerLeaf, ChannelBinding: append([]byte(nil), c.conn.ChannelBinding...)}
 }
 
 // MessageFrames carries a message session's frames, as Frames does but up

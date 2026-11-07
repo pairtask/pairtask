@@ -9,7 +9,8 @@
 // Every value both sides must agree on is bound into what CPace
 // authenticates: the channel binding as the session ID, each side's
 // role-prefixed fingerprint as its own and its peer's ID, and the profile,
-// invitation, both operation IDs and the joiner's name as the context. A
+// invitation, both operation IDs, the joiner's name and, on an
+// epoch-capable connection, the exchange's mode as the context. A
 // difference in any of them fails the exchange. Local associated data is
 // unused, since CPace does not require both sides to agree on it.
 package pake
@@ -53,11 +54,21 @@ func input(b peer.ExchangeBinding, code []byte, joiner bool) cpace.Input {
 	return in
 }
 
+// epochField is the sixth context field an epoch-capable binding appends
+// (#276); a legacy binding has none, so it stays byte for byte what a v8
+// build binds.
+const epochField = "mode:epoch"
+
 // bindingContext is the profile, the invitation, both operation IDs and the
-// joiner's name, each with a big-endian uint32 length.
+// joiner's name, then, for an epoch-capable binding only, its mode, each
+// with a big-endian uint32 length.
 func bindingContext(b peer.ExchangeBinding) []byte {
+	fields := []string{profile, b.InvitationID, b.JoinerOperationID, b.InviterOperationID, b.JoinerName}
+	if b.Mode.Epoch() {
+		fields = append(fields, epochField)
+	}
 	var out []byte
-	for _, field := range []string{profile, b.InvitationID, b.JoinerOperationID, b.InviterOperationID, b.JoinerName} {
+	for _, field := range fields {
 		out = binary.BigEndian.AppendUint32(out, uint32(len(field)))
 		out = append(out, field...)
 	}
@@ -92,7 +103,7 @@ func (exchanger) Join(ctx context.Context, f peer.Frames, b peer.ExchangeBinding
 		return err
 	}
 	defer session.Close()
-	if err := persist(ctx, peer.ExchangeResult{Peer: b.Inviter, TranscriptID: session.TranscriptID()}); err != nil {
+	if err := persist(ctx, peer.ExchangeResult{Peer: b.Inviter, TranscriptID: session.TranscriptID(), Mode: b.Mode}); err != nil {
 		return err
 	}
 	return f.Send(msgC)
@@ -141,7 +152,7 @@ func (exchanger) Invite(ctx context.Context, f peer.Frames, b peer.ExchangeBindi
 		return peer.ExchangeResult{}, exchangeError(err)
 	}
 	defer session.Close()
-	return peer.ExchangeResult{Peer: b.Joiner, TranscriptID: session.TranscriptID()}, nil
+	return peer.ExchangeResult{Peer: b.Joiner, TranscriptID: session.TranscriptID(), Mode: b.Mode}, nil
 }
 
 // exchangeError marks a CPace refusal: a wrong code, a binding mismatch or

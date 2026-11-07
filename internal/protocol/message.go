@@ -210,6 +210,7 @@ type Message struct {
 	PairingDestination  string              `json:"pairing_destination,omitempty"` // operator_pairing redeem: host:port of the inviter
 	PairingCode         string              `json:"pairing_code,omitempty"`        // operator_pairing redeem: never stored, logged or echoed
 	PairingName         string              `json:"pairing_name,omitempty"`        // operator_pairing redeem: the name to pair under
+	PairingRepair       string              `json:"pairing_repair,omitempty"`      // operator_pairing open, redeem: the identity key the pairing repairs (#276)
 	PairingJoin         *PairingJoinView    `json:"pairing_join,omitempty"`        // operator_pairing_result for redeem
 	PairingSettle       *PairingSettleView  `json:"pairing_settle,omitempty"`      // operator_pairing_result for settle
 	PageRequest         *PageRequest        `json:"page_request,omitempty"`        // operator_receive

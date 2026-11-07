@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS peer_pairing_outcomes (
 var _ peer.PairingStore = (*Store)(nil)
 
 // Commit writes the outcome and its request in one transaction; see
-// peer.PairingStore. An epoch-capable outcome writes its ledger row first;
-// a refusal keeps only that row, and still answers its error.
+// peer.PairingStore. Every outcome writes its ledger row first; a refusal
+// keeps only that row, and still answers its error.
 func (s *Store) Commit(ctx context.Context, o peer.PairingOutcome) (peer.PairingRequest, error) {
 	if err := peer.ValidOutcome(o); err != nil {
 		return peer.PairingRequest{}, err
@@ -73,6 +73,16 @@ func commitPairing(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) (peer
 	}
 	if o.Mode.Epoch() {
 		return commitEpoch(ctx, tx, o)
+	}
+	return commitLegacy(ctx, tx, o)
+}
+
+// commitLegacy commits a legacy outcome: its ledger row, then, if Amendment
+// A3 permits it, the request and outcome as before; a refusal keeps only
+// the row.
+func commitLegacy(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) (peer.PairingRequest, error) {
+	if _, err := commitLegacyExchange(ctx, tx, outcomeExchange(o)); err != nil {
+		return peer.PairingRequest{}, err
 	}
 	if err := insertPairing(ctx, tx, o); err != nil {
 		return peer.PairingRequest{}, err

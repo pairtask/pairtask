@@ -33,6 +33,10 @@ const (
 
 	// ErrPairing is a refused pairing operation; the detail names why.
 	ErrPairing = "pairing_refused"
+	// ErrPairingPeerTooOld: the other side spoke only the legacy pairing
+	// exchange, which can't pair an identity this side retains or a
+	// declared repair (#276); it must update to pair again.
+	ErrPairingPeerTooOld = "pairing_peer_too_old"
 
 	// CapabilityPairing: the broker serves operator_pairing.
 	CapabilityPairing = "pairing"

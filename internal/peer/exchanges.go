@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// Pairing exchanges (#276). Every exchange on an epoch-capable connection
-// is recorded in an exchange ledger as it commits, under its operation ID.
+// Pairing exchanges (#276). Every exchange is recorded in an exchange
+// ledger as it commits, under its operation ID; a legacy one only as
+// permitted (ExchangeLegacy) or refused.
 // The ledger, not the request or join rows, is the authority record of
 // such a pairing: what it is (a first pairing, a declared repair or an
 // address move), the global authority mark it began under, its decision,
@@ -24,6 +25,9 @@ const (
 	ModeLegacy ExchangeMode = "legacy"
 	ModeEpoch  ExchangeMode = "epoch"
 )
+
+// known accepts the modes an exchange can bind: "", legacy and epoch.
+func (m ExchangeMode) known() bool { return m == "" || m.Stored() == m }
 
 // Epoch reports an epoch-capable exchange.
 func (m ExchangeMode) Epoch() bool { return m == ModeEpoch }
@@ -54,11 +58,15 @@ const (
 	ExchangeInstalled = "installed"
 	ExchangeRetired   = "retired"
 	ExchangeRefused   = "refused"
+	// ExchangeLegacy is a permitted legacy exchange: it follows the legacy
+	// decision path and installs no pairing ID.
+	ExchangeLegacy = "legacy"
 
 	RefusedCrossed     = "crossed_transition"
 	RefusedAmbiguous   = "ambiguous"
 	RefusedAddressMove = "address_move"
 	RefusedMismatch    = "identity_mismatch"
+	RefusedPeerTooOld  = "peer_too_old"
 )
 
 // ExchangeRecord is one exchange's ledger row.
@@ -71,7 +79,7 @@ type ExchangeRecord struct {
 	Mode                     ExchangeMode
 	TranscriptID             []byte
 	BegunMark                uint64 // the global authority mark when the exchange began
-	State                    string // ExchangeOpen, ExchangeInstalled, ExchangeRetired or ExchangeRefused
+	State                    string // ExchangeOpen, ExchangeInstalled, ExchangeRetired, ExchangeRefused or ExchangeLegacy
 	Decision                 PairingState
 	DecidedAt, DeliveredAt   time.Time
 	InstalledAt, RetiredAt   time.Time
@@ -113,14 +121,18 @@ var (
 	ErrOperationRequired = errors.New("peer: the pairing's delivery must name its operation")
 	// ErrRepairMismatch: a declared repair authenticated another identity.
 	ErrRepairMismatch = fmt.Errorf("peer: repair authenticated another identity: %w", ErrIdentityMismatch)
+	// ErrPeerTooOld: a legacy exchange can't pair an identity this side
+	// retains or declared a repair of; only an epoch-capable one can.
+	ErrPeerTooOld = errors.New("peer: the other side must update to pair again")
 )
 
 // refusals are the errors a refused exchange answers with; an address move
 // is settled, not an error.
 var refusals = map[string]error{
-	RefusedCrossed:   ErrCrossedTransition,
-	RefusedAmbiguous: ErrAmbiguousPairing,
-	RefusedMismatch:  ErrRepairMismatch,
+	RefusedCrossed:    ErrCrossedTransition,
+	RefusedAmbiguous:  ErrAmbiguousPairing,
+	RefusedMismatch:   ErrRepairMismatch,
+	RefusedPeerTooOld: ErrPeerTooOld,
 }
 
 // RefusalError is a refused exchange's error by its reason; nil for an

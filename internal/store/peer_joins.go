@@ -88,9 +88,9 @@ func (s *Store) SetCorrelation(ctx context.Context, opID string, h peer.InviterH
 	})
 }
 
-// RecordVerified records the authenticated inviter; an epoch-capable
-// exchange writes its ledger row first, and a refusal keeps only that row
-// (#276). See peer.JoinStore.
+// RecordVerified records the authenticated inviter; the exchange writes its
+// ledger row first, and a refusal keeps only that row (#276). See
+// peer.JoinStore.
 func (s *Store) RecordVerified(ctx context.Context, opID string, res peer.ExchangeResult, at time.Time) (peer.JoinRecord, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -345,8 +345,8 @@ type verified struct {
 }
 
 // verifyJoin is RecordVerified inside its transaction: a replay of a
-// committed exchange answers it, a legacy one records as before, an
-// epoch-capable one commits its ledger row first.
+// committed exchange answers it; otherwise the exchange commits its ledger
+// row first, a permitted legacy one then recording as before.
 func verifyJoin(ctx context.Context, tx *sql.Tx, v verified) (peer.JoinRecord, error) {
 	r, err := knownJoin(ctx, tx, v.opID)
 	if err != nil {
@@ -365,6 +365,15 @@ func verifyJoin(ctx context.Context, tx *sql.Tx, v verified) (peer.JoinRecord, e
 	}
 	if v.res.Mode.Epoch() {
 		return verifyEpoch(ctx, tx, next)
+	}
+	return verifyLegacy(ctx, tx, next)
+}
+
+// verifyLegacy commits a legacy join's ledger row, then, if Amendment A3
+// permits it, the join as before; a refusal keeps only the row.
+func verifyLegacy(ctx context.Context, tx *sql.Tx, next peer.JoinRecord) (peer.JoinRecord, error) {
+	if _, err := commitLegacyExchange(ctx, tx, joinExchange(next)); err != nil {
+		return peer.JoinRecord{}, err
 	}
 	return next, putJoin(ctx, tx, next)
 }
@@ -387,11 +396,11 @@ func replayVerified(r peer.JoinRecord, x peer.ExchangeRecord, v verified) (peer.
 // verifyEpoch commits the join's ledger row, then the join; an address
 // move merges the contact's new destination now, as it never installs.
 func verifyEpoch(ctx context.Context, tx *sql.Tx, next peer.JoinRecord) (peer.JoinRecord, error) {
+	next.Mode = peer.ModeEpoch
 	x, err := commitExchange(ctx, tx, joinExchange(next))
 	if err != nil {
 		return peer.JoinRecord{}, err
 	}
-	next.Mode = peer.ModeEpoch
 	if x.Kind == peer.KindAddressMove {
 		if err := upsertContact(ctx, tx, peer.JoinerContact(next), next.OperationID); err != nil {
 			return peer.JoinRecord{}, err

@@ -215,7 +215,7 @@ func (i *Inviter) answer(ctx context.Context, m Settle, peer string) (SettleRepl
 		return unknownReply, err
 	}
 	x, found, err := store.Exchange(ctx, m.InviterOperationID)
-	if err != nil || found {
+	if err != nil || ledgerAnswers(x, found) {
 		return exchangeReply(x), err
 	}
 	request, found, err := store.Request(ctx, peer)
@@ -225,12 +225,18 @@ func (i *Inviter) answer(ctx context.Context, m Settle, peer string) (SettleRepl
 	return SettleReply{Receipt: ReceiptMatched, Decision: request.State}, nil
 }
 
+// ledgerAnswers: the ledger row, not the request, holds the decision; a
+// permitted legacy exchange follows its request (#276).
+func ledgerAnswers(x ExchangeRecord, found bool) bool {
+	return found && x.State != ExchangeLegacy
+}
+
 // unknownReply carries no authority.
 var unknownReply = SettleReply{Receipt: ReceiptUnknown, Decision: PairingPending}
 
 // exchangeReply answers from a ledger row (#276): an open exchange with its
 // decision, an installed one as accepted, so the joiner's confirmation
-// replays; a retired or refused one is unknown.
+// replays; a retired or refused one, peer_too_old included, is unknown.
 func exchangeReply(x ExchangeRecord) SettleReply {
 	switch x.State {
 	case ExchangeOpen:
