@@ -31,10 +31,10 @@ func namespaceRepair(t *testing.T, f workspaceStoreFixture) {
 	op := &operatorContactFixture{db: f.db, raw: f.raw, contact: f.key}
 	_, _, err := f.db.UnpairContact(context.Background(), unpairRequest(t, op, "namespace-unpair"))
 	pairOK(t, err)
-	_, err = f.raw.Exec(`UPDATE peer_contacts SET pairing_epoch=2,pairing_id=?,unpaired_at='',generation=generation+1 WHERE identity_key=?`, make([]byte, 32), f.key)
+	o := op.epochOutcome(t, 110)
+	_, err = f.db.Commit(context.Background(), o)
 	pairOK(t, err)
-	_, err = f.raw.Exec(`UPDATE peer_pairing_requests SET state='accepted',delivered_at='2026-11-06T00:00:00Z' WHERE identity_key=?`, f.key)
-	pairOK(t, err)
+	op.deliverEpoch(t, o)
 }
 
 func namespaceMessage(id, text string) messaging.Message {

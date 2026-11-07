@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
@@ -36,9 +37,14 @@ func (f historyHubCase) repair(t *testing.T) {
 	messageWorkerOK(t, err)
 	_, _, err = f.h.store.UnpairContact(ctx, store.ContactUnpair{OperationID: "history-unpair", Contact: f.key, Confirm: f.key, SeenEpoch: 1, AuditID: audit, At: at})
 	messageWorkerOK(t, err)
-	_, err = f.raw.Exec(`UPDATE peer_contacts SET pairing_epoch=2,pairing_id=?,unpaired_at='',generation=generation+1 WHERE identity_key=?`, make([]byte, 32), f.key)
+	mark, err := f.h.store.PairingMark(ctx)
 	messageWorkerOK(t, err)
-	_, err = f.raw.Exec(`UPDATE peer_pairing_requests SET state='accepted',delivered_at=? WHERE identity_key=?`, at.Format(time.RFC3339Nano), f.key)
+	o := peer.PairingOutcome{OperationID: "history-epoch-install", InvitationID: "history-epoch-invitation", IdentityKey: f.key, Name: "Remote workspace", TranscriptID: []byte("history-test-transcript"), At: at, Mode: peer.ModeEpoch, BegunMark: mark}
+	_, err = f.h.store.Commit(ctx, o)
+	messageWorkerOK(t, err)
+	_, err = f.h.store.Accept(ctx, f.key)
+	messageWorkerOK(t, err)
+	_, err = f.h.store.DeliverExchange(ctx, peer.ExchangeDelivery{IdentityKey: f.key, OperationID: o.OperationID, Decision: peer.PairingAccepted, At: at})
 	messageWorkerOK(t, err)
 }
 

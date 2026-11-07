@@ -15,8 +15,11 @@ import (
 func repairReviewEpochFixture(t *testing.T, c *consentPublishCase) {
 	t.Helper()
 	unpairPublicationContact(t, c)
-	_, err := c.f.raw.Exec(`UPDATE peer_contacts SET pairing_epoch=2, pairing_id=?, unpaired_at='', generation=generation+1 WHERE identity_key=?`, make([]byte, 32), c.f.key)
+	op := &operatorContactFixture{db: c.f.db, raw: c.f.raw, contact: c.f.key}
+	o := op.epochOutcome(t, 111)
+	_, err := c.f.db.Commit(context.Background(), o)
 	pairOK(t, err)
+	op.deliverEpoch(t, o)
 	// Explicit new authority in epoch 2 must never authorize epoch 1 work.
 	_, err = c.f.raw.Exec(`INSERT INTO peer_review_grants(contact,pairing_epoch,agent,mode,publish,formal,granted_at)
  VALUES (?,2,'reviewer','auto',1,1,'2026-11-06T00:00:00Z')`, c.f.key)
