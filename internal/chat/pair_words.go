@@ -88,7 +88,7 @@ func (m *Model) awaitingRequests(l argLine) []string {
 		}
 	}
 	slices.Sort(ids)
-	return withPrefix(ids, l.current)
+	return withPrefix(slices.Compact(ids), l.current) // an ID two pairings reused, once
 }
 
 // pairWordLabel is a row for one of these choices: the word and what it
