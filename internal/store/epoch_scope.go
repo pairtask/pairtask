@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // currentEpoch is a contact's current pairing epoch, from its one
@@ -207,6 +208,18 @@ const livePairingImport = `NOT EXISTS (SELECT 1 FROM peer_contacts lp WHERE lp.i
 // source is the pairing an import was staged under; 0 is the legacy 1.
 func (imp RemoteImport) source() pairingKey {
 	return pairingKey{imp.Contact, max(imp.Epoch, 1)}
+}
+
+// stampNotice keeps, with a notice written here of a paired workspace's
+// review request or its outcome, where it came from and the pairing epoch,
+// so a replay still says whom to answer (#259).
+func stampNotice(ctx context.Context, tx *sql.Tx, msg protocol.Message, epoch int64) error {
+	if msg.Remote == nil {
+		return stampSource(ctx, tx, msg.MessageID, epoch)
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE message_metadata SET remote_contact = ?, remote_sender = ?, remote_epoch = ? WHERE message_id = ?`,
+		msg.Remote.Contact, msg.Remote.Sender, epoch, msg.MessageID)
+	return err
 }
 
 // stampSource keeps, with a message an import became, the pairing epoch

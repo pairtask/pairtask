@@ -255,13 +255,17 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 }
 
 // workspaceParent is the message from that workspace a reply answers. A
-// review notice's ID names none there: its refusal says how to answer.
+// review notice's ID stands for the request it announced (#259); one that
+// names none there says how to answer.
 func (h *Hub) workspaceParent(ctx context.Context, contact, inReplyTo string) (store.RemoteImport, *routingError) {
 	parent, found, err := h.store.RemoteParent(ctx, inReplyTo)
-	switch {
-	case err == nil && !found && strings.HasPrefix(inReplyTo, reviewNoticePrefix):
-		return parent, errReviewNotice
-	case err != nil || !found || parent.Contact != contact:
+	if err == nil && !found && strings.HasPrefix(inReplyTo, reviewNoticePrefix) {
+		parent, found, err = h.store.NoticeReview(ctx, strings.TrimPrefix(inReplyTo, reviewNoticePrefix))
+		if err == nil && !found {
+			return parent, errReviewNotice
+		}
+	}
+	if err != nil || !found || parent.Contact != contact {
 		return parent, errOtherWorkspace
 	}
 	return parent, nil
@@ -269,8 +273,8 @@ func (h *Hub) workspaceParent(ctx context.Context, contact, inReplyTo string) (s
 
 var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
 
-// errReviewNotice answers a reply to a review notice, which names no
-// message of the workspace that asked: the review is answered through its
+// errReviewNotice answers a reply to a review notice that stands for no
+// request of that workspace: the review is answered through its
 // lifecycle, whose outcomes go back on their own.
 var errReviewNotice = &routingError{protocol.ErrMalformedFrame,
 	"a synthetic review notice is not a chat reply target; use its review_id with accept_review, decline_review or submit_review; review outcomes are queued to the requester"}
