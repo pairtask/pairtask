@@ -270,25 +270,18 @@ func (s contactSpan) overlaps(start, end int) bool {
 // are read apart (#276), each request carrying at most ContactReadMax
 // under its own operation ID.
 func (m *Model) readShown(contact string) tea.Cmd {
-	groups := m.unreadByEpoch(contact)
+	t := m.contacts.thread(contact)
+	groups := map[int64][]string{} // unread drawn now, by the pairing each came under
+	for _, r := range m.shownReads(contact) {
+		if !t.settledRead(r) && !m.readPending(contactReadRef{contact, r}) {
+			groups[r.epoch] = append(groups[r.epoch], r.id)
+		}
+	}
 	var cmds []tea.Cmd
 	for _, epoch := range slices.Sorted(maps.Keys(groups)) {
 		cmds = append(cmds, m.sendRead(contactRead{contact: contact, epoch: epoch, ids: groups[epoch]}))
 	}
 	return tea.Batch(cmds...)
-}
-
-// unreadByEpoch are the received messages drawn now and not read yet, by
-// the pairing each came under.
-func (m *Model) unreadByEpoch(contact string) map[int64][]string {
-	t := m.contacts.thread(contact)
-	groups := map[int64][]string{}
-	for _, r := range m.shownReads(contact) {
-		if !t.settledRead(r) && !m.readPending(contact, r) {
-			groups[r.epoch] = append(groups[r.epoch], r.id)
-		}
-	}
-	return groups
 }
 
 // contactRead is one read: a contact's messages of one pairing.
@@ -317,9 +310,15 @@ func (t *contactThread) settledRead(r readRef) bool {
 	return t.read[r] || t.refused[r]
 }
 
-func (m *Model) readPending(contact string, r readRef) bool {
+// contactReadRef is one contact's message, in its pairing.
+type contactReadRef struct {
+	contact string
+	readRef
+}
+
+func (m *Model) readPending(r contactReadRef) bool {
 	for _, op := range m.contacts.reads {
-		if op.readsMessage(contact, r) {
+		if op.readsMessage(r) {
 			return true
 		}
 	}
@@ -327,8 +326,8 @@ func (m *Model) readPending(contact string, r readRef) bool {
 }
 
 // readsMessage: the read names this contact's message, in its pairing.
-func (op *contactOp) readsMessage(contact string, r readRef) bool {
-	if op.msg.ContactKey != contact || op.msg.ContactEpoch != r.epoch {
+func (op *contactOp) readsMessage(r contactReadRef) bool {
+	if op.msg.ContactKey != r.contact || op.msg.ContactEpoch != r.epoch {
 		return false
 	}
 	return slices.Contains(op.msg.ContactRead, r.id)
