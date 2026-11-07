@@ -122,16 +122,28 @@ type ReviewsAskedArgs struct {
 // detail is the one request the arguments name, or false for the list;
 // an error for an incomplete or mixed selection.
 func (a ReviewsAskedArgs) detail() (protocol.ReviewAskRef, bool, error) {
-	if a.AskID == "" && a.Workspace == "" && a.PairingEpoch == 0 {
+	if !a.selects() {
 		return protocol.ReviewAskRef{}, false, nil
 	}
-	if a.AskID == "" || a.Workspace == "" || a.Before != "" {
+	if !a.complete() {
 		return protocol.ReviewAskRef{}, false, errReviewsAskedSelection
 	}
 	if a.PairingEpoch < 0 {
 		return protocol.ReviewAskRef{}, false, errors.New("pairing_epoch must be a listed request's pairing_epoch, or omitted")
 	}
 	return protocol.ReviewAskRef{Contact: a.Workspace, AskID: a.AskID, PairingEpoch: a.PairingEpoch}, true, nil
+}
+
+// selects: the arguments name a request rather than the list.
+func (a ReviewsAskedArgs) selects() bool {
+	return a.PairingEpoch != 0 || a.named()
+}
+
+func (a ReviewsAskedArgs) named() bool { return a.AskID != "" || a.Workspace != "" }
+
+// complete: both of the request's names, and no page cursor beside them.
+func (a ReviewsAskedArgs) complete() bool {
+	return !slices.Contains([]string{a.AskID, a.Workspace}, "") && a.Before == ""
 }
 
 var errReviewsAskedSelection = errors.New("give both ask_id and workspace (and optionally its pairing_epoch) to read one request, or none of them for the list (with before for an older page)")
