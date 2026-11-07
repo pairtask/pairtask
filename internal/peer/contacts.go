@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -14,8 +15,9 @@ import (
 // authenticated acceptance; as inviter, the joiner's acknowledgement of it.
 // There is one contact per identity. A rejection never makes one.
 
-// ErrContactCapacity refuses a new contact to a full store.
-var ErrContactCapacity = errors.New("peer: contact capacity reached")
+// ErrContactCapacity refuses one more active contact to a store holding
+// MaxActiveContacts; it is an ErrIdentityStorage.
+var ErrContactCapacity = fmt.Errorf("peer: contact capacity reached: %w", ErrIdentityStorage)
 
 var (
 	// ErrDestinationChanged refuses an address change whose contact moved
@@ -95,10 +97,29 @@ func NewerDestination(existing, c Contact) bool {
 	return existing.Destination == "" || c.DestinationAt.After(existing.DestinationAt)
 }
 
-// AdmitContact refuses a new identity to a full store; a known one always
-// updates.
-func AdmitContact(found bool, total int) error {
-	if !found && total >= MaxPairingIdentities {
+// ContactSlots is what the contact bounds count, read with the write they
+// admit: the contacts not unpaired, and every identity row retained.
+type ContactSlots struct {
+	Active, Retained int
+}
+
+// AdmitContact refuses a new identity to a full store: ErrIdentityStorage
+// beyond MaxRetainedIdentities, ErrContactCapacity beyond
+// MaxActiveContacts. A known one always updates.
+func AdmitContact(found bool, slots ContactSlots) error {
+	switch {
+	case found:
+		return nil
+	case slots.Retained >= MaxRetainedIdentities:
+		return ErrIdentityStorage
+	}
+	return AdmitActive(slots)
+}
+
+// AdmitActive refuses to make one more contact active beyond
+// MaxActiveContacts, as pairing an unpaired one again does.
+func AdmitActive(slots ContactSlots) error {
+	if slots.Active >= MaxActiveContacts {
 		return ErrContactCapacity
 	}
 	return nil
@@ -122,7 +143,7 @@ func (m *MemContacts) apply(c Contact, commit func()) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, found := m.contacts[c.IdentityKey]
-	if err := AdmitContact(found, len(m.contacts)); err != nil {
+	if err := AdmitContact(found, ContactSlots{Active: len(m.contacts), Retained: len(m.contacts)}); err != nil {
 		return err
 	}
 	commit()

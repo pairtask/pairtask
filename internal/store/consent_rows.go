@@ -14,7 +14,7 @@ import (
 
 const consentColumns = `cursor, id, contact, message_id, n, created_at, sender, recipients, reply_id, reply_author,
     text, review_ask, hash, targets, digest, state, revision, received_at, expires_at,
-    COALESCE(choice, ''), COALESCE(audit_id, 0)`
+    COALESCE(choice, ''), COALESCE(audit_id, 0), pairing_epoch`
 
 // consentRow is one held request as stored; times stay as stored text,
 // which compares in time order. A pruned request has no text, review or
@@ -35,6 +35,7 @@ type consentRow struct {
 	ReceivedAt, ExpiresAt  string
 	Choice                 string
 	AuditID                int64
+	epoch                  int64 // the pairing it was held under (#276)
 }
 
 func scanConsent(row rowScanner) (consentRow, error) {
@@ -42,7 +43,8 @@ func scanConsent(row rowScanner) (consentRow, error) {
 	var recipients string
 	var text, ask, targets sql.NullString
 	err := row.Scan(&c.Cursor, &c.ID, &c.Contact, &c.MessageID, &c.N, &c.CreatedAt, &c.Sender, &recipients, &c.ReplyTo.ID, &c.ReplyTo.Author,
-		&text, &ask, &c.hash, &targets, &c.Digest, &c.State, &c.Revision, &c.ReceivedAt, &c.ExpiresAt, &c.Choice, &c.AuditID)
+		&text, &ask, &c.hash, &targets, &c.Digest, &c.State, &c.Revision, &c.ReceivedAt, &c.ExpiresAt, &c.Choice, &c.AuditID,
+		&c.epoch)
 	if err != nil {
 		return c, err
 	}
@@ -93,13 +95,19 @@ func oneConsent(row *sql.Row) (consentRow, bool, error) {
 	return c, err == nil, err
 }
 
+// consentByMessage is the request held under a message ID in the
+// contact's current pairing (#276).
 func consentByMessage(ctx context.Context, q rowQuerier, contact, messageID string) (consentRow, bool, error) {
-	return oneConsent(q.QueryRowContext(ctx, `SELECT `+consentColumns+` FROM consent_requests WHERE contact = ? AND message_id = ?`, contact, messageID))
+	return oneConsent(q.QueryRowContext(ctx, `SELECT `+consentColumns+` FROM consent_requests
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND message_id = ?2`, contact, messageID))
 }
 
 func consentByID(ctx context.Context, q rowQuerier, id string) (consentRow, bool, error) {
 	return oneConsent(q.QueryRowContext(ctx, `SELECT `+consentColumns+` FROM consent_requests WHERE id = ?`, id))
 }
+
+// pairing is the pairing the request was held under.
+func (c consentRow) pairing() pairingKey { return pairingKey{c.Contact, c.epoch} }
 
 // message is the request as it arrived.
 func (c consentRow) message() (messaging.Message, error) {

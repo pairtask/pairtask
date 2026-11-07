@@ -21,7 +21,12 @@ import (
 )
 
 const (
-	// ALPN names the pairing exchange; both ends must negotiate it.
+	// PairingALPN3 names the epoch-capable pairing exchange (#276): the
+	// exchange binds its mode, and an accepted pairing installs a pairing
+	// epoch with its own pairing ID.
+	PairingALPN3 = "pairtask-pairing/3"
+	// ALPN names the legacy pairing exchange, the only one a v8 peer speaks:
+	// its binding is unchanged, and it installs no pairing ID.
 	ALPN = "pairtask-pairing/2"
 	// ContactALPN names a connection between paired workspaces, each pinning
 	// the other's identity; no exchange runs on it.
@@ -30,6 +35,11 @@ const (
 	// each pinning the other's identity; a peer that doesn't speak it
 	// refuses the handshake, so nothing reaches its settlement.
 	MessageALPN = "pairtask-message/1"
+	// ControlALPN names a control session between workspaces that hold each
+	// other's contact row, each pinning the other's identity (#276): it
+	// carries contact notices only, so the receiver knows by framing, before
+	// any admission, that nothing else runs on it.
+	ControlALPN = "pairtask-control/1"
 	// MaxMessageFrameBytes bounds a message session's frames.
 	MaxMessageFrameBytes = 32 << 10
 	// ExporterLabel is RFC 9266's tls-exporter channel binding.
@@ -78,19 +88,51 @@ type Conn struct {
 // offers contact connections, accepting one only from an identity it
 // reports true for.
 type ServerOptions struct {
+	// PairingProtocols are the pairing ALPNs offered, in preference order;
+	// nil offers PairingProtocols(). A compatibility knob: []string{ALPN}
+	// serves as a v8 build would.
+	PairingProtocols []string
+
 	ContactPins func(fingerprint string) bool
 	// MessagePins, when set, also offers message sessions, accepting one
 	// only from an identity it reports true for: a confirmed contact.
 	MessagePins func(fingerprint string) bool
+	// ControlPins, when set, also offers control sessions (#276),
+	// accepting one only from an identity it reports true for: any
+	// retained contact row, paused or unpaired included.
+	ControlPins func(fingerprint string) bool
 }
 
-// Protocol is the negotiated ALPN: ALPN, ContactALPN or MessageALPN.
+// ClientOptions shape a pairing client's handshake.
+type ClientOptions struct {
+	// PairingProtocols are the pairing ALPNs offered; nil offers
+	// PairingProtocols(). A compatibility knob: []string{ALPN} joins as a v8
+	// build would.
+	PairingProtocols []string
+}
+
+// PairingProtocols are the pairing ALPNs a build offers by default, the
+// epoch-capable one first; a server's order decides.
+func PairingProtocols() []string { return []string{PairingALPN3, ALPN} }
+
+// Protocol is the negotiated ALPN: PairingALPN3, ALPN, ContactALPN,
+// MessageALPN or ControlALPN.
 func (c *Conn) Protocol() string { return c.protocol }
+
+// ExchangeMode is the mode the negotiated pairing ALPN fixes for the
+// exchange: epoch on PairingALPN3, legacy on ALPN, and "" on any other
+// protocol, which runs no exchange.
+func (c *Conn) ExchangeMode() peer.ExchangeMode { return exchangeMode(c.protocol) }
+
+// pairingModes map each pairing ALPN to its exchange mode.
+var pairingModes = map[string]peer.ExchangeMode{PairingALPN3: peer.ModeEpoch, ALPN: peer.ModeLegacy}
+
+func exchangeMode(protocol string) peer.ExchangeMode { return pairingModes[protocol] }
 
 // Server runs the inviter's end over raw, which it owns: on any error raw is
 // closed.
 func Server(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time) (*Conn, error) {
-	return handshake(ctx, raw, id, clock, pairingRole(true))
+	return handshake(ctx, raw, id, clock, pairingRole(true, nil))
 }
 
 // ServerWith is Server with options, such as accepting contact connections.
@@ -101,7 +143,12 @@ func ServerWith(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, c
 // Client runs the joiner's end over raw, which it owns: on any error raw is
 // closed.
 func Client(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time) (*Conn, error) {
-	return handshake(ctx, raw, id, clock, pairingRole(false))
+	return ClientWith(ctx, raw, id, clock, ClientOptions{})
+}
+
+// ClientWith is Client with options, such as the pairing ALPNs it offers.
+func ClientWith(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, opts ClientOptions) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, pairingRole(false, opts.PairingProtocols))
 }
 
 // ContactClient opens a contact connection to the workspace whose identity
@@ -116,14 +163,38 @@ func MessageClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity
 	return handshake(ctx, raw, id, clock, pinned{MessageALPN, pin}.role())
 }
 
+// ControlClient opens a control session's connection to the contact whose
+// identity is pin, offering ControlALPN alone, so it never falls back to a
+// pairing or message session; raw is owned as by Client. Its frames are
+// carried by MessageFrames.
+func ControlClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, pinned{ControlALPN, pin}.role())
+}
+
 // NoCommonProtocol reports a handshake the peer refused for want of a
 // protocol in common, by its TLS alert: an older workspace without message
 // sessions, as opposed to one that couldn't be reached or presented another
 // identity. crypto/tls reports a peer's alert as a "remote error" OpError
 // whose error is the alert's text.
 func NoCommonProtocol(err error) bool {
+	return remoteAlert(err, "tls: no application protocol")
+}
+
+// RefusedCertificate reports a peer that refused this side's certificate
+// by its TLS alert, as a server refuses an identity its pins don't admit.
+// Under TLS 1.3 the client's handshake has finished by then, so the alert
+// arrives on its first read, not from the handshake.
+func RefusedCertificate(err error) bool {
+	return remoteAlert(err, "tls: bad certificate")
+}
+
+// remoteAlert: err is the peer's TLS alert of that text.
+func remoteAlert(err error, text string) bool {
 	var op *net.OpError
-	return errors.As(err, &op) && op.Op == "remote error" && op.Err != nil && op.Err.Error() == "tls: no application protocol"
+	if !errors.As(err, &op) || op.Op != "remote error" {
+		return false
+	}
+	return op.Err != nil && op.Err.Error() == text
 }
 
 func handshake(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, role tlsRole) (*Conn, error) {
@@ -164,18 +235,19 @@ func established(t *tls.Conn) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: channel binding: %w", ErrFirstContact, err)
 	}
-	return &Conn{tls: t, conn: peer.Connection{PeerLeaf: peer.SPKIFingerprint(cs.PeerCertificates[0]), ChannelBinding: ekm},
-		protocol: cs.NegotiatedProtocol}, nil
+	return &Conn{tls: t, conn: peer.Connection{Mode: exchangeMode(cs.NegotiatedProtocol), PeerLeaf: peer.SPKIFingerprint(cs.PeerCertificates[0]),
+		ChannelBinding: ekm}, protocol: cs.NegotiatedProtocol}, nil
 }
 
 // Connection is what this connection fixes for the pairing exchange: the
-// peer's presented key and the exporter, as a copy.
+// exchange mode its ALPN negotiated, the peer's presented key and the
+// exporter, as a copy.
 func (c *Conn) Connection() peer.Connection {
-	return peer.Connection{PeerLeaf: c.conn.PeerLeaf, ChannelBinding: append([]byte(nil), c.conn.ChannelBinding...)}
+	return peer.Connection{Mode: c.conn.Mode, PeerLeaf: c.conn.PeerLeaf, ChannelBinding: append([]byte(nil), c.conn.ChannelBinding...)}
 }
 
-// MessageFrames carries a message session's frames, as Frames does but up
-// to MaxMessageFrameBytes each.
+// MessageFrames carries a message or control session's frames, as Frames
+// does but up to MaxMessageFrameBytes each.
 func (c *Conn) MessageFrames(ctx context.Context) peer.Frames {
 	return streamFrames{ctx: ctx, conn: c.tls, limit: MaxMessageFrameBytes}
 }

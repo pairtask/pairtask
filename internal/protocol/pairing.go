@@ -33,6 +33,13 @@ const (
 
 	// ErrPairing is a refused pairing operation; the detail names why.
 	ErrPairing = "pairing_refused"
+	// ErrPairingPeerTooOld: the other side spoke only the legacy pairing
+	// exchange, which can't pair an identity this side retains or a
+	// declared repair (#276); it must update to pair again.
+	ErrPairingPeerTooOld = "pairing_peer_too_old"
+	// ErrIdentityStorage: this side's store holds as many identities as it
+	// retains, so it can't take another (#276).
+	ErrIdentityStorage = "identity_storage"
 
 	// CapabilityPairing: the broker serves operator_pairing.
 	CapabilityPairing = "pairing"
@@ -72,6 +79,10 @@ type PairingSnapshot struct {
 	NamesAvailable bool `json:"names_available,omitempty"`
 	// PauseAvailable: the broker serves contact ops pause and resume (#276).
 	PauseAvailable bool `json:"pause_available,omitempty"`
+	// UnpairAvailable: the broker serves contact op unpair; RepairAvailable,
+	// pairing_repair on open and redeem (#276).
+	UnpairAvailable bool `json:"unpair_available,omitempty"`
+	RepairAvailable bool `json:"repair_available,omitempty"`
 	// AcksAvailable: the broker serves contact op ack (#287).
 	AcksAvailable     bool                 `json:"acks_available,omitempty"`
 	IdentityError     string               `json:"identity_error,omitempty"`
@@ -108,11 +119,31 @@ type PairingContactView struct {
 	// PausedAt is when this side's operator paused it (#276): no traffic
 	// either way until resumed; nil while active.
 	PausedAt *time.Time `json:"paused_at,omitempty"`
+	// UnpairedAt is when this side's operator unpaired it (#276): its
+	// history stays readable, nothing more travels; nil while paired.
+	// PairingEpoch is its current or last pairing; Legacy, that the
+	// pairing was made by the legacy exchange, without a pairing ID.
+	UnpairedAt   *time.Time `json:"unpaired_at,omitempty"`
+	PairingEpoch int64      `json:"pairing_epoch"`
+	Legacy       bool       `json:"legacy,omitempty"`
 	// Summary is nil from a broker that reports none: unknown, not idle.
 	Summary *PairingContactSummary `json:"summary,omitempty"`
 	// Acks are the operator's acknowledgments of its messages (#287), from
 	// a broker serving contact_acks.
 	Acks *ContactAckSummary `json:"acks,omitempty"`
+	// PeerState is what the other side last told this one of itself
+	// (#276): paused or unpaired, empty while active or unknown, with
+	// PeerStateAt when it was stored. PeerStateAvailable is unavailable
+	// only once the peer is known to speak a version without notices.
+	PeerState          string     `json:"peer_state,omitempty"`
+	PeerStateAt        *time.Time `json:"peer_state_at,omitempty"`
+	PeerStateAvailable string     `json:"peer_state_available,omitempty"`
+	// Notice is this side's newest notice of the current pairing while the
+	// peer hasn't answered it: pending, or undelivered after its last
+	// attempt; NoticeAttempts counts its attempts. Neither claims the peer
+	// knows.
+	Notice         string `json:"notice,omitempty"`
+	NoticeAttempts int    `json:"notice_attempts,omitempty"`
 }
 
 // PairingContactSummary is how a contact stands now: its sync as this broker
@@ -146,6 +177,9 @@ type PairingJoinView struct {
 	// its decision; SettleError is the last settlement's fixed cause.
 	DecisionConfirmedAt *time.Time `json:"decision_confirmed_at,omitempty"`
 	SettleError         string     `json:"settle_error,omitempty"`
+	// Kind and RepairsUnpairedAt are as on a request (#276).
+	Kind              string     `json:"kind,omitempty"`
+	RepairsUnpairedAt *time.Time `json:"repairs_unpaired_at,omitempty"`
 }
 
 // InvitationView describes the open invitation. Code is set only in the
@@ -169,6 +203,11 @@ type PairingRequestView struct {
 	FirstPairedAt time.Time `json:"first_paired_at"`
 	// DeliveredAt is when the joiner acknowledged the decision.
 	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	// Kind is what the exchange is (#276): pair, repair or address_move,
+	// display only; RepairsUnpairedAt is when this side unpaired the
+	// identity it pairs with again, nil when it isn't unpaired.
+	Kind              string     `json:"kind,omitempty"`
+	RepairsUnpairedAt *time.Time `json:"repairs_unpaired_at,omitempty"`
 }
 
 var (

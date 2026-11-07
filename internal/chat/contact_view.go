@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -44,6 +45,7 @@ type contactLayout struct {
 type contactSpan struct {
 	id         string
 	direction  string
+	epoch      int64
 	cursor     int64
 	from, upto int // message lines [from, upto)
 	unread     bool
@@ -59,27 +61,49 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 		return l
 	}
 	thread := t.ordered()
-	for _, v := range thread {
+	breaks := epochBreaks(thread)
+	for i, v := range thread {
+		if breaks && newEpoch(thread, i) {
+			l.lines = append(l.lines, "", mutedStyle.Render("── "+epochLabel(v.PairingEpoch)+" ──"))
+		}
 		l.lines = append(l.lines, "") // a separator, which shows no message
 		from := len(l.lines)
 		l.lines = append(l.lines, m.messageLines(c, v, thread)...)
-		l.spans = append(l.spans, contactSpan{id: v.ID, direction: v.Direction, cursor: v.Cursor, from: from, upto: len(l.lines),
+		l.spans = append(l.spans, contactSpan{id: v.ID, direction: v.Direction, epoch: v.PairingEpoch, cursor: v.Cursor, from: from, upto: len(l.lines),
 			unread: v.Direction == "in" && unreadHere(v)})
 	}
 	l.lines = append(l.lines, m.cardLines(contactKey(fingerprint))...) // what the operator just did, below the messages
 	return l
 }
 
-// contactShowsMessages: the broker carries them and both sides confirmed.
+// contactShowsMessages: the broker carries them, and both sides confirmed
+// or this side unpaired it, keeping its history.
 func (m *Model) contactShowsMessages(c protocol.PairingContactView) bool {
-	return m.contactsAvailable() && c.Confirmed
+	return m.contactsAvailable() && m.historyContact(c.IdentityKey)
+}
+
+// standsAs is how the card's title says the contact stands.
+func standsAs(c protocol.PairingContactView) string {
+	switch {
+	case unpairedHere(c):
+		return unpairedNote(c)
+	case c.Confirmed:
+		return "confirmed on both sides"
+	}
+	return "confirming: the peer has not yet confirmed the decision"
 }
 
 func (m *Model) contactHeader(c protocol.PairingContactView) []string {
-	state := "confirming: the peer has not yet confirmed the decision"
-	if c.Confirmed {
-		state = "confirmed on both sides"
+	lines := m.contactCardLines(c)
+	if standing := standingLine(c); standing != "" {
+		lines = append(lines, warnStyle.Render("  "+standing))
 	}
+	return lines
+}
+
+// contactCardLines are the card's title, key and how it syncs.
+func (m *Model) contactCardLines(c protocol.PairingContactView) []string {
+	state := standsAs(c)
 	lines := []string{
 		titleStyle.Render("⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(" · "+state),
 		mutedStyle.Render("  identity " + safe(c.IdentityKey)),
@@ -87,6 +111,8 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 	switch {
 	case !m.contactsAvailable():
 		lines = append(lines, "  this broker doesn't carry contact messages; upgrade it")
+	case unpairedHere(c):
+		lines = append(lines, warnStyle.Render("  read-only: nothing is sent, acknowledged or shared; pairing again needs a fresh code"))
 	case !c.Confirmed:
 		lines = append(lines, "  "+contactConfirming)
 	case pausedHere(c):
@@ -184,6 +210,9 @@ func (m *Model) outboundState(v protocol.ContactMessageView) string {
 	if heldForUpgrade(v) {
 		return "queued: leaves once they upgrade pairtask"
 	}
+	if expiredUnpaired(v) {
+		return "not sent: the workspace was unpaired first"
+	}
 	return label + refusalNote(v)
 }
 
@@ -239,14 +268,23 @@ func (m *Model) contactCard(key viewKey, rows int) []string {
 // shownUnread are the received messages drawn now in the open tab, wholly
 // or in part; offscreen ones are not.
 func (m *Model) shownUnread(fingerprint string) []string {
-	l, start, end := m.contactWindow(fingerprint, m.layout().transcript)
 	var ids []string
-	for _, s := range l.spans {
-		if s.unread && s.overlaps(start, end) {
-			ids = append(ids, s.id)
-		}
+	for _, r := range m.shownReads(fingerprint) {
+		ids = append(ids, r.id)
 	}
 	return ids
+}
+
+// shownReads are shownUnread with the pairing each came under (#276).
+func (m *Model) shownReads(fingerprint string) []readRef {
+	l, start, end := m.contactWindow(fingerprint, m.layout().transcript)
+	var refs []readRef
+	for _, s := range l.spans {
+		if s.unread && s.overlaps(start, end) {
+			refs = append(refs, readRef{s.epoch, s.id})
+		}
+	}
+	return refs
 }
 
 // overlaps: the message has a line in [start, end).
@@ -254,42 +292,72 @@ func (s contactSpan) overlaps(start, end int) bool {
 	return s.from < end && s.upto > start
 }
 
-// readShown marks read the received messages drawn now, once each: IDs a
-// read is pending, confirmed or refused for are left out, and each request
-// carries at most ContactReadMax under its own operation ID.
+// readShown marks read the received messages drawn now, once each: those
+// a read is pending, confirmed or refused for are left out. Each pairing's
+// are read apart (#276), each request carrying at most ContactReadMax
+// under its own operation ID.
 func (m *Model) readShown(contact string) tea.Cmd {
 	t := m.contacts.thread(contact)
-	var ids []string
-	for _, id := range m.shownUnread(contact) {
-		if !t.settledRead(id) && !m.readPending(contact, id) {
-			ids = append(ids, id)
+	groups := map[int64][]string{} // unread drawn now, by the pairing each came under
+	for _, r := range m.shownReads(contact) {
+		if !t.settledRead(r) && !m.readPending(contactReadRef{contact, r}) {
+			groups[r.epoch] = append(groups[r.epoch], r.id)
 		}
 	}
-	if len(ids) == 0 {
-		return nil
+	var cmds []tea.Cmd
+	for _, epoch := range slices.Sorted(maps.Keys(groups)) {
+		cmds = append(cmds, m.sendRead(contactRead{contact: contact, epoch: epoch, ids: groups[epoch]}))
 	}
-	ids = ids[:min(len(ids), protocol.ContactReadMax)]
-	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpRead, ContactKey: contact,
-		MessageID: uuid.NewString(), ContactRead: ids}
+	return tea.Batch(cmds...)
+}
+
+// contactRead is one read: a contact's messages of one pairing.
+type contactRead struct {
+	contact string
+	epoch   int64
+	ids     []string
+}
+
+// sendRead sends a read under a fixed ID, kept until its answer. A tagged
+// pairing is named, so a pairing again meanwhile can't retarget it; an
+// untagged row's read names none, the current one.
+func (m *Model) sendRead(r contactRead) tea.Cmd {
+	ids := r.ids[:min(len(r.ids), protocol.ContactReadMax)]
+	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpRead, ContactKey: r.contact,
+		MessageID: uuid.NewString(), ContactRead: ids, ContactEpoch: r.epoch}
 	if m.contacts.reads == nil {
 		m.contacts.reads = map[string]*contactOp{}
 	}
 	m.contacts.reads[msg.MessageID] = &contactOp{msg: msg}
-	return m.request(kindContactRead, msg, contact, msg.MessageID)
+	return m.request(kindContactRead, msg, r.contact, msg.MessageID)
 }
 
 // settledRead: a read of this message was confirmed or refused already.
-func (t *contactThread) settledRead(id string) bool {
-	return t.read[id] || t.refused[id]
+func (t *contactThread) settledRead(r readRef) bool {
+	return t.read[r] || t.refused[r]
 }
 
-func (m *Model) readPending(contact, id string) bool {
+// contactReadRef is one contact's message, in its pairing.
+type contactReadRef struct {
+	contact string
+	readRef
+}
+
+func (m *Model) readPending(r contactReadRef) bool {
 	for _, op := range m.contacts.reads {
-		if op.msg.ContactKey == contact && slices.Contains(op.msg.ContactRead, id) {
+		if op.readsMessage(r) {
 			return true
 		}
 	}
 	return false
+}
+
+// readsMessage: the read names this contact's message, in its pairing.
+func (op *contactOp) readsMessage(r contactReadRef) bool {
+	if op.msg.ContactKey != r.contact || op.msg.ContactEpoch != r.epoch {
+		return false
+	}
+	return slices.Contains(op.msg.ContactRead, r.id)
 }
 
 // contactReadResult settles a read: its IDs are confirmed, or refused and
@@ -306,7 +374,7 @@ func (m *Model) contactReadResult(req pendingRequest, resp protocol.Message) tea
 		settled = t.read
 	}
 	for _, id := range op.msg.ContactRead {
-		settled[id] = true
+		settled[readRef{op.msg.ContactEpoch, id}] = true
 	}
 	if p := resp.ContactPage; p != nil && p.Contact == op.msg.ContactKey {
 		t.merge(p.Messages)

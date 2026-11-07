@@ -1,0 +1,8 @@
+{
+  "tag": "workspace-v0.0.0-build.836.1",
+  "commit": "9f12564924f35d0b2a9025ae57416fbd9feffd44",
+  "source_db_sha256": "c24b8657e4146751bbe6e23caa3cffdd1b87a15656152a7bb62e5cdac4f44ab9",
+  "sql_sha256": "3fd66b5144a610d144ba54c8f04d491c5f3a8883619cf2b70afe3e1eb90ab34d",
+  "generator": "designs/276-repro-836/main.go.txt; released store.Open followed by Close",
+  "state": "empty released database; consent tables absent"
+}

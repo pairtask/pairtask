@@ -162,8 +162,12 @@ func declineHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, er
 
 // allowHeld settles the request allowed, installing the grant always
 // asks for, and stages its delivery or review as an arrival under a grant
-// would have been.
+// would have been. A request held under a pairing that has since ended is
+// never allowed into the new one (#276).
 func allowHeld(ctx context.Context, tx *sql.Tx, c decided) (ConsentOutcome, error) {
+	if err := refuseRetired(ctx, tx, c.held.pairing()); err != nil {
+		return ConsentOutcome{}, err
+	}
 	if err := grantChoice(ctx, tx, c); err != nil {
 		return ConsentOutcome{}, err
 	}
@@ -252,11 +256,12 @@ func installGrants(ctx context.Context, tx *sql.Tx, c decided) error {
 // grantStatements install each operation's grant: a share, a review grant
 // without publication, or an existing review grant's publication raised.
 var grantStatements = map[string]string{
-	protocol.ConsentMessage: `INSERT INTO peer_grants (contact, agent, granted_at) VALUES (?1, ?2, ?3) ON CONFLICT DO NOTHING`,
-	protocol.ConsentReview: `INSERT INTO peer_review_grants (contact, agent, mode, publish, formal, granted_at)
-VALUES (?1, ?2, 'auto', 0, 0, ?3) ON CONFLICT DO NOTHING`,
+	protocol.ConsentMessage: `INSERT INTO peer_grants (contact, pairing_epoch, agent, granted_at) VALUES (?1, ` + currentEpochOf1 + `, ?2, ?3)
+ON CONFLICT DO NOTHING`,
+	protocol.ConsentReview: `INSERT INTO peer_review_grants (contact, pairing_epoch, agent, mode, publish, formal, granted_at)
+VALUES (?1, ` + currentEpochOf1 + `, ?2, 'auto', 0, 0, ?3) ON CONFLICT DO NOTHING`,
 	protocol.ConsentPublish: `UPDATE peer_review_grants SET publish = 1, formal = formal OR ?4, granted_at = ?3
-WHERE contact = ?1 AND agent = ?2`,
+WHERE contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND agent = ?2`,
 }
 
 // installGrant installs one scope's grant. Publication follows its

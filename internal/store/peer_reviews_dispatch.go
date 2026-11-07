@@ -28,7 +28,7 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 	if held != "" {
 		return heldOutcome(ctx, tx, imp, askSettle{held, heldReasons[held], at})
 	}
-	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
+	if imp.LocalID, err = freeLocalID(ctx, tx, imp.source(), imp.RemoteID); err != nil {
 		return ImportResult{}, err
 	}
 	label, err := contactLabel(ctx, tx, imp.Contact)
@@ -36,7 +36,7 @@ func dispatchReview(ctx context.Context, tx *sql.Tx, imp RemoteImport, at import
 		return ImportResult{}, err
 	}
 	rec := remoteReview(imp, g, label, at)
-	created, err := createRemoteReview(ctx, tx, rec)
+	created, err := createRemoteReview(ctx, tx, rec, imp.source().epoch)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -67,7 +67,10 @@ func announceReview(ctx context.Context, tx *sql.Tx, n newReview) error {
 	if err := askOutcome(ctx, tx, n.imp, askEnd{"requested", "", n.at.ts}); err != nil {
 		return err
 	}
-	return persistMessage(ctx, tx, routedMessage{msg: n.notice.Msg, recipients: n.notice.Recipients})
+	if err := persistMessage(ctx, tx, routedMessage{msg: n.notice.Msg, recipients: n.notice.Recipients}); err != nil {
+		return err
+	}
+	return stampSource(ctx, tx, n.notice.Msg.MessageID, n.imp.source().epoch)
 }
 
 // heldReasons are why a request that can't be dispatched now is held.
@@ -116,10 +119,12 @@ type askSettle struct {
 	at            importSlot
 }
 
+// settleAsk moves a request's import, in its own pairing, where s says.
 func settleAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport, s askSettle) (ImportResult, error) {
+	src := imp.source()
 	_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = ?1, reason = NULLIF(?2, ''), local_id = ?3,
-    settled_at = CASE WHEN ?1 = 'awaiting' THEN NULL ELSE ?4 END WHERE contact = ?5 AND remote_id = ?6`,
-		s.state, s.reason, imp.LocalID, msgStamp(s.at.ts), imp.Contact, imp.RemoteID)
+    settled_at = CASE WHEN ?1 = 'awaiting' THEN NULL ELSE ?4 END WHERE contact = ?5 AND pairing_epoch = ?6 AND remote_id = ?7`,
+		s.state, s.reason, imp.LocalID, msgStamp(s.at.ts), src.contact, src.epoch, imp.RemoteID)
 	return ImportResult{State: s.state, Changed: true}, err
 }
 
@@ -151,14 +156,25 @@ func remoteReviewHash(rec review.Record) string {
 	return review.Hash(RemoteRequester+string(data), rec.View.Spec)
 }
 
-// createRemoteReview stores the review with its event, under the open
-// bounds; one already stored for this request is answered as it is.
-func createRemoteReview(ctx context.Context, tx *sql.Tx, rec review.Record) (bool, error) {
+// createRemoteReview stores the review with its event and the pairing
+// epoch its request was staged under, under the open bounds; one already
+// stored for this request is answered as it is.
+func createRemoteReview(ctx context.Context, tx *sql.Tx, rec review.Record, epoch int64) (bool, error) {
 	_, created, err := createReview(ctx, tx, rec)
+	if err == nil && created {
+		err = stampRemoteEpoch(ctx, tx, rec.View.ID, epoch)
+	}
 	if err != nil {
 		return false, err
 	}
 	return created, record(ctx, tx, reviewChange{rec, created, ReviewAction{Actor: RemoteRequester, Action: protocol.ReviewOpRequest}})
+}
+
+// stampRemoteEpoch keeps a new review's source: the pairing epoch frozen
+// with its request when it was staged, never the one at dispatch (#276).
+func stampRemoteEpoch(ctx context.Context, tx *sql.Tx, reviewID string, epoch int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE reviews SET remote_epoch = ? WHERE review_id = ?`, epoch, reviewID)
+	return err
 }
 
 // remoteReviewNotice is the reviewer's message about a request from a
@@ -218,18 +234,40 @@ func remotePolicyText(p *protocol.ReviewPolicy) string {
 // allowed under decides, within the ceiling it showed (#293). A write
 // already reserved is never refused its result.
 func publicationAllowed(ctx context.Context, tx *sql.Tx, before review.Record, c reviewChange) error {
-	v, owner := c.rec.View, c.act.Owner
+	v := c.rec.View
 	if v.Remote == nil || v.Publication.Intent <= before.View.Publication.Intent {
 		return nil
 	}
-	g, granted, err := reviewGrant(ctx, tx, v.Remote.Contact, v.Spec.Reviewer)
+	src, err := publicationContact(ctx, tx, v)
+	if err != nil {
+		return err
+	}
+	// The pairing is still the review's own: the grant now is its grant.
+	g, granted, err := reviewGrant(ctx, tx, src.contact, v.Spec.Reviewer)
 	if err != nil {
 		return err
 	}
 	if granted && g.allows(*v.Spec.Policy) {
 		return nil
 	}
-	return consentPublication(ctx, tx, v, owner)
+	return consentPublication(ctx, tx, src, c)
+}
+
+// publicationContact is the pairing a review came under, denying new
+// write intents once the requester unpaired, or paired again since: a
+// new pairing's authority never covers an earlier one's review (#276).
+// Completion of an intent already reserved is handled before this check.
+func publicationContact(ctx context.Context, tx *sql.Tx, v protocol.ReviewView) (pairingKey, error) {
+	epoch, err := remoteEpoch(ctx, tx, v.ID)
+	if err != nil {
+		return pairingKey{}, err
+	}
+	src := pairingKey{v.Remote.Contact, epoch}
+	err = refuseRetired(ctx, tx, src)
+	if errors.Is(err, ErrUnpaired) {
+		return src, fmt.Errorf("%w: %w", review.ErrDenied, err)
+	}
+	return src, err
 }
 
 // ErrConsentEnded refuses a publication whose consent no longer holds: its
@@ -260,17 +298,19 @@ type consentAuthority struct {
 }
 
 // consentPublication allows a write intent under the consent its request
-// was allowed under: once, or the session that owns the broker now, within
-// the asked ceiling, and never past an explicit denial since.
-func consentPublication(ctx context.Context, tx *sql.Tx, v protocol.ReviewView, owner LiveOwner) error {
-	a, found, err := reviewConsent(ctx, tx, v.Remote.Contact, v.RemoteRequest)
+// was allowed under in its pairing: once, or the session that owns the
+// broker now, within the asked ceiling, and never past an explicit denial
+// since.
+func consentPublication(ctx context.Context, tx *sql.Tx, src pairingKey, c reviewChange) error {
+	v, owner := c.rec.View, c.act.Owner
+	a, found, err := reviewConsent(ctx, tx, src, v.RemoteRequest)
 	switch {
 	case err != nil:
 		return err
 	case !found:
 		return review.ErrDenied
 	}
-	denied, err := publishDenied(ctx, tx, v.Remote.Contact, v.Spec.Reviewer)
+	denied, err := publishDenied(ctx, tx, src, v.Spec.Reviewer)
 	switch {
 	case err != nil:
 		return err
@@ -297,12 +337,13 @@ func (a consentAuthority) covers(p protocol.ReviewPolicy) bool {
 	return !p.Formal || a.ask.Formal
 }
 
-// reviewConsent is the allowed request a review was made from, if any.
-func reviewConsent(ctx context.Context, tx *sql.Tx, contact, requestID string) (consentAuthority, bool, error) {
+// reviewConsent is the allowed request a review was made from in its
+// pairing, if any.
+func reviewConsent(ctx context.Context, tx *sql.Tx, src pairingKey, requestID string) (consentAuthority, bool, error) {
 	var a consentAuthority
 	var ask sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT COALESCE(evidence_kind, ''), COALESCE(evidence_epoch, ''), COALESCE(evidence_gen, 0), review_ask
-FROM consent_requests WHERE contact = ? AND message_id = ? AND state = 'allowed'`, contact, requestID).Scan(
+FROM consent_requests WHERE contact = ? AND pairing_epoch = ? AND message_id = ? AND state = 'allowed'`, src.contact, src.epoch, requestID).Scan(
 		&a.evidence.Kind, &a.evidence.Epoch, &a.evidence.Gen, &ask)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, false, nil
@@ -315,11 +356,11 @@ FROM consent_requests WHERE contact = ? AND message_id = ? AND state = 'allowed'
 }
 
 // publishDenied: the operator explicitly denied the reviewer's review or
-// publication for contact since.
-func publishDenied(ctx context.Context, tx *sql.Tx, contact, agent string) (bool, error) {
+// publication in the pairing since.
+func publishDenied(ctx context.Context, tx *sql.Tx, src pairingKey, agent string) (bool, error) {
 	var denied bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM consent_decisions WHERE contact = ? AND agent = ?
-    AND operation IN ('review', 'publish') AND state = 'denied')`, contact, agent).Scan(&denied)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM consent_decisions WHERE contact = ? AND pairing_epoch = ? AND agent = ?
+    AND operation IN ('review', 'publish') AND state = 'denied')`, src.contact, src.epoch, agent).Scan(&denied)
 	return denied, err
 }
 

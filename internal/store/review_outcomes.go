@@ -19,9 +19,10 @@ import (
 // not yet answered waits to be sent, so what waits is bounded by the
 // requests admitted. Every outcome is written in its cause's transaction.
 
-const reviewOutcomesSchema = `
-CREATE TABLE IF NOT EXISTS review_outcome_seq (
+// reviewOutcomeSeqColumns is review_outcome_seq with pairing_epoch in its key (#276).
+const reviewOutcomeSeqColumns = `(
     contact      TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     ask_id       TEXT NOT NULL,
     reviewer     TEXT NOT NULL,
     seq          INTEGER NOT NULL DEFAULT 0,
@@ -29,17 +30,19 @@ CREATE TABLE IF NOT EXISTS review_outcome_seq (
     acked_seq    INTEGER NOT NULL DEFAULT 0,
     refused      TEXT,
     created_at   TEXT NOT NULL,
-    PRIMARY KEY (contact, ask_id)
-);
-CREATE TABLE IF NOT EXISTS review_outcomes_out (
+    PRIMARY KEY (contact, pairing_epoch, ask_id)
+)`
+
+// reviewOutcomesOutColumns is review_outcomes_out with pairing_epoch in its key (#276).
+const reviewOutcomesOutColumns = `(
     contact   TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     ask_id    TEXT NOT NULL,
     seq       INTEGER NOT NULL,
     payload   TEXT NOT NULL,
     queued_at TEXT NOT NULL,
-    PRIMARY KEY (contact, ask_id)
-);
-`
+    PRIMARY KEY (contact, pairing_epoch, ask_id)
+)`
 
 // Bounds on requests whose outcomes are still owed.
 const (
@@ -50,72 +53,97 @@ const (
 // owed is a request whose final outcome isn't answered yet.
 const owed = `refused IS NULL AND (terminal_seq IS NULL OR acked_seq < terminal_seq)`
 
-// reserveOutcomes reserves a staged request's outcomes.
+// reserveOutcomes reserves a staged request's outcomes, in the pairing it
+// came under: its contact's current one.
 func reserveOutcomes(ctx context.Context, tx *sql.Tx, r newRow) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO review_outcome_seq (contact, ask_id, reviewer, created_at) VALUES (?, ?, ?, ?)
-ON CONFLICT DO NOTHING`, r.key.contact, r.m.ID, r.m.To[0], msgStamp(r.now))
+	_, err := tx.ExecContext(ctx, `INSERT INTO review_outcome_seq (contact, pairing_epoch, ask_id, reviewer, created_at)
+VALUES (?, `+currentEpoch+`, ?, ?, ?) ON CONFLICT DO NOTHING`, r.key.contact, r.key.contact, r.m.ID, r.m.To[0], msgStamp(r.now))
 	return err
 }
 
-// outcomesFull: a contact's requests with outcomes owed, or all of them,
-// are at their bound.
+// outcomesFull: the requests of a contact's current pairing with outcomes
+// owed, or all contacts' current ones, are at their bound (#276).
 func outcomesFull(ctx context.Context, tx *sql.Tx, contact string) (bool, error) {
 	var theirs, total int
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(contact = ?), 0), COUNT(*) FROM review_outcome_seq WHERE `+owed, contact).Scan(&theirs, &total)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(contact = ?), 0), COUNT(*) FROM review_outcome_seq
+WHERE `+owed+` AND pairing_epoch = `+currentEpochFor("review_outcome_seq.contact"), contact).Scan(&theirs, &total)
 	return theirs >= OutcomesOwedPerContact || total >= OutcomesOwedTotal, err
 }
 
-// outcomeEvent is one outcome of a request, and when.
+// outcomeEvent is one outcome of a request, the pairing it came under,
+// and when.
 type outcomeEvent struct {
-	contact, askID string
-	o              messaging.ReviewOutcome
-	terminal       bool
-	at             time.Time
+	src      pairingKey
+	askID    string
+	o        messaging.ReviewOutcome
+	terminal bool
+	at       time.Time
 }
 
-// emitOutcome numbers an outcome and makes it the one to send.
+// emitOutcome numbers an outcome and makes it the one to send, in the
+// pairing its request came under; nothing for one that pairing ended.
 func emitOutcome(ctx context.Context, tx *sql.Tx, e outcomeEvent) error {
-	var seq uint64
-	err := tx.QueryRowContext(ctx, `UPDATE review_outcome_seq SET seq = seq + 1 WHERE contact = ? AND ask_id = ? RETURNING seq, reviewer`,
-		e.contact, e.askID).Scan(&seq, &e.o.Reviewer)
-	if err == sql.ErrNoRows {
-		return nil // no request owed outcomes: nothing to send
-	}
-	if err != nil {
+	retired, err := outcomeContactRetired(ctx, tx, e.src)
+	if err != nil || retired {
 		return err
 	}
-	e.o.AskID, e.o.Seq = e.askID, seq
-	if e.terminal {
-		if _, err := tx.ExecContext(ctx, `UPDATE review_outcome_seq SET terminal_seq = ? WHERE contact = ? AND ask_id = ?`, seq, e.contact, e.askID); err != nil {
-			return err
-		}
+	numbered, err := numberOutcome(ctx, tx, &e)
+	if err != nil || !numbered {
+		return err
 	}
 	payload, _ := json.Marshal(e.o) // a struct of strings and numbers always encodes
-	_, err = tx.ExecContext(ctx, `INSERT INTO review_outcomes_out (contact, ask_id, seq, payload, queued_at) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT (contact, ask_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload, queued_at = excluded.queued_at`,
-		e.contact, e.askID, seq, string(payload), msgStamp(e.at))
+	_, err = tx.ExecContext(ctx, `INSERT INTO review_outcomes_out (contact, pairing_epoch, ask_id, seq, payload, queued_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT (contact, pairing_epoch, ask_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload, queued_at = excluded.queued_at`,
+		e.src.contact, e.src.epoch, e.askID, e.o.Seq, string(payload), msgStamp(e.at))
 	return err
 }
 
+// numberOutcome gives the outcome its request's next number, and marks a
+// final one; numbered is false for a request owing no outcomes.
+func numberOutcome(ctx context.Context, tx *sql.Tx, e *outcomeEvent) (bool, error) {
+	err := tx.QueryRowContext(ctx, `UPDATE review_outcome_seq SET seq = seq + 1,
+    terminal_seq = CASE WHEN ?4 THEN seq + 1 ELSE terminal_seq END
+WHERE contact = ?1 AND pairing_epoch = ?2 AND ask_id = ?3 AND refused IS NULL RETURNING seq, reviewer`,
+		e.src.contact, e.src.epoch, e.askID, e.terminal).Scan(&e.o.Seq, &e.o.Reviewer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil // no request owed outcomes: nothing to send
+	}
+	e.o.AskID = e.askID
+	return err == nil, err
+}
+
+// outcomeContactRetired lets local work finish without producing traffic
+// for a pairing this operator ended, or one since replaced by another.
+// Paused pairings still queue outcomes.
+func outcomeContactRetired(ctx context.Context, tx *sql.Tx, src pairingKey) (bool, error) {
+	err := refuseRetired(ctx, tx, src)
+	if errors.Is(err, ErrUnpaired) {
+		return true, nil
+	}
+	return false, err
+}
+
 // askOutcome is an outcome of a request before it is a review: its state,
-// why, and when.
+// why, and when, in the pairing its import was staged under (#276).
 func askOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, e askEnd) error {
-	return emitOutcome(ctx, tx, outcomeEvent{contact: imp.Contact, askID: imp.RemoteID,
+	return emitOutcome(ctx, tx, outcomeEvent{src: imp.source(), askID: imp.RemoteID,
 		o: messaging.ReviewOutcome{State: e.state, Reason: e.reason}, terminal: askTerminal[e.state], at: e.at})
 }
 
 // askTerminal are the outcomes that end a request before it is a review.
 var askTerminal = map[string]bool{"declined": true, "expired": true, "withheld": true}
 
-// PendingOutcomes is the oldest outcomes waiting to be sent to contact,
-// each naming the review its request became here, if it became one (#259):
-// read as it is sent, never stored with the outcome, so the outcome and
-// its digest are the same either way.
+// PendingOutcomes is the oldest outcomes of contact's current pairing
+// waiting to be sent to it, each naming the review its request became
+// here, if it became one (#259): read as it is sent, never stored with the
+// outcome, so the outcome and its digest are the same either way.
 func (p *PeerMessages) PendingOutcomes(ctx context.Context, contact string, max int) ([]messaging.ReviewOutcome, error) {
 	var out []messaging.ReviewOutcome
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT o.payload, `+linkedReview+` FROM review_outcomes_out o WHERE o.contact = ?
-ORDER BY o.queued_at, o.rowid LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
+		rows, err := tx.QueryContext(ctx, `SELECT o.payload, `+linkedReview+` FROM review_outcomes_out o
+WHERE o.contact = ? AND o.pairing_epoch = `+currentEpoch+` ORDER BY o.queued_at, o.rowid LIMIT ?`,
+			contact, contact, sessionBudget.clamp(budget{max, 0}).count)
 		if err != nil {
 			return err
 		}
@@ -126,10 +154,12 @@ ORDER BY o.queued_at, o.rowid LIMIT ?`, contact, sessionBudget.clamp(budget{max,
 }
 
 // linkedReview is the review an outcome's request became here: the one
-// that names its contact and request, for its reviewer; "" for none, as
-// before it is a review.
-const linkedReview = `COALESCE((SELECT r.review_id FROM reviews r JOIN review_outcome_seq s ON s.contact = o.contact AND s.ask_id = o.ask_id
+// that names its contact and request, for its reviewer, in the outcome's
+// pairing; "" for none, as before it is a review.
+const linkedReview = `COALESCE((SELECT r.review_id FROM reviews r JOIN review_outcome_seq s
+    ON s.contact = o.contact AND s.pairing_epoch = o.pairing_epoch AND s.ask_id = o.ask_id
     WHERE r.reviewer = s.reviewer AND json_extract(r.doc, '$.remote.contact') = o.contact AND json_extract(r.doc, '$.remote_request') = o.ask_id
+    AND COALESCE(r.remote_epoch, 1) = o.pairing_epoch
     ORDER BY r.created_at, r.review_id LIMIT 1), '')`
 
 func scanOutcomes(rows *sql.Rows) ([]messaging.ReviewOutcome, error) {
@@ -159,22 +189,34 @@ func sendableID(id string) string {
 	return id
 }
 
-// OutcomeAnswered records contact's answer to an outcome: one no newer
-// than the answer is no longer sent; Stored moves the answered mark up, and
-// a refusal is kept with why, for the operator.
+// OutcomeAnswered records contact's answer to an outcome of its current
+// pairing: one no newer than the answer is no longer sent; Stored moves
+// the answered mark up, and a refusal is kept with why, for the operator.
+// An earlier pairing's outcomes and numbering are never touched.
 func (p *PeerMessages) OutcomeAnswered(ctx context.Context, contact string, r messaging.OutcomeReply) error {
 	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		sent, err := queryOptional[uint64](ctx, tx, `SELECT seq FROM review_outcome_seq WHERE contact = ? AND ask_id = ?`, contact, r.AskID)
-		if err != nil || !answersSent(sent, r) {
-			return err // an answer to no outcome of ours: ignored
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM review_outcomes_out WHERE contact = ? AND ask_id = ? AND seq <= ?`, contact, r.AskID, r.Seq); err != nil {
+		epoch, err := contactEpoch(ctx, tx, contact)
+		if err != nil {
 			return err
 		}
-		mark, args := answerMark(contact, r)
-		_, err = tx.ExecContext(ctx, mark, args...)
-		return err
+		return answerOutcome(ctx, tx, pairingKey{contact, epoch}, r)
 	})
+}
+
+// answerOutcome records an answer to an outcome of the pairing k.
+func answerOutcome(ctx context.Context, tx *sql.Tx, k pairingKey, r messaging.OutcomeReply) error {
+	sent, err := queryOptional[uint64](ctx, tx, `SELECT seq FROM review_outcome_seq WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`,
+		k.contact, k.epoch, r.AskID)
+	if err != nil || !answersSent(sent, r) {
+		return err // an answer to no outcome of ours: ignored
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM review_outcomes_out WHERE contact = ? AND pairing_epoch = ? AND ask_id = ? AND seq <= ?`,
+		k.contact, k.epoch, r.AskID, r.Seq); err != nil {
+		return err
+	}
+	mark, args := answerMark(k, r)
+	_, err = tx.ExecContext(ctx, mark, args...)
+	return err
 }
 
 // answersSent: the answer is to an outcome this side sent.
@@ -184,12 +226,13 @@ func answersSent(sent *uint64, r messaging.OutcomeReply) bool {
 
 // answerMark is how an answer marks its request's numbering: Stored moves
 // the answered mark up, a refusal keeps why.
-func answerMark(contact string, r messaging.OutcomeReply) (string, []any) {
+func answerMark(k pairingKey, r messaging.OutcomeReply) (string, []any) {
 	if r.Reason != "" {
-		return `UPDATE review_outcome_seq SET refused = ?3 WHERE contact = ?1 AND ask_id = ?2`, []any{contact, r.AskID, r.Reason}
+		return `UPDATE review_outcome_seq SET refused = ?3 WHERE contact = ?1 AND pairing_epoch = ?4 AND ask_id = ?2`,
+			[]any{k.contact, r.AskID, r.Reason, k.epoch}
 	}
-	return `UPDATE review_outcome_seq SET acked_seq = MAX(acked_seq, ?3) WHERE contact = ?1 AND ask_id = ?2 AND seq >= ?3`,
-		[]any{contact, r.AskID, r.Seq}
+	return `UPDATE review_outcome_seq SET acked_seq = MAX(acked_seq, ?3) WHERE contact = ?1 AND pairing_epoch = ?4 AND ask_id = ?2 AND seq >= ?3`,
+		[]any{k.contact, r.AskID, r.Seq, k.epoch}
 }
 
 // queryOptional is the one value a query gives, or nil without a row.
@@ -270,7 +313,11 @@ func reviewChanged(ctx context.Context, tx *sql.Tx, before, after review.Record)
 		return nil
 	}
 	now.Findings = verdictFindings(v.Verdict) // projected once, kept with the outcome (#303)
-	return emitOutcome(ctx, tx, outcomeEvent{contact: v.Remote.Contact, askID: v.RemoteRequest, o: now, terminal: terminal, at: v.UpdatedAt})
+	epoch, err := remoteEpoch(ctx, tx, v.ID)
+	if err != nil {
+		return err
+	}
+	return emitOutcome(ctx, tx, outcomeEvent{src: pairingKey{v.Remote.Contact, epoch}, askID: v.RemoteRequest, o: now, terminal: terminal, at: v.UpdatedAt})
 }
 
 // verdictFindings is what an outcome carries of a verdict's findings, nil
@@ -287,10 +334,14 @@ func verdictFindings(v *protocol.Verdict) *messaging.FindingsEnvelope {
 }
 
 // pruneOutcomes forgets the outcome numbering of requests whose outcomes
-// are all answered, or refused, once their import is forgotten too.
+// are all answered, or refused, once their import is forgotten too, each
+// pairing's by its own import and outcomes: another pairing's import of
+// the same ask ID never keeps it (#276).
 func pruneOutcomes(ctx context.Context, tx *sql.Tx, contact string, _ time.Time) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM review_outcome_seq WHERE contact = ?1 AND NOT (`+owed+`)
-    AND NOT EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = ?1 AND ri.remote_id = review_outcome_seq.ask_id)
-    AND NOT EXISTS (SELECT 1 FROM review_outcomes_out o WHERE o.contact = ?1 AND o.ask_id = review_outcome_seq.ask_id)`, contact)
+    AND NOT EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = ?1 AND ri.pairing_epoch = review_outcome_seq.pairing_epoch
+        AND ri.remote_id = review_outcome_seq.ask_id)
+    AND NOT EXISTS (SELECT 1 FROM review_outcomes_out o WHERE o.contact = ?1 AND o.pairing_epoch = review_outcome_seq.pairing_epoch
+        AND o.ask_id = review_outcome_seq.ask_id)`, contact)
 	return err
 }

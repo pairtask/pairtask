@@ -84,27 +84,35 @@ func verifyLeaf(leaf *x509.Certificate, self string, now time.Time) error {
 	return nil
 }
 
-// pairingRole offers the pairing exchange only.
-func pairingRole(server bool) tlsRole {
-	return tlsRole{server: server, protocols: []string{ALPN}}
+// pairingRole offers the pairing exchange only, over the given pairing
+// ALPNs in preference order, or by default PairingProtocols().
+func pairingRole(server bool, protocols []string) tlsRole {
+	if protocols == nil {
+		protocols = PairingProtocols()
+	}
+	return tlsRole{server: server, protocols: slices.Clone(protocols)}
 }
 
-// serverRole offers contact connections and message sessions too when their
-// pins are given, and accepts each only from an identity its pins admit.
+// serverRole offers contact connections, message sessions and control
+// sessions too when their pins are given, and accepts each only from an identity its pins admit.
+// The pairing ALPNs come first, in preference order: crypto/tls picks the
+// first of the server's protocols the client offers, so the server's order
+// decides the exchange's mode (#276).
 func serverRole(opts ServerOptions) tlsRole {
+	role := pairingRole(true, opts.PairingProtocols)
 	pins := map[string]func(string) bool{}
-	protocols := []string{ALPN}
-	for protocol, admit := range map[string]func(string) bool{ContactALPN: opts.ContactPins, MessageALPN: opts.MessagePins} {
+	var pinned []string
+	for protocol, admit := range opts.pins() {
 		if admit != nil {
 			pins[protocol] = admit
-			protocols = append(protocols, protocol)
+			pinned = append(pinned, protocol)
 		}
 	}
 	if len(pins) == 0 {
-		return pairingRole(true)
+		return role
 	}
-	slices.Sort(protocols[1:])
-	return tlsRole{server: true, protocols: protocols, accept: func(protocol, fingerprint string) error {
+	slices.Sort(pinned)
+	return tlsRole{server: true, protocols: append(role.protocols, pinned...), accept: func(protocol, fingerprint string) error {
 		if admit, pinned := pins[protocol]; pinned && !admit(fingerprint) {
 			return fmt.Errorf("%w: %w", ErrFirstContact, peer.ErrPeerMismatch)
 		}
@@ -127,4 +135,9 @@ func (p pinned) role() tlsRole {
 		}
 		return nil
 	}}
+}
+
+// pins are the pinned protocols' admission checks, by ALPN.
+func (opts ServerOptions) pins() map[string]func(string) bool {
+	return map[string]func(string) bool{ContactALPN: opts.ContactPins, MessageALPN: opts.MessagePins, ControlALPN: opts.ControlPins}
 }

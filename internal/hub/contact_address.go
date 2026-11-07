@@ -170,7 +170,7 @@ func (h *Hub) refuseAddress(ctx context.Context, r addressRequest, why addressRe
 // addressAccepted is the answer to an accepted change: the snapshot as it
 // is now, whatever the request asked for.
 func (h *Hub) addressAccepted(ctx context.Context, r addressRequest) protocol.Message {
-	snapshot, rerr := h.applyPairing(ctx, pairingOps[protocol.PairingOpList], "")
+	snapshot, rerr := h.applyPairing(ctx, pairingOps[protocol.PairingOpList], pairingArgs{})
 	if rerr != nil {
 		return rerr.frame(r.id)
 	}

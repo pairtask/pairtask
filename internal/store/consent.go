@@ -39,15 +39,12 @@ const (
 	ConsentExpiry      = 7 * 24 * time.Hour
 )
 
-// consentSchema keeps held requests, explicit per-scope decisions and each
-// contact's arrival budget. A settled request's text, review request and
-// targets go NULL once its outcome is answered and it has aged out; its
-// identity, sequence, hash and digest stay until the replay floor passes it.
-const consentSchema = `
-CREATE TABLE IF NOT EXISTS consent_requests (
+// consentRequestsColumns is consent_requests with pairing_epoch in its key (#276).
+const consentRequestsColumns = `(
     cursor         INTEGER PRIMARY KEY AUTOINCREMENT,
     id             TEXT NOT NULL UNIQUE,
     contact        TEXT NOT NULL,
+    pairing_epoch  INTEGER NOT NULL DEFAULT 1,
     message_id     TEXT NOT NULL,
     n              INTEGER NOT NULL,
     created_at     TEXT NOT NULL,
@@ -74,18 +71,26 @@ CREATE TABLE IF NOT EXISTS consent_requests (
     outcome        TEXT NOT NULL DEFAULT '',
     outcome_reason TEXT NOT NULL DEFAULT '',
     refused_reason TEXT NOT NULL DEFAULT '',
-    UNIQUE (contact, message_id)
-);
-CREATE INDEX IF NOT EXISTS consent_requests_state ON consent_requests (state, contact);
-CREATE TABLE IF NOT EXISTS consent_decisions (
+    UNIQUE (contact, pairing_epoch, message_id)
+)`
+
+// consentDecisionsColumns is consent_decisions with pairing_epoch in its key (#276).
+const consentDecisionsColumns = `(
     contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     agent      TEXT NOT NULL,
     operation  TEXT NOT NULL,
     state      TEXT NOT NULL CHECK (state IN ('undecided', 'denied')),
     decided_at TEXT NOT NULL,
     audit_id   INTEGER,
-    PRIMARY KEY (contact, agent, operation)
-);
+    PRIMARY KEY (contact, pairing_epoch, agent, operation)
+)`
+
+// consentSchema keeps held requests, explicit per-scope decisions and each
+// contact's arrival budget. A settled request's text, review request and
+// targets go NULL once its outcome is answered and it has aged out; its
+// identity, sequence, hash and digest stay until the replay floor passes it.
+const consentSchema = `
 CREATE TABLE IF NOT EXISTS consent_rate (
     contact      TEXT PRIMARY KEY,
     tokens       INTEGER NOT NULL,

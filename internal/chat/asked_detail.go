@@ -48,11 +48,14 @@ func (m *Model) askedRefs() []string {
 	return refs
 }
 
-// askedRef is the request an asked identity names.
+// askedRef is the request an asked identity names, under the pairing it
+// was listed with.
 func askedRef(identity itemKey) (protocol.ReviewAskRef, bool) {
 	rest, ok := strings.CutPrefix(string(identity), "a")
-	contact, askID, cut := strings.Cut(rest, "\x00")
-	return protocol.ReviewAskRef{Contact: contact, AskID: askID}, ok && cut
+	if !ok {
+		return protocol.ReviewAskRef{}, false
+	}
+	return parseAskRefKey(rest)
 }
 
 // readAskedDetail shows the request and reads it with all its findings,

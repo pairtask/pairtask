@@ -21,18 +21,19 @@ import (
 // and becomes a review only when the hub dispatches it under the grant
 // that holds then.
 
-// peerReviewsSchema keeps the review grants.
-const peerReviewsSchema = `
-CREATE TABLE IF NOT EXISTS peer_review_grants (
+// peerReviewGrantsColumns keeps the review grants.
+// The transition creates it, or rebuilds a released one, with
+// pairing_epoch in its key (#276).
+const peerReviewGrantsColumns = `(
     contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     agent      TEXT NOT NULL,
     mode       TEXT NOT NULL CHECK (mode IN ('ask', 'auto')),
     publish    INTEGER NOT NULL,
     formal     INTEGER NOT NULL,
     granted_at TEXT NOT NULL,
-    PRIMARY KEY (contact, agent)
-);
-`
+    PRIMARY KEY (contact, pairing_epoch, agent)
+)`
 
 // Review grant modes.
 const (
@@ -131,7 +132,8 @@ type grantRow struct {
 func setGrant(ctx context.Context, tx *sql.Tx, r grantRow) error {
 	g := r.change
 	if g.Mode == ReviewOff {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_review_grants WHERE contact = ? AND agent = ?`, r.contact, r.agent); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM peer_review_grants WHERE contact = ? AND pairing_epoch = `+currentEpoch+` AND agent = ?`,
+			r.contact, r.contact, r.agent); err != nil {
 			return err
 		}
 		// Off is an explicit decision: it never reads as undecided (#293).
@@ -141,9 +143,10 @@ func setGrant(ctx context.Context, tx *sql.Tx, r grantRow) error {
 		}
 		return withholdAsks(ctx, tx, askScope{r.contact, r.agent, "unshared", g.Now})
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO peer_review_grants (contact, agent, mode, publish, formal, granted_at) VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT (contact, agent) DO UPDATE SET mode = excluded.mode, publish = excluded.publish, formal = excluded.formal, granted_at = excluded.granted_at`,
-		r.contact, r.agent, g.Mode, g.Publish, g.Formal, msgStamp(g.Now))
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_review_grants (contact, pairing_epoch, agent, mode, publish, formal, granted_at)
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, ?)
+ON CONFLICT (contact, pairing_epoch, agent) DO UPDATE SET mode = excluded.mode, publish = excluded.publish, formal = excluded.formal, granted_at = excluded.granted_at`,
+		r.contact, r.contact, r.agent, g.Mode, g.Publish, g.Formal, msgStamp(g.Now))
 	return err
 }
 
@@ -153,10 +156,12 @@ type askScope struct {
 	at                     time.Time
 }
 
-// withholdAsks settles, as withheld, review requests not yet dispatched.
+// withholdAsks settles, as withheld, review requests of the contact's
+// current pairing not yet dispatched.
 func withholdAsks(ctx context.Context, tx *sql.Tx, s askScope) error {
 	ids, err := queryStrings(ctx, tx, `UPDATE remote_imports SET state = 'withheld', reason = ?1, settled_at = ?2
-WHERE contact = ?3 AND kind = 'review' AND state IN ('pending', 'awaiting') AND (?4 = '' OR recipients = json_array(?4)) RETURNING remote_id`,
+WHERE contact = ?3 AND pairing_epoch = `+currentEpochAt(3)+` AND kind = 'review' AND state IN ('pending', 'awaiting')
+    AND (?4 = '' OR recipients = json_array(?4)) RETURNING remote_id`,
 		s.reason, msgStamp(s.at), s.contact, s.agent)
 	if err != nil {
 		return err
@@ -167,24 +172,31 @@ WHERE contact = ?3 AND kind = 'review' AND state IN ('pending', 'awaiting') AND 
 	return askOutcomes(ctx, tx, askScope{s.contact, "", "withheld", s.at}, ids)
 }
 
-// askOutcomes tells the requester of each request the scope's outcome.
+// askOutcomes tells the requester of each request, of the contact's
+// current pairing, the scope's outcome.
 func askOutcomes(ctx context.Context, tx *sql.Tx, s askScope, remoteIDs []string) error {
+	src, err := currentPairing(ctx, tx, s.contact)
+	if err != nil {
+		return err
+	}
 	reason := map[string]string{"withheld": "unshared"}[s.reason]
 	for _, id := range remoteIDs {
-		if err := askOutcome(ctx, tx, RemoteImport{Contact: s.contact, RemoteID: id}, askEnd{s.reason, reason, s.at}); err != nil {
+		imp := RemoteImport{Contact: src.contact, Epoch: src.epoch, RemoteID: id}
+		if err := askOutcome(ctx, tx, imp, askEnd{s.reason, reason, s.at}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ReviewGrants are a contact's grants, by agent.
+// ReviewGrants are a contact's grants in its current pairing, by agent.
 func (p *PeerMessages) ReviewGrants(ctx context.Context, contact string) ([]ReviewGrant, error) {
 	return reviewGrants(ctx, p.db, contact)
 }
 
 func reviewGrants(ctx context.Context, q rowsQuerier, contact string) ([]ReviewGrant, error) {
-	rows, err := q.QueryContext(ctx, `SELECT agent, mode, publish, formal, granted_at FROM peer_review_grants WHERE contact = ? ORDER BY agent`, contact)
+	rows, err := q.QueryContext(ctx, `SELECT agent, mode, publish, formal, granted_at FROM peer_review_grants
+WHERE contact = ? AND pairing_epoch = `+currentEpoch+` ORDER BY agent`, contact, contact)
 	if err != nil {
 		return nil, err
 	}
@@ -211,10 +223,11 @@ func scanGrant(row rowScanner) (ReviewGrant, error) {
 	return g, err
 }
 
-// reviewGrant is the grant a contact has for agent now; found is false for none.
+// reviewGrant is the grant a contact has for agent now, in its current
+// pairing; found is false for none.
 func reviewGrant(ctx context.Context, q rowQuerier, contact, agent string) (ReviewGrant, bool, error) {
 	g, err := scanGrant(q.QueryRowContext(ctx, `SELECT agent, mode, publish, formal, granted_at FROM peer_review_grants
-WHERE contact = ? AND agent = ?`, contact, agent))
+WHERE contact = ? AND pairing_epoch = `+currentEpoch+` AND agent = ?`, contact, contact, agent))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ReviewGrant{}, false, nil
 	}
@@ -256,11 +269,12 @@ func askCountsFull(ctx context.Context, tx *sql.Tx, contact, agent string) (bool
 	return mine >= ReviewAsksPerAgent || theirs >= ReviewAsksPerContact || total >= ReviewAsksTotal, nil
 }
 
-// AwaitingReviewCounts are, by contact, the review requests waiting for
-// this side's operator; a contact with none is absent.
+// AwaitingReviewCounts are, by contact, the review requests of its current
+// pairing waiting for this side's operator (#276); a contact with none is
+// absent.
 func (s *PeerMessages) AwaitingReviewCounts(ctx context.Context) (map[string]int, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT contact, COUNT(*) FROM remote_imports
-WHERE kind = 'review' AND state = 'awaiting' GROUP BY contact`)
+WHERE kind = 'review' AND state = 'awaiting' AND pairing_epoch = `+currentEpochFor("remote_imports.contact")+` GROUP BY contact`)
 	if err != nil {
 		return nil, err
 	}
@@ -291,46 +305,65 @@ type RemoteDecision struct {
 }
 
 func (s *Store) DecideRemoteReview(ctx context.Context, d RemoteDecision) (string, error) {
-	contact, remoteID, approve, now := d.Contact, d.RemoteID, d.Approve, d.Now
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
-	state, staged, err := stagedReview(ctx, tx, contact, remoteID)
+	a, err := stagedReview(ctx, tx, d.Contact, d.RemoteID)
 	if err != nil {
 		return "", err
 	}
-	if state != ImportAwaiting {
-		return state, ErrNotAwaiting
+	if a.state != ImportAwaiting {
+		return a.state, ErrNotAwaiting
 	}
-	next, reason := decision(approve, staged, now)
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = ?1, reason = ?2, approved_at = CASE WHEN ?1 = 'pending' THEN ?3 END,
-    settled_at = CASE WHEN ?1 = 'withheld' THEN ?3 END WHERE contact = ?4 AND remote_id = ?5`,
-		next, reason, msgStamp(now), contact, remoteID); err != nil {
+	next, reason := decision(d.Approve, a.staged, d.Now)
+	if err := decideAsk(ctx, tx, a.imp, askEnd{next, reason, d.Now}); err != nil {
 		return "", err
-	}
-	if next == ImportWithheld {
-		if err := askOutcome(ctx, tx, RemoteImport{Contact: contact, RemoteID: remoteID}, askEnd{reason, "", now}); err != nil {
-			return "", err
-		}
 	}
 	return next, tx.Commit()
 }
 
-// stagedReview is a contact's staged review request: its state and when it
-// was staged. A paused contact's requests wait for a decision until it
+// decideAsk moves a waiting request where the decision sends it, and
+// tells its requester one withheld.
+func decideAsk(ctx context.Context, tx *sql.Tx, imp RemoteImport, e askEnd) error {
+	src := imp.source()
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = ?1, reason = ?2, approved_at = CASE WHEN ?1 = 'pending' THEN ?3 END,
+    settled_at = CASE WHEN ?1 = 'withheld' THEN ?3 END WHERE contact = ?4 AND pairing_epoch = ?5 AND remote_id = ?6`,
+		e.state, e.reason, msgStamp(e.at), src.contact, src.epoch, imp.RemoteID); err != nil {
+		return err
+	}
+	if e.state != ImportWithheld {
+		return nil
+	}
+	return askOutcome(ctx, tx, imp, askEnd{e.reason, "", e.at})
+}
+
+// stagedAskRow is a staged review request of a contact's current pairing:
+// its import's key, its state and when it was staged.
+type stagedAskRow struct {
+	imp           RemoteImport
+	state, staged string
+}
+
+// stagedReview is a contact's staged review request in its current
+// pairing. A paused contact's requests wait for a decision until it
 // resumes (#276).
-func stagedReview(ctx context.Context, tx *sql.Tx, contact, remoteID string) (state, staged string, err error) {
+func stagedReview(ctx context.Context, tx *sql.Tx, contact, remoteID string) (stagedAskRow, error) {
 	if err := requireActive(ctx, tx, contact); err != nil {
-		return "", "", err
+		return stagedAskRow{}, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT state, staged_at FROM remote_imports WHERE contact = ? AND remote_id = ? AND kind = 'review'`,
-		contact, remoteID).Scan(&state, &staged)
+	src, err := currentPairing(ctx, tx, contact)
+	if err != nil {
+		return stagedAskRow{}, err
+	}
+	a := stagedAskRow{imp: RemoteImport{Contact: src.contact, Epoch: src.epoch, RemoteID: remoteID}}
+	err = tx.QueryRowContext(ctx, `SELECT state, staged_at FROM remote_imports WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND kind = 'review'`,
+		src.contact, src.epoch, remoteID).Scan(&a.state, &a.staged)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", ErrNoImport
+		return stagedAskRow{}, ErrNoImport
 	}
-	return state, staged, err
+	return a, err
 }
 
 // decision is a waiting request's next state and why: expired before any
@@ -345,10 +378,11 @@ func decision(approve bool, staged string, now time.Time) (string, string) {
 	return ImportWithheld, "declined"
 }
 
-// expireAsks withholds a contact's requests that waited past ReviewAskExpiry.
+// expireAsks withholds a contact's requests of its current pairing that
+// waited past ReviewAskExpiry.
 func expireAsks(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
 	ids, err := queryStrings(ctx, tx, `UPDATE remote_imports SET state = 'withheld', reason = 'expired', settled_at = ?1
-WHERE contact = ?2 AND kind = 'review' AND state = 'awaiting' AND staged_at < ?3 RETURNING remote_id`,
+WHERE contact = ?2 AND pairing_epoch = `+currentEpochAt(2)+` AND kind = 'review' AND state = 'awaiting' AND staged_at < ?3 RETURNING remote_id`,
 		msgStamp(now), contact, msgStamp(now.Add(-ReviewAskExpiry)))
 	if err != nil {
 		return err
@@ -381,16 +415,35 @@ type AskStatus struct {
 	State, ReviewID, Reason string
 }
 
-// AskStatus is a request's state, the review it became once imported, and
-// why it was withheld; found is false for a message that isn't one.
+// AskStatus is a request's state in the contact's current pairing, the
+// review it became once imported, and why it was withheld; found is false
+// for a message that isn't one.
 func (p *PeerMessages) AskStatus(ctx context.Context, contact, remoteID string) (AskStatus, bool, error) {
 	var a AskStatus
 	err := p.db.QueryRowContext(ctx, `SELECT state, CASE WHEN state = 'imported' THEN local_id ELSE '' END, COALESCE(reason, '')
-FROM remote_imports WHERE contact = ? AND remote_id = ? AND kind = 'review'`, contact, remoteID).Scan(&a.State, &a.ReviewID, &a.Reason)
+FROM remote_imports WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND remote_id = ?2 AND kind = 'review'`,
+		contact, remoteID).Scan(&a.State, &a.ReviewID, &a.Reason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, false, nil
 	}
 	return a, err == nil, err
+}
+
+// AskStatusIn is AskStatus in the pairing k names (#276): its epoch, or
+// with 0 the newest the contact's history holds; an earlier pairing's
+// request of the same ID is another. An epoch the contact never had is
+// messaging.ErrInvalid.
+func (p *PeerMessages) AskStatusIn(ctx context.Context, k MessageKey) (AskStatus, bool, error) {
+	return inHistory(ctx, p.db, k, func(tx *sql.Tx, pk pairingKey) (AskStatus, bool, error) {
+		var a AskStatus
+		err := tx.QueryRowContext(ctx, `SELECT state, CASE WHEN state = 'imported' THEN local_id ELSE '' END, COALESCE(reason, '')
+FROM remote_imports WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND kind = 'review'`,
+			pk.contact, pk.epoch, k.ID).Scan(&a.State, &a.ReviewID, &a.Reason)
+		if errors.Is(err, sql.ErrNoRows) {
+			return a, false, nil
+		}
+		return a, err == nil, err
+	})
 }
 
 // IsReview: the import is a review request, whose outcomes go back.

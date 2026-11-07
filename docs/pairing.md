@@ -374,7 +374,100 @@ pairtask operator peer pause sha256:…
 pairtask operator peer resume sha256:…
 ```
 
-To stop pairing altogether, or change how this machine listens:
+### Unpair
+
+To end a pairing for good, open its `⇄` tab and type `/pair unpair`, or name
+it from any tab: `/pair unpair NAME`. A card says what ends:
+
+- what you share with it, review grants and consent end;
+- queued messages expire, shown `not sent`, and held requests end;
+- reviews running here finish without sending their results.
+
+To go ahead, type the line the card shows, `/pair unpair confirm` and the
+first 8 characters of its key after `sha256:`. A paste, Enter, Esc, another
+tab, a reconnect or any change to that workspace in the pairing state
+discards the card, and nothing is sent. One card sends one unpair. If the
+connection drops before the answer, the chat sends the same unpair again
+once it reconnects, and the broker answers it with the first result.
+
+The workspace keeps a read-only tab, `⇄ NAME (unpaired)`, after a restart
+too. Its history, what was never sent and the reads stay. A draft stays as
+you wrote it, but nothing is sent, acknowledged, shared or changed there.
+`/pair status` shows `unpaired by you DATE · history kept`.
+
+From a terminal, by the full key only:
+
+```sh
+pairtask operator peer unpair sha256:FULL --confirm sha256:FULL
+pairtask operator peer messages sha256:FULL    # the history, still
+```
+
+Without `--epoch N` the command reads the current pairing first and echoes
+it. `--message-id ID` repeats an unpair safely: the retry answers the first
+result.
+
+Pairing again needs a fresh code (steps 2 to 5). Its request shows
+`re-pair`.
+
+### What the other side sees
+
+This side stops at once; the other side learns from a notice. Its card and
+`/pair status` say `unpaired by them`, or `paused by them`. Here, the card
+says how the notice stands:
+
+- `notice pending: they learn when they next connect`, while it waits;
+- `notice undelivered` after five attempts in total.
+
+A side that only waits to be dialed has no address for the other one. Its
+notice waits until the other side connects again.
+`their state: unavailable (older version)` means the other side runs a
+pairtask without notices.
+
+### Repair
+
+If the other side still holds another pairing with this one, the card says
+`holds another pairing: /pair invite --repair`. Pair again and declare which
+workspace the pairing repairs:
+
+```text
+/pair invite --repair NAME                  on one side: opens a code
+/pair redeem --repair NAME CODE@HOST:PORT   on the other: redeems it
+```
+
+NAME must name exactly one paired workspace, by its name or key; otherwise
+nothing is sent, so type more of the key. From a terminal, use
+`pairtask operator pairing open --repair KEY` and `redeem --repair KEY`.
+The request shows `repair`. Pairing again without `--repair` with a
+workspace that is still paired only moves its address (`address move`).
+
+Changes that cross are refused, never merged:
+
+- If both sides change the pairing at once, the later change is refused
+  (`pairing_crossed`); make it again.
+- If two pairings could both be meant, both are refused
+  (`pairing_ambiguous`); start one fresh repair.
+
+### Versions
+
+Unpairing always revokes on this side, whatever version the other side
+runs. Telling them, pairing again and repairing need peer protocol v9 on
+both sides:
+
+- A workspace paired under v9 refuses a peer that still runs v8. The card
+  says `unsupported: the other side must update`.
+- A pairing made with a v8 peer keeps working with either version, and can
+  be unpaired here; the other side isn't notified.
+- Pairing again, or repairing, needs v9 on both sides.
+
+**Release note.** Downgrading to a build without peer protocol v9 support
+is unsupported: the upgrade
+migrates the broker's database, and a v9 pairing refuses an older peer.
+Upgrade the other side instead. Queued messages wait for it until they
+expire.
+
+### Stop pairing
+
+To stop pairing on this machine altogether, or change how it listens:
 
 ```sh
 pairtask pairing on --host-port 8445   # another port (redeem with A_IP:8445)

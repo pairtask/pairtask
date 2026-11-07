@@ -31,6 +31,9 @@ func (m *Model) contactAcksAvailable() bool {
 // ackSummary is where a contact's acknowledgments stand: the newest the
 // tab heard, else the pairing snapshot's.
 func (m *Model) ackSummary(contact string) protocol.ContactAckSummary {
+	if m.unpairedContact(contact) {
+		return protocol.ContactAckSummary{} // nothing can be acknowledged there any more (#276)
+	}
 	if t := m.contacts.threads[contact]; t != nil && t.acks != nil {
 		return *t.acks
 	}
@@ -70,6 +73,9 @@ func (m *Model) contactAckReminder() string {
 // broker last counted, or #n, a message's number here.
 func (m *Model) contactAckCommand(arg argument) tea.Cmd {
 	key := m.conv.selected.contact
+	if m.refuseUnpaired(key) {
+		return nil
+	}
 	switch {
 	case !m.contactAcksAvailable():
 		m.status = noContactAcks
@@ -88,12 +94,14 @@ func (m *Model) contactAckCommand(arg argument) tea.Cmd {
 		m.status = "give #n, a message's number in this tab"
 		return nil
 	}
-	id := waitingID(m.contacts.thread(key), n)
-	if id == "" {
+	v, ok := waitingRow(m.contacts.thread(key), n)
+	if !ok {
 		m.status = fmt.Sprintf("#%d isn't a message waiting for acknowledgment in this tab", n)
 		return nil
 	}
-	return m.sendContactAck(protocol.Message{ContactKey: key, ContactAck: []string{id}})
+	// The message's own pairing (#276): a pairing again meanwhile can't
+	// retarget it; an untagged row names none, the current one.
+	return m.sendContactAck(protocol.Message{ContactKey: key, ContactAck: []string{v.ID}, ContactEpoch: v.PairingEpoch})
 }
 
 // ackContactAll acknowledges a tab up to the bound its count was read with,
@@ -131,15 +139,15 @@ func (m *Model) ackContacts() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// waitingID is the ID of the loaded message numbered n that waits for
-// acknowledgment, "" for none.
-func waitingID(t *contactThread, n int64) string {
+// waitingRow is the loaded message numbered n that waits for
+// acknowledgment; ok is false for none.
+func waitingRow(t *contactThread, n int64) (protocol.ContactMessageView, bool) {
 	for _, v := range t.rows {
 		if awaitsAck(v) && v.Cursor == n {
-			return v.ID
+			return v, true
 		}
 	}
-	return ""
+	return protocol.ContactMessageView{}, false
 }
 
 // messageNumber is #n's n.
@@ -294,10 +302,11 @@ func (m *Model) recheckNext(contact string, page *protocol.ContactMessagePage) t
 	return m.refreshContact(contact, oldest)
 }
 
-// acks: the acknowledgment selects the message.
+// acks: the acknowledgment selects the message, by ID one of the pairing
+// it names (#276).
 func acks(msg protocol.Message, v protocol.ContactMessageView) bool {
 	if msg.ContactAckUpto != 0 {
 		return v.Cursor <= msg.ContactAckUpto
 	}
-	return slices.Contains(msg.ContactAck, v.ID)
+	return msg.ContactEpoch == v.PairingEpoch && slices.Contains(msg.ContactAck, v.ID)
 }

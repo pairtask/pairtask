@@ -9,6 +9,7 @@ import (
 
 	"github.com/pairtask/pairtask/internal/peer"
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
+	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -161,9 +162,13 @@ func (s *settleState) due(id string, now time.Time) bool {
 	return a.passes < SettleMaxAttempts && !now.Before(a.next)
 }
 
-// settleCandidate is a join that still needs settling and can be.
+// settleCandidate is a join that still needs settling and can be; one an
+// unpair retired never does.
 func settleCandidate(r peer.JoinRecord) bool {
 	if r.Destination == "" || r.Peer == "" {
+		return false
+	}
+	if !r.RetiredAt.IsZero() {
 		return false
 	}
 	switch r.State {
@@ -215,7 +220,7 @@ func (h *Hub) queueAutomatic(ctx context.Context) {
 	now := h.pair.cfg.Clock()
 	var ids []string
 	for _, r := range joins {
-		if h.automaticDue(r, now) {
+		if h.automaticDue(ctx, r, now) {
 			ids = append(ids, r.OperationID)
 		}
 	}
@@ -224,11 +229,28 @@ func (h *Hub) queueAutomatic(ctx context.Context) {
 
 // automaticDue reports a candidate within SettleWindow, its budget and its
 // backoff.
-func (h *Hub) automaticDue(r peer.JoinRecord, now time.Time) bool {
-	if !settleCandidate(r) || now.Sub(r.CreatedAt) > SettleWindow {
+func (h *Hub) automaticDue(ctx context.Context, r peer.JoinRecord, now time.Time) bool {
+	if !h.liveCandidate(ctx, r) || now.Sub(r.CreatedAt) > SettleWindow {
 		return false
 	}
 	return h.pair.settle.due(r.OperationID, now)
+}
+
+// liveCandidate is a candidate whose exchange can still install: one
+// the ledger retired or refused, an address move included, is settled
+// already (#276), and no ack loop retries it.
+func (h *Hub) liveCandidate(ctx context.Context, r peer.JoinRecord) bool {
+	if !r.Mode.Epoch() {
+		return settleCandidate(r)
+	}
+	if !settleCandidate(r) {
+		return false
+	}
+	x, found, err := h.store.Exchange(ctx, r.OperationID)
+	if err != nil || !found {
+		return false
+	}
+	return x.State == peer.ExchangeOpen || x.State == peer.ExchangeInstalled
 }
 
 func (h *Hub) drainSettle(ctx context.Context) {
@@ -391,7 +413,7 @@ func (h *Hub) settleTargets(ctx context.Context, target string) ([]string, *rout
 	}
 	var ids []string
 	for _, r := range joins {
-		if settleCandidate(r) {
+		if h.liveCandidate(ctx, r) {
 			ids = append(ids, r.OperationID)
 		}
 	}
@@ -408,8 +430,36 @@ func (h *Hub) settleTarget(ctx context.Context, target string) ([]string, *routi
 		return nil, &routingError{protocol.ErrPairing, "no_join"}
 	case r.Destination == "" || r.Peer == "":
 		return nil, &routingError{protocol.ErrPairing, "no_destination"}
+	case r.State == peer.JoinAddressMoved:
+		return nil, nil // settled by its receipt: nothing to queue
+	}
+	if rerr := h.settleEnded(ctx, r); rerr != nil {
+		return nil, rerr
 	}
 	return []string{target}, nil
+}
+
+// endedExchanges are the ledger states nothing settles any more (#276).
+var endedExchanges = map[string]routingError{
+	peer.ExchangeRetired: {protocol.ErrPairing, "join_retired"},
+	peer.ExchangeRefused: {protocol.ErrPairing, "join_refused"},
+}
+
+// settleEnded refuses a join an unpair retired, or whose ledger exchange
+// was retired or refused, before any network work (#276).
+func (h *Hub) settleEnded(ctx context.Context, r peer.JoinRecord) *routingError {
+	if !r.RetiredAt.IsZero() {
+		rerr := endedExchanges[peer.ExchangeRetired]
+		return &rerr
+	}
+	x, found, err := h.store.Exchange(ctx, r.OperationID)
+	if err != nil {
+		return &routingError{protocol.ErrInternal, "pairing state unavailable"}
+	}
+	if rerr, ended := endedExchanges[x.State]; found && ended {
+		return &rerr
+	}
+	return nil
 }
 
 // contactsSnapshot lists contacts newest first, each confirmed from the full
@@ -439,13 +489,43 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 		own = h.identity.Fingerprint()
 	}
 	for _, c := range contacts {
-		snapshot.Contacts = append(snapshot.Contacts, protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
+		view := protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
 			Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
 			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own), PausedAt: pausedAt(c),
 			Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: counts.awaiting[c.IdentityKey]},
-			Acks:    ackView(counts.acks, c.IdentityKey)})
+			Acks:    ackView(counts.acks, c.IdentityKey)}
+		noticeView(&view, counts.notices[c.IdentityKey])
+		snapshot.Contacts = append(snapshot.Contacts, view)
 	}
 	return nil
+}
+
+// noticeView adds the contact's notice state to its view (#276): the
+// peer's stored state, unavailable only once a version without notices is
+// known, and this side's notice while the peer hasn't answered it.
+func noticeView(view *protocol.PairingContactView, n store.ContactNoticeState) {
+	view.PeerState = n.PeerState
+	if !n.PeerStateAt.IsZero() {
+		at := n.PeerStateAt
+		view.PeerStateAt = &at
+	}
+	if n.PeerVersion > 0 && n.PeerVersion < int(messaging.PairingVersion) {
+		view.PeerStateAvailable = "unavailable"
+	}
+	if n.Notice == "pending" || n.Notice == "undelivered" {
+		view.Notice, view.NoticeAttempts = n.Notice, n.NoticeAttempts
+	}
+	pairingView(view, n)
+}
+
+// pairingView is the pairing the contact stands for (#276): its epoch,
+// whether it is legacy, and when this side unpaired it.
+func pairingView(view *protocol.PairingContactView, n store.ContactNoticeState) {
+	view.PairingEpoch, view.Legacy = n.PairingEpoch, n.Legacy
+	if !n.UnpairedAt.IsZero() {
+		at := n.UnpairedAt
+		view.UnpairedAt = &at
+	}
 }
 
 // pausedAt is when this side paused the contact, nil while active (#276).

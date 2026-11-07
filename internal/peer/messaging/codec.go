@@ -22,7 +22,7 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 8
+	MaxVersion byte = 9 // PairingVersion
 )
 
 // LiveVersion is the first version whose sessions can stay open;
@@ -166,7 +166,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameConsentOutcomeRefused
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameContactStateStored
 }
 
 // shape is a frame type and its exact number of fields.

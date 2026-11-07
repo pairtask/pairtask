@@ -21,37 +21,59 @@ func (h *Hub) pendingReviews(ctx context.Context, msg protocol.Message) protocol
 		return rerr.frame(msg.MessageID)
 	}
 	out := protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp}
-	var err error
-	if msg.ReviewAskRefs != nil {
-		var page protocol.ReviewAskedPage
-		page, err = h.store.AskedByRefs(ctx, msg.ReviewAskRefs)
-		out.ReviewAsked = &page
-	} else {
-		err = pageReaders[msg.ReviewOp](ctx, h.store, msg.ReviewBefore, &out)
-	}
+	err := h.readPending(ctx, msg, &out)
 	switch {
 	case errors.Is(err, store.ErrReviewCursor):
 		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
 	case err != nil:
 		return (&routingError{protocol.ErrInternal, "reviews unavailable"}).frame(msg.MessageID)
 	}
+	if !historyCapable(msg.ProtocolVersion) {
+		untaggedReviews(&out)
+	}
 	return out
 }
 
+// readPending reads the page or the refs a request names into its result.
+func (h *Hub) readPending(ctx context.Context, msg protocol.Message, out *protocol.Message) error {
+	if msg.ReviewAskRefs != nil {
+		page, err := h.store.AskedByRefs(ctx, msg.ReviewAskRefs)
+		out.ReviewAsked = &page
+		return err
+	}
+	return pageReaders[msg.ReviewOp](ctx, h.store, pageRequest{msg.ReviewBefore, historyCapable(msg.ProtocolVersion)}, out)
+}
+
+// pageRequest is the page a request names: after before, and with every
+// pairing's requests for a client with pairing history, else each
+// contact's newest pairing's alone (#276).
+type pageRequest struct {
+	before     string
+	allHistory bool
+}
+
 // pageReaders read one page of each paged operation into its result.
-var pageReaders = map[string]func(context.Context, *store.Store, string, *protocol.Message) error{
-	protocol.ReviewOpAwaiting: func(ctx context.Context, s *store.Store, before string, out *protocol.Message) error {
-		page, err := s.AwaitingReviews(ctx, before)
+var pageReaders = map[string]func(context.Context, *store.Store, pageRequest, *protocol.Message) error{
+	protocol.ReviewOpAwaiting: func(ctx context.Context, s *store.Store, req pageRequest, out *protocol.Message) error {
+		page, err := s.AwaitingReviews(ctx, req.before)
 		out.ReviewAwaiting = &page
 		return err
 	},
-	protocol.ReviewOpAsked: func(ctx context.Context, s *store.Store, before string, out *protocol.Message) error {
-		page, err := s.AskedReviews(ctx, before)
+	protocol.ReviewOpAsked: func(ctx context.Context, s *store.Store, req pageRequest, out *protocol.Message) error {
+		read := s.CurrentAskedReviews
+		if req.allHistory {
+			read = s.AskedReviews
+		}
+		page, err := read(ctx, req.before)
 		out.ReviewAsked = &page
 		return err
 	},
-	protocol.ReviewOpFailed: func(ctx context.Context, s *store.Store, before string, out *protocol.Message) error {
-		page, err := s.FailedReviews(ctx, before)
+	protocol.ReviewOpFailed: func(ctx context.Context, s *store.Store, req pageRequest, out *protocol.Message) error {
+		read := s.CurrentFailedReviews
+		if req.allHistory {
+			read = s.FailedReviews
+		}
+		page, err := read(ctx, req.before)
 		out.ReviewFailed = &page
 		return err
 	},
@@ -59,8 +81,8 @@ var pageReaders = map[string]func(context.Context, *store.Store, string, *protoc
 
 // pendingRequestFields refuses anything but the operation and its cursor.
 func pendingRequestFields(msg protocol.Message) *routingError {
-	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ReviewOp: msg.ReviewOp,
-		ReviewBefore: msg.ReviewBefore, ReviewAskRefs: msg.ReviewAskRefs}
+	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
+		ReviewOp: msg.ReviewOp, ReviewBefore: msg.ReviewBefore, ReviewAskRefs: msg.ReviewAskRefs}
 	switch {
 	case !sameJSON(msg, clean):
 		return &routingError{protocol.ErrMalformedFrame, "review_op " + msg.ReviewOp + " takes only review_before"}
@@ -72,7 +94,7 @@ func pendingRequestFields(msg protocol.Message) *routingError {
 	if err := protocol.ValidateReviewAskRefs(msg.ReviewAskRefs); err != nil {
 		return &routingError{protocol.ErrMalformedFrame, err.Error()}
 	}
-	return nil
+	return refsEpochRefused(msg.ReviewAskRefs, msg.ProtocolVersion)
 }
 
 // sameJSON: the two frames encode alike, so one carries nothing the other
@@ -85,15 +107,26 @@ func sameJSON(a, b protocol.Message) bool {
 
 // reviewCounts answers counts: the snapshot's review_counts, read again.
 func (h *Hub) reviewCounts(ctx context.Context, msg protocol.Message) protocol.Message {
-	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ReviewOp: msg.ReviewOp}
+	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
+		ReviewOp: msg.ReviewOp}
 	if !sameJSON(msg, clean) {
 		return (&routingError{protocol.ErrMalformedFrame, "review_op counts takes no other field"}).frame(msg.MessageID)
 	}
-	counts, err := h.store.ReviewCounts(ctx)
+	counts, err := h.readReviewCounts(ctx, msg.ProtocolVersion)
 	if err != nil {
 		return (&routingError{protocol.ErrInternal, "reviews unavailable"}).frame(msg.MessageID)
 	}
 	return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp, ReviewCounts: &counts}
+}
+
+// readReviewCounts are the review counts a client at version reads: what
+// failed counted as its failed page lists it, every pairing's with
+// pairing history, else each contact's newest pairing's alone (#276).
+func (h *Hub) readReviewCounts(ctx context.Context, version int) (protocol.ReviewCounts, error) {
+	if historyCapable(version) {
+		return h.store.ReviewCounts(ctx)
+	}
+	return h.store.CurrentReviewCounts(ctx)
 }
 
 // readOnlyReviewOps are the operator's review reads added for #286.
@@ -108,16 +141,24 @@ var readOnlyReviewOps = map[string]func(*Hub, context.Context, protocol.Message)
 
 // askedDetail answers asked_detail: exactly one request, by ID, nothing else.
 func (h *Hub) askedDetail(ctx context.Context, msg protocol.Message) protocol.Message {
-	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ReviewOp: msg.ReviewOp, ReviewAskRefs: msg.ReviewAskRefs}
+	clean := protocol.Message{Type: msg.Type, MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
+		ReviewOp: msg.ReviewOp, ReviewAskRefs: msg.ReviewAskRefs}
 	if !sameJSON(msg, clean) || len(msg.ReviewAskRefs) != 1 {
 		return (&routingError{protocol.ErrMalformedFrame, "review_op asked_detail takes exactly one review_ask_refs entry"}).frame(msg.MessageID)
 	}
 	if err := protocol.ValidateReviewAskRefs(msg.ReviewAskRefs); err != nil {
 		return (&routingError{protocol.ErrMalformedFrame, err.Error()}).frame(msg.MessageID)
 	}
+	if rerr := refsEpochRefused(msg.ReviewAskRefs, msg.ProtocolVersion); rerr != nil {
+		return rerr.frame(msg.MessageID)
+	}
 	page, err := h.store.AskedDetail(ctx, msg.ReviewAskRefs[0])
 	if err != nil {
 		return (&routingError{protocol.ErrInternal, "reviews unavailable"}).frame(msg.MessageID)
 	}
-	return protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp, ReviewAsked: &page}
+	out := protocol.Message{Type: protocol.TypeOperatorReviewResult, MessageID: msg.MessageID, ReviewOp: msg.ReviewOp, ReviewAsked: &page}
+	if !historyCapable(msg.ProtocolVersion) {
+		untaggedReviews(&out)
+	}
+	return out
 }

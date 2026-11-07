@@ -48,11 +48,15 @@ type ContactSend struct {
 }
 
 // ContactRead is one operator read of messages shown to the operator.
+// Epoch is the pairing they came under (#276): 0 for the current one;
+// another, up to the newest the contact's history holds, is read here
+// alone, with no receipt for the peer.
 type ContactRead struct {
 	OperationID, Contact string
 	IDs                  []string
 	AuditID              int64
 	Now                  time.Time
+	Epoch                int64
 }
 
 // operation is one registered operator operation: what it asked, the
@@ -73,6 +77,19 @@ func operationFingerprint(op, contact string, parts ...string) []byte {
 		h.Write([]byte(part))
 	}
 	return h.Sum(nil)
+}
+
+// epochParts are an operation's fingerprint parts, with the pairing it
+// names when not the current one (#276): an operation on the current one
+// keeps the fingerprint it always had, and the same operation ID naming
+// another pairing conflicts. The parts before are a sorted set of IDs or
+// a fixed list, which never ends in "epoch" and digits, so no fingerprint
+// of the one meets the other's.
+func epochParts(parts []string, epoch int64) []string {
+	if epoch == 0 {
+		return parts
+	}
+	return append(parts, "epoch", strconv.FormatInt(epoch, 10))
 }
 
 // canonicalIDs is a read's IDs as a sorted set.
@@ -170,19 +187,23 @@ func askAdvice(ctx context.Context, tx *sql.Tx, contact string, m messaging.Mess
 	return ReviewAdvisories(ctx, tx, contact, m.To[0])
 }
 
-// OperatorContactRead marks the shown messages read and finishes its audit
-// as accepted in one transaction; it counts the messages newly marked, so
-// a retry of the same operation marks none.
+// OperatorContactRead marks the shown messages read, in the pairing the
+// read names, and finishes its audit as accepted in one transaction; it
+// counts the messages newly marked, so a retry of the same operation marks
+// none.
 func (s *Store) OperatorContactRead(ctx context.Context, c ContactRead) (int, error) {
 	ids := canonicalIDs(c.IDs)
-	op := operation{c.OperationID, "read", c.Contact, operationFingerprint("read", c.Contact, ids...), c.AuditID, c.Now}
+	op := operation{c.OperationID, "read", c.Contact, operationFingerprint("read", c.Contact, epochParts(ids, c.Epoch)...), c.AuditID, c.Now}
 	marked := 0
 	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
 		if replay {
 			return nil
 		}
-		var err error
-		marked, err = markReadIn(ctx, tx, readSet{c.Contact, ids, c.Now})
+		r, err := readScope(c.Epoch)(ctx, tx, ReadMark{Contact: c.Contact, Epoch: c.Epoch, IDs: ids, At: c.Now})
+		if err != nil {
+			return err
+		}
+		marked, err = markReadIn(ctx, tx, r)
 		return err
 	})
 	if err != nil {
@@ -200,7 +221,9 @@ func (s *Store) operationTx(ctx context.Context, op operation, apply func(tx *sq
 		return err
 	}
 	defer tx.Rollback()
-	if err := requireContact(ctx, tx, contactKey(op.contact)); err != nil {
+	// An unpaired contact's history stays readable; a send is refused
+	// where it is queued (#276).
+	if err := requireKnown(ctx, tx, contactKey(op.contact)); err != nil {
 		return err
 	}
 	replay, err := registered(ctx, tx, op)

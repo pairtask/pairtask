@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -13,11 +14,34 @@ type HomeRoute struct {
 	Operator bool
 }
 
-// HomeRouting is the home route of the ⇄ send id to contact, as its
-// message here was stored: none for a send that tagged no one here.
+// HomeRouting is the home route of the ⇄ send id to contact in its
+// current pairing (#276), as its message here was stored: none for a send
+// that tagged no one here.
 func (s *Store) HomeRouting(ctx context.Context, contact, id string) (HomeRoute, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.agent_id FROM paired_threads t JOIN message_receipts r ON r.message_id = t.local_id
-WHERE t.local_id = ? AND t.contact = ? AND t.root_local_id = t.local_id ORDER BY r.agent_id`, id, contact)
+	return homeRoute(ctx, s.db, homeRouteQuery(currentEpochAt(2)), id, contact)
+}
+
+// HomeRoutingIn is HomeRouting in the pairing k names (#276): its epoch,
+// or with 0 the newest the contact's history holds; another pairing's send
+// is never borrowed. An epoch the contact never had is messaging.ErrInvalid.
+func (s *Store) HomeRoutingIn(ctx context.Context, k MessageKey) (HomeRoute, error) {
+	route, _, err := inHistory(ctx, s.db, k, func(tx *sql.Tx, pk pairingKey) (HomeRoute, bool, error) {
+		r, err := homeRoute(ctx, tx, homeRouteQuery("?3"), k.ID, pk.contact, pk.epoch)
+		return r, true, err
+	})
+	return route, err
+}
+
+// homeRouteQuery reads the targets of the ⇄ send ?1 to contact ?2 in the
+// pairing epoch names.
+func homeRouteQuery(epoch string) string {
+	return `SELECT r.agent_id FROM paired_threads t JOIN message_receipts r ON r.message_id = t.local_id
+WHERE t.local_id = ?1 AND t.contact = ?2 AND t.root_local_id = t.local_id AND t.pairing_epoch = ` + epoch + ` ORDER BY r.agent_id`
+}
+
+// homeRoute is the route a homeRouteQuery reads.
+func homeRoute(ctx context.Context, q rowsQuerier, query string, args ...any) (HomeRoute, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return HomeRoute{}, err
 	}

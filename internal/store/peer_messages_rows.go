@@ -9,7 +9,7 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
 
-const messageColumns = `cursor, contact, direction, message_id, n, created_at, COALESCE(text, ''), text_hash, hash,
+const messageColumns = `cursor, pairing_epoch, contact, direction, message_id, n, created_at, COALESCE(text, ''), text_hash, hash,
     state, class, reason, COALESCE(delivered_at, ''), COALESCE(read_at, ''), receipt,
     COALESCE(from_agent, ''), to_agents, COALESCE(reply_id, ''), COALESCE(reply_author, 0), review_ask,
     ` + ackStateColumn + `, COALESCE(acked_at, '')`
@@ -27,9 +27,10 @@ type rowsQuerier interface {
 // messageKey names one message: a contact, a direction and an ID.
 type messageKey struct{ contact, direction, id string }
 
+// messageRow is the message k names in its contact's current pairing (#276).
 func messageRow(ctx context.Context, q rowQuerier, k messageKey) (storedRow, bool, error) {
-	row := q.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM peer_messages WHERE contact = ? AND direction = ? AND message_id = ?`,
-		k.contact, k.direction, k.id)
+	row := q.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM peer_messages
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = ?2 AND message_id = ?3`, k.contact, k.direction, k.id)
 	r, err := scanMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedRow{}, false, nil
@@ -59,7 +60,7 @@ func scanMessage(row rowScanner) (storedRow, error) {
 	var n int64
 	var created, delivered, read, acked string
 	var to, ask sql.NullString
-	err := row.Scan(&r.Cursor, &r.Contact, &r.Direction, &r.ID, &n, &created, &r.Text, &r.textHash, &r.hash,
+	err := row.Scan(&r.Cursor, &r.PairingEpoch, &r.Contact, &r.Direction, &r.ID, &n, &created, &r.Text, &r.textHash, &r.hash,
 		&r.State, &r.Refusal.Class, &r.Refusal.Reason, &delivered, &read, &r.Receipt,
 		&r.From, &to, &r.ReplyTo.ID, &r.ReplyTo.Author, &ask, &r.AckState, &acked)
 	if err != nil {
@@ -100,7 +101,26 @@ func optionalMessageTime(s string) (*time.Time, error) {
 // time order: RFC3339Nano drops trailing zeros and would not.
 func msgStamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") }
 
-// AgentAcks is the contact's agents that acknowledged this side's message id.
+// AgentAcks is the contact's agents that acknowledged this side's message
+// id in its current pairing (#276).
 func (p *PeerMessages) AgentAcks(ctx context.Context, contact, id string) ([]string, error) {
-	return queryStrings(ctx, p.db, `SELECT agent FROM peer_agent_acks WHERE contact = ? AND message_id = ? ORDER BY agent`, contact, id)
+	return queryStrings(ctx, p.db, `SELECT agent FROM peer_agent_acks
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND message_id = ?2 ORDER BY agent`, contact, id)
+}
+
+// AgentAcksIn is AgentAcks in one of the contact's pairings, the current
+// one or an earlier: history, read here alone (#276). Any other epoch is
+// messaging.ErrInvalid.
+func (p *PeerMessages) AgentAcksIn(ctx context.Context, contact string, epoch int64, id string) ([]string, error) {
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true}) // the epoch and the acks from one snapshot
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	k := pairingKey{contact, epoch}
+	if _, err := heldPairing(ctx, tx, k); err != nil {
+		return nil, err
+	}
+	return queryStrings(ctx, tx, `SELECT agent FROM peer_agent_acks
+WHERE contact = ? AND pairing_epoch = ? AND message_id = ? ORDER BY agent`, k.contact, k.epoch, id)
 }

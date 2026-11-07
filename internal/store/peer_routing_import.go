@@ -35,6 +35,7 @@ var ErrNoImport = errors.New("no message staged for import under that contact an
 // RemoteImport is a message staged for this side's agents.
 type RemoteImport struct {
 	Contact    string             // the peer's identity key
+	Epoch      int64              // the pairing epoch it was staged under; 0 is the legacy 1
 	RemoteID   string             // the message's ID on the peer
 	LocalID    string             // reserved at Accept; ImportRemote may move it
 	Sender     string             // the remote agent, "" for their operator
@@ -67,39 +68,58 @@ type ImportResult struct {
 // pendingImport is an inbound row whose message isn't imported yet: its
 // text and its row must stay.
 const pendingImport = `EXISTS (SELECT 1 FROM remote_imports ri WHERE ri.contact = peer_messages.contact
-    AND ri.remote_id = peer_messages.message_id AND ri.state IN ('pending', 'awaiting'))`
+    AND ri.pairing_epoch = peer_messages.pairing_epoch AND ri.remote_id = peer_messages.message_id
+    AND ri.state IN ('pending', 'awaiting'))`
 
-// stageImport stages an inbound message for agents with its row.
+// stageImport stages an inbound message for agents with its row, under
+// the contact's current pairing, read in the same transaction (#276).
 func stageImport(ctx context.Context, tx *sql.Tx, r newRow) error {
 	if len(r.m.To) == 0 {
 		return nil
 	}
-	localID, err := freeLocalID(ctx, tx, r.key.contact, r.m.ID)
+	src, err := currentPairing(ctx, tx, r.key.contact)
 	if err != nil {
 		return err
+	}
+	state, err := insertStaged(ctx, tx, r, src)
+	if err != nil || r.m.Review == nil {
+		return err
+	}
+	return stagedAsk(ctx, tx, r, staged{RemoteImport{Contact: src.contact, Epoch: src.epoch, RemoteID: r.m.ID}, state})
+}
+
+// insertStaged writes a staged message's import row in its pairing, and
+// answers the state it starts in.
+func insertStaged(ctx context.Context, tx *sql.Tx, r newRow, src pairingKey) (string, error) {
+	localID, err := freeLocalID(ctx, tx, src, r.m.ID)
+	if err != nil {
+		return "", err
 	}
 	kind, state, err := stagedAs(ctx, tx, r)
 	if err != nil {
-		return err
+		return "", err
 	}
 	recipients, _ := json.Marshal(r.m.To) // a []string always encodes
 	_, err = tx.ExecContext(ctx, `INSERT INTO remote_imports
-(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, approved_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, r.key.contact, r.m.ID, localID, r.m.From, string(recipients),
+(contact, pairing_epoch, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, approved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, src.contact, src.epoch, r.m.ID, localID, r.m.From, string(recipients),
 		r.m.ReplyTo.ID, int(r.m.ReplyTo.Author), state, msgStamp(r.now), kind, r.approvedAt())
-	if err != nil || kind != importReview {
-		return err
-	}
-	return stagedAsk(ctx, tx, r, state)
+	return state, err
+}
+
+// staged is an import as staging wrote it, and the state it starts in.
+type staged struct {
+	imp   RemoteImport
+	state string
 }
 
 // stagedAsk reserves a staged request's outcomes, and tells its requester
 // when it waits for this side's operator.
-func stagedAsk(ctx context.Context, tx *sql.Tx, r newRow, state string) error {
-	if err := reserveOutcomes(ctx, tx, r); err != nil || state != ImportAwaiting {
+func stagedAsk(ctx context.Context, tx *sql.Tx, r newRow, s staged) error {
+	if err := reserveOutcomes(ctx, tx, r); err != nil || s.state != ImportAwaiting {
 		return err
 	}
-	return askOutcome(ctx, tx, RemoteImport{Contact: r.key.contact, RemoteID: r.m.ID}, askEnd{"waiting", "", r.now})
+	return askOutcome(ctx, tx, s.imp, askEnd{"waiting", "", r.now})
 }
 
 // approvedAt is when this side's operator approved a staged review
@@ -126,23 +146,24 @@ func stagedAs(ctx context.Context, tx *sql.Tx, r newRow) (string, string, error)
 }
 
 // importedBefore: a message for agents reuses the ID of one staged before
-// whose row is gone, never the same message.
+// in the current pairing whose row is gone, never the same message; an
+// earlier pairing's import is history, not a conflict (#276).
 func importedBefore(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
 	if len(m.To) == 0 {
 		return false, nil
 	}
 	var held bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM remote_imports WHERE contact = ? AND remote_id = ?)`,
-		contact, m.ID).Scan(&held)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM remote_imports WHERE contact = ? AND pairing_epoch = `+currentEpoch+`
+    AND remote_id = ?)`, contact, contact, m.ID).Scan(&held)
 	return held, err
 }
 
-// importBacklogFull: the contact's messages staged and not yet imported are
-// at their bound, or the remembered identities are.
+// importBacklogFull: the contact's messages staged in its current pairing
+// and not yet imported are at their bound, or the remembered identities are.
 func importBacklogFull(ctx context.Context, tx *sql.Tx, contact string, size int) (bool, error) {
 	var staged, stagedBytes int
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(text_bytes), 0) FROM peer_messages
-WHERE contact = ? AND direction = 'in' AND `+pendingImport, contact).Scan(&staged, &stagedBytes)
+WHERE contact = ? AND pairing_epoch = `+currentEpoch+` AND direction = 'in' AND `+pendingImport, contact, contact).Scan(&staged, &stagedBytes)
 	backlog := budget{messaging.ImportBacklog, messaging.UnreadBytes}
 	if err != nil || !backlog.holds(budget{staged, stagedBytes + size}) {
 		return true, err
@@ -166,9 +187,10 @@ const localIDAlternates = 64
 var ErrLocalIDsTaken = errors.New("every local ID for this remote message is taken")
 
 // freeLocalID is the first of the derived ID and its numbered alternates
-// that no local message and no other import holds.
-func freeLocalID(ctx context.Context, tx *sql.Tx, contact, remoteID string) (string, error) {
-	base := localIDBase(contact, remoteID)
+// that no local message and no other import holds; the same remote ID in
+// another pairing is another import (#276).
+func freeLocalID(ctx context.Context, tx *sql.Tx, src pairingKey, remoteID string) (string, error) {
+	base := localIDBase(src.contact, remoteID)
 	for i := 0; i <= localIDAlternates; i++ {
 		id := base
 		if i > 0 {
@@ -178,8 +200,8 @@ func freeLocalID(ctx context.Context, tx *sql.Tx, contact, remoteID string) (str
 		// An import's local ID may become a review's, and its notice's.
 		err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM message_metadata WHERE message_id IN (?1, 'review:' || ?1))
     OR EXISTS (SELECT 1 FROM reviews WHERE review_id = ?1)
-    OR EXISTS (SELECT 1 FROM remote_imports WHERE local_id = ?1 AND NOT (contact = ?2 AND remote_id = ?3))`,
-			id, contact, remoteID).Scan(&taken)
+    OR EXISTS (SELECT 1 FROM remote_imports WHERE local_id = ?1 AND NOT (contact = ?2 AND pairing_epoch = ?4 AND remote_id = ?3))`,
+			id, src.contact, remoteID, src.epoch).Scan(&taken)
 		if err != nil || !taken {
 			return id, err
 		}
@@ -187,20 +209,23 @@ func freeLocalID(ctx context.Context, tx *sql.Tx, contact, remoteID string) (str
 	return "", ErrLocalIDsTaken
 }
 
-const importColumns = `ri.contact, ri.remote_id, ri.local_id, ri.sender, ri.recipients, ri.reply_id, ri.reply_author,
+const importColumns = `ri.contact, ri.pairing_epoch, ri.remote_id, ri.local_id, ri.sender, ri.recipients, ri.reply_id, ri.reply_author,
     ri.staged_at, ri.state, COALESCE(pm.text, ri.body, ''), COALESCE(pm.created_at, ri.staged_at), ri.rowid,
     COALESCE(ri.kind, 'message'), pm.review_ask, ri.approved_at IS NOT NULL,
     COALESCE(cr.evidence_kind, ''), COALESCE(cr.evidence_epoch, ''), COALESCE(cr.evidence_gen, 0)`
 
+// importFrom joins an import to its message and the hold it was allowed
+// from, each in the import's own pairing (#276).
 const importFrom = ` FROM remote_imports ri LEFT JOIN peer_messages pm
-    ON pm.contact = ri.contact AND pm.direction = 'in' AND pm.message_id = ri.remote_id
-    LEFT JOIN consent_requests cr ON cr.contact = ri.contact AND cr.message_id = ri.remote_id AND cr.state = 'allowed'`
+    ON pm.contact = ri.contact AND pm.pairing_epoch = ri.pairing_epoch AND pm.direction = 'in' AND pm.message_id = ri.remote_id
+    LEFT JOIN consent_requests cr ON cr.contact = ri.contact AND cr.pairing_epoch = ri.pairing_epoch
+        AND cr.message_id = ri.remote_id AND cr.state = 'allowed'`
 
 func scanImport(row rowScanner) (RemoteImport, string, error) {
 	var imp RemoteImport
 	var recipients, staged, state, created string
 	var ask sql.NullString
-	err := row.Scan(&imp.Contact, &imp.RemoteID, &imp.LocalID, &imp.Sender, &recipients, &imp.ReplyTo.ID, &imp.ReplyTo.Author,
+	err := row.Scan(&imp.Contact, &imp.Epoch, &imp.RemoteID, &imp.LocalID, &imp.Sender, &recipients, &imp.ReplyTo.ID, &imp.ReplyTo.Author,
 		&staged, &state, &imp.Text, &created, &imp.Order, &imp.Kind, &ask, &imp.Approved,
 		&imp.Consent.Kind, &imp.Consent.Epoch, &imp.Consent.Gen)
 	if err != nil {
@@ -220,7 +245,7 @@ func scanImport(row rowScanner) (RemoteImport, string, error) {
 }
 
 // PendingImports is the oldest staged messages not yet imported, across
-// contacts.
+// contacts, each in its contact's current pairing, which hasn't ended.
 func (s *Store) PendingImports(ctx context.Context, max int) ([]RemoteImport, error) {
 	return s.PendingImportsAfter(ctx, 0, max)
 }
@@ -229,7 +254,7 @@ func (s *Store) PendingImports(ctx context.Context, max int) ([]RemoteImport, er
 // whose Order is after.
 func (s *Store) PendingImportsAfter(ctx context.Context, after int64, max int) ([]RemoteImport, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+importColumns+importFrom+`
-WHERE ri.state = 'pending' AND ri.rowid > ? ORDER BY ri.rowid LIMIT ?`, after, max)
+WHERE ri.state = 'pending' AND `+livePairingImport+` AND ri.rowid > ? ORDER BY ri.rowid LIMIT ?`, after, max)
 	if err != nil {
 		return nil, err
 	}
@@ -247,22 +272,19 @@ WHERE ri.state = 'pending' AND ri.rowid > ? ORDER BY ri.rowid LIMIT ?`, after, m
 
 // ImportRemote imports a staged message into its recipients' durable
 // inboxes at seq, in one transaction, reading it again from what Accept
-// froze; only imp's contact, remote ID and sessions count. Every recipient
-// must still be shared, or the whole message is withheld. A local message
-// that took its ID since moves it to the next free alternate. A full inbox
-// writes nothing and leaves it pending; one settled before is answered as
-// it is.
+// froze; only imp's contact, epoch, remote ID and sessions count. An epoch
+// the contact has since left, or an unpaired contact, is refused with
+// ErrUnpaired and nothing changes (#276). Every recipient must still be
+// shared, or the whole message is withheld. A local message that took its
+// ID since moves it to the next free alternate. A full inbox writes
+// nothing and leaves it pending; one settled before is answered as it is.
 func (s *Store) ImportRemote(ctx context.Context, imp RemoteImport, seq uint64, ts time.Time) (ImportResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ImportResult{}, err
 	}
 	defer tx.Rollback()
-	frozen, state, err := scanImport(tx.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
-WHERE ri.contact = ? AND ri.remote_id = ?`, imp.Contact, imp.RemoteID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return ImportResult{}, ErrNoImport
-	}
+	frozen, state, err := frozenImport(ctx, tx, imp)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -283,6 +305,21 @@ WHERE ri.contact = ? AND ri.remote_id = ?`, imp.Contact, imp.RemoteID))
 		return ImportResult{}, err
 	}
 	return result, tx.Commit()
+}
+
+// frozenImport is imp as Accept froze it, staged under imp's pairing, and
+// its state; a pairing that has ended is refused before any read.
+func frozenImport(ctx context.Context, tx *sql.Tx, imp RemoteImport) (RemoteImport, string, error) {
+	src := imp.source()
+	if err := refuseRetired(ctx, tx, src); err != nil {
+		return RemoteImport{}, "", err
+	}
+	frozen, state, err := scanImport(tx.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
+WHERE ri.contact = ? AND ri.pairing_epoch = ? AND ri.remote_id = ?`, src.contact, src.epoch, imp.RemoteID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return RemoteImport{}, "", ErrNoImport
+	}
+	return frozen, state, err
 }
 
 // importSlot is where an import goes in the message order, and when.
@@ -316,18 +353,20 @@ func importPlain(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlo
 		return ImportResult{}, err
 	}
 	if !shared && !imp.Consent.authorizes() {
-		_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', settled_at = ? WHERE contact = ? AND remote_id = ?`,
-			msgStamp(ts), imp.Contact, imp.RemoteID)
+		src := imp.source()
+		_, err := tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'withheld', settled_at = ?
+WHERE contact = ? AND pairing_epoch = ? AND remote_id = ?`, msgStamp(ts), src.contact, src.epoch, imp.RemoteID)
 		return ImportResult{State: ImportWithheld, Changed: true}, err
 	}
 	return persistImport(ctx, tx, imp, at)
 }
 
-// persistImport makes a pending import the durable message it becomes.
+// persistImport makes a pending import the durable message it becomes,
+// which keeps the pairing the import came under.
 func persistImport(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (ImportResult, error) {
-	ts := at.ts
+	ts, src := at.ts, imp.source()
 	var err error
-	if imp.LocalID, err = freeLocalID(ctx, tx, imp.Contact, imp.RemoteID); err != nil {
+	if imp.LocalID, err = freeLocalID(ctx, tx, src, imp.RemoteID); err != nil {
 		return ImportResult{}, err
 	}
 	msg, recipients, err := importedMessage(ctx, tx, imp, at)
@@ -337,12 +376,12 @@ func persistImport(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importS
 	if err := persistMessage(ctx, tx, routedMessage{msg: msg, recipients: recipients}); err != nil {
 		return ImportResult{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE message_metadata SET remote_contact = ?, remote_sender = ?, remote_reply_id = ?, remote_reply_author = ?
-WHERE message_id = ?`, imp.Contact, imp.Sender, nullString(imp.ReplyTo.ID), int(imp.ReplyTo.Author), msg.MessageID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE message_metadata SET remote_contact = ?, remote_sender = ?, remote_reply_id = ?, remote_reply_author = ?,
+    remote_epoch = ? WHERE message_id = ?`, imp.Contact, imp.Sender, nullString(imp.ReplyTo.ID), int(imp.ReplyTo.Author), src.epoch, msg.MessageID); err != nil {
 		return ImportResult{}, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'imported', local_id = ?, settled_at = ? WHERE contact = ? AND remote_id = ?`,
-		imp.LocalID, msgStamp(ts), imp.Contact, imp.RemoteID)
+	_, err = tx.ExecContext(ctx, `UPDATE remote_imports SET state = 'imported', local_id = ?, settled_at = ?
+WHERE contact = ? AND pairing_epoch = ? AND remote_id = ?`, imp.LocalID, msgStamp(ts), src.contact, src.epoch, imp.RemoteID)
 	return ImportResult{State: ImportImported, Changed: true, Msg: msg, Recipients: recipients}, err
 }
 
@@ -390,11 +429,13 @@ func contactLabel(ctx context.Context, tx *sql.Tx, contact string) (string, erro
 // doesn't resolve: by the sender, a message of theirs imported here; by the
 // receiver, a message one of this side's agents sent them, whose sender is
 // among this reply's recipients and which was sent to this reply's sender.
+// Either is in the import's own pairing (#276).
 func localParent(ctx context.Context, tx *sql.Tx, imp RemoteImport) (string, error) {
 	switch imp.ReplyTo.Author {
 	case messaging.ReplyBySender:
+		src := imp.source()
 		return optionalString(tx.QueryRowContext(ctx, `SELECT local_id FROM remote_imports
-WHERE contact = ? AND remote_id = ? AND state = 'imported'`, imp.Contact, imp.ReplyTo.ID))
+WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND state = 'imported'`, src.contact, src.epoch, imp.ReplyTo.ID))
 	case messaging.ReplyByReceiver:
 		return answeredLocal(ctx, tx, imp)
 	}
@@ -406,8 +447,8 @@ func answeredLocal(ctx context.Context, tx *sql.Tx, imp RemoteImport) (string, e
 	var to sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT pm.local_id, pm.from_agent, pm.to_agents, m.sender FROM peer_messages pm
     JOIN message_metadata mm ON mm.message_id = pm.local_id JOIN messages m ON m.seq = mm.seq
-WHERE pm.contact = ? AND pm.direction = 'out' AND pm.message_id = ? AND pm.local_id IS NOT NULL AND pm.from_agent IS NOT NULL`,
-		imp.Contact, imp.ReplyTo.ID).Scan(&localID, &from, &to, &sender)
+WHERE pm.contact = ? AND pm.pairing_epoch = ? AND pm.direction = 'out' AND pm.message_id = ?
+    AND pm.local_id IS NOT NULL AND pm.from_agent IS NOT NULL`, imp.Contact, imp.source().epoch, imp.ReplyTo.ID).Scan(&localID, &from, &to, &sender)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -557,13 +598,18 @@ func replyOutgoing(ctx context.Context, tx *sql.Tx, r RemoteReply) (outgoing, er
 	return outgoing{key: messageKey{parent.Contact, messaging.DirOut, reply.ID}, m: reply, now: r.Now, localID: r.Msg.MessageID}, nil
 }
 
-// replyParent is the import a reply answers: imported, with the reply's
-// sender among its recipients and the reply to its sender.
+// replyParent is the import a reply answers: imported under the contact's
+// current pairing, which hasn't ended, with the reply's sender among its
+// recipients and the reply to its sender. One an earlier pairing imported
+// is ErrUnpaired: the new pairing never carries a reply to it (#276).
 func replyParent(ctx context.Context, tx *sql.Tx, r RemoteReply) (RemoteImport, error) {
 	parent, state, err := scanImport(tx.QueryRowContext(ctx, `SELECT `+importColumns+importFrom+`
 WHERE ri.local_id = ?`, r.Parent))
 	if err != nil || state != ImportImported {
 		return RemoteImport{}, errors.Join(err, ErrNoImport)
+	}
+	if err := refuseRetired(ctx, tx, parent.source()); err != nil {
+		return RemoteImport{}, err
 	}
 	if !slices.Contains(parent.Recipients, r.Msg.From) || r.Msg.To != parent.RemoteSender() {
 		return RemoteImport{}, messaging.ErrNotRecipient

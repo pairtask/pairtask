@@ -29,12 +29,13 @@ func ReviewAdvisories(ctx context.Context, q rowQuerier, contact, reviewer strin
 	return out, nil
 }
 
-// notInDirectory: the contact said what it shares, and not this agent.
-// Nothing is said while it never has.
+// notInDirectory: the contact said what it shares in its current pairing,
+// and not this agent (#276). Nothing is said while it never has.
 func notInDirectory(ctx context.Context, q rowQuerier, contact, reviewer string) (*protocol.ReviewAdvisory, error) {
 	var seen sql.NullString
 	var listed bool
-	err := q.QueryRowContext(ctx, `SELECT directory_at, EXISTS (SELECT 1 FROM peer_directory WHERE contact = ?1 AND agent = ?2)
+	err := q.QueryRowContext(ctx, `SELECT directory_at, EXISTS (SELECT 1 FROM peer_directory
+    WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND agent = ?2)
 FROM peer_contacts WHERE identity_key = ?1`, contact, reviewer).Scan(&seen, &listed)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -47,15 +48,17 @@ FROM peer_contacts WHERE identity_key = ?1`, contact, reviewer).Scan(&seen, &lis
 	return advisoryAt(protocol.AdvisoryNotInDirectory, seen.String, "")
 }
 
-// refusedNotShared: the newest request to this agent there was refused
-// not_shared, and no outcome from there has moved a request to it on
-// since (outcome_at, set only when one is applied). A request queued or
-// settled here clears nothing.
+// refusedNotShared: the newest request to this agent there, in the
+// contact's current pairing (#276), was refused not_shared, and no outcome
+// from there has moved a request of that pairing to it on since
+// (outcome_at, set only when one is applied). A request queued or settled
+// here clears nothing; an earlier pairing's refusals are history.
 func refusedNotShared(ctx context.Context, q rowQuerier, contact, reviewer string) (*protocol.ReviewAdvisory, error) {
 	var askID, at string
 	err := q.QueryRowContext(ctx, `SELECT r.ask_id, r.updated_at FROM review_asks_out r
-WHERE r.contact = ?1 AND r.reviewer = ?2 AND r.state = 'refused' AND r.reason = 'not_shared'
-  AND NOT EXISTS (SELECT 1 FROM review_asks_out n WHERE n.contact = ?1 AND n.reviewer = ?2 AND n.outcome_at > r.updated_at)
+WHERE r.contact = ?1 AND r.pairing_epoch = `+currentEpochOf1+` AND r.reviewer = ?2 AND r.state = 'refused' AND r.reason = 'not_shared'
+  AND NOT EXISTS (SELECT 1 FROM review_asks_out n WHERE n.contact = ?1 AND n.pairing_epoch = r.pairing_epoch AND n.reviewer = ?2
+      AND n.outcome_at > r.updated_at)
 ORDER BY r.updated_at DESC LIMIT 1`, contact, reviewer).Scan(&askID, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

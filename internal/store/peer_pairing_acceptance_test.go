@@ -70,6 +70,8 @@ func TestPairingStoreAcceptanceReplayAndDecisions(t *testing.T) {
 		pairOK(t, err)
 		_, err = db.Reject(ctx, first.IdentityKey)
 		pairEqual(t, errors.Is(err, peer.ErrNotPending), true)
+		_, err = db.Deliver(ctx, first.IdentityKey, peer.PairingAccepted, first.At)
+		pairOK(t, err)
 		again := pairOutcome(2)
 		pairEqual(t, pairSaved(t, db, again).State, peer.PairingAccepted)
 		pairEqual(t, pairReceipt(t, db, first.OperationID).InvitationID, first.InvitationID)
@@ -92,7 +94,17 @@ func TestPairingStoreAcceptanceRejectedIdentityStaysRejected(t *testing.T) {
 		pairOK(t, err)
 		_, err = db.Accept(ctx, first.IdentityKey)
 		pairEqual(t, errors.Is(err, peer.ErrNotPending), true)
-		pairEqual(t, pairSaved(t, db, pairOutcome(4)).State, peer.PairingRejected)
+		pairEqual(t, pairSaved(t, db, first).State, peer.PairingRejected) // exact operation replay stays valid
+		_, nextErr := db.Commit(ctx, pairOutcome(4))
+		if _, modern := db.(*store.Store); modern {
+			pairEqual(t, errors.Is(nextErr, peer.ErrPeerTooOld), true)
+		} else {
+			pairOK(t, nextErr) // the explicitly legacy-only memory backend keeps v8 behavior
+		}
+		current, found, readErr := db.Request(ctx, first.IdentityKey)
+		pairOK(t, readErr)
+		pairEqual(t, found, true)
+		pairEqual(t, current.State, peer.PairingRejected)
 		changed := pairOutcome(5)
 		changed.IdentityKey = "sha256:" + strings.Repeat("b", 64)
 		// Same name is not identity and cannot inherit the old decision.
@@ -185,6 +197,8 @@ func TestPairingStoreAcceptanceRestartRetainsAllOutcomes(t *testing.T) {
 	first, second := pairOutcome(8), pairOutcome(9)
 	pairSaved(t, db, first)
 	_, err := db.Accept(context.Background(), first.IdentityKey)
+	pairOK(t, err)
+	_, err = db.Deliver(context.Background(), first.IdentityKey, peer.PairingAccepted, first.At)
 	pairOK(t, err)
 	pairSaved(t, db, second)
 	pairOK(t, db.Close())

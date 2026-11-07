@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = ConsentVersion
+	Version                 = PairingHistoryVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -57,6 +57,7 @@ const (
 	ReviewFindingsVersion   = 21 // asked requests carry the findings their verdict sent (#303)
 	ReviewAdvisoriesVersion = 22 // a review request queued comes back with advisories (#304)
 	PairedMentionsVersion   = 23 // a ⇄ message tags this side's agents and operator; replies share its audience (#278)
+	PairingHistoryVersion   = 25 // contact history is tagged by pairing and an earlier pairing's read or acknowledged (#276)
 	StageAccepted           = "accepted"
 	StageAdapterReceived    = "adapter_received"
 	StageAgentAcknowledged  = "agent_acknowledged"
@@ -209,6 +210,7 @@ type Message struct {
 	PairingDestination  string              `json:"pairing_destination,omitempty"` // operator_pairing redeem: host:port of the inviter
 	PairingCode         string              `json:"pairing_code,omitempty"`        // operator_pairing redeem: never stored, logged or echoed
 	PairingName         string              `json:"pairing_name,omitempty"`        // operator_pairing redeem: the name to pair under
+	PairingRepair       string              `json:"pairing_repair,omitempty"`      // operator_pairing open, redeem: the identity key the pairing repairs (#276)
 	PairingJoin         *PairingJoinView    `json:"pairing_join,omitempty"`        // operator_pairing_result for redeem
 	PairingSettle       *PairingSettleView  `json:"pairing_settle,omitempty"`      // operator_pairing_result for settle
 	PageRequest         *PageRequest        `json:"page_request,omitempty"`        // operator_receive
@@ -254,6 +256,7 @@ type Message struct {
 	ContactReviewGrant  *ContactReviewGrant `json:"contact_review_grant,omitempty"`  // operator_contact review_grant (#235)
 	ContactApprove      *bool               `json:"contact_approve,omitempty"`       // operator_contact review_decide
 	ContactBefore       int64               `json:"contact_before,omitempty"`        // operator_contact list: a cursor, 0 for the newest
+	ContactEpoch        int64               `json:"contact_epoch,omitempty"`         // operator_contact read and ack: the pairing, 0 for the current one; unpair: the epoch shown (#276)
 	ContactMessage      *ContactMessageView `json:"contact_message,omitempty"`       // operator_contact_result for send
 	ContactPage         *ContactMessagePage `json:"contact_page,omitempty"`          // operator_contact_result for list and read
 	ContactSync         *ContactSyncView    `json:"contact_sync,omitempty"`          // operator_contact_result for sync
@@ -262,6 +265,8 @@ type Message struct {
 	ContactAckUpto      int64               `json:"contact_ack_upto,omitempty"`      // operator_contact ack: every message up to this cursor
 	ContactAcked        *int                `json:"contact_acked,omitempty"`         // operator_contact_result for ack: newly acknowledged
 	ContactAcks         *ContactAckSummary  `json:"contact_acks,omitempty"`          // operator_contact_result for ack: the contact's acknowledgments after it
+	ContactConfirm      string              `json:"contact_confirm,omitempty"`       // operator_contact unpair: the contact's full identity key again, exactly (#276)
+	ContactUnpaired     *ContactUnpairView  `json:"contact_unpaired,omitempty"`      // operator_contact_result for unpair: the durable result
 	Client              string              `json:"client,omitempty"`                // operator_session_open
 	Session             *SessionInfo        `json:"session,omitempty"`               // operator_session
 	Owner               *SessionInfo        `json:"owner,omitempty"`                 // owner_busy

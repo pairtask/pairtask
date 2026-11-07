@@ -43,24 +43,26 @@ WHERE contact = ?1 AND state = 'allowed' AND outcome = '' AND (`+settledImport+`
 // settledImport is the state of the import an allowed request staged;
 // withheldReason is why it was withheld.
 const (
-	settledImport = `SELECT ri.state FROM remote_imports ri
-    WHERE ri.contact = consent_requests.contact AND ri.remote_id = consent_requests.message_id`
-	withheldReason = `SELECT COALESCE(ri.reason, '') FROM remote_imports ri
-    WHERE ri.contact = consent_requests.contact AND ri.remote_id = consent_requests.message_id`
+	settledImport = `SELECT ri.state FROM remote_imports ri WHERE ri.contact = consent_requests.contact
+    AND ri.pairing_epoch = consent_requests.pairing_epoch AND ri.remote_id = consent_requests.message_id`
+	withheldReason = `SELECT COALESCE(ri.reason, '') FROM remote_imports ri WHERE ri.contact = consent_requests.contact
+    AND ri.pairing_epoch = consent_requests.pairing_epoch AND ri.remote_id = consent_requests.message_id`
 )
 
 // WithholdConsent settles, for good, an import staged under session
 // evidence the hub found ended: nothing is delivered or dispatched, and
-// the requester hears it was withheld, in one transaction. One no longer
-// pending is answered as it is.
+// the requester hears it was withheld, in one transaction, in the pairing
+// imp was staged under. One no longer pending is answered as it is.
 func (s *Store) WithholdConsent(ctx context.Context, imp RemoteImport, reason string, now time.Time) (ImportResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ImportResult{}, err
 	}
 	defer tx.Rollback()
+	src := imp.source()
 	ids, err := queryStrings(ctx, tx, `UPDATE remote_imports SET state = 'withheld', reason = ?1, settled_at = ?2
-WHERE contact = ?3 AND remote_id = ?4 AND state = 'pending' RETURNING remote_id`, reason, msgStamp(now), imp.Contact, imp.RemoteID)
+WHERE contact = ?3 AND pairing_epoch = ?4 AND remote_id = ?5 AND state = 'pending' RETURNING remote_id`,
+		reason, msgStamp(now), src.contact, src.epoch, imp.RemoteID)
 	if err != nil || len(ids) == 0 {
 		return ImportResult{}, err
 	}
@@ -96,13 +98,15 @@ func (s *Store) ConsentMark(ctx context.Context) (ConsentMark, error) {
 	return m, err
 }
 
-// PendingConsentOutcomes is the oldest outcomes of the contact's held
-// requests its requester hasn't answered yet, each as it was settled.
+// PendingConsentOutcomes is the oldest outcomes of the held requests of
+// the contact's current pairing its requester hasn't answered yet, each as
+// it was settled; an earlier pairing's are never sent (#276).
 func (p *PeerMessages) PendingConsentOutcomes(ctx context.Context, contact string, max int) ([]messaging.ConsentOutcome, error) {
 	var out []messaging.ConsentOutcome
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT message_id, state, outcome_reason FROM consent_requests
-WHERE contact = ? AND outcome = 'pending' ORDER BY decided_at, cursor LIMIT ?`, contact, sessionBudget.clamp(budget{max, 0}).count)
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND outcome = 'pending' ORDER BY decided_at, cursor LIMIT ?2`,
+			contact, sessionBudget.clamp(budget{max, 0}).count)
 		if err != nil {
 			return err
 		}
@@ -119,9 +123,10 @@ WHERE contact = ? AND outcome = 'pending' ORDER BY decided_at, cursor LIMIT ?`, 
 	return out, err
 }
 
-// ConsentOutcomeAnswered records the requester's answer to an outcome; one
-// it never had, or answered before, changes nothing.
+// ConsentOutcomeAnswered records the requester's answer to an outcome of
+// the contact's current pairing; one it never had, or answered before, or
+// only an earlier pairing had, changes nothing (#276).
 func (p *PeerMessages) ConsentOutcomeAnswered(ctx context.Context, contact string, s messaging.ConsentOutcomeStored) error {
 	return p.exec(ctx, contact, `UPDATE consent_requests SET outcome = 'answered'
-WHERE contact = ? AND message_id = ? AND outcome = 'pending'`, contact, s.ID)
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND message_id = ?2 AND outcome = 'pending'`, contact, s.ID)
 }

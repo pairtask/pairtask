@@ -20,16 +20,10 @@ import (
 // authority usable. Opening the store clears both, so a restarted broker
 // revives none.
 
-// consentOwnerSchema keeps the live owner and the session grants.
-const consentOwnerSchema = `
-CREATE TABLE IF NOT EXISTS consent_owner (
-    id     INTEGER PRIMARY KEY CHECK (id = 1),
-    epoch  TEXT NOT NULL,
-    gen    INTEGER NOT NULL,
-    set_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS consent_sessions (
+// consentSessionsColumns is consent_sessions with pairing_epoch in its key (#276).
+const consentSessionsColumns = `(
     contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     agent      TEXT NOT NULL,
     operation  TEXT NOT NULL,
     formal     INTEGER NOT NULL,
@@ -37,7 +31,16 @@ CREATE TABLE IF NOT EXISTS consent_sessions (
     gen        INTEGER NOT NULL,
     consent_id TEXT NOT NULL,
     decided_at TEXT NOT NULL,
-    PRIMARY KEY (contact, agent, operation)
+    PRIMARY KEY (contact, pairing_epoch, agent, operation)
+)`
+
+// consentOwnerSchema keeps the live owner and the session grants.
+const consentOwnerSchema = `
+CREATE TABLE IF NOT EXISTS consent_owner (
+    id     INTEGER PRIMARY KEY CHECK (id = 1),
+    epoch  TEXT NOT NULL,
+    gen    INTEGER NOT NULL,
+    set_at TEXT NOT NULL
 );
 `
 
@@ -140,10 +143,10 @@ func askedFormal(sc consentScope, ask *messaging.ReviewAsk) bool {
 // the deciding connection.
 func grantSession(ctx context.Context, tx *sql.Tx, c decided) error {
 	for _, sc := range c.undecided {
-		_, err := tx.ExecContext(ctx, `INSERT INTO consent_sessions (contact, agent, operation, formal, epoch, gen, consent_id, decided_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, agent, operation) DO UPDATE SET formal = excluded.formal,
+		_, err := tx.ExecContext(ctx, `INSERT INTO consent_sessions (contact, pairing_epoch, agent, operation, formal, epoch, gen, consent_id, decided_at)
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, pairing_epoch, agent, operation) DO UPDATE SET formal = excluded.formal,
     epoch = excluded.epoch, gen = excluded.gen, consent_id = excluded.consent_id, decided_at = excluded.decided_at`,
-			sc.contact, sc.agent, sc.operation, askedFormal(sc, c.held.Review), c.d.Evidence.Epoch, int64(c.d.Evidence.Gen),
+			sc.contact, sc.contact, sc.agent, sc.operation, askedFormal(sc, c.held.Review), c.d.Evidence.Epoch, int64(c.d.Evidence.Gen),
 			c.held.ID, msgStamp(c.d.Now))
 		if err != nil {
 			return err

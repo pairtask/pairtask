@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -48,21 +50,33 @@ var (
 	// beyond its byte bound.
 	ErrInvalidPairingOutcome = errors.New("peer: pairing outcome field too long")
 	// ErrOutcomeCapacity, ErrIdentityCapacity and ErrTooManyPending refuse a
-	// new record to a full store.
+	// new record to a full store; ErrIdentityCapacity, a new identity beyond
+	// MaxRetainedIdentities, is an ErrIdentityStorage.
 	ErrOutcomeCapacity  = errors.New("peer: pairing outcome capacity reached")
-	ErrIdentityCapacity = errors.New("peer: pairing identity capacity reached")
+	ErrIdentityCapacity = fmt.Errorf("peer: pairing identity capacity reached: %w", ErrIdentityStorage)
 	ErrTooManyPending   = errors.New("peer: too many pairing requests awaiting a decision")
+	// ErrIdentityStorage refuses another identity to a store that retains
+	// as many as it can (#276, D4); ErrContactCapacity, one more active
+	// contact, is of the same family.
+	ErrIdentityStorage = errors.New("identity storage full; purge needed")
 )
 
 // Storage bounds. Pending requests fit one listing, so every request awaiting
 // a decision can be shown.
 const (
 	MaxPendingPairingRequests = 64
-	MaxPairingIdentities      = 1024
-	MaxPairingOutcomes        = 4096
-	MaxPairingNameBytes       = 64
-	MaxPairingIDBytes         = 128
-	MaxTranscriptIDBytes      = 64 // SHA-512 at most
+	// MaxPairingIdentities is kept for compatibility; retained identities
+	// are bounded by MaxRetainedIdentities alone.
+	MaxPairingIdentities = 1024
+	// MaxActiveContacts bounds the contacts not unpaired, and
+	// MaxRetainedIdentities every contact row kept, unpaired ones included
+	// (#276, D4).
+	MaxActiveContacts     = 1024
+	MaxRetainedIdentities = 2048
+	MaxPairingOutcomes    = 4096
+	MaxPairingNameBytes   = 64
+	MaxPairingIDBytes     = 128
+	MaxTranscriptIDBytes  = 64 // SHA-512 at most
 )
 
 // PairingOutcome is one successful pairing operation, kept durably so a repeat
@@ -75,6 +89,14 @@ type PairingOutcome struct {
 	Name         string
 	TranscriptID []byte
 	At           time.Time
+	// Mode is what the exchange can install (#276); "" is legacy.
+	Mode ExchangeMode
+	// BegunMark is the global authority mark when the attempt began: an
+	// authority transition of the identity since then refuses the commit.
+	BegunMark uint64
+	// Repair is the identity the operator declared this exchange repairs,
+	// "" for none.
+	Repair string
 }
 
 // PairingRequest is the current decision state for one identity.
@@ -86,6 +108,11 @@ type PairingRequest struct {
 	// DeliveredAt is when the joiner acknowledged the decision; until then
 	// an accepted request is not yet a contact.
 	DeliveredAt time.Time
+	// OperationID names the identity's current epoch-capable candidate, and
+	// Kind what it is; display only, never authority (#276). Both are empty
+	// for a legacy request.
+	OperationID string
+	Kind        ExchangeKind
 }
 
 // PairingStore keeps pairing outcomes and requests durably.
@@ -109,7 +136,20 @@ type PairingStore interface {
 	// Deliver records that the joiner acknowledged the request's decision,
 	// once; an accepted one becomes a contact in the same write. The
 	// request must hold that decision.
+	// An identity whose candidate is epoch-capable is ErrOperationRequired:
+	// its delivery goes through DeliverExchange.
 	Deliver(ctx context.Context, identityKey string, decision PairingState, at time.Time) (PairingRequest, error)
+	// PairingMark is the global authority mark, captured as an attempt
+	// begins (#276).
+	PairingMark(ctx context.Context) (uint64, error)
+	// Exchange is one exchange's ledger row, if any; legacy exchanges have
+	// none.
+	Exchange(ctx context.Context, operationID string) (ExchangeRecord, bool, error)
+	// DeliverExchange records the joiner's acknowledgement of one
+	// epoch-capable exchange, by its operation: a replay answers what was
+	// recorded, then the authority mark is checked, then an acceptance
+	// installs the pairing atomically.
+	DeliverExchange(ctx context.Context, d ExchangeDelivery) (InstallResult, error)
 }
 
 // DeliverDecision is Deliver's transition for one request: it changes it
@@ -139,6 +179,15 @@ func ValidOutcome(o PairingOutcome) error {
 	present := []bool{o.OperationID != "", o.InvitationID != "", o.IdentityKey != "", len(o.TranscriptID) > 0, !o.At.IsZero()}
 	if slices.Contains(present, false) {
 		return errors.New("peer: pairing outcome is missing a required field")
+	}
+	return ValidMark(o.BegunMark)
+}
+
+// ValidMark refuses an authority mark beyond what the store's signed
+// counter holds: it is never wrapped (#276, Amendment B).
+func ValidMark(mark uint64) error {
+	if mark > math.MaxInt64 {
+		return fmt.Errorf("%w: authority mark beyond its range", ErrInvalidPairingOutcome)
 	}
 	return nil
 }
@@ -176,26 +225,41 @@ func validPairingName(name string) bool {
 }
 
 // PairingCounts is what admitting a new outcome depends on, read atomically
-// with the commit.
+// with the commit: Identities counts the distinct identities retained by
+// any durable evidence (contacts, requests, joins), and Retained says the
+// outcome's identity is one of them; KnownIdentity, that it has a request.
 type PairingCounts struct {
 	Outcomes, Identities, Pending int
-	KnownIdentity                 bool
+	KnownIdentity, Retained       bool
 }
 
 // AdmitOutcome refuses a new outcome to a full store. A known identity adds
-// no request, so only the outcome bound applies to it.
+// no request, so only the outcome bound applies to it; a retained one
+// reuses its identity slot.
 func AdmitOutcome(c PairingCounts) error {
 	switch {
 	case c.Outcomes >= MaxPairingOutcomes:
 		return ErrOutcomeCapacity
 	case c.KnownIdentity:
 		return nil
-	case c.Identities >= MaxPairingIdentities:
-		return ErrIdentityCapacity
-	case c.Pending >= MaxPendingPairingRequests:
+	}
+	if err := AdmitRetained(c); err != nil {
+		return err
+	}
+	if c.Pending >= MaxPendingPairingRequests {
 		return ErrTooManyPending
 	}
 	return nil
+}
+
+// AdmitRetained refuses a new identity beyond MaxRetainedIdentities; one
+// already retained reuses its slot. The inviter's outcome and the joiner's
+// verified exchange both pass it before storing an identity.
+func AdmitRetained(c PairingCounts) error {
+	if c.Retained || c.Identities < MaxRetainedIdentities {
+		return nil
+	}
+	return ErrIdentityCapacity
 }
 
 // SameOutcome compares every immutable field of two outcomes.
@@ -261,6 +325,20 @@ func (s *MemPairingStore) Deliver(_ context.Context, identityKey string, decisio
 	return next, nil
 }
 
+// PairingMark is always 0: a memory store has no authority transitions.
+func (s *MemPairingStore) PairingMark(context.Context) (uint64, error) { return 0, nil }
+
+// Exchange finds nothing: a memory store keeps legacy pairings only.
+func (s *MemPairingStore) Exchange(context.Context, string) (ExchangeRecord, bool, error) {
+	return ExchangeRecord{}, false, nil
+}
+
+// DeliverExchange has no exchange to deliver: a memory store keeps legacy
+// pairings only.
+func (s *MemPairingStore) DeliverExchange(context.Context, ExchangeDelivery) (InstallResult, error) {
+	return InstallResult{}, ErrNoPairingRequest
+}
+
 func cloneOutcome(o PairingOutcome) PairingOutcome {
 	o.TranscriptID = bytes.Clone(o.TranscriptID)
 	return o
@@ -300,7 +378,7 @@ func (s *MemPairingStore) Commit(_ context.Context, o PairingOutcome) (PairingRe
 
 func (s *MemPairingStore) counts(identityKey string) PairingCounts {
 	_, known := s.requests[identityKey]
-	c := PairingCounts{Outcomes: len(s.outcomes), Identities: len(s.requests), KnownIdentity: known}
+	c := PairingCounts{Outcomes: len(s.outcomes), Identities: len(s.requests), KnownIdentity: known, Retained: known}
 	for _, r := range s.requests {
 		if r.State == PairingPending {
 			c.Pending++

@@ -73,10 +73,10 @@ func insertRefused(ctx context.Context, tx *sql.Tx, r newRow, refusal messaging.
 	key, m, now := r.key, r.m, r.now
 	hash := m.Hash()
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
-(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, class, reason, stored_at,
+(contact, pairing_epoch, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, class, reason, stored_at,
     from_agent, to_agents, reply_id, reply_author, review_ask)
-VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), textHash(m.Text), hash[:],
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		key.contact, key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), textHash(m.Text), hash[:],
 		messaging.StateRefused, refusal.Class, refusal.Reason, msgStamp(now), nullString(m.From), nullList(m.To),
 		nullString(m.ReplyTo.ID), replyAuthor(m), reviewAskJSON(m.Review))
 	return err

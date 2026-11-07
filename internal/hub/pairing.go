@@ -51,13 +51,49 @@ func identityProblem(err error) string {
 	return "identity_unavailable"
 }
 
+// pairingCodes are the refusals with a code of their own (#276).
+var pairingCodes = []struct {
+	err  error
+	code routingError
+}{
+	{peer.ErrPeerTooOld, routingError{protocol.ErrPairingPeerTooOld, "the other side must update to pair again"}},
+	{peer.ErrCrossedTransition, routingError{protocol.ErrPairingCrossed, "the pairing changed meanwhile; use a fresh code"}},
+	{peer.ErrAmbiguousPairing, routingError{protocol.ErrPairingAmbiguousCode, "two pairings crossed; start one fresh repair"}},
+}
+
 func pairingError(err error) *routingError {
-	for known, reason := range pairingRefusals {
-		if errors.Is(err, known) {
-			return &routingError{protocol.ErrPairing, reason}
-		}
+	if rerr, ok := codedPairingError(err); ok {
+		return rerr
+	}
+	if rerr, ok := pairingRefusal(err); ok {
+		return rerr
+	}
+	// Only after the refusals: identity_capacity is a storage error too.
+	if errors.Is(err, peer.ErrIdentityStorage) {
+		return &routingError{protocol.ErrIdentityStorage, "identity_storage"}
 	}
 	return &routingError{protocol.ErrInternal, "pairing state unavailable"}
+}
+
+// codedPairingError is a pairing error with a wire code of its own.
+func codedPairingError(err error) (*routingError, bool) {
+	for _, known := range pairingCodes {
+		if errors.Is(err, known.err) {
+			rerr := known.code
+			return &rerr, true
+		}
+	}
+	return nil, false
+}
+
+// pairingRefusal is a refusal answered as pairing_refused with its reason.
+func pairingRefusal(err error) (*routingError, bool) {
+	for known, reason := range pairingRefusals {
+		if errors.Is(err, known) {
+			return &routingError{protocol.ErrPairing, reason}, true
+		}
+	}
+	return nil, false
 }
 
 // pairingOp checks a request's target and applies it; open returns the code.
@@ -66,30 +102,42 @@ func pairingError(err error) *routingError {
 type pairingOp struct {
 	target   bool
 	identity bool
-	apply    func(h *Hub, ctx context.Context, target string) (code string, err error)
+	apply    func(h *Hub, ctx context.Context, args pairingArgs) (code string, err error)
 }
 
+// pairingArgs are what an operation applies to: its target, and for open
+// the identity key it declares it repairs (#276).
+type pairingArgs struct{ target, repair string }
+
 var pairingOps = map[string]pairingOp{
-	protocol.PairingOpOpen: {false, true, func(h *Hub, _ context.Context, _ string) (string, error) {
-		inv, err := h.pairing.Open()
+	protocol.PairingOpOpen: {false, true, func(h *Hub, _ context.Context, args pairingArgs) (string, error) {
+		inv, err := h.openInvitation(args.repair)
 		return inv.Code, err
 	}},
-	protocol.PairingOpCancel: {true, false, func(h *Hub, _ context.Context, id string) (string, error) {
-		return "", h.pairing.Cancel(id)
+	protocol.PairingOpCancel: {true, false, func(h *Hub, _ context.Context, args pairingArgs) (string, error) {
+		return "", h.pairing.Cancel(args.target)
 	}},
 	protocol.PairingOpStatus: {false, false, noPairingChange},
 	protocol.PairingOpList:   {false, false, noPairingChange},
-	protocol.PairingOpAccept: {true, false, func(h *Hub, ctx context.Context, key string) (string, error) {
-		_, err := h.store.Accept(ctx, key)
+	protocol.PairingOpAccept: {true, false, func(h *Hub, ctx context.Context, args pairingArgs) (string, error) {
+		_, err := h.store.Accept(ctx, args.target)
 		return "", err
 	}},
-	protocol.PairingOpReject: {true, false, func(h *Hub, ctx context.Context, key string) (string, error) {
-		_, err := h.store.Reject(ctx, key)
+	protocol.PairingOpReject: {true, false, func(h *Hub, ctx context.Context, args pairingArgs) (string, error) {
+		_, err := h.store.Reject(ctx, args.target)
 		return "", err
 	}},
 }
 
-func noPairingChange(*Hub, context.Context, string) (string, error) { return "", nil }
+func noPairingChange(*Hub, context.Context, pairingArgs) (string, error) { return "", nil }
+
+// openInvitation opens an invitation, declaring the repair if one is named.
+func (h *Hub) openInvitation(repair string) (peer.Invitation, error) {
+	if repair == "" {
+		return h.pairing.Open()
+	}
+	return h.pairing.OpenRepair(repair)
+}
 
 // loadIdentity loads, or for a new workspace creates, the identity key; a
 // failure is retried on the next request, never repaired by replacing a key.
@@ -175,7 +223,7 @@ func (h *Hub) pairingResponse(ctx context.Context, op pairingOp, msg protocol.Me
 		resp.PairingJoin = view
 		msg.PairingTarget = ""
 	}
-	snapshot, rerr := h.applyPairing(ctx, op, msg.PairingTarget)
+	snapshot, rerr := h.applyPairing(ctx, op, pairingArgs{msg.PairingTarget, msg.PairingRepair})
 	resp.PairingResult = snapshot
 	return resp, rerr
 }
@@ -219,7 +267,7 @@ func encodedLen(v any) int {
 	return len(data)
 }
 
-func (h *Hub) applyPairing(ctx context.Context, op pairingOp, target string) (*protocol.PairingSnapshot, *routingError) {
+func (h *Hub) applyPairing(ctx context.Context, op pairingOp, args pairingArgs) (*protocol.PairingSnapshot, *routingError) {
 	if h.pairing == nil {
 		return nil, &routingError{protocol.ErrInternal, "pairing unavailable"}
 	}
@@ -227,7 +275,7 @@ func (h *Hub) applyPairing(ctx context.Context, op pairingOp, target string) (*p
 	if op.identity && problem != "" {
 		return nil, &routingError{protocol.ErrPairing, problem}
 	}
-	code, err := op.apply(h, ctx, target)
+	code, err := op.apply(h, ctx, args)
 	if err != nil {
 		return nil, pairingError(err)
 	}
@@ -240,6 +288,7 @@ func (h *Hub) applyPairing(ctx context.Context, op pairingOp, target string) (*p
 	}
 	snapshot.IdentityError, snapshot.SelfName, snapshot.NamesAvailable = problem, h.pair.cfg.Name, true
 	snapshot.PauseAvailable, snapshot.AcksAvailable = true, true
+	snapshot.UnpairAvailable, snapshot.RepairAvailable = true, true
 	if h.identity != nil {
 		snapshot.SelfIdentity = h.identity.Fingerprint()
 	}
@@ -260,9 +309,9 @@ func (h *Hub) pairingSnapshot(ctx context.Context) (*protocol.PairingSnapshot, e
 	if len(requests) > protocol.ListedPairingRequests {
 		requests, snapshot.RequestsTruncated = requests[:protocol.ListedPairingRequests], true
 	}
+	unpaired := unpairedSince(snapshot.Contacts)
 	for _, r := range requests {
-		snapshot.Requests = append(snapshot.Requests, protocol.PairingRequestView{IdentityKey: r.IdentityKey, Name: r.Name,
-			State: string(r.State), FirstPairedAt: r.FirstPairedAt, DeliveredAt: timeOrNil(r.DeliveredAt)})
+		snapshot.Requests = append(snapshot.Requests, requestView(r, unpaired))
 	}
 	if err := h.joinsSnapshot(ctx, snapshot); err != nil {
 		return nil, err

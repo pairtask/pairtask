@@ -24,7 +24,7 @@ const (
 
 // contactThread is what chat holds of one contact's messages.
 type contactThread struct {
-	rows      map[string]protocol.ContactMessageView // by direction and ID
+	rows      map[rowRef]protocol.ContactMessageView // by direction, pairing and ID
 	loaded    bool                                   // the newest page arrived at least once
 	failed    bool                                   // the last read was refused; no retry until an event, a reconnect or reopening the tab
 	stale     bool                                   // changed while a refresh was in flight
@@ -37,8 +37,8 @@ type contactThread struct {
 	dirKnown  bool                        // a page or share answer said it, if only that it's empty
 	grants    []protocol.ReviewGrantView  // what the contact may ask of agents here (#235)
 	offset    int                         // rows scrolled up from the newest
-	read      map[string]bool             // inbound IDs a read was confirmed for
-	refused   map[string]bool             // inbound IDs a read was refused for; not asked again until reloaded
+	read      map[readRef]bool            // inbound messages a read was confirmed for
+	refused   map[readRef]bool            // inbound messages a read was refused for; not asked again until reloaded
 	acks      *protocol.ContactAckSummary // the operator's acknowledgments, as last heard (#287)
 	recheck   []int64                     // loaded messages an acknowledgment selected, read again oldest last
 }
@@ -65,13 +65,29 @@ func (s *contactState) thread(contact string) *contactThread {
 	}
 	t := s.threads[contact]
 	if t == nil {
-		t = &contactThread{rows: map[string]protocol.ContactMessageView{}, read: map[string]bool{}, refused: map[string]bool{}}
+		t = &contactThread{rows: map[rowRef]protocol.ContactMessageView{}, read: map[readRef]bool{}, refused: map[readRef]bool{}}
 		s.threads[contact] = t
 	}
 	return t
 }
 
-func rowKey(v protocol.ContactMessageView) string { return v.Direction + "/" + v.ID }
+// rowRef is one message of a contact's thread: a wire ID is unique only
+// in one direction of one pairing, so a pairing again may reuse it (#276).
+// A row from before pairings were tagged has epoch 0.
+type rowRef struct {
+	direction string
+	epoch     int64
+	id        string
+}
+
+func rowKey(v protocol.ContactMessageView) rowRef { return rowRef{v.Direction, v.PairingEpoch, v.ID} }
+
+// readRef is one received message a read names: its pairing, 0 for an
+// untagged row the current pairing reads, and its ID.
+type readRef struct {
+	epoch int64
+	id    string
+}
 
 // contactsAvailable: the broker serves contact messages.
 func (m *Model) contactsAvailable() bool {
@@ -106,12 +122,12 @@ func (m *Model) contactTabShown(key viewKey) bool {
 }
 
 // contactsUsable: connected to a broker that carries contact messages, for
-// a confirmed contact.
+// a confirmed contact or an unpaired one's history.
 func (m *Model) contactsUsable(contact string) bool {
 	if !m.ready() || !m.contactsAvailable() {
 		return false
 	}
-	return m.confirmedContact(contact)
+	return m.historyContact(contact)
 }
 
 // contactNeedsLoad: never loaded, no failure waiting for a retry, and no
@@ -135,7 +151,7 @@ func (m *Model) refreshContact(contact string, before int64) tea.Cmd {
 }
 
 // contactListResult merges a page into the contact's thread. Pages merge
-// by direction and ID, never moving a message's state back, so a late page
+// by direction, pairing and ID, never moving a message's state back, so a late page
 // can't undo a newer one; only the newest refresh decides the sync view.
 func (m *Model) contactListResult(req pendingRequest, resp protocol.Message) tea.Cmd {
 	contact, before := req.ids[0], req.ids[2]
@@ -323,8 +339,8 @@ func (m *Model) contactSubmit() tea.Cmd {
 	case !m.contactsAvailable():
 		m.status = "this broker doesn't carry contact messages; upgrade it"
 		return nil
-	case !m.confirmedContact(contact):
-		m.status = contactConfirming
+	case m.sendRefusal(contact) != "":
+		m.status = m.sendRefusal(contact)
 		return nil
 	case !m.ready():
 		m.status = "not connected; the draft is kept"
@@ -394,6 +410,7 @@ func (m *Model) contactsDisconnected() {
 	if m.contacts.send != nil {
 		m.contacts.send.unknown = true
 	}
+	m.unpairDisconnected()
 	for _, op := range m.contacts.reads {
 		op.unknown = true
 	}
@@ -411,7 +428,7 @@ func (m *Model) contactsReconnected() tea.Cmd {
 	if !m.contactsAvailable() {
 		return nil
 	}
-	return tea.Batch(m.resendContactSend(), m.resendContactReads(), m.resendContactAcks(), m.refreshLoadedContacts())
+	return tea.Batch(m.resendContactSend(), m.resendContactReads(), m.resendContactAcks(), m.resendUnpair(), m.refreshLoadedContacts())
 }
 
 // resendContactSend resends a send whose answer was lost, unchanged.

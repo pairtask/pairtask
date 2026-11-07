@@ -227,8 +227,9 @@ func decideInbound(ctx context.Context, tx *sql.Tx, contact string, m messaging.
 // validSequence: from 1, within what the store can hold.
 func validSequence(n uint64) bool { return n != 0 && n < math.MaxInt64 }
 
-// replay answers a message whose ID or sequence is already held: the same
-// message is Stored again, anything else is a conflict.
+// replay answers a message whose ID or sequence is already held in the
+// contact's current pairing: the same message is Stored again, anything
+// else is a conflict.
 func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (messaging.Answer, bool, error) {
 	row, found, err := messageRow(ctx, tx, messageKey{contact, messaging.DirIn, m.ID})
 	if err != nil {
@@ -241,8 +242,8 @@ func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message
 		return messaging.Answer{}, false, nil
 	}
 	var other int
-	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peer_messages WHERE contact = ? AND direction = 'in' AND n = ?`,
-		contact, int64(m.N)).Scan(&other)
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peer_messages WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND direction = 'in' AND n = ?2`, contact, int64(m.N)).Scan(&other)
 	if err != nil || other == 0 {
 		return messaging.Answer{}, false, err
 	}
@@ -270,32 +271,80 @@ func belowFloor(ctx context.Context, tx *sql.Tx, contact string, n uint64) (bool
 	return int64(n) < floor, err
 }
 
+// replayFloor is the contact's replay floor in its current pairing.
 func replayFloor(ctx context.Context, q rowQuerier, contact string) (int64, error) {
 	var floor int64
-	err := q.QueryRowContext(ctx, `SELECT floor FROM peer_message_floors WHERE contact = ?`, contact).Scan(&floor)
+	err := q.QueryRowContext(ctx, `SELECT floor FROM peer_message_floors WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1,
+		contact).Scan(&floor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	return floor, err
 }
 
-// peerInboxFull: the unread messages or the remembered identities are at
-// their bounds.
+// peerInboxFull: the unread messages of the contact's current pairing, or
+// the remembered identities, are at their bounds.
 func peerInboxFull(ctx context.Context, tx *sql.Tx, contact string, size int) (bool, error) {
 	var unread, unreadBytes int
 	err := tx.QueryRowContext(ctx, `SELECT
     COALESCE(SUM(state = 'received'), 0), COALESCE(SUM(CASE WHEN state = 'received' THEN text_bytes END), 0)
-FROM peer_messages WHERE contact = ? AND direction = 'in'`, contact).Scan(&unread, &unreadBytes)
+FROM peer_messages WHERE `+currentInbound, contact).Scan(&unread, &unreadBytes)
 	if err != nil || !unreadBudget.holds(budget{unread, unreadBytes + size}) {
 		return true, err
 	}
 	return identitiesFull(ctx, tx, contact)
 }
 
-// MarkRead marks inbound messages read as shown here, and queues a receipt
-// for each one newly read; the oldest pending receipts past the bound are
-// dropped.
+// MarkRead marks inbound messages of the contact's current pairing read as
+// shown here, and queues a receipt for each one newly read; the oldest
+// pending receipts past the bound are dropped.
 func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []string, at time.Time) (int, error) {
+	return p.markRead(ctx, ReadMark{Contact: contact, IDs: ids, At: at}, currentMark)
+}
+
+// ReadMark is messages of one of the contact's pairings, named by its
+// epoch, shown to the operator at a time (#276).
+type ReadMark struct {
+	Contact string
+	Epoch   int64
+	IDs     []string
+	At      time.Time
+}
+
+// MarkReadIn marks inbound messages of the pairing r names read as shown
+// here: the current one as MarkRead does, an earlier one, or any of an
+// unpaired or removed contact, as history read here alone, with no receipt
+// for the peer (#276). An epoch past the newest the contact's history
+// holds, or below 1, is messaging.ErrInvalid, marking nothing.
+func (p *PeerMessages) MarkReadIn(ctx context.Context, r ReadMark) (int, error) {
+	return p.markRead(ctx, r, explicitMark)
+}
+
+// markScope is the pairing a mark is read in: as named, or the current one.
+type markScope func(ctx context.Context, tx *sql.Tx, r ReadMark) (ReadMark, error)
+
+// readScope is the scope of a read naming epoch: the current pairing for
+// 0, else the one named (#276).
+func readScope(epoch int64) markScope {
+	if epoch == 0 {
+		return currentMark
+	}
+	return explicitMark
+}
+
+// explicitMark is the mark as named.
+func explicitMark(_ context.Context, _ *sql.Tx, r ReadMark) (ReadMark, error) { return r, nil }
+
+// currentMark is the mark in its contact's current pairing.
+func currentMark(ctx context.Context, tx *sql.Tx, r ReadMark) (ReadMark, error) {
+	var err error
+	r.Epoch, err = contactEpoch(ctx, tx, r.Contact)
+	return r, err
+}
+
+// markRead marks a mark read, in the pairing scope picks, in one
+// transaction.
+func (p *PeerMessages) markRead(ctx context.Context, r ReadMark, scope markScope) (int, error) {
 	if err := p.localOnly(); err != nil {
 		return 0, err
 	}
@@ -304,7 +353,10 @@ func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []strin
 		return 0, err
 	}
 	defer tx.Rollback()
-	marked, err := markReadIn(ctx, tx, readSet{contact, ids, at})
+	if r, err = scope(ctx, tx, r); err != nil {
+		return 0, err
+	}
+	marked, err := markReadIn(ctx, tx, r)
 	if err != nil {
 		return 0, err
 	}
@@ -314,45 +366,58 @@ func (p *PeerMessages) MarkRead(ctx context.Context, contact string, ids []strin
 	return marked, nil
 }
 
-// readSet is received messages shown to the operator at a time.
-type readSet struct {
-	contact string
-	ids     []string
-	at      time.Time
-}
-
-// markReadIn is MarkRead inside a transaction.
-func markReadIn(ctx context.Context, tx *sql.Tx, r readSet) (int, error) {
-	contact, ids, at := r.contact, r.ids, r.at
+// markReadIn is MarkReadIn inside a transaction.
+func markReadIn(ctx context.Context, tx *sql.Tx, r ReadMark) (int, error) {
+	k := pairingKey{r.Contact, r.Epoch}
+	receipt, err := readReceipt(ctx, tx, k)
+	if err != nil {
+		return 0, err
+	}
 	marked := 0
-	for _, id := range ids {
-		n, err := markOneRead(ctx, tx, readOne{contact, id, at})
+	for _, id := range r.IDs {
+		n, err := markOneRead(ctx, tx, readOne{k, id, r.At, receipt})
 		if err != nil {
 			return 0, err
 		}
 		marked += n
 	}
-	if err := dropReceiptsOver(ctx, tx, contact); err != nil {
+	if err := dropReceiptsOver(ctx, tx, r.Contact); err != nil {
 		return 0, err
 	}
 	return marked, nil
 }
 
-// readOne is one inbound message shown to the operator at a time.
-type readOne struct {
-	contact, id string
-	at          time.Time
+// readReceipt is the receipt a read in pairing k owes the peer: pending in
+// the live pairing alone; local only in an earlier one, for an unpaired
+// contact, or one removed, whose history is read here alone (#276).
+func readReceipt(ctx context.Context, tx *sql.Tx, k pairingKey) (string, error) {
+	live, err := heldPairing(ctx, tx, k)
+	if err != nil || !live {
+		return "local", err
+	}
+	return "pending", nil
 }
 
-// markOneRead marks a received message read with a receipt for the peer,
-// or a refusal recorded here read once, with none: the peer already knows.
+// readOne is one inbound message of a pairing shown to the operator at a
+// time, and the receipt its read owes.
+type readOne struct {
+	k       pairingKey
+	id      string
+	at      time.Time
+	receipt string
+}
+
+// markOneRead marks a received message of the pairing read, with the
+// receipt its read owes, or a refusal recorded here read once, with none:
+// the peer already knows. Another pairing's message with the same ID is
+// never touched (#276).
 func markOneRead(ctx context.Context, tx *sql.Tx, r readOne) (int, error) {
 	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET
-    state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?1,
-    receipt = CASE WHEN state = 'received' THEN 'pending' ELSE receipt END,
-    receipt_at = CASE WHEN state = 'received' THEN ?1 ELSE receipt_at END
-WHERE contact = ?2 AND direction = 'in' AND message_id = ?3
-    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, msgStamp(r.at), r.contact, r.id)
+    state = CASE WHEN state = 'received' THEN 'read' ELSE state END, read_at = ?3,
+    receipt = CASE WHEN state = 'received' THEN ?4 ELSE receipt END,
+    receipt_at = CASE WHEN state = 'received' THEN ?3 ELSE receipt_at END
+WHERE contact = ?1 AND pairing_epoch = ?2 AND direction = 'in' AND message_id = ?5
+    AND (state = 'received' OR state = 'refused' AND read_at IS NULL)`, r.k.contact, r.k.epoch, msgStamp(r.at), r.receipt, r.id)
 	if err != nil {
 		return 0, err
 	}
@@ -360,28 +425,35 @@ WHERE contact = ?2 AND direction = 'in' AND message_id = ?3
 	return int(n), err
 }
 
-// dropReceiptsOver drops the oldest pending receipts beyond the bound.
+// dropReceiptsOver drops the oldest pending receipts of the contact's
+// current pairing beyond the bound.
 func dropReceiptsOver(ctx context.Context, tx *sql.Tx, contact string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET receipt = 'dropped'
-WHERE cursor IN (SELECT cursor FROM peer_messages WHERE contact = ?1 AND direction = 'in' AND receipt = 'pending'
+WHERE cursor IN (SELECT cursor FROM peer_messages WHERE `+currentInbound+` AND receipt = 'pending'
     ORDER BY receipt_at DESC, cursor DESC LIMIT -1 OFFSET ?2)`, contact, messaging.Receipts)
 	return err
 }
 
-// PendingReads is the oldest receipts not yet confirmed by the peer.
+// PendingReads is the oldest receipts of the contact's current pairing not
+// yet confirmed by the peer.
 func (p *PeerMessages) PendingReads(ctx context.Context, contact string, max int) ([]string, error) {
 	var ids []string
 	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
 		ids, err = queryStrings(ctx, tx, `SELECT message_id FROM peer_messages
-WHERE contact = ? AND direction = 'in' AND receipt = 'pending' ORDER BY receipt_at, cursor LIMIT ?`,
+WHERE `+currentInbound+` AND receipt = 'pending' ORDER BY receipt_at, cursor LIMIT ?2`,
 			contact, sessionBudget.clamp(budget{max, 0}).count)
 		return err
 	})
 	return ids, err
 }
 
-// ReadConfirmed records the peer's ReadStored for a pending receipt.
+// ReadConfirmed records the peer's ReadStored for a pending receipt of the
+// contact's current pairing.
 func (p *PeerMessages) ReadConfirmed(ctx context.Context, contact, id string) error {
 	return p.exec(ctx, contact, `UPDATE peer_messages SET receipt = 'confirmed'
-WHERE contact = ? AND direction = 'in' AND message_id = ? AND receipt = 'pending'`, contact, id)
+WHERE `+currentInbound+` AND message_id = ?2 AND receipt = 'pending'`, contact, id)
 }
+
+// currentInbound is the messages from contact ?1 in its current pairing
+// (#276).
+const currentInbound = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND direction = 'in'`

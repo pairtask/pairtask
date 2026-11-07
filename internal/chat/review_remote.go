@@ -376,5 +376,5 @@ func (m *Model) remoteReviewResult(req pendingRequest, resp protocol.Message) te
 	t.merge([]protocol.ContactMessageView{*resp.ContactMessage})
 	m.status = req.ids[2]
 	m.keepAdvice(card, resp.ReviewAdvisories)
-	return m.remoteQueued(card, req.ids[1])
+	return m.remoteQueued(card, protocol.ReviewAskRef{Contact: req.ids[0], AskID: req.ids[1], PairingEpoch: resp.ContactMessage.PairingEpoch})
 }

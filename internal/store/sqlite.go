@@ -70,11 +70,16 @@ func Open(path string) (*Store, error) {
 	// serialized write pattern; a reader outside the broker still holds the
 	// file a moment, so a commit waits for it rather than failing at once.
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + peerMessagesSchema + operatorContactSchema + peerRoutingSchema + peerReviewsSchema + reviewOutcomesSchema + reviewAsksSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + contactAcksSchema + refusalNoticesSchema + pairedSchema + consentSchema + consentHeldOutSchema + consentOwnerSchema); err != nil {
+	existing, err := existingTables(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("read schema: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + operatorContactSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + refusalNoticesSchema + pairedSchema + consentSchema + consentOwnerSchema + schemaStepsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	if err := migrate(db); err != nil {
+	if err := migrate(db, existing); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
@@ -163,20 +168,67 @@ var columnAdded = map[string]func(*sql.Tx) error{
 	"peer_contacts.consent_legacy": markConsentLegacy,
 }
 
-func migrate(db *sql.DB) error {
+// existingTables are the tables the file holds before Open creates any.
+func existingTables(db *sql.DB) (map[string]bool, error) {
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT name FROM sqlite_schema WHERE type = 'table'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		existing[name] = true
+	}
+	return existing, rows.Err()
+}
+
+// migrate adds each released column a table lacks, then runs the epoch
+// transition. A column of a table the transition still has to create or
+// rebuild is the transition's to add, with its callback, in its
+// transaction, once every table the callback needs exists.
+func migrate(db *sql.DB, existing map[string]bool) error {
+	if err := restoreEpochTables(db, existing); err != nil {
+		return err
+	}
 	for _, c := range addedColumns {
-		var count int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&count); err != nil {
+		missing, err := columnMissing(db, c.table, c.column)
+		if err != nil {
 			return err
 		}
-		if count != 0 {
+		if !missing {
 			continue
 		}
-		if err := addColumn(db, c.table, c.column, c.decl); err != nil {
+		if err := addReleasedColumn(db, c); err != nil {
 			return err
 		}
 	}
-	return nil
+	return epochTransition(db, existing)
+}
+
+func columnMissing(db *sql.DB, table, column string) (bool, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&count)
+	return count == 0, err
+}
+
+// addReleasedColumn adds a missing column now, unless its table is one the
+// transition creates or rebuilds: one without pairing_epoch.
+func addReleasedColumn(db *sql.DB, c struct{ table, column, decl string }) error {
+	if epochTableColumns[c.table] == "" {
+		return addColumn(db, c.table, c.column, c.decl)
+	}
+	transitionAdds, err := columnMissing(db, c.table, "pairing_epoch")
+	if err != nil || transitionAdds {
+		return err
+	}
+	return addColumn(db, c.table, c.column, c.decl)
 }
 
 // addColumn adds one column, with what it needs from the existing rows, in

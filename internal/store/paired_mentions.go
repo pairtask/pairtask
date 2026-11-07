@@ -55,6 +55,7 @@ var ErrNotPaired = errors.New("not a reply in a shared conversation")
 type PairedBinding struct {
 	Contact, RootLocalID, PeerID string
 	Audience                     protocol.PeerAudience
+	epoch                        int64 // the pairing it was bound under (#276)
 }
 
 // PairedThread is the shared conversation a local message belongs to.
@@ -63,7 +64,8 @@ func (s *Store) PairedThread(ctx context.Context, id string) (PairedBinding, boo
 }
 
 // KeepsConversations: this side keeps a shared conversation with contact,
-// whether or not the contact is still there.
+// whether or not the contact is still there, under any of its pairings:
+// it admits reading history alone, which spans them all (#276).
 func (s *Store) KeepsConversations(ctx context.Context, contact string) (bool, error) {
 	var ok bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM paired_threads WHERE contact = ?)`, contact).Scan(&ok)
@@ -73,8 +75,8 @@ func (s *Store) KeepsConversations(ctx context.Context, contact string) (bool, e
 func pairedThread(ctx context.Context, q rowQuerier, id string) (PairedBinding, bool, error) {
 	var b PairedBinding
 	var audience string
-	err := q.QueryRowContext(ctx, `SELECT contact, root_local_id, peer_id, peer_audience FROM paired_threads WHERE local_id = ?`, id).
-		Scan(&b.Contact, &b.RootLocalID, &b.PeerID, &audience)
+	err := q.QueryRowContext(ctx, `SELECT contact, root_local_id, peer_id, peer_audience, pairing_epoch FROM paired_threads WHERE local_id = ?`, id).
+		Scan(&b.Contact, &b.RootLocalID, &b.PeerID, &audience, &b.epoch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PairedBinding{}, false, nil
 	}
@@ -163,10 +165,11 @@ type threadRow struct {
 	audience                   protocol.PeerAudience
 }
 
+// bindThread binds it under the contact's current pairing (#276).
 func bindThread(ctx context.Context, tx *sql.Tx, r threadRow) error {
 	audience, _ := json.Marshal(r.audience) // a struct of a bool and strings always encodes
-	_, err := tx.ExecContext(ctx, `INSERT INTO paired_threads (local_id, contact, root_local_id, peer_id, peer_audience) VALUES (?, ?, ?, ?, ?)`,
-		r.local, r.contact, r.root, r.peer, string(audience))
+	_, err := tx.ExecContext(ctx, `INSERT INTO paired_threads (local_id, contact, root_local_id, peer_id, peer_audience, pairing_epoch)
+VALUES (?2, ?1, ?3, ?4, ?5, `+currentEpochOf1+`)`, r.contact, r.local, r.root, r.peer, string(audience))
 	return err
 }
 
@@ -206,19 +209,17 @@ type PairedReplyResult struct {
 // PairedReply keeps a reply in its shared conversation and, when the agent
 // may still speak to that workspace, queues it there to the same audience,
 // in one transaction. The same reply again is answered as it was; one that
-// names another destination, or changed, is a conflict.
+// names another destination, or changed, is a conflict. A conversation
+// bound under a pairing since ended takes no reply: ErrUnpaired (#276).
 func (s *Store) PairedReply(ctx context.Context, r PairedReply) (PairedReplyResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PairedReplyResult{}, err
 	}
 	defer tx.Rollback()
-	b, found, err := pairedThread(ctx, tx, r.Msg.InReplyTo)
-	if err != nil || !found {
-		return PairedReplyResult{}, errors.Join(err, ErrNotPaired)
-	}
-	if elsewhere(r.Msg, b) {
-		return PairedReplyResult{}, ErrConversationConflict
+	b, err := replyBinding(ctx, tx, r.Msg)
+	if err != nil {
+		return PairedReplyResult{}, err
 	}
 	reply := pairedReply{r, b, replyDigest(r.Msg, b.RootLocalID)}
 	if held, ok, err := reply.replayed(ctx, tx); err != nil || ok {
@@ -229,6 +230,19 @@ func (s *Store) PairedReply(ctx context.Context, r PairedReply) (PairedReplyResu
 		return PairedReplyResult{}, err
 	}
 	return result, tx.Commit()
+}
+
+// replyBinding is the conversation a reply answers, under a pairing that
+// hasn't ended, when the reply names it.
+func replyBinding(ctx context.Context, tx *sql.Tx, m protocol.Message) (PairedBinding, error) {
+	b, found, err := pairedThread(ctx, tx, m.InReplyTo)
+	if err != nil || !found {
+		return PairedBinding{}, errors.Join(err, ErrNotPaired)
+	}
+	if elsewhere(m, b) {
+		return PairedBinding{}, ErrConversationConflict
+	}
+	return b, refuseRetired(ctx, tx, pairingKey{b.Contact, b.epoch})
 }
 
 // elsewhere: the reply names another destination than its conversation.
@@ -289,8 +303,10 @@ func (p pairedReply) keep(ctx context.Context, tx *sql.Tx) (PairedReplyResult, e
 	if err := p.keepThere(ctx, tx, delivery); err != nil {
 		return PairedReplyResult{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO paired_reply_outcomes (message_id, contact, root_local_id, sender, body_digest, seq, peer, reason)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, p.Msg.MessageID, p.binding.Contact, p.binding.RootLocalID, p.Msg.From, p.digest, seq, delivery.State, delivery.Reason)
+	_, err = tx.ExecContext(ctx, `INSERT INTO paired_reply_outcomes
+(message_id, contact, root_local_id, sender, body_digest, seq, peer, reason, pairing_epoch)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Msg.MessageID, p.binding.Contact, p.binding.RootLocalID, p.Msg.From, p.digest, seq,
+		delivery.State, delivery.Reason, p.binding.epoch)
 	return PairedReplyResult{Seq: seq, PeerDelivery: delivery, Binding: p.binding}, err
 }
 
@@ -321,7 +337,7 @@ func notSent(reason string) protocol.PeerDelivery {
 // operator assigned it in this conversation.
 func (p pairedReply) speaksThere(ctx context.Context, tx *sql.Tx) (bool, error) {
 	var ok bool
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_grants WHERE contact = ?1 AND agent = ?2)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_grants WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND agent = ?2)
     OR EXISTS (SELECT 1 FROM assignments WHERE operator_message_id = ?3 AND agent_id = ?2 AND task = ?4 AND state = ?5)`,
 		p.binding.Contact, p.Msg.From, p.binding.RootLocalID, protocol.TaskReply, protocol.AssignmentAssigned).Scan(&ok)
 	return ok, err
@@ -381,11 +397,11 @@ type keptRow struct {
 
 // keepNotSent stores a reply that didn't go there as a DirKept row: read in
 // the contact's history like any other, never offered to it, and kept even
-// once the contact is gone.
+// once the contact is gone. It numbers in the contact's current pairing.
 func keepNotSent(ctx context.Context, tx *sql.Tx, k keptRow) error {
 	var n int64
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(n), 0) + 1 FROM peer_messages WHERE contact = ? AND direction = ?`,
-		k.contact, messaging.DirKept).Scan(&n)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(n), 0) + 1 FROM peer_messages WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND direction = ?2`, k.contact, messaging.DirKept).Scan(&n)
 	if err != nil {
 		return err
 	}
@@ -393,10 +409,10 @@ func keepNotSent(ctx context.Context, tx *sql.Tx, k keptRow) error {
 	m.N, m.CreatedAt = uint64(n), k.now.UTC()
 	hash := m.Hash()
 	_, err = tx.ExecContext(ctx, `INSERT INTO peer_messages
-(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, reason, stored_at,
+(contact, pairing_epoch, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, reason, stored_at,
     from_agent, to_agents, reply_id, reply_author, local_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		k.contact, messaging.DirKept, m.ID, n, msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		k.contact, k.contact, messaging.DirKept, m.ID, n, msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
 		messaging.StateNotSent, k.reason, msgStamp(k.now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), replyAuthor(m), m.ID)
 	return err
 }

@@ -28,11 +28,13 @@ type findingsSnapshot struct {
 	attempt  sql.NullInt64
 }
 
+// loadFindings is the findings snapshot of the request, in the pairing it
+// was asked under (#276).
 func loadFindings(ctx context.Context, tx *sql.Tx, a AskOut) (findingsSnapshot, error) {
 	var s findingsSnapshot
 	var envelope sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT findings, findings_attempt FROM review_asks_out WHERE contact = ? AND ask_id = ?`,
-		a.Contact, a.AskID).Scan(&envelope, &s.attempt)
+	err := tx.QueryRowContext(ctx, `SELECT findings, findings_attempt FROM review_asks_out
+WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`, a.Contact, a.Epoch, a.AskID).Scan(&envelope, &s.attempt)
 	if envelope.Valid {
 		s.envelope = []byte(envelope.String)
 	}
@@ -118,6 +120,8 @@ func (s findingsSnapshot) enrich(ctx context.Context, tx *sql.Tx, w findingsWrit
 	return writeFindings(ctx, tx, w)
 }
 
+// writeFindings replaces the request's findings snapshot, in the pairing
+// it was asked under (#276).
 func writeFindings(ctx context.Context, tx *sql.Tx, w findingsWrite) error {
 	var envelope any
 	if w.envelope != nil {
@@ -125,7 +129,8 @@ func writeFindings(ctx context.Context, tx *sql.Tx, w findingsWrite) error {
 	}
 	digest := w.o.Digest()
 	_, err := tx.ExecContext(ctx, `UPDATE review_asks_out SET findings = ?, findings_seq = ?, findings_attempt = ?, findings_intent = ?,
-    findings_digest = ? WHERE contact = ? AND ask_id = ?`, envelope, w.o.Seq, w.o.Attempt, w.o.Intent, digest[:], w.a.Contact, w.a.AskID)
+    findings_digest = ? WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`,
+		envelope, w.o.Seq, w.o.Attempt, w.o.Intent, digest[:], w.a.Contact, w.a.Epoch, w.a.AskID)
 	return err
 }
 

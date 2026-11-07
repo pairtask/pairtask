@@ -26,32 +26,46 @@ var (
 	ErrFenced = errors.New("the contact was paused or resumed since this session was admitted")
 )
 
-// linkFence is the contact and generation a session was admitted under.
+// sessionAuthority is what a session is admitted under, and what each of
+// its transactions compares (#276): the contact's generation, its pairing
+// epoch and its pairing ID ("" for a legacy contact).
+type sessionAuthority struct {
+	generation, epoch int64
+	pairingID         string
+}
+
+// linkFence is the contact and authority a session was admitted under.
 type linkFence struct {
-	contact    string
-	generation int64
+	contact string
+	sessionAuthority
 }
 
 // contactState is what admission and the fence check: whether the contact
-// is confirmed, whether it is paused, and its generation.
+// was confirmed, whether it is paused or unpaired, here or by the other
+// side (unpairedByThem), and its authority.
 type contactState struct {
-	confirmed, paused bool
-	generation        int64
+	confirmed, paused, unpaired bool
+	unpairedByThem              bool
+	sessionAuthority
 }
 
 func readContactState(ctx context.Context, q rowQuerier, contact string) (contactState, error) {
-	confirmed, err := confirmedContact(ctx, q, contactKey(contact))
-	if err != nil || !confirmed {
+	known, err := knownContact(ctx, q, contactKey(contact))
+	if err != nil || !known {
 		return contactState{}, err
 	}
 	s := contactState{confirmed: true}
-	var pausedAt string
-	err = q.QueryRowContext(ctx, `SELECT paused_at, generation FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&pausedAt, &s.generation)
-	s.paused = pausedAt != ""
+	var pausedAt, unpairedAt, peerState string
+	var id []byte
+	err = q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, peer_state, generation, pairing_epoch, pairing_id FROM peer_contacts WHERE identity_key = ?`, contact).
+		Scan(&pausedAt, &unpairedAt, &peerState, &s.generation, &s.epoch, &id)
+	s.paused, s.unpaired, s.pairingID = pausedAt != "", unpairedAt != "", string(id)
+	s.unpairedByThem = peerState == remoteUnpaired
 	return s, err
 }
 
-// Admit binds a session to a confirmed, active contact at its generation.
+// Admit binds a session to a confirmed, active contact at its generation,
+// pairing epoch and pairing ID.
 // Only the root store admits: a bound one can't refresh or move its own.
 func (p *PeerMessages) Admit(ctx context.Context, contact string) (*PeerMessages, error) {
 	if p.fence != nil {
@@ -67,10 +81,14 @@ func (p *PeerMessages) Admit(ctx context.Context, contact string) (*PeerMessages
 		return nil, err
 	case !s.confirmed:
 		return nil, messaging.ErrUnknownContact
+	case s.unpaired:
+		return nil, ErrUnpaired
+	case s.unpairedByThem:
+		return nil, ErrUnpairedByThem
 	case s.paused:
 		return nil, ErrPaused
 	}
-	return &PeerMessages{db: p.db, fence: &linkFence{contact: contact, generation: s.generation}, gate: p.gate}, nil
+	return &PeerMessages{db: p.db, fence: &linkFence{contact: contact, sessionAuthority: s.sessionAuthority}, gate: p.gate}, nil
 }
 
 // Fence is the contact and generation this store is bound to; bound is
@@ -83,8 +101,8 @@ func (p *PeerMessages) Fence() (contact string, generation int64, bound bool) {
 }
 
 // checkFence, inside tx, lets a bound store act only for its contact while
-// it is confirmed, active and at the admitted generation. The root store
-// passes.
+// it is confirmed, active and at the admitted generation, epoch and
+// pairing ID. The root store passes.
 func (p *PeerMessages) checkFence(ctx context.Context, tx *sql.Tx, contact string) error {
 	if p.fence == nil {
 		return nil
@@ -96,21 +114,25 @@ func (p *PeerMessages) checkFence(ctx context.Context, tx *sql.Tx, contact strin
 	if err != nil {
 		return err
 	}
-	if !s.admits(p.fence.generation) {
+	if !s.admits(p.fence.sessionAuthority) {
 		return ErrFenced
 	}
 	return nil
 }
 
-// admits: a session admitted at generation may still act, the contact
-// confirmed, active and not paused or resumed since.
-func (s contactState) admits(generation int64) bool {
-	return s.active() && s.generation == generation
+// admits: a session admitted under authority may still act, the contact
+// confirmed, active, not paused or resumed since, and still the same
+// pairing.
+func (s contactState) admits(authority sessionAuthority) bool {
+	return s.active() && s.sessionAuthority == authority
 }
 
 func (s contactState) active() bool {
-	return s.confirmed && !s.paused
+	return s.confirmed && !s.paused && !s.ended()
 }
+
+// ended: the pairing was ended, here or by the other side.
+func (s contactState) ended() bool { return s.unpaired || s.unpairedByThem }
 
 // inTx runs fn in one transaction, after the fence check: nothing in fn may
 // use p.db, which holds the only connection meanwhile.
@@ -138,19 +160,58 @@ func (p *PeerMessages) localOnly() error {
 	return nil
 }
 
-// requireActive refuses a paused contact, inside the caller's transaction.
+// contactFlags are what the refusals below read of a contact.
+type contactFlags struct {
+	pausedAt, unpairedAt, peerState string
+}
+
+// readFlags reads a contact's flags inside the caller's transaction; found
+// is false for no contact row.
+func readFlags(ctx context.Context, q rowQuerier, contact string) (contactFlags, bool, error) {
+	var f contactFlags
+	err := q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, peer_state FROM peer_contacts WHERE identity_key = ?`,
+		contact).Scan(&f.pausedAt, &f.unpairedAt, &f.peerState)
+	if errors.Is(err, sql.ErrNoRows) {
+		return contactFlags{}, false, nil
+	}
+	return f, err == nil, err
+}
+
+// requireActive refuses a paused or unpaired contact, inside the caller's
+// transaction.
 func requireActive(ctx context.Context, q rowQuerier, contact string) error {
-	var pausedAt string
-	err := q.QueryRowContext(ctx, `SELECT paused_at FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&pausedAt)
+	f, found, err := readFlags(ctx, q, contact)
 	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return messaging.ErrUnknownContact
 	case err != nil:
 		return err
-	case pausedAt != "":
+	case !found:
+		return messaging.ErrUnknownContact
+	case f.unpairedAt != "":
+		return ErrUnpaired
+	case f.pausedAt != "":
 		return ErrPaused
 	}
 	return nil
+}
+
+// refuseUnpairedByThem refuses a contact the other side unpaired, inside
+// the caller's transaction; any other, or none, passes.
+func refuseUnpairedByThem(ctx context.Context, q rowQuerier, contact string) error {
+	f, _, err := readFlags(ctx, q, contact)
+	if err == nil && f.peerState == remoteUnpaired {
+		return ErrUnpairedByThem
+	}
+	return err
+}
+
+// refuseUnpaired refuses an unpaired contact, inside the caller's
+// transaction; any other, or none, passes.
+func refuseUnpaired(ctx context.Context, q rowQuerier, contact string) error {
+	f, _, err := readFlags(ctx, q, contact)
+	if err == nil && f.unpairedAt != "" {
+		return ErrUnpaired
+	}
+	return err
 }
 
 const contactPauseSchema = `
@@ -214,7 +275,7 @@ func (s *Store) ApplyContactPause(ctx context.Context, r ContactPause) (ContactP
 func pauseIn(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseResult, bool, error) {
 	action := pauseDetail(r.Paused, true)
 	op := operation{r.OperationID, action, r.Contact, operationFingerprint(action, r.Contact), r.AuditID, r.At}
-	if err := requireContact(ctx, tx, contactKey(r.Contact)); err != nil {
+	if err := requireKnown(ctx, tx, contactKey(r.Contact)); err != nil {
 		return ContactPauseResult{}, false, err
 	}
 	replay, err := registered(ctx, tx, op)
@@ -235,6 +296,9 @@ func pauseIn(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseResul
 // what the audit records.
 func pauseOutcome(ctx context.Context, tx *sql.Tx, r ContactPause, replay bool) (ContactPauseResult, string, error) {
 	if !replay {
+		if err := refuseUnpaired(ctx, tx, r.Contact); err != nil {
+			return ContactPauseResult{}, "", err
+		}
 		return changePause(ctx, tx, r)
 	}
 	out, err := pauseResult(ctx, tx, r.OperationID)
@@ -286,17 +350,28 @@ func changePause(ctx context.Context, tx *sql.Tx, r ContactPause) (ContactPauseR
 	return out, pauseDetail(r.Paused, changed), err
 }
 
-// applyPause writes a pause or resume at its generation; a pause also ends
-// the contact's session consent (#293).
+// applyPause writes a pause or resume at its generation and queues its
+// notice; a pause also ends the contact's session consent (#293).
 func applyPause(ctx context.Context, tx *sql.Tx, r ContactPause, generation int64) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET paused_at = ?, generation = ? WHERE identity_key = ?`,
 		pausedStamp(r), generation, r.Contact); err != nil {
+		return err
+	}
+	if err := queueChangeNotice(ctx, tx, r.Contact, pauseNotice(r.Paused)); err != nil {
 		return err
 	}
 	if !r.Paused {
 		return nil
 	}
 	return pauseSessions(ctx, tx, r.Contact, r.At)
+}
+
+// pauseNotice is the state a pause or resume notice carries.
+func pauseNotice(paused bool) string {
+	if paused {
+		return noticePaused
+	}
+	return noticeResumed
 }
 
 // pausedStamp is paused_at as a change to r writes it: "" for a resume.

@@ -71,6 +71,13 @@ type PairingEndpoint struct {
 	MessagePins   func(fingerprint string) bool
 	Admit         func(ctx context.Context, contact string) (messaging.Store, error)
 	BeginMessages func(contact string) (end func(moved bool), ok bool)
+	// ControlPins accepts a control session from any contact row this side
+	// retains, paused or unpaired included (#276); AdmitControl binds its
+	// store within the contact's bound on control sessions, and
+	// ControlDone records what the session did.
+	ControlPins  func(fingerprint string) bool
+	AdmitControl func(ctx context.Context, contact string) (messaging.ControlStore, error)
+	ControlDone  func(ctx context.Context, s messaging.ControlStore, r messaging.ControlResult)
 	// ClaimLink claims a serving live link for contact after a first round
 	// agreed to stay open, replacing one still open for it (#222).
 	ClaimLink func(contact string) (*LiveClaim, bool)
@@ -131,7 +138,7 @@ func (h *Hub) redeemAvailable() bool {
 // identity; it runs in the Run goroutine.
 func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 	cfg := h.pair.cfg
-	if joiner, err := peer.NewJoiner(cfg.Exchanger, h.store, id, cfg.Clock, rand.Reader); err == nil {
+	if joiner, err := peer.NewJoiner(cfg.Exchanger, h.joinStore(), id, cfg.Clock, rand.Reader); err == nil {
 		h.pair.joiner = joiner
 	}
 	if h.pairing == nil {
@@ -141,6 +148,7 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 		h.pair.endpoint.Store(&PairingEndpoint{Identity: id, Inviter: inviter, Joiner: h.pair.joiner, Clock: cfg.Clock,
 			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark,
 			MessagePins: h.messagePins, Admit: h.admit, BeginMessages: h.beginMessages,
+			ControlPins: h.controlPins, AdmitControl: h.admitControl, ControlDone: h.controlDone,
 			ClaimLink: h.ClaimLink})
 	}
 }
@@ -196,17 +204,37 @@ func (h *Hub) settlePairing() {
 }
 
 // redeemFields refuses the redemption fields on any other operation, before
-// its audit, so a code can never be carried into one.
+// its audit, so a code can never be carried into one; a declared repair
+// belongs to open and redeem only, and must be an identity key.
 func redeemFields(msg protocol.Message) *routingError {
 	fields := []string{msg.PairingDestination, msg.PairingCode, msg.PairingName}
 	if msg.PairingOp != protocol.PairingOpRedeem && slices.ContainsFunc(fields, func(f string) bool { return f != "" }) {
 		return &routingError{protocol.ErrMalformedFrame, "pairing_destination, pairing_code and pairing_name belong to redeem only"}
 	}
+	return repairField(msg)
+}
+
+// repairOps are the operations that may declare a repair.
+var repairOps = []string{protocol.PairingOpOpen, protocol.PairingOpRedeem}
+
+// repairField refuses a declared repair on another operation, or one that
+// names no identity key.
+func repairField(msg protocol.Message) *routingError {
+	if msg.PairingRepair == "" {
+		return nil
+	}
+	if !slices.Contains(repairOps, msg.PairingOp) {
+		return &routingError{protocol.ErrMalformedFrame, "pairing_repair belongs to open and redeem only"}
+	}
+	if peer.ValidIdentityKey(msg.PairingRepair) != nil {
+		return &routingError{protocol.ErrMalformedFrame, "pairing_repair must be a full identity key"}
+	}
 	return nil
 }
 
 func (h *Hub) redeemRequest(msg protocol.Message) (peer.JoinRequest, *routingError) {
-	req := peer.JoinRequest{OperationID: msg.MessageID, Destination: msg.PairingDestination, Name: msg.PairingName, Code: []byte(msg.PairingCode)}
+	req := peer.JoinRequest{OperationID: msg.MessageID, Destination: msg.PairingDestination, Name: msg.PairingName, Code: []byte(msg.PairingCode),
+		Repair: msg.PairingRepair}
 	if req.Name == "" {
 		req.Name = h.pair.cfg.Name
 	}
@@ -268,7 +296,8 @@ func (h *Hub) replayRedeem(known peer.JoinRecord, join peer.JoinRequest, err err
 	if err != nil {
 		return redeemReply{&routingError{protocol.ErrInternal, "pairing state unavailable"}}
 	}
-	if known.Destination != join.Destination || known.JoinerName != join.Name {
+	same := []bool{known.Destination == join.Destination, known.JoinerName == join.Name, known.Repair == join.Repair}
+	if slices.Contains(same, false) {
 		return redeemReply{&routingError{protocol.ErrPairing, "join_conflict"}}
 	}
 	return redeemReply{}
@@ -348,6 +377,7 @@ var pairingCauses = []struct {
 	err   error
 	cause string
 }{
+	{peer.ErrPeerTooOld, protocol.ErrPairingPeerTooOld}, // before exchange_failed, which wraps it on the joiner
 	{peer.ErrJoinOutcomeUnknown, "outcome_unknown"},
 	{peer.ErrJoinRefused, "refused"},
 	{peer.ErrExchangeFailed, "exchange_failed"},
@@ -414,8 +444,13 @@ func (h *Hub) joinsSnapshot(ctx context.Context, snapshot *protocol.PairingSnaps
 	if len(joins) > protocol.ListedPairingJoins {
 		joins, snapshot.JoinsTruncated = joins[:protocol.ListedPairingJoins], true
 	}
+	unpaired := unpairedSince(snapshot.Contacts)
 	for _, j := range joins {
-		snapshot.Joins = append(snapshot.Joins, h.settledJoinView(j))
+		view := h.settledJoinView(j)
+		if err := h.joinKind(ctx, &view, unpaired); err != nil {
+			return err
+		}
+		snapshot.Joins = append(snapshot.Joins, view)
 	}
 	snapshot.RedeemAvailable = h.redeemAvailable()
 	return nil

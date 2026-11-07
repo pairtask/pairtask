@@ -17,7 +17,7 @@ const pendingAcceptance = "pending_acceptance"
 var pairVerbs = []string{"open", "status", "cancel", "accept", "reject", "redeem", "settle"}
 
 // contactPairVerbs are offered too in a contact's tab, where they act.
-var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairReview, pairApprove, pairDecline, pairName, pairAddress, pairPause, pairResume}
+var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairReview, pairApprove, pairDecline, pairName, pairAddress, pairPause, pairResume, pairUnpair}
 
 // pairVerbsHere are the /pair words that act in the open tab.
 func (m *Model) pairVerbsHere() []string {
@@ -46,6 +46,7 @@ var pairUsages = map[string]string{
 	"name":    "name NAME|--clear: in a ⇄ tab, what this side calls that workspace",
 	"pause":   "pause: in a ⇄ tab, block new traffic with that workspace, both ways, until resume",
 	"resume":  "resume: in a ⇄ tab, let queued messages flow with that workspace again",
+	"unpair":  "unpair [NAME|KEY]: end that workspace's pairing for good, its history kept; a card asks you to confirm",
 	"consent": "consent [ID | contact:NAME | on NAME | off NAME | reset NAME AGENT OPERATION]: what paired workspaces wait for you to decide",
 }
 

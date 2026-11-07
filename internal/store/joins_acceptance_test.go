@@ -38,10 +38,14 @@ func joinStart(t *testing.T, db peer.JoinStore, id string) peer.JoinRecord {
 }
 func joinVerified(t *testing.T, db peer.JoinStore, id string) peer.JoinRecord {
 	t.Helper()
+	return joinVerifiedPeer(t, db, id, joinKey(2))
+}
+func joinVerifiedPeer(t *testing.T, db peer.JoinStore, id, remote string) peer.JoinRecord {
+	t.Helper()
 	joinStart(t, db, id)
 	_, err := db.SetCorrelation(context.Background(), id, peer.InviterHello{InvitationID: "inv-" + id, OperationID: "remote-" + id}, joinAt.Add(time.Second))
 	pairOK(t, err)
-	r, err := db.RecordVerified(context.Background(), id, peer.ExchangeResult{Peer: joinKey(2), TranscriptID: []byte("provider-transcript")}, joinAt.Add(2*time.Second))
+	r, err := db.RecordVerified(context.Background(), id, peer.ExchangeResult{Peer: remote, TranscriptID: []byte("provider-transcript")}, joinAt.Add(2*time.Second))
 	pairOK(t, err)
 	return r
 }
@@ -135,7 +139,7 @@ func TestJoinsAcceptanceRecoveryIsExplicitAndPreservesUnknown(t *testing.T) {
 		_, err := db.SetCorrelation(ctx, "exchange", peer.InviterHello{InvitationID: "inv", OperationID: "remote"}, joinAt)
 		pairOK(t, err)
 		unknown := joinVerified(t, db, "unknown")
-		ready := joinVerified(t, db, "ready")
+		ready := joinVerifiedPeer(t, db, "ready", joinKey(3))
 		_, err = db.RecordReceipt(ctx, "ready", joinReceipt(ready), joinAt)
 		pairOK(t, err)
 		_, err = db.Joins(ctx)

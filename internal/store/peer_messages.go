@@ -13,14 +13,16 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
 
-// peerMessagesSchema keeps messages between paired workspaces (#210), both
-// directions, one row each. A message's ID, sequence, time and hash never
-// change; its text is collected within the bounds, and an inbound row is
-// the tombstone that stops a replay until the floor passes it.
-const peerMessagesSchema = `
-CREATE TABLE IF NOT EXISTS peer_messages (
+// peerMessagesColumns keeps messages between paired workspaces (#210),
+// both directions, one row each. A message's ID, sequence, time and hash
+// never change; its text is collected within the bounds, and an inbound row
+// is the tombstone that stops a replay until the floor passes it.
+// The transition creates it, or rebuilds a released one, with
+// pairing_epoch in its key (#276).
+const peerMessagesColumns = `(
     cursor       INTEGER PRIMARY KEY AUTOINCREMENT,
     contact      TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     direction    TEXT NOT NULL,
     message_id   TEXT NOT NULL,
     n            INTEGER NOT NULL,
@@ -37,19 +39,25 @@ CREATE TABLE IF NOT EXISTS peer_messages (
     read_at      TEXT,
     receipt      TEXT NOT NULL DEFAULT '',
     receipt_at   TEXT,
-    UNIQUE (contact, direction, message_id),
-    UNIQUE (contact, direction, n)
-);
-CREATE INDEX IF NOT EXISTS peer_messages_state ON peer_messages (contact, direction, state);
-CREATE TABLE IF NOT EXISTS peer_message_sequences (
-    contact TEXT PRIMARY KEY,
-    next    INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS peer_message_floors (
-    contact TEXT PRIMARY KEY,
-    floor   INTEGER NOT NULL
-);
-`
+    UNIQUE (contact, pairing_epoch, direction, message_id),
+    UNIQUE (contact, pairing_epoch, direction, n)
+)`
+
+// peerMessageSequencesColumns is peer_message_sequences with pairing_epoch in its key (#276).
+const peerMessageSequencesColumns = `(
+    contact TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
+    next    INTEGER NOT NULL,
+    PRIMARY KEY (contact, pairing_epoch)
+)`
+
+// peerMessageFloorsColumns is peer_message_floors with pairing_epoch in its key (#276).
+const peerMessageFloorsColumns = `(
+    contact TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
+    floor   INTEGER NOT NULL,
+    PRIMARY KEY (contact, pairing_epoch)
+)`
 
 // messagePageLimit bounds one Page.
 const messagePageLimit = 64
@@ -66,23 +74,55 @@ var _ messaging.Store = (*PeerMessages)(nil)
 // PeerMessages is the messaging store over this database.
 func (s *Store) PeerMessages() *PeerMessages { return &PeerMessages{db: s.db, gate: s.gate} }
 
-// confirmedContact: a contact row and a confirmed decision, as the inviter
-// (a delivered acceptance) or as the joiner (a confirmed contact join). A
-// pending or rejected pairing never counts.
+// confirmedContact: a contact row whose pairing wasn't ended since (#276)
+// and whose pairing is confirmed: one installed through the exchange
+// ledger by the installed row its pairing_op names, nothing else; a legacy
+// one by its decision, as the inviter (a delivered acceptance) or as the
+// joiner (a confirmed contact join). A pending or rejected pairing never
+// counts.
 func confirmedContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, error) {
 	var ok bool
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts WHERE identity_key = ?1) AND (
-    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?1 AND state = 'accepted' AND delivered_at IS NOT NULL)
-    OR EXISTS (SELECT 1 FROM peer_joins WHERE peer = ?1 AND state = 'contact' AND decision_confirmed_at IS NOT NULL))`,
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts c WHERE c.identity_key = ?1 AND c.unpaired_at = '' AND `+pairingConfirmed+`)`,
 		string(contact)).Scan(&ok)
 	return ok, err
 }
 
+// knownContact: a confirmed contact, or one whose pairing was confirmed and
+// has ended since; an unpaired contact keeps its history (#276).
+func knownContact(ctx context.Context, q rowQuerier, contact contactKey) (bool, error) {
+	var ok bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_contacts c WHERE c.identity_key = ?1 AND (c.unpaired_at != '' OR `+pairingConfirmed+`))`,
+		string(contact)).Scan(&ok)
+	return ok, err
+}
+
+// pairingConfirmed is the confirmed pairing of contact row c, identity ?1:
+// a pairing ID is confirmed only by the installed row its pairing_op
+// names; a legacy pairing, with none, by its decision.
+const pairingConfirmed = `(
+    (c.pairing_id IS NOT NULL AND EXISTS (SELECT 1 FROM pairing_exchanges x
+        WHERE x.operation_id = c.pairing_op AND x.identity_key = ?1 AND x.state = 'installed'))
+    OR (c.pairing_id IS NULL AND ` + pairingDecided + `))`
+
+// pairingDecided is the legacy confirmed decision for identity ?1.
+const pairingDecided = `(
+    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?1 AND state = 'accepted' AND delivered_at IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM peer_joins WHERE peer = ?1 AND state = 'contact' AND decision_confirmed_at IS NOT NULL))`
+
 // contactKey is a contact's identity key.
 type contactKey string
 
+// requireContact: a confirmed contact; an unpaired one is ErrUnpaired.
 func requireContact(ctx context.Context, q rowQuerier, contact contactKey) error {
-	ok, err := confirmedContact(ctx, q, contact)
+	if err := requireKnown(ctx, q, contact); err != nil {
+		return err
+	}
+	return refuseUnpaired(ctx, q, string(contact))
+}
+
+// requireKnown: a confirmed contact, or an unpaired one.
+func requireKnown(ctx context.Context, q rowQuerier, contact contactKey) error {
+	ok, err := knownContact(ctx, q, contact)
 	if err == nil && !ok {
 		err = messaging.ErrUnknownContact
 	}
@@ -159,6 +199,9 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	}
 	// A paused contact takes nothing new; a retry above still answers (#276).
 	if err := requireActive(ctx, tx, key.contact); err != nil {
+		return messaging.Row{}, err
+	}
+	if err := refuseUnpairedByThem(ctx, tx, key.contact); err != nil {
 		return messaging.Row{}, err
 	}
 	if err := o.senderMaySpeak(ctx, tx); err != nil {
@@ -238,11 +281,12 @@ func sameAsk(a, b *messaging.ReviewAsk) bool {
 	return *a == *b
 }
 
-// outboxRoom refuses a message the contact's queued messages leave no room for.
+// outboxRoom refuses a message the contact's queued messages, in its
+// current pairing, leave no room for.
 func outboxRoom(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	var held budget
 	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(text_bytes), 0) FROM peer_messages
-WHERE contact = ? AND direction = 'out' AND state = 'queued'`, o.key.contact).Scan(&held.count, &held.bytes)
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = 'out' AND state = 'queued'`, o.key.contact).Scan(&held.count, &held.bytes)
 	if err != nil {
 		return err
 	}
@@ -278,15 +322,15 @@ var sessionBudget = budget{messaging.SessionMessages, messaging.SessionBytes}
 // reused and never wraps.
 func nextSequence(ctx context.Context, tx *sql.Tx, contact contactKey) (uint64, error) {
 	var next int64 = 1
-	err := tx.QueryRowContext(ctx, `SELECT next FROM peer_message_sequences WHERE contact = ?`, string(contact)).Scan(&next)
+	err := tx.QueryRowContext(ctx, `SELECT next FROM peer_message_sequences WHERE contact = ? AND pairing_epoch = `+currentEpoch, string(contact), string(contact)).Scan(&next)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	if next < 1 || next == math.MaxInt64 {
 		return 0, errors.New("messaging: sequence exhausted for this contact")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_sequences (contact, next) VALUES (?, ?)
-ON CONFLICT(contact) DO UPDATE SET next = excluded.next`, string(contact), next+1)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_message_sequences (contact, pairing_epoch, next) VALUES (?, `+currentEpoch+`, ?)
+ON CONFLICT(contact, pairing_epoch) DO UPDATE SET next = excluded.next`, string(contact), string(contact), next+1)
 	return uint64(next), err
 }
 
@@ -314,14 +358,16 @@ func (r newRow) state() string {
 	return initialState[r.key.direction]
 }
 
+// insertMessage stores a message in its contact's current pairing: an ID
+// an earlier pairing used is a new message there, the old row history.
 func insertMessage(ctx context.Context, tx *sql.Tx, r newRow) error {
 	key, m, now := r.key, r.m, r.now
 	hash := m.Hash()
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_messages
-(contact, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at,
+(contact, pairing_epoch, direction, message_id, n, created_at, text, text_bytes, text_hash, hash, state, stored_at,
     from_agent, to_agents, reply_id, reply_author, local_id, review_ask)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
+VALUES (?, `+currentEpoch+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		key.contact, key.contact, key.direction, m.ID, int64(m.N), msgStamp(m.CreatedAt), m.Text, len(m.Text), textHash(m.Text), hash[:],
 		r.state(), msgStamp(now), nullString(m.From), nullList(m.To), nullString(m.ReplyTo.ID), replyAuthor(m), nullString(r.localID), reviewAskJSON(m.Review))
 	return err
 }
@@ -335,13 +381,14 @@ func replyAuthor(m messaging.Message) sql.NullInt64 {
 }
 
 // holdForUpgrade says why queued messages a session's peer can't carry
-// stay queued; a delivery clears it.
+// stay queued; a delivery clears it. Only the current pairing's are offered.
 func holdForUpgrade(ctx context.Context, tx *sql.Tx, contact, carried string) error {
 	if carried == carriedAll {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET class = ?, reason = ?
-WHERE contact = ? AND direction = 'out' AND state = 'queued' AND NOT (`+carried+`)`, messaging.Transient, messaging.ReasonPeerUpgrade, contact)
+	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET class = ?2, reason = ?3
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = 'out' AND state = 'queued' AND NOT (`+carried+`)`,
+		contact, messaging.Transient, messaging.ReasonPeerUpgrade)
 	return err
 }
 
@@ -364,7 +411,8 @@ func carriedAt(version byte) string {
 	return unroutedRow
 }
 
-// Offer is the oldest queued messages that fit the session bounds; queued
+// Offer is the oldest queued messages, in the contact's current pairing
+// (#276), that fit the session bounds; queued
 // messages past QueuedExpiry are expired first and never offered.
 // Before RoutingVersion, messages to or from agents stay queued.
 func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time, l messaging.Limit) ([]messaging.Row, error) {
@@ -378,7 +426,8 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 		if err := holdForUpgrade(ctx, tx, contact, carried); err != nil {
 			return err
 		}
-		rows, err := queryRows(ctx, tx, `WHERE contact = ? AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
+		rows, err := queryRows(ctx, tx, `WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
+    AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
 		out = within(rows, budget{limit.count + 1, limit.bytes})
 		return err
 	})
@@ -402,15 +451,18 @@ func within(rows []storedRow, b budget) []messaging.Row {
 	return out
 }
 
+// expireQueued expires the current pairing's queued messages past
+// QueuedExpiry; an earlier pairing's are history.
 func expireQueued(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
 	ids, err := queryStrings(ctx, tx, `UPDATE peer_messages SET state = 'expired'
-WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ? RETURNING message_id`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND direction = 'out' AND state = 'queued' AND created_at < ?2
+RETURNING message_id`, contact, msgStamp(now.Add(-messaging.QueuedExpiry)))
 	if err != nil {
 		return err
 	}
 	for _, id := range ids {
 		// A review request never sent ends unsent.
-		if err := settleAsks(ctx, tx, askEnd{"unsent", "", now}, oneAsk(contact, id)); err != nil {
+		if err := settleAsks(ctx, tx, askEnd{"unsent", "", now}, currentAsk(contact, id)); err != nil {
 			return err
 		}
 	}
@@ -418,16 +470,22 @@ WHERE contact = ? AND direction = 'out' AND state = 'queued' AND created_at < ? 
 }
 
 // Delivered records the peer's Stored: a queued or expired message is
-// delivered; a read one stays read, and the time is kept once set.
+// delivered; a read one stays read, and the time is kept once set. The ID
+// names a message of the contact's current pairing: one only an earlier
+// pairing used is unknown here (#276).
 func (p *PeerMessages) Delivered(ctx context.Context, contact, id string, at time.Time) error {
 	return p.exec(ctx, contact, `UPDATE peer_messages SET
-    delivered_at = COALESCE(delivered_at, ?),
+    delivered_at = COALESCE(delivered_at, ?3),
     state = CASE WHEN state IN ('queued', 'expired') THEN 'delivered' ELSE state END,
     class = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE class END,
     reason = CASE WHEN state IN ('queued', 'expired') THEN '' ELSE reason END
-WHERE contact = ? AND direction = 'out' AND message_id = ? AND state IN ('queued', 'expired', 'delivered', 'read')`,
-		msgStamp(at), contact, id)
+WHERE `+currentOutbound+` AND state IN ('queued', 'expired', 'delivered', 'read')`,
+		contact, id, msgStamp(at))
 }
+
+// currentOutbound is this side's message ?2 to contact ?1 in its current
+// pairing: the peer's answers name only those (#276).
+const currentOutbound = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND direction = 'out' AND message_id = ?2`
 
 // exec runs one statement for contact in a fenced transaction.
 func (p *PeerMessages) exec(ctx context.Context, contact, query string, args ...any) error {
@@ -449,40 +507,69 @@ func (p *PeerMessages) Refused(ctx context.Context, contact string, refused mess
 		state = messaging.StateRefused
 	}
 	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = ?, class = ?, reason = ?
-WHERE contact = ? AND direction = 'out' AND message_id = ? AND state = 'queued'`, state, r.Class, r.Reason, contact, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = ?3, class = ?4, reason = ?5
+WHERE `+currentOutbound+` AND state = 'queued'`, contact, id, state, r.Class, r.Reason); err != nil {
 			return err
 		}
 		if state != messaging.StateRefused {
 			return nil
 		}
-		// A review request refused for good ends there, and the agent that
-		// sent it is told (#302); a held one waits.
-		return settleRefusedAsk(ctx, tx, contact, refused)
+		return settleCurrentRefusal(ctx, tx, contact, refused)
 	})
 }
 
-// PeerRead records the peer's Read of one of this side's messages to it; a
-// read message was stored, so it is delivered too. Refused messages and
-// anything else are left alone.
-func (p *PeerMessages) PeerRead(ctx context.Context, contact, id string, at time.Time) error {
-	return p.exec(ctx, contact, `UPDATE peer_messages SET state = 'read',
-    read_at = COALESCE(read_at, ?1), delivered_at = COALESCE(delivered_at, ?1), class = '', reason = ''
-WHERE contact = ?2 AND direction = 'out' AND message_id = ?3 AND state IN ('queued', 'expired', 'delivered', 'read')`,
-		msgStamp(at), contact, id)
+// settleCurrentRefusal ends a review request refused for good, and tells the
+// agent that sent it (#302); a held one waits. An ID the contact's current
+// pairing doesn't hold refuses nothing (#276).
+func settleCurrentRefusal(ctx context.Context, tx *sql.Tx, contact string, refused messaging.Refused) error {
+	_, found, err := messageRow(ctx, tx, messageKey{contact, messaging.DirOut, refused.ID})
+	if err != nil || !found {
+		return err
+	}
+	return settleRefusedAsk(ctx, tx, contact, refused)
 }
 
-// Page is a contact's messages, both directions, newest first, before a
-// cursor (0 or less for the newest).
+// PeerRead records the peer's Read of one of this side's messages to it,
+// in the contact's current pairing; a read message was stored, so it is
+// delivered too. Refused messages and anything else are left alone.
+func (p *PeerMessages) PeerRead(ctx context.Context, contact, id string, at time.Time) error {
+	return p.exec(ctx, contact, `UPDATE peer_messages SET state = 'read',
+    read_at = COALESCE(read_at, ?3), delivered_at = COALESCE(delivered_at, ?3), class = '', reason = ''
+WHERE `+currentOutbound+` AND state IN ('queued', 'expired', 'delivered', 'read')`,
+		contact, id, msgStamp(at))
+}
+
+// Page is a contact's messages, both directions, of every pairing with it
+// (#276), newest first, before a cursor (0 or less for the newest).
 func (p *PeerMessages) Page(ctx context.Context, contact string, before int64, limit int) ([]messaging.Row, bool, error) {
+	return p.page(ctx, pageQuery{contact, before, limit, ""})
+}
+
+// CurrentPage is Page in the newest pairing the contact's history holds,
+// its current one while paired (#276): what a client without pairing
+// history reads, never another pairing's message of the same ID.
+func (p *PeerMessages) CurrentPage(ctx context.Context, contact string, before int64, limit int) ([]messaging.Row, bool, error) {
+	return p.page(ctx, pageQuery{contact, before, limit, ` AND pairing_epoch = ` + historyEpochOf1})
+}
+
+// pageQuery is one page of a contact's messages: before a cursor, at most
+// limit, in the pairings scope admits.
+type pageQuery struct {
+	contact string
+	before  int64
+	limit   int
+	scope   string
+}
+
+func (p *PeerMessages) page(ctx context.Context, q pageQuery) ([]messaging.Row, bool, error) {
 	if err := p.localOnly(); err != nil {
 		return nil, false, err
 	}
-	limit = max(1, min(limit, messagePageLimit))
+	limit, before := max(1, min(q.limit, messagePageLimit)), q.before
 	if before <= 0 {
 		before = math.MaxInt64
 	}
-	rows, err := queryRows(ctx, p.db, `WHERE contact = ? AND cursor < ? ORDER BY cursor DESC LIMIT ?`, contact, before, limit+1)
+	rows, err := queryRows(ctx, p.db, `WHERE contact = ?1 AND cursor < ?2`+q.scope+` ORDER BY cursor DESC LIMIT ?3`, q.contact, before, limit+1)
 	if err != nil {
 		return nil, false, err
 	}

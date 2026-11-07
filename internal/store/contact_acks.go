@@ -17,16 +17,17 @@ import (
 // Messages received before acknowledgments were tracked stay "before",
 // below a floor written once at migration, never taken for acknowledged.
 
-const contactAcksSchema = `
-CREATE TABLE IF NOT EXISTS peer_ack_floors (
-    contact TEXT PRIMARY KEY,
+// peerAckFloorsColumns is peer_ack_floors with pairing_epoch in its key (#276).
+const peerAckFloorsColumns = `(
+    contact TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     floor   INTEGER NOT NULL DEFAULT 0,
-    expired INTEGER NOT NULL DEFAULT 0
-);
-`
+    expired INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (contact, pairing_epoch)
+)`
 
 // ackFloor is a row's contact's floor: 0 for a contact with none.
-const ackFloor = `COALESCE((SELECT f.floor FROM peer_ack_floors f WHERE f.contact = peer_messages.contact), 0)`
+const ackFloor = `COALESCE((SELECT f.floor FROM peer_ack_floors f WHERE f.contact = peer_messages.contact AND f.pairing_epoch = peer_messages.pairing_epoch), 0)`
 
 // ackEligible: a message received for this side's operator, after the floor.
 // Messages routed to agents are theirs to acknowledge.
@@ -43,11 +44,12 @@ const ackStateColumn = `CASE WHEN direction != 'in' OR state NOT IN ('received',
     ELSE 'needs_ack' END`
 
 // seedAckFloors puts every existing contact's received messages below its
-// floor, once, when acknowledgments start being tracked.
+// floor, once, when acknowledgments start being tracked. It runs inside the
+// pairing-epoch transition (#276), where both tables have the epoch.
 func seedAckFloors(tx *sql.Tx) error {
-	_, err := tx.Exec(`INSERT INTO peer_ack_floors (contact, floor)
-SELECT contact, MAX(cursor) FROM peer_messages WHERE direction = 'in' GROUP BY contact
-ON CONFLICT(contact) DO NOTHING`)
+	_, err := tx.Exec(`INSERT INTO peer_ack_floors (contact, pairing_epoch, floor)
+SELECT contact, pairing_epoch, MAX(cursor) FROM peer_messages WHERE direction = 'in' GROUP BY contact, pairing_epoch
+ON CONFLICT (contact, pairing_epoch) DO NOTHING`)
 	return err
 }
 
@@ -74,7 +76,7 @@ func (p *PeerMessages) Ack(ctx context.Context, contact string, sel AckSelector,
 		return 0, protocol.ContactAckSummary{}, err
 	}
 	defer tx.Rollback()
-	acked, err := ackIn(ctx, tx, ackRequest{contact, sel, at})
+	acked, err := ackIn(ctx, tx, ackRequest{contact: contact, sel: sel, at: at})
 	if err != nil {
 		return 0, protocol.ContactAckSummary{}, err
 	}
@@ -85,20 +87,32 @@ func (p *PeerMessages) Ack(ctx context.Context, contact string, sel AckSelector,
 	return acked, summary, tx.Commit()
 }
 
-// ackRequest is one acknowledgment to apply: whose messages, which, and when.
+// ackRequest is one acknowledgment to apply: whose messages, which, when,
+// and in which pairing, 0 for the current one (#276).
 type ackRequest struct {
 	contact string
 	sel     AckSelector
 	at      time.Time
+	epoch   int64
 }
 
 func ackIn(ctx context.Context, tx *sql.Tx, r ackRequest) (int, error) {
-	where, args, err := ackSelection(ctx, tx, r.contact, r.sel)
+	// An unpaired contact's history is acknowledged to nobody (#276).
+	if err := refuseUnpaired(ctx, tx, r.contact); err != nil {
+		return 0, err
+	}
+	k, err := namedPairing(ctx, tx, pairingKey{r.contact, r.epoch})
 	if err != nil {
 		return 0, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET acked_at = ? WHERE contact = ? AND `+needsAck+` AND `+where,
-		append([]any{msgStamp(r.at), r.contact}, args...)...)
+	where, args, err := ackSelection(ctx, tx, k, r.sel)
+	if err != nil {
+		return 0, err
+	}
+	// Only the named pairing's messages: an ID another one used, or a
+	// cursor reaching its rows, acknowledges nothing there (#276).
+	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET acked_at = ? WHERE contact = ? AND pairing_epoch = ?
+    AND `+needsAck+` AND `+where, append([]any{msgStamp(r.at), k.contact, k.epoch}, args...)...)
 	if err != nil {
 		return 0, err
 	}
@@ -107,8 +121,8 @@ func ackIn(ctx context.Context, tx *sql.Tx, r ackRequest) (int, error) {
 }
 
 // ackSelection is the selector as a condition, after checking a cursor
-// against the newest message received.
-func ackSelection(ctx context.Context, tx *sql.Tx, contact string, sel AckSelector) (string, []any, error) {
+// against the newest message received in the pairing acknowledged.
+func ackSelection(ctx context.Context, tx *sql.Tx, k pairingKey, sel AckSelector) (string, []any, error) {
 	if sel.Upto == 0 {
 		args := make([]any, len(sel.IDs))
 		for i, id := range sel.IDs {
@@ -116,7 +130,7 @@ func ackSelection(ctx context.Context, tx *sql.Tx, contact string, sel AckSelect
 		}
 		return `message_id IN (?` + strings.Repeat(`, ?`, len(sel.IDs)-1) + `)`, args, nil
 	}
-	newest, err := newestReceived(ctx, tx, contact)
+	newest, err := newestReceivedIn(ctx, tx, k)
 	if err != nil {
 		return "", nil, err
 	}
@@ -140,21 +154,23 @@ func (p *PeerMessages) AckSummary(ctx context.Context, contact string) (protocol
 }
 
 // ackSummary reads the count and the cursor bound in one statement, so an
-// "everything" acknowledgment covers exactly what was counted.
+// "everything" acknowledgment covers exactly what was counted. It is the
+// contact's current pairing's: an earlier one's are history (#276).
 func ackSummary(ctx context.Context, q rowQuerier, contact string) (protocol.ContactAckSummary, error) {
 	var s protocol.ContactAckSummary
 	err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(`+needsAck+`), 0), COALESCE(MAX(CASE WHEN `+needsAck+` THEN cursor END), 0),
-    COALESCE((SELECT expired FROM peer_ack_floors WHERE contact = ?1), 0)
-FROM peer_messages WHERE contact = ?1`, contact).Scan(&s.Unacked, &s.AckUpto, &s.AckExpired)
+    COALESCE((SELECT expired FROM peer_ack_floors WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`), 0)
+FROM peer_messages WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1, contact).Scan(&s.Unacked, &s.AckUpto, &s.AckExpired)
 	return s, err
 }
 
 // expireUnacked expires the oldest messages waiting for acknowledgment past
 // UnackedKept, counting them for good: they are never acknowledged, and
-// the count outlives them.
+// the count outlives them. Only the current pairing's count (#276).
 func expireUnacked(ctx context.Context, tx *sql.Tx, contact string, now time.Time) error {
 	res, err := tx.ExecContext(ctx, `UPDATE peer_messages SET ack_expired_at = ?1 WHERE cursor IN (
-    SELECT cursor FROM peer_messages WHERE contact = ?2 AND `+needsAck+` ORDER BY cursor DESC LIMIT -1 OFFSET ?3)`,
+    SELECT cursor FROM peer_messages WHERE contact = ?2 AND pairing_epoch = `+currentEpochAt(2)+` AND `+needsAck+`
+    ORDER BY cursor DESC LIMIT -1 OFFSET ?3)`,
 		msgStamp(now), contact, protocol.UnackedKept)
 	if err != nil {
 		return err
@@ -163,17 +179,21 @@ func expireUnacked(ctx context.Context, tx *sql.Tx, contact string, now time.Tim
 	if err != nil || n == 0 {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO peer_ack_floors (contact, expired) VALUES (?, ?)
-ON CONFLICT(contact) DO UPDATE SET expired = expired + excluded.expired`, contact, n)
+	_, err = tx.ExecContext(ctx, `INSERT INTO peer_ack_floors (contact, pairing_epoch, expired) VALUES (?, `+currentEpoch+`, ?)
+ON CONFLICT(contact, pairing_epoch) DO UPDATE SET expired = expired + excluded.expired`, contact, contact, n)
 	return err
 }
 
-// ContactAck is one operator acknowledgment, audited.
+// ContactAck is one operator acknowledgment, audited. Epoch is the
+// pairing its messages came under (#276): 0 for the current one; another,
+// up to the newest the contact's history holds, is acknowledged here
+// alone, its cursor bound by that pairing's newest message received.
 type ContactAck struct {
 	OperationID, Contact string
 	Selector             AckSelector
 	AuditID              int64
 	Now                  time.Time
+	Epoch                int64
 }
 
 // OperatorContactAck acknowledges the selected messages and finishes its
@@ -181,13 +201,13 @@ type ContactAck struct {
 // acknowledges none, and both answer where the contact stands now.
 func (s *Store) OperatorContactAck(ctx context.Context, c ContactAck) (int, protocol.ContactAckSummary, error) {
 	sel := AckSelector{IDs: canonicalIDs(c.Selector.IDs), Upto: c.Selector.Upto}
-	op := operation{c.OperationID, "ack", c.Contact, ackFingerprint(c.Contact, sel), c.AuditID, c.Now}
+	op := operation{c.OperationID, "ack", c.Contact, ackFingerprint(c.Contact, sel, c.Epoch), c.AuditID, c.Now}
 	acked := 0
 	var summary protocol.ContactAckSummary
 	err := s.operationTx(ctx, op, func(tx *sql.Tx, replay bool) error {
 		var err error
 		if !replay {
-			if acked, err = ackIn(ctx, tx, ackRequest{c.Contact, sel, c.Now}); err != nil {
+			if acked, err = ackIn(ctx, tx, ackRequest{c.Contact, sel, c.Now, c.Epoch}); err != nil {
 				return err
 			}
 		}
@@ -197,12 +217,13 @@ func (s *Store) OperatorContactAck(ctx context.Context, c ContactAck) (int, prot
 	return acked, summary, err
 }
 
-// ackFingerprint names an acknowledgment by what it selects.
-func ackFingerprint(contact string, sel AckSelector) []byte {
+// ackFingerprint names an acknowledgment by what it selects, and in which
+// pairing.
+func ackFingerprint(contact string, sel AckSelector, epoch int64) []byte {
 	if sel.Upto != 0 {
-		return operationFingerprint("ack", contact, "upto", strconv.FormatInt(sel.Upto, 10))
+		return operationFingerprint("ack", contact, epochParts([]string{"upto", strconv.FormatInt(sel.Upto, 10)}, epoch)...)
 	}
-	return operationFingerprint("ack", contact, append([]string{"ids"}, sel.IDs...)...)
+	return operationFingerprint("ack", contact, epochParts(append([]string{"ids"}, sel.IDs...), epoch)...)
 }
 
 // AckSummaries are every contact's acknowledgments, by identity key; a
@@ -212,12 +233,13 @@ func (p *PeerMessages) AckSummaries(ctx context.Context) (map[string]protocol.Co
 		return nil, err
 	}
 	// Every contact with messages or a floor: an expired count outlives
-	// the messages it counted.
+	// the messages it counted. Each counts its current pairing (#276).
 	rows, err := p.db.QueryContext(ctx, `SELECT k.contact,
-    COALESCE((SELECT SUM(`+needsAck+`) FROM peer_messages WHERE contact = k.contact), 0),
-    COALESCE((SELECT MAX(cursor) FROM peer_messages WHERE contact = k.contact AND `+needsAck+`), 0),
-    COALESCE((SELECT expired FROM peer_ack_floors f WHERE f.contact = k.contact), 0)
-FROM (SELECT contact FROM peer_messages UNION SELECT contact FROM peer_ack_floors) k`)
+    COALESCE((SELECT SUM(`+needsAck+`) FROM peer_messages WHERE contact = k.contact AND pairing_epoch = k.epoch), 0),
+    COALESCE((SELECT MAX(cursor) FROM peer_messages WHERE contact = k.contact AND pairing_epoch = k.epoch AND `+needsAck+`), 0),
+    COALESCE((SELECT expired FROM peer_ack_floors f WHERE f.contact = k.contact AND f.pairing_epoch = k.epoch), 0)
+FROM (SELECT u.contact, COALESCE((SELECT ce.pairing_epoch FROM peer_contacts ce WHERE ce.identity_key = u.contact), 1) AS epoch
+    FROM (SELECT contact FROM peer_messages UNION SELECT contact FROM peer_ack_floors) u) k`)
 	if err != nil {
 		return nil, err
 	}
@@ -243,10 +265,39 @@ func (p *PeerMessages) NewestReceived(ctx context.Context, contact string) (int6
 	return newestReceived(ctx, p.db, contact)
 }
 
+// NewestReceivedIn is NewestReceived in one of the contact's pairings
+// (#276): the current one for 0, else one its history holds; any other is
+// messaging.ErrInvalid.
+func (p *PeerMessages) NewestReceivedIn(ctx context.Context, contact string, epoch int64) (int64, error) {
+	if err := p.localOnly(); err != nil {
+		return 0, err
+	}
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true}) // the pairing and the cursor from one snapshot
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	k, err := namedPairing(ctx, tx, pairingKey{contact, epoch})
+	if err != nil {
+		return 0, err
+	}
+	return newestReceivedIn(ctx, tx, k)
+}
+
+// newestReceived is the cursor of the contact's newest message received
+// in its current pairing, 0 for none.
 func newestReceived(ctx context.Context, q rowQuerier, contact string) (int64, error) {
 	var newest int64
-	err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(cursor), 0) FROM peer_messages WHERE contact = ? AND direction = 'in'`,
-		contact).Scan(&newest)
+	err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(cursor), 0) FROM peer_messages WHERE `+currentInbound, contact).Scan(&newest)
+	return newest, err
+}
+
+// newestReceivedIn is the cursor of the newest message received in
+// pairing k, 0 for none.
+func newestReceivedIn(ctx context.Context, q rowQuerier, k pairingKey) (int64, error) {
+	var newest int64
+	err := q.QueryRowContext(ctx, `SELECT COALESCE(MAX(cursor), 0) FROM peer_messages
+WHERE contact = ? AND pairing_epoch = ? AND direction = 'in'`, k.contact, k.epoch).Scan(&newest)
 	return newest, err
 }
 

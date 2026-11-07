@@ -118,6 +118,9 @@ type ReviewAskedItem struct {
 	// own lifecycle.
 	Consent       string `json:"consent,omitempty"`
 	ConsentReason string `json:"consent_reason,omitempty"`
+	// PairingEpoch is the pairing with the contact it was asked under
+	// (#276); set only for a client at PairingHistoryVersion.
+	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
 }
 
 // AskFindings are a request's findings as received: how many the verdict
@@ -181,6 +184,9 @@ type ReviewFailedItem struct {
 	Change     string    `json:"change"`
 	Reason     string    `json:"reason,omitempty"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	// PairingEpoch is the pairing a failed ask was asked under (#276), 0
+	// for a review here.
+	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
 }
 
 // Failed item kinds.
@@ -412,6 +418,9 @@ type ReviewOutcomeView struct {
 	// Findings are the newest verdict's findings received (#303), nil
 	// while none are known: the reviewer's side's words, data.
 	Findings *AskFindings `json:"findings,omitempty"`
+	// PairingEpoch is the pairing with the workspace the request was asked
+	// under (#276); set only for a client at PairingHistoryVersion.
+	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
 }
 
 // ReviewAdvisory is advice on a review request (#304): something known here

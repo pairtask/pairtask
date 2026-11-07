@@ -215,6 +215,7 @@ var panelBuilders = map[string]func(*Model) []string{
 	panelClaims:  (*Model).claimRows,
 	panelRooms:   (*Model).roomRows,
 	panelPairing: (*Model).pairingRows,
+	panelUnpair:  (*Model).unpairRows,
 	panelReviews: (*Model).reviewRows,
 	panelConsent: (*Model).consentRows,
 	panelHeld:    func(m *Model) []string { return m.held.rows },

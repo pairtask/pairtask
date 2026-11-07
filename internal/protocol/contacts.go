@@ -95,6 +95,9 @@ const (
 	CapabilityContactAcks = "contact_acks"
 	// ErrContactPaused refuses a send to a paused contact.
 	ErrContactPaused = "contact_paused"
+	// ErrContactUnpairedByThem refuses a send to a contact the other side
+	// unpaired (#276): unpair here or pair again.
+	ErrContactUnpairedByThem = "contact_unpaired_by_them"
 
 	// CapabilityContactRouting: the broker serves share and unshare, a send
 	// to the contact's agents (contact_to), and routing in the views.
@@ -172,6 +175,9 @@ type ContactMessageView struct {
 	// paired_mentions sets them.
 	Here         []string `json:"here,omitempty"`
 	OperatorHere bool     `json:"operator_here,omitempty"`
+	// PairingEpoch is the pairing with the contact the message came under
+	// (#276); set only for a client at PairingHistoryVersion, 0 otherwise.
+	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
 }
 
 // ContactHeldForUpgrade is the refusal_reason of a queued message to or
@@ -244,10 +250,19 @@ const CapabilityReviewAdvisories = "review_advisories"
 // operator (#278).
 const CapabilityPairedMentions = "paired_mentions"
 
+// CapabilityPairingHistory: a contact's history carries every pairing with
+// it, each message tagged, and an earlier pairing's messages read or
+// acknowledged by contact_epoch (#276). Advertised only to a session that
+// opened at PairingHistoryVersion.
+const CapabilityPairingHistory = "pairing_history"
+
 // ReviewAskRef names one of this side's requests to a paired workspace.
 type ReviewAskRef struct {
 	Contact string `json:"contact"`
 	AskID   string `json:"ask_id"`
+	// PairingEpoch is the pairing it was asked under (#276), 0 for the
+	// contact's current one; another needs PairingHistoryVersion.
+	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
 }
 
 // ReviewAskRefsMax bounds the refs one read names.
@@ -265,6 +280,9 @@ func ValidateReviewAskRefs(refs []ReviewAskRef) error {
 		}
 		if !validAskRef(r.AskID) {
 			return errors.New("review_ask_refs needs each ask_id, at most 128 bytes")
+		}
+		if r.PairingEpoch < 0 {
+			return errors.New("review_ask_refs pairing_epoch is 1 or more, or 0 for the current pairing")
 		}
 	}
 	return nil
@@ -300,7 +318,7 @@ type ContactSyncView struct {
 var contactFields = map[string]contactFieldSet{
 	ContactOpSend:    {key: true, text: true, id: true, to: true},
 	ContactOpList:    {key: true, before: true},
-	ContactOpRead:    {key: true, read: true, id: true},
+	ContactOpRead:    {key: true, read: true, id: true, epoch: true},
 	ContactOpSync:    {key: true},
 	ContactOpShare:   {key: true, id: true, agents: true},
 	ContactOpUnshare: {key: true, id: true, agents: true},
@@ -312,7 +330,9 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpAddress:      {key: true, id: true, text: true},
 	ContactOpPause:        {key: true, id: true},
 	ContactOpResume:       {key: true, id: true},
-	ContactOpAck:          {key: true, id: true, ack: true},
+	ContactOpAck:          {key: true, id: true, ack: true, epoch: true},
+	// Unpairing a contact (#276).
+	ContactOpUnpair: {key: true, id: true, epoch: true, confirm: true},
 	// Pending consent (#293): the list spans every contact without a key.
 	ContactOpConsentList:   {anyKey: true, consentBefore: true},
 	ContactOpConsentDecide: {key: true, id: true, decide: true},
@@ -322,7 +342,7 @@ var contactFields = map[string]contactFieldSet{
 
 type contactFieldSet struct {
 	key, text, note, read, before, id, to, agents, grant, ask, approve, ack bool
-	anyKey, consentBefore, decide, consentOn, scope                         bool
+	anyKey, consentBefore, decide, consentOn, scope, epoch, confirm         bool
 }
 
 // ValidateContactRequest checks an operator_contact frame before anything
@@ -331,7 +351,7 @@ type contactFieldSet struct {
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, " +
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, unpair, " +
 			"consent_list, consent_decide, consent_opt or consent_reset")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
@@ -339,7 +359,17 @@ func ValidateContactRequest(msg Message) error {
 	}
 	return errors.Join(validKeyFor(msg, allowed), validContactID(msg, allowed), validContactText(msg, allowed),
 		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
-		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed), validConsent(msg, allowed))
+		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed), validConsent(msg, allowed),
+		validContactEpoch(msg), validContactUnpair(msg, allowed))
+}
+
+// validContactEpoch refuses a pairing epoch below 0; 0 is the current
+// pairing (#276).
+func validContactEpoch(msg Message) error {
+	if msg.ContactEpoch < 0 {
+		return errors.New("contact_epoch names a pairing: 1 or more, or 0 for the current one")
+	}
+	return nil
 }
 
 // validContactAddress requires an address change's HOST:PORT: a host and
@@ -376,6 +406,9 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"contact_marked", msg.ContactMarked != nil, false},
 		{"contact_ack", msg.ContactAck != nil, allowed.ack},
 		{"contact_ack_upto", msg.ContactAckUpto != 0, allowed.ack},
+		{"contact_epoch", msg.ContactEpoch != 0, allowed.epoch},
+		{"contact_confirm", msg.ContactConfirm != "", allowed.confirm},
+		{"contact_unpaired", msg.ContactUnpaired != nil, false},
 		{"contact_acked", msg.ContactAcked != nil, false},
 		{"contact_acks", msg.ContactAcks != nil, false},
 		{"contact_consent_before", msg.ContactConsentBefore != 0, allowed.consentBefore},

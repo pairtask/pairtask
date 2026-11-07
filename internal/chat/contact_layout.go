@@ -85,16 +85,18 @@ func (s contactSides) senderStyled(v protocol.ContactMessageView) string {
 
 // replyParent is the message v answers in this contact's loaded thread:
 // the same wire ID can be one sent and one received, so the side the reply
-// names decides which, and a side it doesn't name decides nothing. ok is
+// names decides which, and a side it doesn't name decides nothing; it is
+// one of v's own pairing, never another's that reused the ID (#276). ok is
 // false when none or more than one match.
 func replyParent(v protocol.ContactMessageView, thread []protocol.ContactMessageView) (protocol.ContactMessageView, bool) {
 	direction, ok := parentDirection(v)
 	if !ok {
 		return protocol.ContactMessageView{}, false
 	}
+	want := rowRef{direction, v.PairingEpoch, v.ReplyID}
 	var found []protocol.ContactMessageView
 	for _, p := range thread {
-		if p.ID == v.ReplyID && p.Direction == direction {
+		if rowKey(p) == want {
 			found = append(found, p)
 		}
 	}

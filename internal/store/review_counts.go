@@ -24,8 +24,22 @@ var ErrReviewCursor = errors.New("review_before is not a cursor this broker gave
 
 // ReviewCounts are the reviews pending: requests from paired workspaces
 // waiting for this operator, with a token naming that set; reviews running
-// here; and this side's requests to paired workspaces not yet settled.
+// here; and this side's requests to paired workspaces not yet settled, in
+// each contact's current pairing (#276). What failed is counted under every
+// pairing, as FailedReviews lists it.
 func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error) {
+	return s.reviewCounts(ctx, allPairings)
+}
+
+// CurrentReviewCounts is ReviewCounts with what failed counted as
+// CurrentFailedReviews lists it (#276): what an operator without pairing
+// history reads, so its count and token match its failed page.
+func (s *Store) CurrentReviewCounts(ctx context.Context) (protocol.ReviewCounts, error) {
+	return s.reviewCounts(ctx, currentPairings)
+}
+
+// reviewCounts are the counts, what failed counted over the scope.
+func (s *Store) reviewCounts(ctx context.Context, scope pairingScope) (protocol.ReviewCounts, error) {
 	var c protocol.ReviewCounts
 	// One read, so what failed and what is in progress never disagree.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -39,16 +53,18 @@ func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error)
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews WHERE state IN `+openStates).Scan(&c.Running); err != nil {
 		return c, err
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out WHERE settled_at IS NULL`).Scan(&c.AskedOpen); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out WHERE settled_at IS NULL
+    AND pairing_epoch = `+currentEpochFor("review_asks_out.contact")).Scan(&c.AskedOpen); err != nil {
 		return c, err
 	}
-	return c, failureCounts(ctx, tx, &c)
+	return c, failureCounts(ctx, tx, &c, scope)
 }
 
-// failureCounts adds what failed and the asks still in progress (#298).
-func failureCounts(ctx context.Context, tx *sql.Tx, c *protocol.ReviewCounts) error {
+// failureCounts adds what failed in scope and the asks still in progress
+// (#298).
+func failureCounts(ctx context.Context, tx *sql.Tx, c *protocol.ReviewCounts, scope pairingScope) error {
 	var err error
-	if c.Failed, c.FailedToken, err = failures(ctx, tx); err != nil {
+	if c.Failed, c.FailedToken, err = failures(ctx, tx, scope); err != nil {
 		return err
 	}
 	active, err := activeAsks(ctx, tx)
@@ -78,7 +94,11 @@ type pendingCursor struct {
 	Kind    string `json:"k,omitempty"` // a failure's kind (#298)
 	At      string `json:"t"`
 	Contact string `json:"c"`
-	ID      string `json:"i"`
+	// Epoch is a request's pairing (#276), a tiebreak between requests
+	// of one contact asked at the same time; a cursor without one, from
+	// before epochs were listed, reads as the first pairing's.
+	Epoch int64  `json:"e,omitempty"`
+	ID    string `json:"i"`
 }
 
 func (c pendingCursor) encode() string {
@@ -134,7 +154,8 @@ func (s *Store) AwaitingReviews(ctx context.Context, before string) (protocol.Re
 		args = append(args, sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT ri.contact, ri.remote_id, COALESCE(pm.cursor, 0), ri.sender, pm.review_ask, ri.staged_at
-FROM remote_imports ri LEFT JOIN peer_messages pm ON pm.contact = ri.contact AND pm.direction = 'in' AND pm.message_id = ri.remote_id
+FROM remote_imports ri LEFT JOIN peer_messages pm ON pm.contact = ri.contact AND pm.pairing_epoch = ri.pairing_epoch
+    AND pm.direction = 'in' AND pm.message_id = ri.remote_id
 WHERE `+where+` `+awaitingOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
 		return page, err
@@ -178,64 +199,113 @@ func AskView(a *messaging.ReviewAsk) *protocol.ReviewAsk {
 		Scope: a.Scope, Base: a.Base, Head: a.Head, Publish: a.Publish, Formal: a.Formal}
 }
 
-// askedOrder is open first, then newest change, then by contact and ID;
-// afterAsked is everything past a cursor in it.
+// askedOrder is open first, then newest change, then by contact, pairing
+// (#276) and ID; afterAsked is everything past a cursor in it.
 const (
-	askedOrder = `ORDER BY (a.settled_at IS NOT NULL), a.updated_at DESC, a.contact, a.ask_id`
-	afterAsked = ` WHERE ((a.settled_at IS NOT NULL) > :s OR (a.settled_at IS NOT NULL) = :s AND (a.updated_at < :t
-    OR a.updated_at = :t AND (a.contact > :c OR a.contact = :c AND a.ask_id > :i)))`
+	askedOrder = `ORDER BY (a.settled_at IS NOT NULL), a.updated_at DESC, a.contact, a.pairing_epoch, a.ask_id`
+	afterAsked = `((a.settled_at IS NOT NULL) > :s OR (a.settled_at IS NOT NULL) = :s AND (a.updated_at < :t
+    OR a.updated_at = :t AND (a.contact > :c OR a.contact = :c AND (a.pairing_epoch > :e OR a.pairing_epoch = :e AND a.ask_id > :i))))`
 )
 
 // askedColumns are a request as the asked list shows it, with its message's
 // cursor and, when the contact held it for its operator (#293), where that
-// hold stands; askedFrom joins them.
+// hold stands; askedFrom joins them, each in the request's own pairing
+// (#276).
 const (
 	askedColumns = `a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
     a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt,
-    COALESCE(ch.state, ''), COALESCE(ch.reason, '')`
-	askedFrom = `review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.direction = 'out' AND pm.message_id = a.ask_id
-    LEFT JOIN consent_held_out ch ON ch.contact = a.contact AND ch.message_id = a.ask_id`
+    COALESCE(ch.state, ''), COALESCE(ch.reason, ''), a.pairing_epoch`
+	askedFrom = `review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.pairing_epoch = a.pairing_epoch
+    AND pm.direction = 'out' AND pm.message_id = a.ask_id
+    LEFT JOIN consent_held_out ch ON ch.contact = a.contact AND ch.pairing_epoch = a.pairing_epoch AND ch.message_id = a.ask_id`
 )
 
+// askedRow is one request as the asked list reads it: the item, its
+// stored change time, its pairing, and its findings as kept.
+type askedRow struct {
+	item    protocol.ReviewAskedItem
+	updated string
+	epoch   int64
+	f       keptFindings
+}
+
+// scanAsked reads one request of askedColumns, with at most limit
+// findings.
+func scanAsked(row rowScanner, limit int) (askedRow, error) {
+	var r askedRow
+	item := &r.item
+	err := row.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
+		&r.updated, &item.Settled, &item.ReviewID, &item.Reason, &r.f.envelope, &r.f.seq, &r.f.attempt, &item.Consent, &item.ConsentReason,
+		&r.epoch)
+	if err != nil {
+		return r, err
+	}
+	item.Findings, item.PairingEpoch = r.f.view(limit), r.epoch
+	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, r.updated)
+	return r, err
+}
+
+// cursor is the asked list's position at this request.
+func (r askedRow) cursor() string {
+	return pendingCursor{Settled: r.item.Settled, At: r.updated, Contact: r.item.Contact, Epoch: r.epoch, ID: r.item.AskID}.encode()
+}
+
 // AskedReviews is one page of this side's requests to paired workspaces,
-// after the cursor.
+// after the cursor, under every pairing (#276).
 func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.ReviewAskedPage, error) {
+	return s.askedReviews(ctx, before, allPairings)
+}
+
+// CurrentAskedReviews is AskedReviews in the newest pairing with each
+// contact its history holds (#276): what an operator without pairing
+// history reads, its total and cursors over that alone.
+func (s *Store) CurrentAskedReviews(ctx context.Context, before string) (protocol.ReviewAskedPage, error) {
+	return s.askedReviews(ctx, before, currentPairings)
+}
+
+// askedReviews is one page of the requests in scope, after the cursor.
+func (s *Store) askedReviews(ctx context.Context, before string, scope pairingScope) (protocol.ReviewAskedPage, error) {
 	page := protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}
 	cur, err := decodeCursor(before)
 	if err != nil {
 		return page, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out`).Scan(&page.Total); err != nil {
+	// One read, so a pairing again between the total and the rows never
+	// changes which pairing scope names (#276).
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
 		return page, err
 	}
-	where, args := "", []any{}
-	if cur != nil {
-		where = afterAsked
-		args = append(args, sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact), sql.Named("i", cur.ID))
+	defer tx.Rollback()
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out a`+scope.where()).Scan(&page.Total); err != nil {
+		return page, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+` `+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
+	where, args := askedAfter(cur, scope)
+	rows, err := tx.QueryContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
 		return page, err
 	}
 	defer rows.Close()
 	var cursors []string
 	for rows.Next() {
-		var item protocol.ReviewAskedItem
-		var updated string
-		var f keptFindings
-		if err := rows.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
-			&updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt, &item.Consent, &item.ConsentReason); err != nil {
+		r, err := scanAsked(rows, 0) // a list carries counts; one request alone, its findings
+		if err != nil {
 			return page, err
 		}
-		item.Findings = f.view(0) // a list carries counts; one request alone, its findings
-		if item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
-			return page, err
-		}
-		page.Items = append(page.Items, item)
-		cursors = append(cursors, pendingCursor{Settled: item.Settled, At: updated, Contact: item.Contact, ID: item.AskID}.encode())
+		page.Items, cursors = append(page.Items, r.item), append(cursors, r.cursor())
 	}
 	page.More, page.Next, err = finishPage(rows, &page.Items, cursors)
 	return page, err
+}
+
+// askedAfter is the condition on the requests in scope past a cursor, nil
+// for the first page, with its arguments.
+func askedAfter(cur *pendingCursor, scope pairingScope) (string, []any) {
+	if cur == nil {
+		return scope.where(), nil
+	}
+	return scope.where(afterAsked), []any{sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact),
+		sql.Named("e", max(cur.Epoch, 1)), sql.Named("i", cur.ID)}
 }
 
 // AskedByRefs are exactly the requests the refs name, in their order, each
@@ -280,24 +350,26 @@ func (s *Store) AskedDetail(ctx context.Context, ref protocol.ReviewAskRef) (pro
 	return page, err
 }
 
-// askedItem is one request as the asked list shows it, with at most limit
-// findings.
+// askedItem is one request, of the pairing the ref names, 0 for the
+// contact's current one (#276), as the asked list shows it, with at most
+// limit findings.
 func askedItem(ctx context.Context, tx *sql.Tx, ref protocol.ReviewAskRef, limit int) (protocol.ReviewAskedItem, bool, error) {
-	var item protocol.ReviewAskedItem
-	var updated string
-	var f keptFindings
-	err := tx.QueryRowContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+` WHERE a.contact = ? AND a.ask_id = ?`,
-		ref.Contact, ref.AskID).Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
-		&updated, &item.Settled, &item.ReviewID, &item.Reason, &f.envelope, &f.seq, &f.attempt, &item.Consent, &item.ConsentReason)
+	epoch, args := refEpoch(ref)
+	r, err := scanAsked(tx.QueryRowContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+`
+WHERE a.contact = ?1 AND a.pairing_epoch = `+epoch+` AND a.ask_id = ?2`, args...), limit)
 	if err == sql.ErrNoRows {
-		return item, false, nil
+		return r.item, false, nil
 	}
-	if err != nil {
-		return item, false, err
+	return r.item, err == nil, err
+}
+
+// refEpoch is the pairing a ref names as a condition on contact ?1, with
+// the ref's arguments: its epoch as ?3, or the contact's current one.
+func refEpoch(ref protocol.ReviewAskRef) (string, []any) {
+	if ref.PairingEpoch == 0 {
+		return currentEpochOf1, []any{ref.Contact, ref.AskID}
 	}
-	item.Findings = f.view(limit)
-	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
-	return item, err == nil, err
+	return "?3", []any{ref.Contact, ref.AskID, ref.PairingEpoch}
 }
 
 // pendingLimit reads one item past a page, to tell whether more follow.

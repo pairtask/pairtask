@@ -110,6 +110,10 @@ func (p *PairingServer) serve(ctx context.Context, raw net.Conn) {
 		p.messageSession(ctx, attemptCtx{netCtx, storeCtx}, conn, ep)
 		return
 	}
+	if conn.Protocol() == firstcontact.ControlALPN {
+		p.controlSession(attemptCtx{netCtx, storeCtx}, conn, ep)
+		return
+	}
 	if !take(p.slots) {
 		p.log.Warn("pairing connection refused: too many")
 		return
@@ -126,7 +130,7 @@ func (p *PairingServer) handshake(netCtx context.Context, raw net.Conn, ep hub.P
 		return nil, false
 	}
 	defer release(p.handshakes)
-	opts := firstcontact.ServerOptions{ContactPins: ep.ContactPins, MessagePins: ep.MessagePins}
+	opts := firstcontact.ServerOptions{ContactPins: ep.ContactPins, MessagePins: ep.MessagePins, ControlPins: ep.ControlPins}
 	conn, err := firstcontact.ServerWith(netCtx, raw, ep.Identity, ep.Clock, opts)
 	if err != nil {
 		p.log.Info("pairing first contact failed", "cause", hub.PairingCause(err))
@@ -212,11 +216,43 @@ func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *first
 		p.log.Info("message session ended", "cause", hub.PairingCause(err))
 		return nil, hub.FirstRound{}
 	}
+	if err := hub.ClearRemotePause(storeCtx, admitted, version); err != nil {
+		p.log.Warn("remote pause not cleared", "cause", hub.PairingCause(err))
+	}
 	p.log.Info("message session answered", "received", result.Received, "sent", result.Sent)
 	if version < messaging.LiveVersion {
 		return nil, hub.FirstRound{}
 	}
 	return p.stayOpen(s, contact, ep), hub.FirstRound{Carried: counted, Version: version, Store: admitted}
+}
+
+// controlSession answers a retained contact's control session (#276)
+// under a message slot, within MessageBudget: one session per contact at a
+// time, message or control, and the contact's bound on control sessions.
+func (p *PairingServer) controlSession(attempt attemptCtx, conn *firstcontact.Conn, ep hub.PairingEndpoint) {
+	if !take(p.messages) {
+		p.log.Warn("control session refused: too many")
+		return
+	}
+	defer release(p.messages)
+	contact := conn.Connection().PeerLeaf
+	end, free := ep.BeginMessages(contact)
+	if !free {
+		p.log.Info("control session refused: a session is running for this contact")
+		return
+	}
+	defer end(false)
+	admitted, err := ep.AdmitControl(attempt.store, contact)
+	if err != nil {
+		p.log.Info("control session refused", "cause", hub.PairingCause(err))
+		return
+	}
+	sessionCtx, cancel := context.WithTimeout(attempt.net, hub.MessageBudget)
+	defer cancel()
+	s := messaging.ControlSession{Frames: conn.MessageFrames(sessionCtx), Store: admitted, Contact: contact}
+	result, err := s.Serve(attempt.store)
+	ep.ControlDone(attempt.store, admitted, result)
+	p.log.Info("control session ended", "sent", result.Sent, "received", result.Received, "cause", hub.PairingCause(err))
 }
 
 // stayOpen answers whether the connection stays open as a live link.

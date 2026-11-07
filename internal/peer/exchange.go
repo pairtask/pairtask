@@ -37,10 +37,15 @@ type Frames interface {
 	Recv() ([]byte, error)
 }
 
-// ExchangeBinding is everything the exchange must bind: both roles'
-// fingerprints as presented on this connection, both operation IDs, the
-// invitation, the joiner's name and the connection's channel binding.
+// ExchangeBinding is everything the exchange must bind: the mode the
+// connection negotiated, both roles' fingerprints as presented on this
+// connection, both operation IDs, the invitation, the joiner's name and the
+// connection's channel binding.
 type ExchangeBinding struct {
+	// Mode is the connection's negotiated mode, never chosen apart from it
+	// (#276): "" or legacy binds exactly what a v8 build binds.
+	Mode ExchangeMode
+
 	InvitationID, JoinerOperationID, InviterOperationID string
 	Inviter, Joiner                                     string
 	JoinerName                                          string
@@ -49,8 +54,9 @@ type ExchangeBinding struct {
 
 // Validate refuses a binding the exchange could not bind faithfully.
 func (b ExchangeBinding) Validate() error {
-	ids := []bool{validPairingID(b.InvitationID), validPairingID(b.JoinerOperationID), validPairingID(b.InviterOperationID)}
-	if slices.Contains(ids, false) || !validPairingName(b.JoinerName) {
+	ids := []bool{validPairingID(b.InvitationID), validPairingID(b.JoinerOperationID), validPairingID(b.InviterOperationID),
+		validPairingName(b.JoinerName), b.Mode.known()}
+	if slices.Contains(ids, false) {
 		return ErrInvalidBinding
 	}
 	if err := validPeers(b.Inviter, b.Joiner); err != nil {
@@ -81,6 +87,8 @@ func validChannelBinding(cb []byte) error {
 type ExchangeResult struct {
 	Peer         string
 	TranscriptID []byte
+	// Mode is what the exchange can install: the mode its binding bound.
+	Mode ExchangeMode
 }
 
 // Exchanger runs the code exchange on one connection.
@@ -94,9 +102,13 @@ type Exchanger interface {
 	Invite(ctx context.Context, f Frames, b ExchangeBinding, code []byte) (ExchangeResult, error)
 }
 
-// Connection is what the caller's connection established: the fingerprint
-// of the leaf certificate the peer presented, and the channel binding.
+// Connection is what the caller's connection established: the exchange
+// mode its pairing protocol negotiated, the fingerprint of the leaf
+// certificate the peer presented, and the channel binding.
 type Connection struct {
+	// Mode is the negotiated exchange mode; "" is legacy.
+	Mode ExchangeMode
+
 	PeerLeaf       string
 	ChannelBinding []byte
 }

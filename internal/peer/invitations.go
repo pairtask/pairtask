@@ -60,6 +60,10 @@ func (p InvitationPolicy) validate() error {
 // Invitation is a newly opened invitation. Code exists only here: it is meant
 // for the operator's own UI response and must never become a broker message.
 type Invitation struct {
+	// Repair is the identity the operator declared the invitation repairs,
+	// "" for none (#276); its outcome carries it.
+	Repair string
+
 	ID        string
 	Code      string `json:"-"` // grouped for reading, e.g. "482-913"; never serialized
 	ExpiresAt time.Time
@@ -82,6 +86,7 @@ type invitation struct {
 	attemptsLeft int
 	inFlight     *Attempt
 	consumed     bool
+	repair       string // the declared repair, "" for none
 }
 
 // Invitations holds at most one open invitation.
@@ -173,7 +178,19 @@ func grouped(code string) string {
 
 // Open replaces any open invitation, including one with an attempt in flight.
 // On a randomness failure nothing changes.
-func (iv *Invitations) Open() (Invitation, error) {
+func (iv *Invitations) Open() (Invitation, error) { return iv.open("") }
+
+// OpenRepair opens an invitation as Open does, declaring that it repairs
+// the pairing with identityKey (#276): its outcome carries the declared
+// repair, which the store judges at commit.
+func (iv *Invitations) OpenRepair(identityKey string) (Invitation, error) {
+	if ValidIdentityKey(identityKey) != nil {
+		return Invitation{}, ErrInvalidBinding
+	}
+	return iv.open(identityKey)
+}
+
+func (iv *Invitations) open(repair string) (Invitation, error) {
 	iv.mu.Lock()
 	defer iv.mu.Unlock()
 	now, ok := iv.now()
@@ -189,8 +206,8 @@ func (iv *Invitations) Open() (Invitation, error) {
 		return Invitation{}, err
 	}
 	iv.close()
-	iv.current = &invitation{id: id, code: code, expiresAt: now.Add(iv.policy.TTL), attemptsLeft: iv.policy.MaxAttempts}
-	return Invitation{ID: id, Code: grouped(code), ExpiresAt: iv.current.expiresAt}, nil
+	iv.current = &invitation{id: id, code: code, expiresAt: now.Add(iv.policy.TTL), attemptsLeft: iv.policy.MaxAttempts, repair: repair}
+	return Invitation{ID: id, Code: grouped(code), ExpiresAt: iv.current.expiresAt, Repair: repair}, nil
 }
 
 // Cancel ends the open invitation and any attempt in flight.
@@ -276,7 +293,13 @@ type Attempt struct {
 	deadline time.Time
 	state    attemptState
 	outcome  *PairingOutcome // frozen at the first Confirm, so a retry can't change it
+	// begunMark is the global authority mark the attempt began under
+	// (#276), set by the inviter before the exchange runs.
+	begunMark uint64
 }
+
+// BegunMark is the global authority mark the attempt began under.
+func (a *Attempt) BegunMark() uint64 { return a.begunMark }
 
 // ID is the attempt's operation ID, the key of its durable outcome.
 func (a *Attempt) ID() string { return a.id }
@@ -307,10 +330,12 @@ type PairedPeer struct {
 	IdentityKey  string
 	Name         string
 	TranscriptID []byte
+	Mode         ExchangeMode // what the exchange can install (#276)
 }
 
 func (p PairedPeer) matches(o PairingOutcome) bool {
-	return p.IdentityKey == o.IdentityKey && p.Name == o.Name && bytes.Equal(p.TranscriptID, o.TranscriptID)
+	same := []bool{p.IdentityKey == o.IdentityKey, p.Name == o.Name, bytes.Equal(p.TranscriptID, o.TranscriptID), p.Mode == o.Mode}
+	return !slices.Contains(same, false)
 }
 
 // Confirm commits the pairing and consumes the invitation, in that order and
@@ -334,7 +359,7 @@ func (a *Attempt) Confirm(ctx context.Context, p PairedPeer) (PairingRequest, er
 	}
 	if a.outcome == nil {
 		a.outcome = &PairingOutcome{OperationID: a.id, InvitationID: a.inv.id, IdentityKey: p.IdentityKey,
-			Name: p.Name, TranscriptID: bytes.Clone(p.TranscriptID), At: now}
+			Name: p.Name, TranscriptID: bytes.Clone(p.TranscriptID), At: now, Mode: p.Mode, BegunMark: a.begunMark, Repair: a.inv.repair}
 	} else if !p.matches(*a.outcome) {
 		return PairingRequest{}, ErrOutcomeConflict
 	}

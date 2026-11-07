@@ -18,7 +18,7 @@ func (h *Hub) contactName(ctx context.Context, req operatorRequest, auditID int6
 		return protocol.Message{}, err
 	}
 	h.PairingChanged()
-	snapshot, rerr := h.applyPairing(ctx, pairingOps[protocol.PairingOpList], "")
+	snapshot, rerr := h.applyPairing(ctx, pairingOps[protocol.PairingOpList], pairingArgs{})
 	if rerr != nil {
 		return rerr.frame(msg.MessageID), nil
 	}

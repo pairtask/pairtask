@@ -130,8 +130,8 @@ func TestContactAcceptancePairingStillUsesItsOwnALPN(t *testing.T) {
 	mustOK(t, err)
 	server := <-result
 	mustOK(t, server.err)
-	equal(t, client.Protocol(), firstcontact.ALPN)
-	equal(t, server.conn.Protocol(), firstcontact.ALPN)
+	equal(t, client.Protocol(), firstcontact.PairingALPN3)
+	equal(t, server.conn.Protocol(), firstcontact.PairingALPN3)
 	a.Close()
 	b.Close()
 	client.Close()

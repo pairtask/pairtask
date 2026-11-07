@@ -116,6 +116,10 @@ func (j *Joiner) Join(ctx context.Context, f Frames, in JoinInput) (JoinRecord, 
 // OperationID is the operator's stable request ID; the code is never
 // formatted, encoded or stored.
 type JoinRequest struct {
+	// Repair is the identity the operator declares this join repairs, ""
+	// for none (#276).
+	Repair string
+
 	OperationID, Destination, Name string
 	Code                           []byte `json:"-"`
 }
@@ -150,7 +154,8 @@ func (j *Joiner) begin(ctx context.Context, req JoinRequest) (*PendingJoin, Join
 	if err != nil {
 		return nil, JoinRecord{}, err
 	}
-	start := JoinStart{OperationID: req.OperationID, Joiner: j.self.Fingerprint(), Name: req.Name, Destination: req.Destination, At: j.clock()}
+	start := JoinStart{OperationID: req.OperationID, Joiner: j.self.Fingerprint(), Name: req.Name, Destination: req.Destination, At: j.clock(),
+		Repair: req.Repair}
 	if known, found, err := j.store.GetJoin(ctx, req.OperationID); err != nil || found {
 		clear(digits)
 		return nil, known, replayed(known, start, err)
@@ -186,6 +191,9 @@ func CheckJoinRequest(req JoinRequest) error {
 func admitRequest(req JoinRequest) ([]byte, error) {
 	if !validPairingID(req.OperationID) || !validPairingName(req.Name) {
 		return nil, ErrInvalidBinding
+	}
+	if err := validRepair(req.Repair); err != nil {
+		return nil, err
 	}
 	if err := validDestination(req.Destination); err != nil {
 		return nil, err
@@ -251,7 +259,7 @@ func (p *PendingJoin) exchangeOn(ctx context.Context, f Frames, c Connection, di
 	if err != nil {
 		return j.fail(ctx, opID, err)
 	}
-	b := ExchangeBinding{InvitationID: hello.InvitationID, JoinerOperationID: opID, InviterOperationID: hello.OperationID,
+	b := ExchangeBinding{Mode: c.Mode, InvitationID: hello.InvitationID, JoinerOperationID: opID, InviterOperationID: hello.OperationID,
 		Inviter: c.PeerLeaf, Joiner: start.Joiner, JoinerName: start.Name, ChannelBinding: c.ChannelBinding}
 	persisted, err := j.exchange(ctx, f, b, digits)
 	if !persisted {
@@ -352,8 +360,8 @@ func (j *Joiner) exchange(ctx context.Context, f Frames, b ExchangeBinding, code
 		return false, err
 	}
 	err = j.ex.Join(ctx, f, b, code, func(ctx context.Context, res ExchangeResult) error {
-		if res.Peer != b.Inviter {
-			return ErrPeerMismatch
+		if err := b.verified(res, b.Inviter); err != nil {
+			return err
 		}
 		if _, err := j.store.RecordVerified(ctx, b.JoinerOperationID, res, j.clock()); err != nil {
 			return err
@@ -421,18 +429,18 @@ func (i *Inviter) Serve(ctx context.Context, f Frames, c Connection) (PairingReq
 	if err != nil {
 		return PairingRequest{}, err
 	}
-	attempt, invitationID, err := i.begin(f, hello)
+	attempt, invitationID, err := i.begin(ctx, f, hello)
 	if err != nil {
 		return PairingRequest{}, err
 	}
-	b := ExchangeBinding{InvitationID: invitationID, JoinerOperationID: hello.OperationID, InviterOperationID: attempt.ID(),
+	b := ExchangeBinding{Mode: c.Mode, InvitationID: invitationID, JoinerOperationID: hello.OperationID, InviterOperationID: attempt.ID(),
 		Inviter: i.self.Fingerprint(), Joiner: c.PeerLeaf, JoinerName: hello.Name, ChannelBinding: c.ChannelBinding}
 	res, err := i.exchange(ctx, f, attempt, b)
 	if err != nil {
 		_ = attempt.Fail()
 		return PairingRequest{}, err
 	}
-	request, err := confirm(ctx, attempt, PairedPeer{IdentityKey: res.Peer, Name: b.JoinerName, TranscriptID: res.TranscriptID})
+	request, err := confirm(ctx, attempt, PairedPeer{IdentityKey: res.Peer, Name: b.JoinerName, TranscriptID: res.TranscriptID, Mode: res.Mode})
 	if err != nil {
 		return PairingRequest{}, err
 	}
@@ -474,16 +482,22 @@ func readJoinerHello(f Frames) (JoinerHello, error) {
 }
 
 // begin charges an attempt at the open invitation and answers the hello; a
-// refusal is sent with its reason and charges nothing.
-func (i *Inviter) begin(f Frames, hello JoinerHello) (*Attempt, string, error) {
+// refusal is sent with its reason and charges nothing. The attempt carries
+// the authority mark read before it began (#276).
+func (i *Inviter) begin(ctx context.Context, f Frames, hello JoinerHello) (*Attempt, string, error) {
 	status, ok := i.inv.Status()
 	if !ok {
 		return nil, "", i.refuse(f, ErrNoInvitation)
+	}
+	mark, err := i.inv.store.PairingMark(ctx)
+	if err != nil {
+		return nil, "", err
 	}
 	attempt, err := i.inv.Begin(status.ID)
 	if err != nil {
 		return nil, "", i.refuse(f, err)
 	}
+	attempt.begunMark = mark
 	frame, err := EncodeInviterHello(InviterHello{InvitationID: status.ID, OperationID: attempt.ID()})
 	if err == nil {
 		err = f.Send(frame)
@@ -512,10 +526,23 @@ func (i *Inviter) exchange(ctx context.Context, f Frames, attempt *Attempt, b Ex
 	if err != nil {
 		return ExchangeResult{}, errors.Join(ErrExchangeFailed, err)
 	}
-	if res.Peer != b.Joiner {
-		return ExchangeResult{}, ErrPeerMismatch
+	if err := b.verified(res, b.Joiner); err != nil {
+		return ExchangeResult{}, err
 	}
 	return res, nil
+}
+
+// verified refuses a result that authenticated someone other than the
+// connection's peer, or under another mode than the binding's: what the
+// exchange can install is the mode TLS negotiated, never the exchanger's.
+func (b ExchangeBinding) verified(res ExchangeResult, peer string) error {
+	if res.Peer != peer {
+		return ErrPeerMismatch
+	}
+	if res.Mode.Stored() != b.Mode.Stored() {
+		return ErrExchangeFailed
+	}
+	return nil
 }
 
 // sendReceipt tells the joiner what was committed, after the commit.

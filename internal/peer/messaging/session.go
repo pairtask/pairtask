@@ -70,6 +70,7 @@ type Session struct {
 	Contact string
 	Now     func() time.Time
 	Version byte
+	pairing sessionPairing // read from Store when the session opens
 }
 
 // maxVersion is the highest version this side speaks with its store: a
@@ -113,28 +114,56 @@ func (s Session) Serve(ctx context.Context) (Result, error) {
 // OpenDial is Dial, also reporting the version both sides speak: at
 // LiveVersion the session may stay open (OfferLive).
 func (s Session) OpenDial(ctx context.Context) (Result, byte, error) {
-	max := s.maxVersion()
-	s.Store = wrapStore(s.Store)
-	version, err := s.offerHello(max)
-	if err != nil {
-		return Result{}, 0, err
-	}
-	s.Version = version
-	r, err := s.phases(ctx, true)
-	return r, version, err
+	return s.open(ctx, true)
 }
 
 // OpenServe is Serve, also reporting the version both sides speak.
 func (s Session) OpenServe(ctx context.Context) (Result, byte, error) {
-	max := s.maxVersion()
-	s.Store = wrapStore(s.Store)
-	version, err := s.answerHello(max)
+	return s.open(ctx, false)
+}
+
+// open agrees the version and, from PairingVersion on, the pairing, then
+// runs the phases; a session that agrees nothing exchanges nothing more.
+func (s Session) open(ctx context.Context, dialer bool) (Result, byte, error) {
+	s, err := s.agree(ctx, dialer)
 	if err != nil {
 		return Result{}, 0, err
 	}
+	r, err := s.phases(ctx, dialer)
+	return r, s.Version, err
+}
+
+// agree runs the hellos and the pairing exchange, then records the agreed
+// version, all before any application phase. The store's pairing and
+// ceiling are read before its errors are marked.
+func (s Session) agree(ctx context.Context, dialer bool) (Session, error) {
+	s.pairing = pairingOf(s.Store)
+	max := s.maxVersion()
+	s.Store = wrapStore(s.Store)
+	version, err := s.hello(helloSide{dialer, max})
+	if err != nil {
+		return s, err
+	}
 	s.Version = version
-	r, err := s.phases(ctx, false)
-	return r, version, err
+	if err := s.exchangePairing(dialer); err != nil {
+		return s, err
+	}
+	return s, s.pairing.record(ctx, version)
+}
+
+// helloSide is this side of the hellos: whether it dials, and the highest
+// version it speaks.
+type helloSide struct {
+	dialer bool
+	max    byte
+}
+
+// hello is this side's half of the hellos.
+func (s Session) hello(h helloSide) (byte, error) {
+	if h.dialer {
+		return s.offerHello(h.max)
+	}
+	return s.answerHello(h.max)
 }
 
 // OfferLive, after a LiveVersion first round, says whether the dialing side
@@ -205,7 +234,7 @@ func (s Session) steps(dialer bool) []phase {
 }
 
 func (s Session) offerHello(max byte) (byte, error) {
-	if err := s.send(EncodeHello(Hello{Min: MinVersion, Max: max})); err != nil {
+	if err := s.send(EncodeHello(Hello{Min: s.pairing.min, Max: max})); err != nil {
 		return 0, err
 	}
 	frame, err := s.Frames.Recv()
@@ -222,7 +251,7 @@ func (s Session) offerHello(max byte) (byte, error) {
 	if err != nil {
 		return 0, err
 	}
-	return common(h, max)
+	return s.common(h, max)
 }
 
 func (s Session) answerHello(max byte) (byte, error) {
@@ -234,17 +263,18 @@ func (s Session) answerHello(max byte) (byte, error) {
 	if err != nil {
 		return 0, err
 	}
-	version, err := common(h, max)
+	version, err := s.common(h, max)
 	if err != nil {
-		s.send(EncodeUnsupported(Unsupported{Min: MinVersion, Max: max}))
+		s.send(EncodeUnsupported(Unsupported{Min: s.pairing.min, Max: max}))
 		return 0, err
 	}
-	return version, s.send(EncodeHello(Hello{Min: MinVersion, Max: max}))
+	return version, s.send(EncodeHello(Hello{Min: s.pairing.min, Max: max}))
 }
 
-// common is the highest version both sides speak.
-func common(h Hello, max byte) (byte, error) {
-	if h.Max < MinVersion || h.Min > max {
+// common is the highest version both sides speak, from this side's
+// pairing minimum.
+func (s Session) common(h Hello, max byte) (byte, error) {
+	if h.Max < s.pairing.min || h.Min > max {
 		return 0, ErrUnsupported
 	}
 	return min(h.Max, max), nil

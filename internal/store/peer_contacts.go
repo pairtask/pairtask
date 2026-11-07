@@ -37,11 +37,11 @@ func upsertContact(ctx context.Context, tx *sql.Tx, c peer.Contact, opID string)
 	if err != nil {
 		return err
 	}
-	var total int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peer_contacts`).Scan(&total); err != nil {
+	slots, err := contactSlots(ctx, tx)
+	if err != nil {
 		return err
 	}
-	if err := peer.AdmitContact(found, total); err != nil {
+	if err := peer.AdmitContact(found, slots); err != nil {
 		return err
 	}
 	merged := peer.MergeContact(existing, found, c)
@@ -55,6 +55,14 @@ ON CONFLICT(identity_key) DO UPDATE SET name = excluded.name, destination = excl
 		return fmt.Errorf("store contact: %w", err)
 	}
 	return auditMove(ctx, tx, contactMove{existing, merged, opID})
+}
+
+// contactSlots counts the contacts the bounds weigh (#276, D4): those not
+// unpaired, and every row retained.
+func contactSlots(ctx context.Context, q rowQuerier) (peer.ContactSlots, error) {
+	var s peer.ContactSlots
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(unpaired_at = ''), 0) FROM peer_contacts`).Scan(&s.Retained, &s.Active)
+	return s, err
 }
 
 // contactMove is a contact before and after a merge, and the pairing

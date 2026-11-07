@@ -73,12 +73,12 @@ func noticeRefusal(ctx context.Context, tx *sql.Tx, a AskOut, end askEnd) error 
 // the agent that sent it, summarising at once when it is past the bound.
 func settleRefusedAsk(ctx context.Context, tx *sql.Tx, contact string, refused messaging.Refused) error {
 	askID, reason, now := refused.ID, refused.Refusal.Reason, time.Now()
-	a, _, found, err := loadAsk(ctx, tx, contact, askID)
+	a, _, found, err := loadCurrentAsk(ctx, tx, contact, askID)
 	if err != nil || !found {
 		return err // a message that was no review request
 	}
 	end := askEnd{"refused", reason, now}
-	if err := settleAsks(ctx, tx, end, oneAsk(contact, askID)); err != nil {
+	if err := settleAsks(ctx, tx, end, oneAsk(a.pairing(), askID)); err != nil {
 		return err
 	}
 	if err := noticeRefusal(ctx, tx, a, end); err != nil {
@@ -88,12 +88,13 @@ func settleRefusedAsk(ctx context.Context, tx *sql.Tx, contact string, refused m
 	return err
 }
 
-// refusalsFull: the agent's individual refusal notices from the contact
-// still owed are at their bound.
+// refusalsFull: the agent's individual refusal notices from the contact's
+// current pairing still owed are at their bound (#276).
 func refusalsFull(ctx context.Context, tx *sql.Tx, s refusalScope) (bool, error) {
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM remote_imports ri WHERE ri.kind = 'outcome' AND ri.contact = ?
-    AND ri.recipients = json_array(?) AND ri.remote_id LIKE ? AND `+unacknowledged, s.contact, s.agent, refusalKey("")+"%").Scan(&n)
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM remote_imports ri WHERE ri.kind = 'outcome' AND ri.contact = ?1
+    AND ri.pairing_epoch = `+currentEpochOf1+` AND ri.recipients = json_array(?2) AND ri.remote_id LIKE ?3 AND `+unacknowledged,
+		s.contact, s.agent, refusalKey("")+"%").Scan(&n)
 	return n >= RefusalNoticesPerAgent, err
 }
 
@@ -114,16 +115,21 @@ type notice struct {
 	at      time.Time
 }
 
-// stageNotice stages it once: a replay of the same key stages nothing.
+// stageNotice stages it once in the contact's current pairing: a replay
+// of the same key there stages nothing.
 func stageNotice(ctx context.Context, tx *sql.Tx, n notice) error {
-	localID, err := freeLocalID(ctx, tx, n.scope.contact, n.key)
+	src, err := currentPairing(ctx, tx, n.scope.contact)
+	if err != nil {
+		return err
+	}
+	localID, err := freeLocalID(ctx, tx, src, n.key)
 	if err != nil {
 		return err
 	}
 	// json_array, as the bounds compare it: one encoding for the agent.
 	_, err = tx.ExecContext(ctx, `INSERT INTO remote_imports
-(contact, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, body)
-VALUES (?, ?, ?, ?, json_array(?), ?, 0, 'pending', ?, 'outcome', ?) ON CONFLICT DO NOTHING`, n.scope.contact, n.key, localID, n.sender,
+(contact, pairing_epoch, remote_id, local_id, sender, recipients, reply_id, reply_author, state, staged_at, kind, body)
+VALUES (?, ?, ?, ?, ?, json_array(?), ?, 0, 'pending', ?, 'outcome', ?) ON CONFLICT DO NOTHING`, src.contact, src.epoch, n.key, localID, n.sender,
 		n.scope.agent, n.replyID, msgStamp(n.at), n.text)
 	return err
 }
@@ -229,13 +235,15 @@ func flushSummary(ctx context.Context, tx *sql.Tx, s refusalScope, at time.Time)
 	return err == nil, err
 }
 
-// summaryOwed: the scope's last summary is still owed to its agent.
+// summaryOwed: the scope's last summary, staged in the contact's current
+// pairing, is still owed to its agent (#276).
 func summaryOwed(ctx context.Context, tx *sql.Tx, s refusalScope, seq int) (bool, error) {
 	if seq == 0 {
 		return false, nil
 	}
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM remote_imports ri WHERE ri.contact = ? AND ri.remote_id = ? AND `+unacknowledged,
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM remote_imports ri
+WHERE ri.contact = ?1 AND ri.pairing_epoch = `+currentEpochOf1+` AND ri.remote_id = ?2 AND `+unacknowledged,
 		s.contact, summaryKey(s.agent, seq)).Scan(&n)
 	return n > 0, err
 }

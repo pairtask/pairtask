@@ -18,20 +18,21 @@ import (
 // transaction, as the request can't be run there; allowed leaves the ask
 // to the review's own outcomes.
 
-// consentHeldOutSchema keeps this side's messages a contact holds, one row
-// each, by the message's own ID.
-const consentHeldOutSchema = `
-CREATE TABLE IF NOT EXISTS consent_held_out (
+// consentHeldOutColumns keeps this side's messages a contact holds, one
+// row each, by the message's own ID.
+// The transition creates it, or rebuilds a released one, with
+// pairing_epoch in its key (#276).
+const consentHeldOutColumns = `(
     contact    TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL DEFAULT 1,
     message_id TEXT NOT NULL,
     held_id    TEXT NOT NULL,
     held_at    TEXT NOT NULL,
     state      TEXT NOT NULL DEFAULT 'held',
     reason     TEXT NOT NULL DEFAULT '',
     decided_at TEXT,
-    PRIMARY KEY (contact, message_id)
-);
-`
+    PRIMARY KEY (contact, pairing_epoch, message_id)
+)`
 
 // heldOut is the state a held message waits in until its outcome.
 const heldOut = "held"
@@ -80,8 +81,7 @@ func heldAgain(hold heldOutRow, h messaging.Held) error {
 // requireOffered: the message is one this side sent and is still offering.
 func requireOffered(ctx context.Context, tx *sql.Tx, contact, id string) error {
 	var state string
-	err := tx.QueryRowContext(ctx, `SELECT state FROM peer_messages
-WHERE contact = ? AND direction = 'out' AND message_id = ?`, contact, id).Scan(&state)
+	err := tx.QueryRowContext(ctx, `SELECT state FROM peer_messages WHERE `+currentOutbound, contact, id).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: held a message never sent", messaging.ErrProtocol)
 	}
@@ -103,13 +103,13 @@ type heldReport struct {
 
 // recordHold keeps the hold and delivers the message, as a Stored would.
 func recordHold(ctx context.Context, tx *sql.Tx, b heldReport) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO consent_held_out (contact, message_id, held_id, held_at)
-VALUES (?, ?, ?, ?)`, b.contact, b.h.ID, b.h.HeldID, msgStamp(b.at)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO consent_held_out (contact, pairing_epoch, message_id, held_id, held_at)
+VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4)`, b.contact, b.h.ID, b.h.HeldID, msgStamp(b.at)); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE peer_messages SET state = 'delivered',
-    delivered_at = COALESCE(delivered_at, ?), class = '', reason = ''
-WHERE contact = ? AND direction = 'out' AND message_id = ?`, msgStamp(b.at), b.contact, b.h.ID)
+    delivered_at = COALESCE(delivered_at, ?3), class = '', reason = ''
+WHERE `+currentOutbound, b.contact, b.h.ID, msgStamp(b.at))
 	return err
 }
 
@@ -154,8 +154,8 @@ type heldEnd struct {
 }
 
 func endHold(ctx context.Context, tx *sql.Tx, e heldEnd) error {
-	_, err := tx.ExecContext(ctx, `UPDATE consent_held_out SET state = ?, reason = ?, decided_at = ?
-WHERE contact = ? AND message_id = ? AND state = 'held'`, e.o.State, e.o.Reason, msgStamp(e.at), e.contact, e.o.ID)
+	_, err := tx.ExecContext(ctx, `UPDATE consent_held_out SET state = ?3, reason = ?4, decided_at = ?5
+WHERE `+currentHeld+` AND state = 'held'`, e.contact, e.o.ID, e.o.State, e.o.Reason, msgStamp(e.at))
 	if err != nil {
 		return err
 	}
@@ -170,14 +170,19 @@ func settleHeldAsk(ctx context.Context, tx *sql.Tx, e heldEnd) error {
 	if e.o.State == consentAllowed {
 		return nil
 	}
-	return settleAsks(ctx, tx, askEnd{e.o.State, e.o.Reason, e.at}, oneAsk(e.contact, e.o.ID))
+	return settleAsks(ctx, tx, askEnd{e.o.State, e.o.Reason, e.at}, currentAsk(e.contact, e.o.ID))
 }
 
-// heldOutFor is the hold of this side's message id, if the contact held it.
+// currentHeld is the hold of this side's message ?2 by contact ?1 in its
+// current pairing (#276): an earlier pairing's hold is unknown here.
+const currentHeld = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND message_id = ?2`
+
+// heldOutFor is the hold of this side's message id, if the contact held it
+// in its current pairing.
 func heldOutFor(ctx context.Context, q rowQuerier, contact, id string) (heldOutRow, bool, error) {
 	var h heldOutRow
-	err := q.QueryRowContext(ctx, `SELECT held_id, state, reason FROM consent_held_out
-WHERE contact = ? AND message_id = ?`, contact, id).Scan(&h.heldID, &h.state, &h.reason)
+	err := q.QueryRowContext(ctx, `SELECT held_id, state, reason FROM consent_held_out WHERE `+currentHeld,
+		contact, id).Scan(&h.heldID, &h.state, &h.reason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return heldOutRow{}, false, nil
 	}
@@ -190,17 +195,34 @@ type HeldStatus struct {
 	State, Reason string
 }
 
-// HeldStatus is the hold of this side's message id, if the contact held it.
+// HeldStatus is the hold of this side's message id, if the contact held it
+// in its current pairing.
 func (p *PeerMessages) HeldStatus(ctx context.Context, contact, id string) (HeldStatus, bool, error) {
 	h, found, err := heldOutFor(ctx, p.db, contact, id)
 	return HeldStatus{State: h.state, Reason: h.reason}, found, err
 }
 
+// HeldStatusIn is HeldStatus in the pairing k names (#276): its epoch, or
+// with 0 the newest the contact's history holds; an earlier pairing's hold
+// of the same ID is another. An epoch the contact never had is
+// messaging.ErrInvalid.
+func (p *PeerMessages) HeldStatusIn(ctx context.Context, k MessageKey) (HeldStatus, bool, error) {
+	return inHistory(ctx, p.db, k, func(tx *sql.Tx, pk pairingKey) (HeldStatus, bool, error) {
+		var h HeldStatus
+		err := tx.QueryRowContext(ctx, `SELECT state, reason FROM consent_held_out WHERE contact = ? AND pairing_epoch = ? AND message_id = ?`,
+			pk.contact, pk.epoch, k.ID).Scan(&h.State, &h.Reason)
+		if errors.Is(err, sql.ErrNoRows) {
+			return HeldStatus{}, false, nil
+		}
+		return h, err == nil, err
+	})
+}
+
 // ConsentOutcomeRefused records the contact's refusal of an outcome this
 // side sent (#293): the pending outcome of that request settles as refused,
 // with the reason kept, and is never sent again. One not pending, or
-// another contact's, changes nothing.
+// another contact's or an earlier pairing's, changes nothing.
 func (p *PeerMessages) ConsentOutcomeRefused(ctx context.Context, contact string, r messaging.ConsentOutcomeRefused) error {
-	return p.exec(ctx, contact, `UPDATE consent_requests SET outcome = 'refused', refused_reason = ?
-WHERE contact = ? AND message_id = ? AND outcome = 'pending'`, r.Reason, contact, r.ID)
+	return p.exec(ctx, contact, `UPDATE consent_requests SET outcome = 'refused', refused_reason = ?3
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND message_id = ?2 AND outcome = 'pending'`, contact, r.ID, r.Reason)
 }
