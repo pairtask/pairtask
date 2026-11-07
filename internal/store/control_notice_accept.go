@@ -69,7 +69,7 @@ func (c *controlStore) AcceptNotice(ctx context.Context, n messaging.ContactStat
 // weigh checks a notice against the admitted pairing and the store's range.
 func (c *controlStore) weigh(n messaging.ContactState) (peerNotice, error) {
 	state, known := peerStates[n.State]
-	if !known || n.Gen == 0 || n.Gen > maxStoredGen {
+	if !known || !storableGen(n.Gen) {
 		return peerNotice{}, fmt.Errorf("%w: contact notice generation or state", messaging.ErrProtocol)
 	}
 	if !bytes.Equal(n.PairingID, c.pairingID()) {
@@ -77,6 +77,10 @@ func (c *controlStore) weigh(n messaging.ContactState) (peerNotice, error) {
 	}
 	return peerNotice{gen: int64(n.Gen), state: state}, nil
 }
+
+// storableGen: a notice generation the store can hold, 1 to MaxInt64
+// (Amendment B).
+func storableGen(g uint64) bool { return g != 0 && g <= maxStoredGen }
 
 // accept applies a notice the ordering admits; closed: the pairing is
 // unpaired by the other side, by this notice or an earlier one.

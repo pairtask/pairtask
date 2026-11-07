@@ -160,19 +160,35 @@ func (p *PeerMessages) localOnly() error {
 	return nil
 }
 
+// contactFlags are what the refusals below read of a contact.
+type contactFlags struct {
+	pausedAt, unpairedAt, peerState string
+}
+
+// readFlags reads a contact's flags inside the caller's transaction; found
+// is false for no contact row.
+func readFlags(ctx context.Context, q rowQuerier, contact string) (contactFlags, bool, error) {
+	var f contactFlags
+	err := q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, peer_state FROM peer_contacts WHERE identity_key = ?`,
+		contact).Scan(&f.pausedAt, &f.unpairedAt, &f.peerState)
+	if errors.Is(err, sql.ErrNoRows) {
+		return contactFlags{}, false, nil
+	}
+	return f, err == nil, err
+}
+
 // requireActive refuses a paused or unpaired contact, inside the caller's
 // transaction.
 func requireActive(ctx context.Context, q rowQuerier, contact string) error {
-	var pausedAt, unpairedAt string
-	err := q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&pausedAt, &unpairedAt)
+	f, found, err := readFlags(ctx, q, contact)
 	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return messaging.ErrUnknownContact
 	case err != nil:
 		return err
-	case unpairedAt != "":
+	case !found:
+		return messaging.ErrUnknownContact
+	case f.unpairedAt != "":
 		return ErrUnpaired
-	case pausedAt != "":
+	case f.pausedAt != "":
 		return ErrPaused
 	}
 	return nil
@@ -181,33 +197,21 @@ func requireActive(ctx context.Context, q rowQuerier, contact string) error {
 // refuseUnpairedByThem refuses a contact the other side unpaired, inside
 // the caller's transaction; any other, or none, passes.
 func refuseUnpairedByThem(ctx context.Context, q rowQuerier, contact string) error {
-	var peerState string
-	err := q.QueryRowContext(ctx, `SELECT peer_state FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&peerState)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return nil
-	case err != nil:
-		return err
-	case peerState == remoteUnpaired:
+	f, _, err := readFlags(ctx, q, contact)
+	if err == nil && f.peerState == remoteUnpaired {
 		return ErrUnpairedByThem
 	}
-	return nil
+	return err
 }
 
 // refuseUnpaired refuses an unpaired contact, inside the caller's
 // transaction; any other, or none, passes.
 func refuseUnpaired(ctx context.Context, q rowQuerier, contact string) error {
-	var unpairedAt string
-	err := q.QueryRowContext(ctx, `SELECT unpaired_at FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&unpairedAt)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return nil
-	case err != nil:
-		return err
-	case unpairedAt != "":
+	f, _, err := readFlags(ctx, q, contact)
+	if err == nil && f.unpairedAt != "" {
 		return ErrUnpaired
 	}
-	return nil
+	return err
 }
 
 const contactPauseSchema = `
