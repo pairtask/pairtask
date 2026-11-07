@@ -185,21 +185,21 @@ func TestPairingBoundsAcceptanceConcurrentAdmissionRespectsLastSlot(t *testing.T
 }
 
 func TestPairingBoundsAcceptanceIdentityLimitRetainsDecisions(t *testing.T) {
-	pairEqual(t, peer.MaxPairingIdentities, 1024)
-	pairSeededBackends(t, 1023, boundedOutcome, peer.PairingRejected, func(t *testing.T, db peer.PairingStore) {
-		last := boundedOutcome(1024)
+	pairEqual(t, peer.MaxRetainedIdentities, 2048)
+	pairSeededBackends(t, 2047, boundedOutcome, peer.PairingRejected, func(t *testing.T, db peer.PairingStore) {
+		last := boundedOutcome(2048)
 		pairEqual(t, pairSaved(t, db, last).State, peer.PairingPending)
 		_, err := db.Reject(context.Background(), last.IdentityKey)
 		pairOK(t, err)
-		pairCapacityRefusal(t, db, boundedOutcome(1025), peer.ErrIdentityCapacity)
+		pairCapacityRefusal(t, db, boundedOutcome(2049), peer.ErrIdentityCapacity)
 		first := boundedOutcome(1)
 		pairEqual(t, pairSaved(t, db, first).State, peer.PairingRejected)
-		known := boundedOutcome(1026)
+		known := boundedOutcome(2050)
 		known.IdentityKey = first.IdentityKey
 		pairEqual(t, pairSaved(t, db, known).State, peer.PairingRejected)
 		rows, err := db.Requests(context.Background())
 		pairOK(t, err)
-		pairEqual(t, len(rows), 1024)
+		pairEqual(t, len(rows), 2048)
 	})
 }
 
