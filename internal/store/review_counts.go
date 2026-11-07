@@ -210,15 +210,15 @@ const (
 // askedColumns are a request as the asked list shows it, with its message's
 // cursor and, when the contact held it for its operator (#293), where that
 // hold stands; askedFrom joins them, each in the request's own pairing
-// (#276).
-const (
-	askedColumns = `a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
+// (#276), and how it links to the requests it replaces or that replaced
+// it (#259).
+var askedColumns = `a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
     a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt,
-    COALESCE(ch.state, ''), COALESCE(ch.reason, ''), a.pairing_epoch`
-	askedFrom = `review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.pairing_epoch = a.pairing_epoch
+    COALESCE(ch.state, ''), COALESCE(ch.reason, ''), a.pairing_epoch, a.supersedes, a.superseded_by, ` + parentKept("a")
+
+const askedFrom = `review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.pairing_epoch = a.pairing_epoch
     AND pm.direction = 'out' AND pm.message_id = a.ask_id
     LEFT JOIN consent_held_out ch ON ch.contact = a.contact AND ch.pairing_epoch = a.pairing_epoch AND ch.message_id = a.ask_id`
-)
 
 // askedRow is one request as the asked list reads it: the item, its
 // stored change time, its pairing, and its findings as kept.
@@ -227,6 +227,7 @@ type askedRow struct {
 	updated string
 	epoch   int64
 	f       keptFindings
+	kept    bool // the request it replaces is still kept
 }
 
 // scanAsked reads one request of askedColumns, with at most limit
@@ -236,11 +237,12 @@ func scanAsked(row rowScanner, limit int) (askedRow, error) {
 	item := &r.item
 	err := row.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
 		&r.updated, &item.Settled, &item.ReviewID, &item.Reason, &r.f.envelope, &r.f.seq, &r.f.attempt, &item.Consent, &item.ConsentReason,
-		&r.epoch)
+		&r.epoch, &item.Supersedes, &item.SupersededBy, &r.kept)
 	if err != nil {
 		return r, err
 	}
 	item.Findings, item.PairingEpoch = r.f.view(limit), r.epoch
+	item.MovedTo, item.SupersedesPruned = movedFrom(item.State, item.Reason), item.Supersedes != "" && !r.kept
 	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, r.updated)
 	return r, err
 }

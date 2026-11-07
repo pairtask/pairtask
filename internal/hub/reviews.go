@@ -69,7 +69,7 @@ func (h *Hub) remoteReviewChanged(rec review.Record) {
 }
 
 func (h *Hub) handleReview(ctx context.Context, clients map[string]*Client, in Inbound) {
-	h.enqueue(clients, in.From, h.agentReview(ctx, in))
+	h.enqueue(clients, in.From, protocol.ReviewsFor(h.agentReview(ctx, in), in.From.ProtocolVersion))
 }
 
 // agentReview serves one review frame from the reviewer's side. Only the

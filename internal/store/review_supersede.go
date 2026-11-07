@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // Replacing a review request (#259): a new request may name one of the same
@@ -105,6 +106,22 @@ WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND ask_id = ?2`, o.k
 		err = messaging.ErrConflict
 	}
 	return err
+}
+
+// parentKept is whether the request the request alias replaces is still
+// kept, false for one that replaces none.
+func parentKept(alias string) string {
+	return `EXISTS (SELECT 1 FROM review_asks_out p WHERE p.contact = ` + alias + `.contact
+        AND p.pairing_epoch = ` + alias + `.pairing_epoch AND p.ask_id = ` + alias + `.supersedes)`
+}
+
+// movedFrom is where a request declined as moved says its change went
+// (#259), nil for any other state or reason.
+func movedFrom(state, reason string) *protocol.Revisions {
+	if state != "declined" {
+		return nil
+	}
+	return protocol.MovedTo(reason)
 }
 
 // keptForReplacement keeps a settled request while a request replacing it

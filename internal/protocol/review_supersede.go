@@ -63,6 +63,57 @@ func OutcomeFor(v *ReviewOutcomeView, version int) *ReviewOutcomeView {
 	return &trimmed
 }
 
+// ReviewsFor is a frame's reviews and requests as a client at version
+// reads them: without what came after that version.
+func ReviewsFor(m Message, version int) Message {
+	if version >= ReviewSupersedeVersion {
+		return m
+	}
+	if m.Review != nil {
+		view := ReviewFor(*m.Review, version)
+		m.Review = &view
+	}
+	if m.ReviewPage != nil {
+		page := *m.ReviewPage
+		page.Reviews = mapped(page.Reviews, func(v ReviewView) ReviewView { return ReviewFor(v, version) })
+		m.ReviewPage = &page
+	}
+	if m.ReviewAsked != nil {
+		page := *m.ReviewAsked
+		page.Items = mapped(page.Items, func(i ReviewAskedItem) ReviewAskedItem { return i.ForVersion(version) })
+		m.ReviewAsked = &page
+	}
+	return m
+}
+
+// mapped is a copy of items, each through f; nil stays nil.
+func mapped[T any](items []T, f func(T) T) []T {
+	if items == nil {
+		return nil
+	}
+	out := make([]T, len(items))
+	for i, item := range items {
+		out[i] = f(item)
+	}
+	return out
+}
+
+// ReviewFor is a review as a client at version reads it.
+func ReviewFor(v ReviewView, version int) ReviewView {
+	if version < ReviewSupersedeVersion {
+		v.MovedTo = nil
+	}
+	return v
+}
+
+// ForVersion is a request as a client at version reads it.
+func (i ReviewAskedItem) ForVersion(version int) ReviewAskedItem {
+	if version < ReviewSupersedeVersion {
+		i.MovedTo, i.Supersedes, i.SupersededBy, i.SupersedesPruned = nil, "", "", false
+	}
+	return i
+}
+
 // ForVersion is the outcome as a client at version reads it: without what
 // came after that version.
 func (v ReviewOutcomeView) ForVersion(version int) ReviewOutcomeView {

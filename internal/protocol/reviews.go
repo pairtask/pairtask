@@ -121,6 +121,14 @@ type ReviewAskedItem struct {
 	// PairingEpoch is the pairing with the contact it was asked under
 	// (#276); set only for a client at PairingHistoryVersion.
 	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
+	// MovedTo is where the reviewer's side reported the change moved, for
+	// a request it declined as moved; Supersedes, SupersededBy and
+	// SupersedesPruned link it to the request it replaces or that replaced
+	// it (#259). All from ReviewSupersedeVersion.
+	MovedTo          *Revisions `json:"moved_to,omitempty"`
+	Supersedes       string     `json:"supersedes,omitempty"`
+	SupersededBy     string     `json:"superseded_by,omitempty"`
+	SupersedesPruned bool       `json:"supersedes_pruned,omitempty"`
 }
 
 // AskFindings are a request's findings as received: how many the verdict

@@ -511,6 +511,9 @@ func (m *Model) askedRows() []string {
 		if consent := consentSummary(it.Consent, it.ConsentReason); consent != "" {
 			rows = append(rows, "    "+mutedStyle.Render(consent))
 		}
+		if links := askedLinks(it).words(); len(links) > 0 {
+			rows = append(rows, "    "+mutedStyle.Render(strings.Join(links, " · ")))
+		}
 		if it.State == "refused" {
 			rows = append(rows, fixRows(it.Reason, it.Reviewer)...)
 		}

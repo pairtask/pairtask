@@ -174,13 +174,13 @@ func loadAsk(ctx context.Context, q rowQuerier, k pairingKey, askID string) (Ask
 	var digest []byte
 	var settled, reviewID sql.NullString
 	var f keptFindings
-	var parentKept bool
+	var kept bool
 	err := q.QueryRowContext(ctx, `SELECT pairing_epoch, contact, ask_id, reviewer, requester_agent, local_id, ask, state, seq, digest, attempt, intent,
     verdict, summary, url, reason, review_id, updated_at, settled_at, findings, findings_seq, findings_attempt, supersedes, superseded_by,
-    EXISTS (SELECT 1 FROM review_asks_out p WHERE p.contact = r.contact AND p.pairing_epoch = r.pairing_epoch AND p.ask_id = r.supersedes)
+    `+parentKept("r")+`
 FROM review_asks_out r WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`, k.contact, k.epoch, askID).Scan(
 		&a.Epoch, &a.Contact, &a.AskID, &a.Reviewer, &a.RequesterAgent, &a.LocalID, &ask, &a.State, &a.Seq, &digest, &a.Attempt, &a.Intent,
-		&a.Verdict, &a.Summary, &a.URL, &a.Reason, &reviewID, &updated, &settled, &f.envelope, &f.seq, &f.attempt, &a.Supersedes, &a.SupersededBy, &parentKept)
+		&a.Verdict, &a.Summary, &a.URL, &a.Reason, &reviewID, &updated, &settled, &f.envelope, &f.seq, &f.attempt, &a.Supersedes, &a.SupersededBy, &kept)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, nil, false, nil
 	}
@@ -188,7 +188,7 @@ FROM review_asks_out r WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`, 
 		return a, nil, false, err
 	}
 	a.Settled, a.ReviewID, a.Findings = settled.Valid, reviewID.String, f.view(protocol.FindingsAll)
-	a.SupersedesPruned = a.Supersedes != "" && !parentKept
+	a.SupersedesPruned = a.Supersedes != "" && !kept
 	if a.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
 		return a, nil, false, err
 	}
@@ -798,14 +798,5 @@ func (a AskOut) View() protocol.ReviewOutcomeView {
 	return protocol.ReviewOutcomeView{AskID: a.AskID, Workspace: a.Contact, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
 		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason,
 		ReviewID: a.ReviewID, Findings: a.Findings, PairingEpoch: a.Epoch,
-		MovedTo: a.movedTo(), Supersedes: a.Supersedes, SupersededBy: a.SupersededBy, SupersedesPruned: a.SupersedesPruned}
-}
-
-// movedTo is where a request declined as moved says its change went
-// (#259), nil for any other request or reason.
-func (a AskOut) movedTo() *protocol.Revisions {
-	if a.State != "declined" {
-		return nil
-	}
-	return protocol.MovedTo(a.Reason)
+		MovedTo: movedFrom(a.State, a.Reason), Supersedes: a.Supersedes, SupersededBy: a.SupersededBy, SupersedesPruned: a.SupersedesPruned}
 }
