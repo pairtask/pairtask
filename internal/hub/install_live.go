@@ -42,7 +42,10 @@ type installedJoin struct {
 }
 
 func (s installedJoin) RecordDecisionConfirmed(ctx context.Context, opID string, decision peer.PairingState, at time.Time) (peer.JoinRecord, error) {
-	before := s.installedAt(ctx, opID)
+	before, err := s.installedAt(ctx, opID)
+	if err != nil {
+		return peer.JoinRecord{}, err // unknown whether installed: confirm nothing, close nothing
+	}
 	r, err := s.JoinStore.RecordDecisionConfirmed(ctx, opID, decision, at)
 	if err == nil && s.newlyInstalled(ctx, opID, before) {
 		s.installed(r.Peer)
@@ -50,22 +53,23 @@ func (s installedJoin) RecordDecisionConfirmed(ctx context.Context, opID string,
 	return r, err
 }
 
-// newlyInstalled: the exchange was not installed before, and is now.
+// newlyInstalled: the exchange was not installed before, and now reads
+// installed; an unreadable ledger closes nothing, the fence still holds.
 func (s installedJoin) newlyInstalled(ctx context.Context, opID string, before time.Time) bool {
 	if !before.IsZero() {
 		return false
 	}
-	return !s.installedAt(ctx, opID).IsZero()
+	after, err := s.installedAt(ctx, opID)
+	return err == nil && !after.IsZero()
 }
 
-// installedAt is when the exchange installed, zero while it hasn't or
-// can't be read.
-func (s installedJoin) installedAt(ctx context.Context, opID string) time.Time {
+// installedAt is when the exchange installed, zero while it hasn't.
+func (s installedJoin) installedAt(ctx context.Context, opID string) (time.Time, error) {
 	x, found, err := s.ledger.Exchange(ctx, opID)
 	if err != nil || !found {
-		return time.Time{}
+		return time.Time{}, err
 	}
-	return x.InstalledAt
+	return x.InstalledAt, nil
 }
 
 // pairingStore is the inviter's store; without one it stays as it was.
