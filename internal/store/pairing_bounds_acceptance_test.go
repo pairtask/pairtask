@@ -127,6 +127,12 @@ func TestPairingBoundsAcceptanceValidatesNewFieldsAtomically(t *testing.T) {
 func TestPairingBoundsAcceptancePendingLimitAllowsKnownIdentityAndReplay(t *testing.T) {
 	pairEqual(t, peer.MaxPendingPairingRequests, 64)
 	pairBackends(t, func(t *testing.T, db peer.PairingStore) {
+		knownFirst := boundedOutcome(1000)
+		pairSaved(t, db, knownFirst)
+		_, err := db.Accept(context.Background(), knownFirst.IdentityKey)
+		pairOK(t, err)
+		_, err = db.Deliver(context.Background(), knownFirst.IdentityKey, peer.PairingAccepted, joinAt)
+		pairOK(t, err)
 		for n := 1; n <= 64; n++ {
 			pairSaved(t, db, boundedOutcome(n))
 		}
@@ -135,14 +141,14 @@ func TestPairingBoundsAcceptancePendingLimitAllowsKnownIdentityAndReplay(t *test
 		first := boundedOutcome(1)
 		pairEqual(t, pairSaved(t, db, first).State, peer.PairingPending)
 		known := boundedOutcome(66)
-		known.IdentityKey = first.IdentityKey
-		pairEqual(t, pairSaved(t, db, known).State, peer.PairingPending)
-		_, err := db.Accept(context.Background(), first.IdentityKey)
+		known.IdentityKey = knownFirst.IdentityKey
+		pairEqual(t, pairSaved(t, db, known).State, peer.PairingAccepted)
+		_, err = db.Accept(context.Background(), first.IdentityKey)
 		pairOK(t, err)
 		pairEqual(t, pairSaved(t, db, blocked).State, peer.PairingPending)
 		rows, err := db.Requests(context.Background())
 		pairOK(t, err)
-		pairEqual(t, len(rows), 65)
+		pairEqual(t, len(rows), 66)
 	})
 }
 

@@ -35,14 +35,19 @@ func contactBackends(t *testing.T, check func(*testing.T, contactBackend)) {
 
 func contactReady(t *testing.T, db peer.JoinStore, op string) peer.JoinRecord {
 	t.Helper()
+	return contactReadyStart(t, db, peer.JoinStart{OperationID: op, Joiner: joinKey(1), Name: "Local name", Destination: "peer.test:7445", At: joinAt}, joinKey(2))
+}
+
+func contactReadyStart(t *testing.T, db peer.JoinStore, start peer.JoinStart, remote string) peer.JoinRecord {
+	t.Helper()
 	ctx := context.Background()
-	_, err := db.BeginJoin(ctx, peer.JoinStart{OperationID: op, Joiner: joinKey(1), Name: "Local name", Destination: "peer.test:7445", At: joinAt})
+	_, err := db.BeginJoin(ctx, start)
 	pairOK(t, err)
-	_, err = db.SetCorrelation(ctx, op, peer.InviterHello{InvitationID: "inv-" + op, OperationID: "remote-" + op}, joinAt)
+	_, err = db.SetCorrelation(ctx, start.OperationID, peer.InviterHello{InvitationID: "inv-" + start.OperationID, OperationID: "remote-" + start.OperationID}, start.At)
 	pairOK(t, err)
-	r, err := db.RecordVerified(ctx, op, peer.ExchangeResult{Peer: joinKey(2), TranscriptID: []byte("verified-transcript")}, joinAt)
+	r, err := db.RecordVerified(ctx, start.OperationID, peer.ExchangeResult{Peer: remote, TranscriptID: []byte("verified-transcript")}, start.At)
 	pairOK(t, err)
-	r, err = db.RecordReceipt(ctx, op, joinReceipt(r), joinAt)
+	r, err = db.RecordReceipt(ctx, start.OperationID, joinReceipt(r), start.At)
 	pairOK(t, err)
 	return r
 }
@@ -98,7 +103,7 @@ func TestContactsAcceptanceCannotSkipReceiptOrDecision(t *testing.T) {
 		_, err := db.joins.RecordDecision(ctx, r.OperationID, peer.PairingAccepted, joinAt)
 		pairEqual(t, errors.Is(err, peer.ErrJoinState), true)
 		joinUnchanged(t, db.joins, r)
-		ready := contactReady(t, db.joins, "ready")
+		ready := contactReadyStart(t, db.joins, peer.JoinStart{OperationID: "ready", Joiner: joinKey(1), Name: "Local name", Destination: "peer.test:7445", At: joinAt}, joinKey(3))
 		_, err = db.joins.RecordDecisionConfirmed(ctx, ready.OperationID, peer.PairingAccepted, joinAt)
 		pairEqual(t, errors.Is(err, peer.ErrJoinState), true)
 		joinUnchanged(t, db.joins, ready)
@@ -255,6 +260,14 @@ func TestContactsAcceptanceCapacityFailurePreservesPendingJoin(t *testing.T) {
 func TestContactsAcceptanceConcurrentReciprocalUpdatesKeepBothDirections(t *testing.T) {
 	contactBackends(t, func(t *testing.T, db contactBackend) {
 		ctx := context.Background()
+		// Start with a valid legacy contact. Two later reciprocal updates must
+		// retain the new destination and the invited flag under concurrency.
+		priorAt := joinAt.Add(-time.Hour)
+		prior := contactReadyStart(t, db.joins, peer.JoinStart{OperationID: "prior-reciprocal", Joiner: joinKey(1), Name: "Local name", Destination: "previous.test:7445", At: priorAt}, joinKey(2))
+		_, seedErr := db.joins.RecordDecision(ctx, prior.OperationID, peer.PairingAccepted, priorAt)
+		pairOK(t, seedErr)
+		_, seedErr = db.joins.RecordDecisionConfirmed(ctx, prior.OperationID, peer.PairingAccepted, priorAt)
+		pairOK(t, seedErr)
 		r := contactReady(t, db.joins, "reciprocal")
 		outcome := pairOutcome(1)
 		outcome.IdentityKey = r.Peer

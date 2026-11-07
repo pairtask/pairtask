@@ -79,9 +79,9 @@ func TestSettleOperatorAcceptanceAutomaticBackoffLimitAndManualOverride(t *testi
 	}
 	f := newRedeemOperator(t, cfg, "")
 	seedSettleJoin(t, f, settleSeed{id: "retry", peer: settleIdentity(1), destination: "host:443", at: start})
-	seedSettleJoin(t, f, settleSeed{id: "old", peer: settleIdentity(1), destination: "host:443", at: start.Add(-hub.SettleWindow - time.Hour)})
-	seedSettleJoin(t, f, settleSeed{id: "direct", peer: settleIdentity(1), at: start})
-	seedSettleJoin(t, f, settleSeed{id: "done", peer: settleIdentity(1), destination: "host:443", at: start, decision: peer.PairingAccepted, confirmed: true})
+	seedSettleJoin(t, f, settleSeed{id: "old", peer: settleIdentity(2), destination: "host:443", at: start.Add(-hub.SettleWindow - time.Hour)})
+	seedSettleJoin(t, f, settleSeed{id: "direct", peer: settleIdentity(3), at: start})
+	seedSettleJoin(t, f, settleSeed{id: "done", peer: settleIdentity(4), destination: "host:443", at: start, decision: peer.PairingAccepted, confirmed: true})
 	sendTick := func() {
 		select {
 		case tick <- cfg.Clock():
@@ -237,7 +237,7 @@ func TestSettleOperatorAcceptanceAuditAndAgentBoundaryBeforeNetwork(t *testing.T
 	cfg.Dial = func(context.Context, string) (net.Conn, error) { calls.Add(1); return nil, errors.New("must not dial") }
 	f := newRedeemOperator(t, cfg, "")
 	seedSettleJoin(t, f, settleSeed{id: "audited", peer: settleIdentity(1), destination: "host:443", at: time.Now()})
-	seedSettleJoin(t, f, settleSeed{id: "direct", peer: settleIdentity(1), at: time.Now()})
+	seedSettleJoin(t, f, settleSeed{id: "direct", peer: settleIdentity(2), at: time.Now()})
 	before := f.count("operator_audit")
 	for _, id := range []string{"missing", "direct"} {
 		operatorEqual(t, "invalid target refused", pairingCommand(f.operatorFixture, "settle", id).text("type"), "error")
