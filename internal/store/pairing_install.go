@@ -233,11 +233,16 @@ type installedPairing struct {
 
 // installContact makes the contact's pairing the installed one, with
 // nothing of the epoch before: no directory, no remote state, no legacy
-// consent; every epoch-keyed row starts empty at the new epoch.
+// consent; every epoch-keyed row starts empty at the new epoch, and a
+// notice still pending under another pairing is superseded.
 func installContact(ctx context.Context, tx *sql.Tx, p installedPairing) error {
+	pairingID := peer.PairingID(p.x.TranscriptID)
+	if err := supersedeReplacedNotices(ctx, tx, p.x.IdentityKey, pairingID); err != nil {
+		return err
+	}
 	_, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET pairing_epoch = ?, pairing_id = ?, pairing_op = ?, unpaired_at = '',
     peer_state = '', peer_state_gen = 0, peer_state_at = NULL, directory_at = NULL, consent_legacy = 0, generation = generation + 1, authority_mark = ?
-WHERE identity_key = ?`, p.epoch, peer.PairingID(p.x.TranscriptID), p.x.OperationID, p.mark, p.x.IdentityKey)
+WHERE identity_key = ?`, p.epoch, pairingID, p.x.OperationID, p.mark, p.x.IdentityKey)
 	return err
 }
 

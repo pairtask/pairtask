@@ -50,9 +50,10 @@ var (
 	// beyond its byte bound.
 	ErrInvalidPairingOutcome = errors.New("peer: pairing outcome field too long")
 	// ErrOutcomeCapacity, ErrIdentityCapacity and ErrTooManyPending refuse a
-	// new record to a full store.
+	// new record to a full store; ErrIdentityCapacity, a new identity beyond
+	// MaxRetainedIdentities, is an ErrIdentityStorage.
 	ErrOutcomeCapacity  = errors.New("peer: pairing outcome capacity reached")
-	ErrIdentityCapacity = errors.New("peer: pairing identity capacity reached")
+	ErrIdentityCapacity = fmt.Errorf("peer: pairing identity capacity reached: %w", ErrIdentityStorage)
 	ErrTooManyPending   = errors.New("peer: too many pairing requests awaiting a decision")
 	// ErrIdentityStorage refuses another identity to a store that retains
 	// as many as it can (#276, D4); ErrContactCapacity, one more active
@@ -64,16 +65,18 @@ var (
 // a decision can be shown.
 const (
 	MaxPendingPairingRequests = 64
-	MaxPairingIdentities      = 1024
+	// MaxPairingIdentities is kept for compatibility; retained identities
+	// are bounded by MaxRetainedIdentities alone.
+	MaxPairingIdentities = 1024
 	// MaxActiveContacts bounds the contacts not unpaired, and
 	// MaxRetainedIdentities every contact row kept, unpaired ones included
 	// (#276, D4).
 	MaxActiveContacts     = 1024
 	MaxRetainedIdentities = 2048
-	MaxPairingOutcomes        = 4096
-	MaxPairingNameBytes       = 64
-	MaxPairingIDBytes         = 128
-	MaxTranscriptIDBytes      = 64 // SHA-512 at most
+	MaxPairingOutcomes    = 4096
+	MaxPairingNameBytes   = 64
+	MaxPairingIDBytes     = 128
+	MaxTranscriptIDBytes  = 64 // SHA-512 at most
 )
 
 // PairingOutcome is one successful pairing operation, kept durably so a repeat
@@ -222,26 +225,39 @@ func validPairingName(name string) bool {
 }
 
 // PairingCounts is what admitting a new outcome depends on, read atomically
-// with the commit.
+// with the commit: Identities counts the distinct identities retained by
+// any durable evidence (contacts, requests, joins), and Retained says the
+// outcome's identity is one of them; KnownIdentity, that it has a request.
 type PairingCounts struct {
 	Outcomes, Identities, Pending int
-	KnownIdentity                 bool
+	KnownIdentity, Retained       bool
 }
 
 // AdmitOutcome refuses a new outcome to a full store. A known identity adds
-// no request, so only the outcome bound applies to it.
+// no request, so only the outcome bound applies to it; a retained one
+// reuses its identity slot.
 func AdmitOutcome(c PairingCounts) error {
 	switch {
 	case c.Outcomes >= MaxPairingOutcomes:
 		return ErrOutcomeCapacity
 	case c.KnownIdentity:
 		return nil
-	case c.Identities >= MaxPairingIdentities:
-		return ErrIdentityCapacity
-	case c.Pending >= MaxPendingPairingRequests:
+	}
+	if err := admitIdentity(c); err != nil {
+		return err
+	}
+	if c.Pending >= MaxPendingPairingRequests {
 		return ErrTooManyPending
 	}
 	return nil
+}
+
+// admitIdentity refuses a new identity beyond MaxRetainedIdentities.
+func admitIdentity(c PairingCounts) error {
+	if c.Retained || c.Identities < MaxRetainedIdentities {
+		return nil
+	}
+	return ErrIdentityCapacity
 }
 
 // SameOutcome compares every immutable field of two outcomes.
@@ -360,7 +376,7 @@ func (s *MemPairingStore) Commit(_ context.Context, o PairingOutcome) (PairingRe
 
 func (s *MemPairingStore) counts(identityKey string) PairingCounts {
 	_, known := s.requests[identityKey]
-	c := PairingCounts{Outcomes: len(s.outcomes), Identities: len(s.requests), KnownIdentity: known}
+	c := PairingCounts{Outcomes: len(s.outcomes), Identities: len(s.requests), KnownIdentity: known, Retained: known}
 	for _, r := range s.requests {
 		if r.State == PairingPending {
 			c.Pending++

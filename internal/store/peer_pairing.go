@@ -219,15 +219,22 @@ func invitationUnused(ctx context.Context, tx *sql.Tx, invitationID string) erro
 	return nil
 }
 
-// pairingCounts reads what admission needs inside the commit's transaction.
+// pairingCounts reads what admission needs inside the commit's
+// transaction: the retained identities are every distinct one a contact, a
+// request or a join holds.
 func pairingCounts(ctx context.Context, tx *sql.Tx, identityKey string) (peer.PairingCounts, error) {
 	var c peer.PairingCounts
-	err := tx.QueryRowContext(ctx, `SELECT
+	err := tx.QueryRowContext(ctx, `WITH retained(identity_key) AS (
+    SELECT identity_key FROM peer_contacts
+    UNION SELECT identity_key FROM peer_pairing_requests
+    UNION SELECT peer FROM peer_joins WHERE peer <> '')
+SELECT
     (SELECT COUNT(*) FROM peer_pairing_outcomes),
-    (SELECT COUNT(*) FROM peer_pairing_requests),
-    (SELECT COUNT(*) FROM peer_pairing_requests WHERE state = ?),
-    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?)`,
-		string(peer.PairingPending), identityKey).Scan(&c.Outcomes, &c.Identities, &c.Pending, &c.KnownIdentity)
+    (SELECT COUNT(*) FROM retained),
+    (SELECT COUNT(*) FROM peer_pairing_requests WHERE state = ?1),
+    EXISTS (SELECT 1 FROM peer_pairing_requests WHERE identity_key = ?2),
+    EXISTS (SELECT 1 FROM retained WHERE identity_key = ?2)`,
+		string(peer.PairingPending), identityKey).Scan(&c.Outcomes, &c.Identities, &c.Pending, &c.KnownIdentity, &c.Retained)
 	return c, err
 }
 

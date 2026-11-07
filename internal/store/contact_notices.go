@@ -29,6 +29,15 @@ const (
 
 var errNoNotice = errors.New("no such contact notice")
 
+// supersedeReplacedNotices supersedes the contact's pending notices queued
+// under another pairing than pairingID, the one an install makes; their
+// attempts stay as evidence.
+func supersedeReplacedNotices(ctx context.Context, tx *sql.Tx, contact string, pairingID []byte) error {
+	_, err := tx.ExecContext(ctx, `UPDATE contact_notices_out SET state = 'superseded'
+WHERE contact = ? AND state = 'pending' AND pairing_id IS NOT ?`, contact, pairingID)
+	return err
+}
+
 // NoticeDue is a pending contact notice due for an attempt: its contact,
 // the pairing and generation it was queued under, the state it carries by
 // its wire name, the attempts made so far and when the next is due (zero:
@@ -89,14 +98,17 @@ func queueChangeNotice(ctx context.Context, tx *sql.Tx, contact, state string) e
 
 const noticeDueColumns = `contact, pairing_id, gen, contact_state, attempts, next_attempt_at`
 
-// PendingNotices are the notices due at now: pending, with attempts left
-// and the next one due by now. Only the root store schedules notices.
+// PendingNotices are the notices due at now: pending, with attempts left,
+// the next one due by now, and queued under the contact's current pairing,
+// so a notice of a replaced pairing is never due. Only the root store
+// schedules notices.
 func (p *PeerMessages) PendingNotices(ctx context.Context, now time.Time) ([]NoticeDue, error) {
 	if err := p.localOnly(); err != nil {
 		return nil, err
 	}
-	rows, err := p.db.QueryContext(ctx, `SELECT `+noticeDueColumns+` FROM contact_notices_out
+	rows, err := p.db.QueryContext(ctx, `SELECT `+noticeDueColumns+` FROM contact_notices_out n
 WHERE state = 'pending' AND attempts < ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+AND pairing_id IS (SELECT c.pairing_id FROM peer_contacts c WHERE c.identity_key = n.contact)
 ORDER BY contact, gen`, maxNoticeAttempts, msgStamp(now))
 	if err != nil {
 		return nil, err
