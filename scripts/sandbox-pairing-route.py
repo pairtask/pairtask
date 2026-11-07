@@ -13,8 +13,9 @@ real redemptions both ways against a standalone broker on this host:
   redemption over a pinned contact connection on the same route, and both
   sides then hold one confirmed contact for the other.
 
-Both directions run again after crash restarts: the repeated redemptions
-find the requests already accepted, settle, and leave one contact each.
+Each direction settles before the next exchange starts. Reusing an active
+identity declares a repair, accepted explicitly before settling. Both
+directions run again after crash restarts and leave one contact each.
 
 It then runs pairing_route_checks on the deployment, proves publishing the
 relay on this host's ports with pairing_publish_checks (a redemption through
@@ -305,11 +306,20 @@ def require_receipt(join, outcome, joiner):
     require(join_joiner == joiner, "the join names a different joiner")
 
 
+def repair_args(snap, identity):
+    """An exchange for a retained identity explicitly repairs its pairing."""
+    if any(c["identity_key"] == identity for c in snap["contacts"]):
+        return ["--repair", identity]
+    return []
+
+
 def outbound(deployment, host, request_state):
     """secured redeems the host's code through connector's egress; the host
     then holds secured's request in request_state."""
-    code, host_identity = opened_code(host.pair("open", "--json"))
-    result = deployment.operator("redeem", host.relay_address, "--name", "secured", "--wait", WAIT, "--json", stdin=code + "\n")
+    secured = snapshot(deployment.operator("status", "--json"))
+    host_state = snapshot(host.pair("status", "--json"))
+    code, host_identity = opened_code(host.pair("open", *repair_args(host_state, secured["self_identity"]), "--json"))
+    result = deployment.operator("redeem", host.relay_address, *repair_args(secured, host_identity), "--name", "secured", "--wait", WAIT, "--json", stdin=code + "\n")
     require(result.returncode == 0, f"secured's redemption did not settle: {result.stdout} {result.stderr}")
     join = json.loads(result.stdout)
     require(join["state"] == "awaiting_acceptance", f"secured's redemption is {join['state']}")
@@ -326,8 +336,10 @@ def outbound(deployment, host, request_state):
 def inbound(deployment, host, destination, request_state):
     """The host redeems secured's code at destination, through connector's
     relay; secured then holds the host's request in request_state."""
-    code, secured_identity = opened_code(deployment.operator("open", "--json"))
-    result = host.pair("redeem", destination, "--wait", WAIT, "--json", stdin=code + "\n")
+    secured = snapshot(deployment.operator("status", "--json"))
+    host_state = snapshot(host.pair("status", "--json"))
+    code, secured_identity = opened_code(deployment.operator("open", *repair_args(secured, host_state["self_identity"]), "--json"))
+    result = host.pair("redeem", destination, *repair_args(host_state, secured_identity), "--wait", WAIT, "--json", stdin=code + "\n")
     require(result.returncode == 0, f"the host's redemption did not settle: {result.stdout} {result.stderr}")
     join = json.loads(result.stdout)
     require(join["state"] == "awaiting_acceptance", f"the host's redemption is {join['state']}")
@@ -388,13 +400,12 @@ def settle_inbound(deployment, host, operation_id, accept):
 
 
 def both_ways(deployment, host, connector_ip, first):
-    """Redeem and settle in both directions; the first round accepts, the
-    repeat finds the requests already accepted."""
+    """Settle each route before opening another exchange for the identity."""
     state = "pending_acceptance" if first else "accepted"
     code_out, op_out = outbound(deployment, host, state)
+    settle_outbound(deployment, host, op_out, accept=True)
     code_in, op_in = inbound(deployment, host, f"{connector_ip}:{RELAY_PORT}", state)
-    settle_outbound(deployment, host, op_out, accept=first)
-    settle_inbound(deployment, host, op_in, accept=first)
+    settle_inbound(deployment, host, op_in, accept=True)
     return [code_out, code_in]
 
 
@@ -424,7 +435,7 @@ def redeem_published(deployment, host, destination):
     """A real redemption and settlement through the host's published port:
     the identity proof that it reaches secured through connector's relay."""
     code, operation_id = inbound(deployment, host, destination, "accepted")
-    settle_inbound(deployment, host, operation_id, accept=False)
+    settle_inbound(deployment, host, operation_id, accept=True)
     print(f"PASS: the host redeemed and settled through the published {destination}.", flush=True)
     return code
 
