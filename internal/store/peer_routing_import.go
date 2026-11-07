@@ -678,10 +678,10 @@ func (imp RemoteImport) answeredBy() messaging.ReplyRef {
 	return messaging.ReplyRef{ID: imp.RemoteID, Author: messaging.ReplyByReceiver}
 }
 
-// ErrOutcomeNotice refuses a reply to a review outcome notice: the notice
-// was written here from the outcome, so it names no message of the
-// workspace that sent the outcome.
-var ErrOutcomeNotice = errors.New("a review outcome notice is not a chat reply target")
+// ErrOutcomeNotice refuses a reply to a refusal notice or summary: this side
+// wrote it, and it answers no request of that workspace, so nothing there is
+// answered (#259). An outcome of a request this side sent is answerable.
+var ErrOutcomeNotice = errors.New("a refusal notice is not a chat reply target")
 
 // repeatedReply answers a reply whose ID is queued already: the same text
 // and routing, queued from the same agent's message, is the same reply.

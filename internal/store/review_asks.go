@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
@@ -523,8 +524,8 @@ func outcomeKey(askID string, seq uint64) string {
 	return outcomeKeyPrefix + askID + "\u00b7" + fmt.Sprint(seq)
 }
 
-// outcomeKeyPrefix starts every outcome notice's import key, and no
-// refusal's.
+// outcomeKeyPrefix starts every outcome notice's import key; a refusal's
+// never does.
 const outcomeKeyPrefix = "outcome\u00b7"
 
 // outcomeText is a notice's text: where the request stands, the verdict
@@ -553,6 +554,18 @@ func outcomeText(a AskOut, o messaging.ReviewOutcome, noticeID string) string {
 func outcomeFollowUp(a AskOut, noticeID string) string {
 	return fmt.Sprintf("To follow up, reply to this notice (message_id %q) to %q with workspace %q: it answers your request there, as chat, and changes nothing in the review.",
 		noticeID, a.Reviewer, a.Contact)
+}
+
+// retargetFollowUp names, in the follow-up this side wrote at the end of a
+// notice's text, the ID the notice is delivered under when staging's was
+// taken meanwhile (#259). The text before it is the peer's, kept byte for
+// byte; text without that follow-up is left as it is.
+func retargetFollowUp(text string, a AskOut, staged, delivered string) string {
+	old := outcomeFollowUp(a, staged)
+	if staged == delivered || !strings.HasSuffix(text, old) {
+		return text
+	}
+	return strings.TrimSuffix(text, old) + outcomeFollowUp(a, delivered)
 }
 
 // collectAsks ends a removed contact's open requests, and forgets settled
@@ -590,9 +603,11 @@ func dispatchOutcome(ctx context.Context, tx *sql.Tx, imp RemoteImport, at impor
 	if err != nil || !found {
 		return ImportResult{}, errors.Join(err, ErrNoImport)
 	}
+	staged := imp.LocalID
 	if imp.LocalID, err = freeLocalID(ctx, tx, imp.source(), imp.RemoteID); err != nil {
 		return ImportResult{}, err
 	}
+	imp.Text = retargetFollowUp(imp.Text, a, staged, imp.LocalID)
 	label, err := contactLabel(ctx, tx, imp.Contact)
 	if err != nil {
 		return ImportResult{}, err
