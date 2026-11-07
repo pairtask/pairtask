@@ -3,6 +3,7 @@ package chat_test
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -26,7 +27,7 @@ func TestUnpairChatRecoveryAcceptanceReconnectDiscardsUnsentCard(t *testing.T) {
 	unpairChatNoRequest(t, h)
 }
 func TestUnpairChatRecoveryAcceptanceSnapshotChangeDiscardsUnsentCard(t *testing.T) {
-	for _, change := range []string{"epoch", "label"} {
+	for _, change := range []string{"epoch", "label", "pause"} {
 		t.Run(change, func(t *testing.T) {
 			h, _ := unpairChatHarness(t, unpairChatOptions{supported: true})
 			v2Command(h, "/pair unpair Office")
@@ -34,10 +35,14 @@ func TestUnpairChatRecoveryAcceptanceSnapshotChangeDiscardsUnsentCard(t *testing
 			h.wire.in <- protocol.Message{Type: protocol.TypeEvent, Event: &protocol.SessionEvent{Kind: protocol.EventPairingChanged, Watermark: protocol.Watermark{Epoch: "epoch", Revision: 2}}}
 			req := h.take(protocol.TypeOperatorPairing)
 			updated := unpairChatContact(t, unpairChatOptions{epoch: 7})
-			if change == "epoch" {
+			switch change {
+			case "epoch":
 				updated = unpairChatContact(t, unpairChatOptions{epoch: 8})
-			} else {
+			case "label":
 				updated.LocalName = "Renamed workspace"
+			case "pause":
+				at := time.Date(2026, 11, 7, 7, 0, 0, 0, time.UTC)
+				updated.PausedAt = &at
 			}
 			h.reply(req, unpairChatSnapshot(t, updated))
 			h.await(func() bool { return h.m.State().InFlight == 0 })
