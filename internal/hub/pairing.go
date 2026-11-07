@@ -309,9 +309,9 @@ func (h *Hub) pairingSnapshot(ctx context.Context) (*protocol.PairingSnapshot, e
 	if len(requests) > protocol.ListedPairingRequests {
 		requests, snapshot.RequestsTruncated = requests[:protocol.ListedPairingRequests], true
 	}
+	unpaired := unpairedSince(snapshot.Contacts)
 	for _, r := range requests {
-		snapshot.Requests = append(snapshot.Requests, protocol.PairingRequestView{IdentityKey: r.IdentityKey, Name: r.Name,
-			State: string(r.State), FirstPairedAt: r.FirstPairedAt, DeliveredAt: timeOrNil(r.DeliveredAt)})
+		snapshot.Requests = append(snapshot.Requests, requestView(r, unpaired))
 	}
 	if err := h.joinsSnapshot(ctx, snapshot); err != nil {
 		return nil, err

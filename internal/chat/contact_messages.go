@@ -122,12 +122,12 @@ func (m *Model) contactTabShown(key viewKey) bool {
 }
 
 // contactsUsable: connected to a broker that carries contact messages, for
-// a confirmed contact.
+// a confirmed contact or an unpaired one's history.
 func (m *Model) contactsUsable(contact string) bool {
 	if !m.ready() || !m.contactsAvailable() {
 		return false
 	}
-	return m.confirmedContact(contact)
+	return m.historyContact(contact)
 }
 
 // contactNeedsLoad: never loaded, no failure waiting for a retry, and no
@@ -339,8 +339,8 @@ func (m *Model) contactSubmit() tea.Cmd {
 	case !m.contactsAvailable():
 		m.status = "this broker doesn't carry contact messages; upgrade it"
 		return nil
-	case !m.confirmedContact(contact):
-		m.status = contactConfirming
+	case m.sendRefusal(contact) != "":
+		m.status = m.sendRefusal(contact)
 		return nil
 	case !m.ready():
 		m.status = "not connected; the draft is kept"
@@ -410,6 +410,7 @@ func (m *Model) contactsDisconnected() {
 	if m.contacts.send != nil {
 		m.contacts.send.unknown = true
 	}
+	m.unpairDisconnected()
 	for _, op := range m.contacts.reads {
 		op.unknown = true
 	}
@@ -427,7 +428,7 @@ func (m *Model) contactsReconnected() tea.Cmd {
 	if !m.contactsAvailable() {
 		return nil
 	}
-	return tea.Batch(m.resendContactSend(), m.resendContactReads(), m.resendContactAcks(), m.refreshLoadedContacts())
+	return tea.Batch(m.resendContactSend(), m.resendContactReads(), m.resendContactAcks(), m.resendUnpair(), m.refreshLoadedContacts())
 }
 
 // resendContactSend resends a send whose answer was lost, unchanged.

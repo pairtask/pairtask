@@ -138,7 +138,7 @@ func (h *Hub) redeemAvailable() bool {
 // identity; it runs in the Run goroutine.
 func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 	cfg := h.pair.cfg
-	if joiner, err := peer.NewJoiner(cfg.Exchanger, h.store, id, cfg.Clock, rand.Reader); err == nil {
+	if joiner, err := peer.NewJoiner(cfg.Exchanger, h.joinStore(), id, cfg.Clock, rand.Reader); err == nil {
 		h.pair.joiner = joiner
 	}
 	if h.pairing == nil {
@@ -444,8 +444,13 @@ func (h *Hub) joinsSnapshot(ctx context.Context, snapshot *protocol.PairingSnaps
 	if len(joins) > protocol.ListedPairingJoins {
 		joins, snapshot.JoinsTruncated = joins[:protocol.ListedPairingJoins], true
 	}
+	unpaired := unpairedSince(snapshot.Contacts)
 	for _, j := range joins {
-		snapshot.Joins = append(snapshot.Joins, h.settledJoinView(j))
+		view := h.settledJoinView(j)
+		if err := h.joinKind(ctx, &view, unpaired); err != nil {
+			return err
+		}
+		snapshot.Joins = append(snapshot.Joins, view)
 	}
 	snapshot.RedeemAvailable = h.redeemAvailable()
 	return nil

@@ -177,6 +177,9 @@ type PairingJoinView struct {
 	// its decision; SettleError is the last settlement's fixed cause.
 	DecisionConfirmedAt *time.Time `json:"decision_confirmed_at,omitempty"`
 	SettleError         string     `json:"settle_error,omitempty"`
+	// Kind and RepairsUnpairedAt are as on a request (#276).
+	Kind              string     `json:"kind,omitempty"`
+	RepairsUnpairedAt *time.Time `json:"repairs_unpaired_at,omitempty"`
 }
 
 // InvitationView describes the open invitation. Code is set only in the
@@ -200,6 +203,11 @@ type PairingRequestView struct {
 	FirstPairedAt time.Time `json:"first_paired_at"`
 	// DeliveredAt is when the joiner acknowledged the decision.
 	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	// Kind is what the exchange is (#276): pair, repair or address_move,
+	// display only; RepairsUnpairedAt is when this side unpaired the
+	// identity it pairs with again, nil when it isn't unpaired.
+	Kind              string     `json:"kind,omitempty"`
+	RepairsUnpairedAt *time.Time `json:"repairs_unpaired_at,omitempty"`
 }
 
 var (

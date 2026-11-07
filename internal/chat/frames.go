@@ -175,6 +175,7 @@ var responseHandlers = map[string]responseHandler{
 	kindContactShare:   (*Model).contactShareResult,
 	kindContactName:    (*Model).contactNameResult,
 	kindContactPause:   (*Model).contactPauseResult,
+	kindContactUnpair:  (*Model).contactUnpairResult,
 	kindContactAddress: (*Model).contactAddressResult,
 	kindContactAsk:     (*Model).contactAskResult,
 	kindCardAsks:       (*Model).cardAsksResult,

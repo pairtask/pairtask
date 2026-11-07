@@ -31,6 +31,9 @@ func (m *Model) contactAcksAvailable() bool {
 // ackSummary is where a contact's acknowledgments stand: the newest the
 // tab heard, else the pairing snapshot's.
 func (m *Model) ackSummary(contact string) protocol.ContactAckSummary {
+	if m.unpairedContact(contact) {
+		return protocol.ContactAckSummary{} // nothing can be acknowledged there any more (#276)
+	}
 	if t := m.contacts.threads[contact]; t != nil && t.acks != nil {
 		return *t.acks
 	}
@@ -70,6 +73,9 @@ func (m *Model) contactAckReminder() string {
 // broker last counted, or #n, a message's number here.
 func (m *Model) contactAckCommand(arg argument) tea.Cmd {
 	key := m.conv.selected.contact
+	if m.refuseUnpaired(key) {
+		return nil
+	}
 	switch {
 	case !m.contactAcksAvailable():
 		m.status = noContactAcks

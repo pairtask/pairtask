@@ -24,7 +24,7 @@ import (
 const (
 	kindPairing  = "pairing"
 	panelPairing = "pairing"
-	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|* | pause | resume | consent [ID | contact:NAME | on NAME | off NAME | reset NAME [AGENT [OPERATION]]]]"
+	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|* | pause | resume | unpair [NAME|KEY] | invite --repair NAME | redeem --repair NAME CODE@HOST:PORT | consent [ID | contact:NAME | on NAME | off NAME | reset NAME [AGENT [OPERATION]]]]"
 )
 
 // pairingView is the last pairing snapshot, its code removed.
@@ -57,6 +57,12 @@ func pairArity(fields pairWords) bool {
 	if fields.sharesAgents() || fields[0] == pairName {
 		return len(fields) >= 2
 	}
+	if repair, ok := fields.repairShape(); repair {
+		return ok
+	}
+	if fields[0] == pairUnpair {
+		return true // the open tab's, NAME|KEY, or confirm TOKEN
+	}
 	if review, ok := fields.reviewArity(); review {
 		return ok
 	}
@@ -67,6 +73,9 @@ func pairArg(a argument) error {
 	fields := pairWords(strings.Fields(string(a)))
 	if len(fields) > 0 && !pairArity(fields) {
 		return errors.New(pairUsage)
+	}
+	if len(fields) > 0 && fields.repairs() {
+		return repairArg(fields)
 	}
 	if len(fields) > 0 && fields[0] == protocol.PairingOpRedeem {
 		return redeemArg(fields)
@@ -118,6 +127,16 @@ var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
 	pairPause:                (*Model).pauseCommand,
 	pairResume:               (*Model).pauseCommand,
 	pairConsent:              (*Model).consentCommand,
+	pairUnpair:               (*Model).unpairCommand,
+}
+
+// pairHandler is the command for a /pair line with one: a repair, or its
+// word's.
+func pairHandler(fields pairWords) func(*Model, pairWords) tea.Cmd {
+	if fields.repairs() {
+		return (*Model).repairCommand
+	}
+	return pairCommands[fields[0]]
 }
 
 // pairCommand is /pair: list by default, or one operation. Accept and reject
@@ -135,7 +154,10 @@ func (m *Model) pairCommand(arg argument) tea.Cmd {
 	if len(fields) == 0 {
 		fields = pairWords{protocol.PairingOpList}
 	}
-	if command := pairCommands[fields[0]]; command != nil {
+	if m.tombstoneRefused(fields[0]) {
+		return nil
+	}
+	if command := pairHandler(fields); command != nil {
 		return command(m, fields)
 	}
 	if fields[0] == protocol.PairingOpSettle && !m.session.HasCapability(protocol.CapabilityPairingContacts) {
@@ -286,11 +308,12 @@ func (m *Model) invitationRows() []string {
 // requestRow is one request on a line, or its state on a line of its own
 // when the full identity key leaves no room for it.
 func (m *Model) requestRow(r protocol.PairingRequestView) []string {
-	row := fmt.Sprintf("  %s  %s  %s%s", safe(r.IdentityKey), safe(r.Name), r.Label(), requestTimes(r))
+	label := r.Label() + kindNote(r.Kind, r.RepairsUnpairedAt != nil)
+	row := fmt.Sprintf("  %s  %s  %s%s", safe(r.IdentityKey), safe(r.Name), label, requestTimes(r))
 	if ansi.StringWidth(row) <= m.width {
 		return []string{row}
 	}
-	return []string{fmt.Sprintf("  %s  %s", safe(r.IdentityKey), safe(r.Name)), "    " + r.Label() + requestTimes(r)}
+	return []string{fmt.Sprintf("  %s  %s", safe(r.IdentityKey), safe(r.Name)), "    " + label + requestTimes(r)}
 }
 
 // redeemResult reports a recorded redemption; /pair shows its progress.

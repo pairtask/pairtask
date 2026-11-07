@@ -115,6 +115,7 @@ func (m *Model) joinRow(j protocol.PairingJoinView) string {
 	if c, ok := m.contact(j.Peer); ok && j.Peer != "" {
 		row += " · with " + safe(contactDisplay(c))
 	}
+	row += kindNote(j.Kind, j.RepairsUnpairedAt != nil)
 	return row + mutedStyle.Render("  "+safe(j.OperationID))
 }
 
@@ -150,6 +151,12 @@ func pairedRow(c protocol.PairingContactView) []string {
 		fmt.Sprintf("      %s · %s · paired %s", protocol.ShortKey(c.IdentityKey), dials, when(c.EstablishedAt))}
 	if pausedHere(c) {
 		rows = append(rows, warnStyle.Render("      "+pausedNote))
+	}
+	if unpairedHere(c) {
+		rows = append(rows, warnStyle.Render("      "+unpairedNote(c)))
+	}
+	if standing := standingLine(c); standing != "" {
+		rows = append(rows, warnStyle.Render("      "+standing))
 	}
 	return rows
 }

@@ -146,6 +146,7 @@ type Model struct {
 	pairing   pairingView         // the last /pair snapshot, never its code
 	reviews   reviewState         // review requests (#201): the last list and a request in flight
 	contacts  contactState        // messages with paired workspaces (#210)
+	unpair    unpairState         // an unpair's card and its one request (#276)
 
 	compose   composer
 	conv      conversations
@@ -302,9 +303,10 @@ func (m *Model) release(id string) (pendingRequest, tea.Cmd) {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd, ok := m.connectionUpdate(msg)
-	if !ok {
+	if !ok && !m.unpairInput(msg) {
 		cmd = m.terminalUpdate(msg)
 	}
+	m.checkUnpairCard()
 	if follow := m.contactFollowUp(); follow != nil {
 		return m, tea.Batch(cmd, follow)
 	}

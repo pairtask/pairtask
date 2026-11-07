@@ -40,7 +40,7 @@ func runOperatorPeer(ctx context.Context, args []string, stdout, stderr io.Write
 	if code != -1 {
 		return code
 	}
-	key, snapshot, err := resolveContact(ctx, call, contact, stderr)
+	key, snapshot, err := resolveContact(ctx, call, queryFor(contact, req.ContactOp), stderr)
 	if err != nil {
 		return 1
 	}

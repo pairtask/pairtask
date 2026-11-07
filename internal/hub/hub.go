@@ -88,7 +88,7 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 	h.pair.cfg = defaultPairingConfig()
 	// The invitation manager does no I/O; it fails only on a missing store,
 	// which leaves pairing unavailable rather than the hub.
-	h.pairing, _ = peer.NewInvitations(peer.DefaultInvitationPolicy(), time.Now, rand.Reader, st)
+	h.pairing, _ = peer.NewInvitations(peer.DefaultInvitationPolicy(), time.Now, rand.Reader, h.pairingStore())
 	h.pair.changed = make(chan struct{}, 1)
 	h.msgs.init(h.pair.changed)
 	return h

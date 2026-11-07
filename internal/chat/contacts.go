@@ -114,7 +114,16 @@ func (m *Model) contactNotice(key viewKey) string {
 	if !m.contactsAvailable() {
 		return "this broker doesn't carry contact messages; upgrade it"
 	}
-	if !m.confirmedContact(key.contact) {
+	return m.sendRefusal(key.contact)
+}
+
+// sendRefusal is why nothing is sent to a contact: unpaired, or not yet
+// confirmed on both sides; "" when it can be.
+func (m *Model) sendRefusal(contact string) string {
+	switch {
+	case m.unpairedContact(contact):
+		return unpairedRefusal
+	case !m.confirmedContact(contact):
 		return contactConfirming
 	}
 	return ""

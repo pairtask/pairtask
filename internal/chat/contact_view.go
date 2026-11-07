@@ -61,7 +61,11 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 		return l
 	}
 	thread := t.ordered()
-	for _, v := range thread {
+	breaks := epochBreaks(thread)
+	for i, v := range thread {
+		if breaks && newEpoch(thread, i) {
+			l.lines = append(l.lines, "", mutedStyle.Render("── "+epochLabel(v.PairingEpoch)+" ──"))
+		}
 		l.lines = append(l.lines, "") // a separator, which shows no message
 		from := len(l.lines)
 		l.lines = append(l.lines, m.messageLines(c, v, thread)...)
@@ -72,16 +76,34 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 	return l
 }
 
-// contactShowsMessages: the broker carries them and both sides confirmed.
+// contactShowsMessages: the broker carries them, and both sides confirmed
+// or this side unpaired it, keeping its history.
 func (m *Model) contactShowsMessages(c protocol.PairingContactView) bool {
-	return m.contactsAvailable() && c.Confirmed
+	return m.contactsAvailable() && m.historyContact(c.IdentityKey)
+}
+
+// standsAs is how the card's title says the contact stands.
+func standsAs(c protocol.PairingContactView) string {
+	switch {
+	case unpairedHere(c):
+		return unpairedNote(c)
+	case c.Confirmed:
+		return "confirmed on both sides"
+	}
+	return "confirming: the peer has not yet confirmed the decision"
 }
 
 func (m *Model) contactHeader(c protocol.PairingContactView) []string {
-	state := "confirming: the peer has not yet confirmed the decision"
-	if c.Confirmed {
-		state = "confirmed on both sides"
+	lines := m.contactCardLines(c)
+	if standing := standingLine(c); standing != "" {
+		lines = append(lines, warnStyle.Render("  "+standing))
 	}
+	return lines
+}
+
+// contactCardLines are the card's title, key and how it syncs.
+func (m *Model) contactCardLines(c protocol.PairingContactView) []string {
+	state := standsAs(c)
 	lines := []string{
 		titleStyle.Render("⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(" · "+state),
 		mutedStyle.Render("  identity " + safe(c.IdentityKey)),
@@ -89,6 +111,8 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 	switch {
 	case !m.contactsAvailable():
 		lines = append(lines, "  this broker doesn't carry contact messages; upgrade it")
+	case unpairedHere(c):
+		lines = append(lines, warnStyle.Render("  read-only: nothing is sent, acknowledged or shared; pairing again needs a fresh code"))
 	case !c.Confirmed:
 		lines = append(lines, "  "+contactConfirming)
 	case pausedHere(c):
@@ -185,6 +209,9 @@ func (m *Model) outboundState(v protocol.ContactMessageView) string {
 	}
 	if heldForUpgrade(v) {
 		return "queued: leaves once they upgrade pairtask"
+	}
+	if expiredUnpaired(v) {
+		return "not sent: the workspace was unpaired first"
 	}
 	return label + refusalNote(v)
 }
