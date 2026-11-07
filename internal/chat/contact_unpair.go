@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -238,16 +239,14 @@ func (m *Model) cardStale(card *unpairCard) bool {
 	return !ok || cardEntry(c) != cardEntry(card.contact)
 }
 
-// unpairEntry is what a card binds of its workspace: a change to any of
-// it, its label included, discards the card.
-type unpairEntry struct {
-	key, label string
-	epoch      int64
-	unpaired   bool
-}
-
-func cardEntry(c protocol.PairingContactView) unpairEntry {
-	return unpairEntry{key: c.IdentityKey, label: contactDisplay(c), epoch: c.PairingEpoch, unpaired: unpairedHere(c)}
+// cardEntry is what a card binds of its workspace: the whole snapshot
+// entry as the broker wrote it, so a change to any of it discards the
+// card, less the activity the card doesn't show (sync summary,
+// acknowledgments), which changes with every message.
+func cardEntry(c protocol.PairingContactView) string {
+	c.Summary, c.Acks = nil, nil
+	entry, _ := json.Marshal(c) // plain fields: it can't fail
+	return string(entry)
 }
 
 // contactUnpairResult takes the snapshot the unpair answered with, so the
