@@ -147,8 +147,7 @@ func commitEpoch(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) (peer.P
 // leaves the request's decision and delivery as they are.
 func mirrorCandidate(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome, kind peer.ExchangeKind) error {
 	if kind == peer.KindRepair {
-		_, err := tx.ExecContext(ctx, `UPDATE peer_pairing_requests SET operation_id = ? WHERE identity_key = ?`, o.OperationID, o.IdentityKey)
-		return err
+		return mirrorRepair(ctx, tx, o)
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_pairing_requests (identity_key, name, state, first_paired_at, operation_id)
 VALUES (?, ?, ?, ?, ?)
@@ -156,6 +155,20 @@ ON CONFLICT(identity_key) DO UPDATE SET name = excluded.name, state = excluded.s
 		o.IdentityKey, o.Name, string(peer.PairingPending), stamp(o.At), o.OperationID)
 	if err != nil {
 		return fmt.Errorf("store pairing request: %w", err)
+	}
+	return nil
+}
+
+// mirrorRepair names a repair on the identity's request, keeping its
+// decision; a pairing this side joined has no request yet, so the repair's
+// is a new one, pending like any request.
+func mirrorRepair(ctx context.Context, tx *sql.Tx, o peer.PairingOutcome) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_pairing_requests (identity_key, name, state, first_paired_at, operation_id)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(identity_key) DO UPDATE SET operation_id = excluded.operation_id`,
+		o.IdentityKey, o.Name, string(peer.PairingPending), stamp(o.At), o.OperationID)
+	if err != nil {
+		return fmt.Errorf("store repair request: %w", err)
 	}
 	return nil
 }
@@ -392,18 +405,24 @@ func (s *Store) decidePairing(ctx context.Context, identityKey string, decision 
 
 // decideRequest decides the request's open candidate on its ledger row,
 // if there is one: a fresh pairing's request mirrors the decision, a
-// repair's keeps its own. Otherwise it decides the legacy request.
+// repair's keeps its own unless the repair made the request, still
+// pending. Otherwise it decides the legacy request.
 func decideRequest(ctx context.Context, tx *sql.Tx, request peer.PairingRequest, decision peer.PairingState) (peer.PairingRequest, error) {
 	x, found, err := exchangeRow(ctx, tx, request.OperationID)
 	if err != nil {
 		return request, err
 	}
 	if found && x.State == peer.ExchangeOpen {
-		if err := decideCandidate(ctx, tx, x, decision); err != nil || x.Kind == peer.KindRepair {
+		if err := decideCandidate(ctx, tx, x, decision); err != nil || keepsDecision(x, request) {
 			return request, err
 		}
 	}
 	return setRequestState(ctx, tx, request, decision)
+}
+
+// keepsDecision: a repair leaves a decided request as it is.
+func keepsDecision(x peer.ExchangeRecord, request peer.PairingRequest) bool {
+	return x.Kind == peer.KindRepair && request.State != peer.PairingPending
 }
 
 // decideCandidate records the operator's decision on the candidate's row.

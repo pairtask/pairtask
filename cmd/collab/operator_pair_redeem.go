@@ -168,10 +168,15 @@ func unsettled(state string) bool {
 // contact.
 var redeemStates = map[string]string{
 	string(peer.JoinAwaitingAcceptance): "the inviter recorded it; it awaits their acceptance",
+	string(peer.JoinAddressMoved):       "the inviter recorded it as an address update: the existing pairing kept, nothing to accept",
 	string(peer.JoinOutcomeUnknown):     "our final confirmation may have arrived, but no receipt came; it awaits reconciliation",
 	string(peer.JoinFailed):             "it failed before the inviter could record it",
 	string(peer.JoinUnverified):         "it was interrupted before the inviter was verified",
 }
+
+// redeemed are the states a redemption succeeded in: recorded by the
+// inviter, for its decision or as an address update.
+var redeemed = map[string]bool{string(peer.JoinAwaitingAcceptance): true, string(peer.JoinAddressMoved): true}
 
 func reportRedeem(stdout, stderr io.Writer, asJSON bool, join protocol.PairingJoinView) int {
 	if asJSON {
@@ -181,7 +186,7 @@ func reportRedeem(stdout, stderr io.Writer, asJSON bool, join protocol.PairingJo
 	} else {
 		fmt.Fprintf(stdout, "redemption %q: %s\n", join.OperationID, join.State)
 	}
-	if join.State == string(peer.JoinAwaitingAcceptance) {
+	if redeemed[join.State] {
 		fmt.Fprintln(stderr, redeemStates[join.State])
 		return 0
 	}

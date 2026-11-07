@@ -104,9 +104,20 @@ func (s *Store) RecordVerified(ctx context.Context, opID string, res peer.Exchan
 	return r, nil
 }
 
+// RecordReceipt applies the inviter's receipt; one for an exchange the
+// ledger settled as an address move ends the join as moved (#276). A legacy
+// exchange keeps today's decision path.
 func (s *Store) RecordReceipt(ctx context.Context, opID string, receipt peer.JoinReceipt, at time.Time) (peer.JoinRecord, error) {
+	x, _, err := exchangeRow(ctx, s.db, opID)
+	if err != nil {
+		return peer.JoinRecord{}, err
+	}
+	apply := peer.ApplyReceipt
+	if x.State == peer.ExchangeRefused && x.Reason == peer.RefusedAddressMove {
+		apply = peer.ApplyMoveReceipt
+	}
 	return s.updateJoin(ctx, opID, func(r peer.JoinRecord) (peer.JoinRecord, bool, error) {
-		return peer.ApplyReceipt(r, receipt, at)
+		return apply(r, receipt, at)
 	})
 }
 

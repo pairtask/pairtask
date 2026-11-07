@@ -430,6 +430,8 @@ func (h *Hub) settleTarget(ctx context.Context, target string) ([]string, *routi
 		return nil, &routingError{protocol.ErrPairing, "no_join"}
 	case r.Destination == "" || r.Peer == "":
 		return nil, &routingError{protocol.ErrPairing, "no_destination"}
+	case r.State == peer.JoinAddressMoved:
+		return nil, nil // settled by its receipt: nothing to queue
 	}
 	if rerr := h.settleEnded(ctx, r); rerr != nil {
 		return nil, rerr

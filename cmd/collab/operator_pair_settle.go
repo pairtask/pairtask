@@ -126,7 +126,12 @@ func followSettle(ctx context.Context, a settleArgs, join protocol.PairingJoinVi
 }
 
 func settleDone(join protocol.PairingJoinView, firstError string) bool {
-	return join.DecisionConfirmedAt != nil || join.SettleError != firstError
+	return settledHere(join) || join.SettleError != firstError
+}
+
+// settledHere: a confirmed decision, or an address update, which awaits none.
+func settledHere(join protocol.PairingJoinView) bool {
+	return join.DecisionConfirmedAt != nil || join.State == string(peer.JoinAddressMoved)
 }
 
 // settleStates explain where a settled redemption stands.
@@ -135,6 +140,7 @@ var settleStates = map[string]string{
 	string(peer.JoinDeclined):           "the inviter declined",
 	string(peer.JoinAwaitingAcceptance): "the inviter has not decided yet",
 	string(peer.JoinOutcomeUnknown):     "the inviter could not yet be reached to confirm the receipt",
+	string(peer.JoinAddressMoved):       "an address update: the existing pairing kept, nothing to settle",
 }
 
 func reportSettled(stdout, stderr io.Writer, asJSON bool, join protocol.PairingJoinView) int {
@@ -151,7 +157,7 @@ func reportSettled(stdout, stderr io.Writer, asJSON bool, join protocol.PairingJ
 	if join.SettleError != "" {
 		fmt.Fprintf(stderr, "last settlement: %q\n", join.SettleError)
 	}
-	if join.DecisionConfirmedAt != nil {
+	if settledHere(join) {
 		return 0
 	}
 	return 1

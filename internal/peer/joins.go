@@ -47,6 +47,10 @@ const (
 	// both are final.
 	JoinContact  JoinState = "contact"
 	JoinDeclined JoinState = "declined"
+	// JoinAddressMoved: the inviter recorded an undeclared exchange with a
+	// pairing both sides hold, which only moved its address and awaits no
+	// decision (#276); final.
+	JoinAddressMoved JoinState = "address_moved"
 )
 
 // Join bounds: open joins (not failed or unverified) and all joins.
@@ -331,6 +335,16 @@ func validTranscriptID(id []byte) bool {
 
 // ApplyReceipt accepts a receipt only if every field equals what we recorded.
 func ApplyReceipt(r JoinRecord, receipt JoinReceipt, at time.Time) (JoinRecord, bool, error) {
+	return applyReceipt(r, receipt, at, JoinAwaitingAcceptance)
+}
+
+// ApplyMoveReceipt is ApplyReceipt for an exchange that only moved an
+// address: its receipt ends the join, with no decision to await.
+func ApplyMoveReceipt(r JoinRecord, receipt JoinReceipt, at time.Time) (JoinRecord, bool, error) {
+	return applyReceipt(r, receipt, at, JoinAddressMoved)
+}
+
+func applyReceipt(r JoinRecord, receipt JoinReceipt, at time.Time, next JoinState) (JoinRecord, bool, error) {
 	if r.Peer == "" {
 		return r, false, ErrJoinState
 	}
@@ -338,10 +352,10 @@ func ApplyReceipt(r JoinRecord, receipt JoinReceipt, at time.Time) (JoinRecord, 
 		return r, false, ErrJoinConflict
 	}
 	if r.State == JoinOutcomeUnknown {
-		r.State, r.UpdatedAt = JoinAwaitingAcceptance, at
+		r.State, r.UpdatedAt = next, at
 		return r, true, nil
 	}
-	return r, false, sameOnce(r.State == JoinAwaitingAcceptance, true)
+	return r, false, sameOnce(r.State == next, true)
 }
 
 func receiptMatches(r JoinRecord, receipt JoinReceipt) bool {
