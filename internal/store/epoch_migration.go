@@ -135,12 +135,13 @@ CREATE TABLE IF NOT EXISTS contact_unpair_results (
     unpaired_at   TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS contact_notices_out (
-    contact      TEXT NOT NULL,
-    pairing_id   BLOB,
-    gen          INTEGER NOT NULL,
-    state        TEXT NOT NULL,
-    attempts     INTEGER NOT NULL DEFAULT 0,
-    delivered_at TEXT,
+    contact       TEXT NOT NULL,
+    pairing_id    BLOB,
+    gen           INTEGER NOT NULL,
+    contact_state TEXT NOT NULL CHECK (contact_state IN ('paused', 'resumed', 'unpaired')), -- the state the notice carries
+    state         TEXT NOT NULL, -- its delivery: pending, delivered or undelivered
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    delivered_at  TEXT,
     PRIMARY KEY (contact, gen)
 );
 INSERT OR IGNORE INTO pairing_marks (id, mark) VALUES (1, 0);

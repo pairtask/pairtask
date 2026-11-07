@@ -219,7 +219,7 @@ type installedPairing struct {
 // consent; every epoch-keyed row starts empty at the new epoch.
 func installContact(ctx context.Context, tx *sql.Tx, p installedPairing) error {
 	_, err := tx.ExecContext(ctx, `UPDATE peer_contacts SET pairing_epoch = ?, pairing_id = ?, pairing_op = ?, unpaired_at = '',
-    peer_state = '', directory_at = NULL, consent_legacy = 0, generation = generation + 1, authority_mark = ?
+    peer_state = '', peer_state_gen = 0, peer_state_at = NULL, directory_at = NULL, consent_legacy = 0, generation = generation + 1, authority_mark = ?
 WHERE identity_key = ?`, p.epoch, peer.PairingID(p.x.TranscriptID), p.x.OperationID, p.mark, p.x.IdentityKey)
 	return err
 }

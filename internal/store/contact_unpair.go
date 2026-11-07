@@ -271,7 +271,7 @@ func queueNotice(ctx context.Context, tx *sql.Tx, c pairingRow) error {
 	if !c.notified() {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO contact_notices_out (contact, pairing_id, gen, state) VALUES (?, ?, ?, 'pending')`,
+	_, err := tx.ExecContext(ctx, `INSERT INTO contact_notices_out (contact, pairing_id, gen, contact_state, state) VALUES (?, ?, ?, 'unpaired', 'pending')`,
 		c.contact, c.pairingID, c.generation)
 	return err
 }

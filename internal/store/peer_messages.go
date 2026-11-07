@@ -201,6 +201,9 @@ func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error)
 	if err := requireActive(ctx, tx, key.contact); err != nil {
 		return messaging.Row{}, err
 	}
+	if err := refuseUnpairedByThem(ctx, tx, key.contact); err != nil {
+		return messaging.Row{}, err
+	}
 	if err := o.senderMaySpeak(ctx, tx); err != nil {
 		return messaging.Row{}, err
 	}

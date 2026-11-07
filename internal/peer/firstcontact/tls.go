@@ -93,8 +93,8 @@ func pairingRole(server bool, protocols []string) tlsRole {
 	return tlsRole{server: server, protocols: slices.Clone(protocols)}
 }
 
-// serverRole offers contact connections and message sessions too when their
-// pins are given, and accepts each only from an identity its pins admit.
+// serverRole offers contact connections, message sessions and control
+// sessions too when their pins are given, and accepts each only from an identity its pins admit.
 // The pairing ALPNs come first, in preference order: crypto/tls picks the
 // first of the server's protocols the client offers, so the server's order
 // decides the exchange's mode (#276).
@@ -102,7 +102,7 @@ func serverRole(opts ServerOptions) tlsRole {
 	role := pairingRole(true, opts.PairingProtocols)
 	pins := map[string]func(string) bool{}
 	var pinned []string
-	for protocol, admit := range map[string]func(string) bool{ContactALPN: opts.ContactPins, MessageALPN: opts.MessagePins} {
+	for protocol, admit := range opts.pins() {
 		if admit != nil {
 			pins[protocol] = admit
 			pinned = append(pinned, protocol)
@@ -135,4 +135,9 @@ func (p pinned) role() tlsRole {
 		}
 		return nil
 	}}
+}
+
+// pins are the pinned protocols' admission checks, by ALPN.
+func (opts ServerOptions) pins() map[string]func(string) bool {
+	return map[string]func(string) bool{ContactALPN: opts.ContactPins, MessageALPN: opts.MessagePins, ControlALPN: opts.ControlPins}
 }

@@ -35,6 +35,11 @@ const (
 	// each pinning the other's identity; a peer that doesn't speak it
 	// refuses the handshake, so nothing reaches its settlement.
 	MessageALPN = "pairtask-message/1"
+	// ControlALPN names a control session between workspaces that hold each
+	// other's contact row, each pinning the other's identity (#276): it
+	// carries contact notices only, so the receiver knows by framing, before
+	// any admission, that nothing else runs on it.
+	ControlALPN = "pairtask-control/1"
 	// MaxMessageFrameBytes bounds a message session's frames.
 	MaxMessageFrameBytes = 32 << 10
 	// ExporterLabel is RFC 9266's tls-exporter channel binding.
@@ -92,7 +97,9 @@ type ServerOptions struct {
 	// MessagePins, when set, also offers message sessions, accepting one
 	// only from an identity it reports true for: a confirmed contact.
 	MessagePins func(fingerprint string) bool
-	// ControlPins is a compile-only seam until control sessions exist (#276).
+	// ControlPins, when set, also offers control sessions (#276),
+	// accepting one only from an identity it reports true for: any
+	// retained contact row, paused or unpaired included.
 	ControlPins func(fingerprint string) bool
 }
 
@@ -108,8 +115,8 @@ type ClientOptions struct {
 // epoch-capable one first; a server's order decides.
 func PairingProtocols() []string { return []string{PairingALPN3, ALPN} }
 
-// Protocol is the negotiated ALPN: PairingALPN3, ALPN, ContactALPN or
-// MessageALPN.
+// Protocol is the negotiated ALPN: PairingALPN3, ALPN, ContactALPN,
+// MessageALPN or ControlALPN.
 func (c *Conn) Protocol() string { return c.protocol }
 
 // ExchangeMode is the mode the negotiated pairing ALPN fixes for the
@@ -154,6 +161,14 @@ func ContactClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity
 // identity is pin, refusing any other; raw is owned as by Client.
 func MessageClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
 	return handshake(ctx, raw, id, clock, pinned{MessageALPN, pin}.role())
+}
+
+// ControlClient opens a control session's connection to the contact whose
+// identity is pin, offering ControlALPN alone, so it never falls back to a
+// pairing or message session; raw is owned as by Client. Its frames are
+// carried by MessageFrames.
+func ControlClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, pinned{ControlALPN, pin}.role())
 }
 
 // NoCommonProtocol reports a handshake the peer refused for want of a
@@ -215,8 +230,8 @@ func (c *Conn) Connection() peer.Connection {
 	return peer.Connection{Mode: c.conn.Mode, PeerLeaf: c.conn.PeerLeaf, ChannelBinding: append([]byte(nil), c.conn.ChannelBinding...)}
 }
 
-// MessageFrames carries a message session's frames, as Frames does but up
-// to MaxMessageFrameBytes each.
+// MessageFrames carries a message or control session's frames, as Frames
+// does but up to MaxMessageFrameBytes each.
 func (c *Conn) MessageFrames(ctx context.Context) peer.Frames {
 	return streamFrames{ctx: ctx, conn: c.tls, limit: MaxMessageFrameBytes}
 }

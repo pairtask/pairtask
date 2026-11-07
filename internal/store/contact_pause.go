@@ -41,9 +41,11 @@ type linkFence struct {
 }
 
 // contactState is what admission and the fence check: whether the contact
-// was confirmed, whether it is paused or unpaired, and its authority.
+// was confirmed, whether it is paused or unpaired, here or by the other
+// side (unpairedByThem), and its authority.
 type contactState struct {
 	confirmed, paused, unpaired bool
+	unpairedByThem              bool
 	sessionAuthority
 }
 
@@ -53,11 +55,12 @@ func readContactState(ctx context.Context, q rowQuerier, contact string) (contac
 		return contactState{}, err
 	}
 	s := contactState{confirmed: true}
-	var pausedAt, unpairedAt string
+	var pausedAt, unpairedAt, peerState string
 	var id []byte
-	err = q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, generation, pairing_epoch, pairing_id FROM peer_contacts WHERE identity_key = ?`, contact).
-		Scan(&pausedAt, &unpairedAt, &s.generation, &s.epoch, &id)
+	err = q.QueryRowContext(ctx, `SELECT paused_at, unpaired_at, peer_state, generation, pairing_epoch, pairing_id FROM peer_contacts WHERE identity_key = ?`, contact).
+		Scan(&pausedAt, &unpairedAt, &peerState, &s.generation, &s.epoch, &id)
 	s.paused, s.unpaired, s.pairingID = pausedAt != "", unpairedAt != "", string(id)
+	s.unpairedByThem = peerState == remoteUnpaired
 	return s, err
 }
 
@@ -80,6 +83,8 @@ func (p *PeerMessages) Admit(ctx context.Context, contact string) (*PeerMessages
 		return nil, messaging.ErrUnknownContact
 	case s.unpaired:
 		return nil, ErrUnpaired
+	case s.unpairedByThem:
+		return nil, ErrUnpairedByThem
 	case s.paused:
 		return nil, ErrPaused
 	}
@@ -123,8 +128,11 @@ func (s contactState) admits(authority sessionAuthority) bool {
 }
 
 func (s contactState) active() bool {
-	return s.confirmed && !s.paused && !s.unpaired
+	return s.confirmed && !s.paused && !s.ended()
 }
+
+// ended: the pairing was ended, here or by the other side.
+func (s contactState) ended() bool { return s.unpaired || s.unpairedByThem }
 
 // inTx runs fn in one transaction, after the fence check: nothing in fn may
 // use p.db, which holds the only connection meanwhile.
@@ -166,6 +174,22 @@ func requireActive(ctx context.Context, q rowQuerier, contact string) error {
 		return ErrUnpaired
 	case pausedAt != "":
 		return ErrPaused
+	}
+	return nil
+}
+
+// refuseUnpairedByThem refuses a contact the other side unpaired, inside
+// the caller's transaction; any other, or none, passes.
+func refuseUnpairedByThem(ctx context.Context, q rowQuerier, contact string) error {
+	var peerState string
+	err := q.QueryRowContext(ctx, `SELECT peer_state FROM peer_contacts WHERE identity_key = ?`, contact).Scan(&peerState)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	case peerState == remoteUnpaired:
+		return ErrUnpairedByThem
 	}
 	return nil
 }
