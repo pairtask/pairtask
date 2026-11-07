@@ -50,7 +50,7 @@ func (s *Store) ReviewCounts(ctx context.Context) (protocol.ReviewCounts, error)
 // failureCounts adds what failed and the asks still in progress (#298).
 func failureCounts(ctx context.Context, tx *sql.Tx, c *protocol.ReviewCounts) error {
 	var err error
-	if c.Failed, c.FailedToken, err = failures(ctx, tx); err != nil {
+	if c.Failed, c.FailedToken, err = failures(ctx, tx, allPairings); err != nil {
 		return err
 	}
 	active, err := activeAsks(ctx, tx)
@@ -189,7 +189,7 @@ func AskView(a *messaging.ReviewAsk) *protocol.ReviewAsk {
 // (#276) and ID; afterAsked is everything past a cursor in it.
 const (
 	askedOrder = `ORDER BY (a.settled_at IS NOT NULL), a.updated_at DESC, a.contact, a.pairing_epoch, a.ask_id`
-	afterAsked = ` WHERE ((a.settled_at IS NOT NULL) > :s OR (a.settled_at IS NOT NULL) = :s AND (a.updated_at < :t
+	afterAsked = `((a.settled_at IS NOT NULL) > :s OR (a.settled_at IS NOT NULL) = :s AND (a.updated_at < :t
     OR a.updated_at = :t AND (a.contact > :c OR a.contact = :c AND (a.pairing_epoch > :e OR a.pairing_epoch = :e AND a.ask_id > :i))))`
 )
 
@@ -237,23 +237,30 @@ func (r askedRow) cursor() string {
 }
 
 // AskedReviews is one page of this side's requests to paired workspaces,
-// after the cursor.
+// after the cursor, under every pairing (#276).
 func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.ReviewAskedPage, error) {
+	return s.askedReviews(ctx, before, allPairings)
+}
+
+// CurrentAskedReviews is AskedReviews in the newest pairing with each
+// contact its history holds (#276): what an operator without pairing
+// history reads, its total and cursors over that alone.
+func (s *Store) CurrentAskedReviews(ctx context.Context, before string) (protocol.ReviewAskedPage, error) {
+	return s.askedReviews(ctx, before, currentPairings)
+}
+
+// askedReviews is one page of the requests in scope, after the cursor.
+func (s *Store) askedReviews(ctx context.Context, before string, scope pairingScope) (protocol.ReviewAskedPage, error) {
 	page := protocol.ReviewAskedPage{Items: []protocol.ReviewAskedItem{}}
 	cur, err := decodeCursor(before)
 	if err != nil {
 		return page, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out`).Scan(&page.Total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_asks_out a`+scope.where()).Scan(&page.Total); err != nil {
 		return page, err
 	}
-	where, args := "", []any{}
-	if cur != nil {
-		where = afterAsked
-		args = append(args, sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact),
-			sql.Named("e", max(cur.Epoch, 1)), sql.Named("i", cur.ID))
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+` `+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
+	where, args := askedAfter(cur, scope)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+askedColumns+` FROM `+askedFrom+where+` `+askedOrder+` LIMIT `+pendingLimit, args...)
 	if err != nil {
 		return page, err
 	}
@@ -268,6 +275,16 @@ func (s *Store) AskedReviews(ctx context.Context, before string) (protocol.Revie
 	}
 	page.More, page.Next, err = finishPage(rows, &page.Items, cursors)
 	return page, err
+}
+
+// askedAfter is the condition on the requests in scope past a cursor, nil
+// for the first page, with its arguments.
+func askedAfter(cur *pendingCursor, scope pairingScope) (string, []any) {
+	if cur == nil {
+		return scope.where(), nil
+	}
+	return scope.where(afterAsked), []any{sql.Named("s", cur.Settled), sql.Named("t", cur.At), sql.Named("c", cur.Contact),
+		sql.Named("e", max(cur.Epoch, 1)), sql.Named("i", cur.ID)}
 }
 
 // AskedByRefs are exactly the requests the refs name, in their order, each

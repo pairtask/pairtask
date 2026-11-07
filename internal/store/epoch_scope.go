@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
@@ -213,4 +214,37 @@ func (imp RemoteImport) source() pairingKey {
 func stampSource(ctx context.Context, tx *sql.Tx, messageID string, epoch int64) error {
 	_, err := tx.ExecContext(ctx, `UPDATE message_metadata SET remote_epoch = ? WHERE message_id = ?`, epoch, messageID)
 	return err
+}
+
+// pairingScope is the pairings an operator review page reads of the
+// requests it lists, as a condition on the request a: "" for every one
+// (#276).
+type pairingScope string
+
+// allPairings is every pairing; currentPairings is the newest with each
+// contact its history holds, as CurrentAsksBy reads: what an older client
+// reads.
+var (
+	allPairings     pairingScope
+	currentPairings = pairingScope(`a.pairing_epoch = ` + historyEpochFor("a.contact"))
+)
+
+// where is the scope and the other conditions as a WHERE clause, "" with
+// none.
+func (s pairingScope) where(conds ...string) string {
+	if s != allPairings {
+		conds = append([]string{string(s)}, conds...)
+	}
+	if len(conds) == 0 {
+		return ""
+	}
+	return " WHERE " + strings.Join(conds, " AND ")
+}
+
+// and is the scope as a further condition, "" for every pairing.
+func (s pairingScope) and() string {
+	if s == allPairings {
+		return ""
+	}
+	return " AND " + string(s)
 }

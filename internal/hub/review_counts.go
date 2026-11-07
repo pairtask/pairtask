@@ -41,23 +41,39 @@ func (h *Hub) readPending(ctx context.Context, msg protocol.Message, out *protoc
 		out.ReviewAsked = &page
 		return err
 	}
-	return pageReaders[msg.ReviewOp](ctx, h.store, msg.ReviewBefore, out)
+	return pageReaders[msg.ReviewOp](ctx, h.store, pageRequest{msg.ReviewBefore, historyCapable(msg.ProtocolVersion)}, out)
+}
+
+// pageRequest is the page a request names: after before, and with every
+// pairing's requests for a client with pairing history, else each
+// contact's newest pairing's alone (#276).
+type pageRequest struct {
+	before     string
+	allHistory bool
 }
 
 // pageReaders read one page of each paged operation into its result.
-var pageReaders = map[string]func(context.Context, *store.Store, string, *protocol.Message) error{
-	protocol.ReviewOpAwaiting: func(ctx context.Context, s *store.Store, before string, out *protocol.Message) error {
-		page, err := s.AwaitingReviews(ctx, before)
+var pageReaders = map[string]func(context.Context, *store.Store, pageRequest, *protocol.Message) error{
+	protocol.ReviewOpAwaiting: func(ctx context.Context, s *store.Store, req pageRequest, out *protocol.Message) error {
+		page, err := s.AwaitingReviews(ctx, req.before)
 		out.ReviewAwaiting = &page
 		return err
 	},
-	protocol.ReviewOpAsked: func(ctx context.Context, s *store.Store, before string, out *protocol.Message) error {
-		page, err := s.AskedReviews(ctx, before)
+	protocol.ReviewOpAsked: func(ctx context.Context, s *store.Store, req pageRequest, out *protocol.Message) error {
+		read := s.CurrentAskedReviews
+		if req.allHistory {
+			read = s.AskedReviews
+		}
+		page, err := read(ctx, req.before)
 		out.ReviewAsked = &page
 		return err
 	},
-	protocol.ReviewOpFailed: func(ctx context.Context, s *store.Store, before string, out *protocol.Message) error {
-		page, err := s.FailedReviews(ctx, before)
+	protocol.ReviewOpFailed: func(ctx context.Context, s *store.Store, req pageRequest, out *protocol.Message) error {
+		read := s.CurrentFailedReviews
+		if req.allHistory {
+			read = s.FailedReviews
+		}
+		page, err := read(ctx, req.before)
 		out.ReviewFailed = &page
 		return err
 	},
