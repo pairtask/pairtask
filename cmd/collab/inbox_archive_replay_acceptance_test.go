@@ -19,7 +19,7 @@ func TestInboxArchiveAcceptanceAgentAndOperatorReplaysAreDuplicateOnWire(t *test
 	p := offlineDial(t, w.agent)
 	welcome := p.exchange(t, protocol.Message{Type: "hello", AgentID: "author", ProtocolVersion: 25})
 	assertStatusEqual(t, "agent connected", welcome.Type, "welcome")
-	response := p.exchange(t, protocol.Message{Type: "send", MessageID: agent.MessageID, To: agent.To, Payload: agent.Payload, Durable: true, AckRequested: true})
+	response := p.exchange(t, protocol.Message{Type: protocol.TypeMsg, MessageID: agent.MessageID, To: agent.To, Payload: agent.Payload, Durable: true, AckRequested: true})
 	offlineDuplicate(t, response)
 	for _, payload := range []json.RawMessage{operator.Payload, marker} {
 		response = offlineDial(t, w.operator).exchange(t, protocol.Message{Type: protocol.TypeOperatorSend, MessageID: operator.MessageID, To: operator.To, Payload: payload})
