@@ -31,6 +31,7 @@ func TestReplyableNoticeAcceptanceCollisionGuidanceNamesDeliveredNotice(t *testi
 	replyableCollisionGuidance(t, body.Text, result.Msg.MessageID, staged.LocalID)
 	reply := outcomeStoreReply(result.Msg)
 	reply.Msg.Seq = 4
+	reply.Msg.TS = &messageAt
 	queued, err := f.db.QueueRemoteReply(context.Background(), reply)
 	pairOK(t, err)
 	pairEqual(t, queued.Row.ReplyTo.ID, "ask")
