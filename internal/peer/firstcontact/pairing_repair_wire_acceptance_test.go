@@ -22,7 +22,7 @@ func pairingWireRepair(t *testing.T, c pairingTLSConnections, s pairingWireStack
 	inviter, err := peer.NewInviter(pake.New(), invitations, c.alice)
 	mustOK(t, err)
 	ctx := testContext(t)
-	pending, _, err := s.joiner.Begin(ctx, peer.JoinRequest{OperationID: "wire-repair-join", Name: "Bob", Code: []byte(opened.Code), Repair: c.alice.Fingerprint()})
+	pending, _, err := s.joiner.Begin(ctx, peer.JoinRequest{OperationID: "wire-repair-join", Destination: "127.0.0.1:7445", Name: "Bob", Code: []byte(opened.Code), Repair: c.alice.Fingerprint()})
 	mustOK(t, err)
 	if pending == nil {
 		t.Fatal("repair join intent missing")
