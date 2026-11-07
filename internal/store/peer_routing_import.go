@@ -484,21 +484,36 @@ func answers(imp RemoteImport, parent sentParent) bool {
 // reviewer it asked (#259); any other reply arrives unthreaded.
 func senderParent(ctx context.Context, tx *sql.Tx, imp RemoteImport) (string, error) {
 	src := imp.source()
-	var parent struct{ localID, kind, sender, recipients string }
+	var parent namedImport
 	err := tx.QueryRowContext(ctx, `SELECT local_id, COALESCE(kind, ''), sender, recipients FROM remote_imports
 WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND state = 'imported'`, src.contact, src.epoch, imp.ReplyTo.ID).
 		Scan(&parent.localID, &parent.kind, &parent.sender, &parent.recipients)
-	if errors.Is(err, sql.ErrNoRows) || err != nil || parent.kind != importReview {
-		return parent.localID, ignoreNoRows(err)
+	if err != nil {
+		return "", ignoreNoRows(err)
 	}
+	if parent.kind != importReview {
+		return parent.localID, nil
+	}
+	return parent.answeredBy(imp)
+}
+
+// namedImport is an import a reply by its sender names.
+type namedImport struct{ localID, kind, sender, recipients string }
+
+// answeredBy is the review request's local ID when the reply comes from the
+// agent that asked and goes to a reviewer it asked, else "".
+func (p namedImport) answeredBy(reply RemoteImport) (string, error) {
 	var reviewers []string
-	if err := json.Unmarshal([]byte(parent.recipients), &reviewers); err != nil {
+	if err := json.Unmarshal([]byte(p.recipients), &reviewers); err != nil {
 		return "", fmt.Errorf("import recipients: %w", err)
 	}
-	if parent.sender != imp.Sender || !slices.ContainsFunc(reviewers, func(r string) bool { return slices.Contains(imp.Recipients, r) }) {
+	if p.sender != reply.Sender {
 		return "", nil
 	}
-	return parent.localID, nil
+	if !slices.ContainsFunc(reviewers, func(r string) bool { return slices.Contains(reply.Recipients, r) }) {
+		return "", nil
+	}
+	return p.localID, nil
 }
 
 // optionalString is a row's one text column, "" for no row.

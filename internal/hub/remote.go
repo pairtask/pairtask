@@ -259,16 +259,39 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 // names none there says how to answer.
 func (h *Hub) workspaceParent(ctx context.Context, contact, inReplyTo string) (store.RemoteImport, *routingError) {
 	parent, found, err := h.store.RemoteParent(ctx, inReplyTo)
-	if err == nil && !found && strings.HasPrefix(inReplyTo, reviewNoticePrefix) {
-		parent, found, err = h.store.NoticeReview(ctx, strings.TrimPrefix(inReplyTo, reviewNoticePrefix))
-		if err == nil && !found {
-			return parent, errReviewNotice
-		}
+	if unknownNotice(inReplyTo, found, err) {
+		return h.noticeParent(ctx, contact, strings.TrimPrefix(inReplyTo, reviewNoticePrefix))
 	}
-	if err != nil || !found || parent.Contact != contact {
-		return parent, errOtherWorkspace
+	return parent, fromWorkspace(parent, contact, found, err)
+}
+
+// unknownNotice: the ID names no import, and reads as a review notice's.
+func unknownNotice(inReplyTo string, found bool, err error) bool {
+	if err != nil || found {
+		return false
 	}
-	return parent, nil
+	return strings.HasPrefix(inReplyTo, reviewNoticePrefix)
+}
+
+// noticeParent is the request a review notice stands for, in that workspace.
+func (h *Hub) noticeParent(ctx context.Context, contact, reviewID string) (store.RemoteImport, *routingError) {
+	parent, found, err := h.store.NoticeReview(ctx, reviewID)
+	if err == nil && !found {
+		return parent, errReviewNotice
+	}
+	return parent, fromWorkspace(parent, contact, found, err)
+}
+
+// fromWorkspace refuses a parent that was not found, or came from another
+// workspace.
+func fromWorkspace(parent store.RemoteImport, contact string, found bool, err error) *routingError {
+	if err != nil || !found {
+		return errOtherWorkspace
+	}
+	if parent.Contact != contact {
+		return errOtherWorkspace
+	}
+	return nil
 }
 
 var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
