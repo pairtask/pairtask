@@ -449,14 +449,18 @@ Changes that cross are refused, never merged:
 
 ### Versions
 
-Unpair, repair and notices need peer protocol v9 on both sides:
+Unpairing always revokes on this side, whatever version the other side
+runs. Telling them, pairing again and repairing need peer protocol v9 on
+both sides:
 
 - A workspace paired under v9 refuses a peer that still runs v8. The card
   says `unsupported: the other side must update`.
-- A pairing made with a v8 peer keeps working with either version.
+- A pairing made with a v8 peer keeps working with either version, and can
+  be unpaired here; the other side isn't notified.
 - Pairing again, or repairing, needs v9 on both sides.
 
-**Release note.** Downgrading pairtask below v9 is unsupported: the upgrade
+**Release note.** Downgrading to a build without peer protocol v9 support
+is unsupported: the upgrade
 migrates the broker's database, and a v9 pairing refuses an older peer.
 Upgrade the other side instead. Queued messages wait for it until they
 expire.
