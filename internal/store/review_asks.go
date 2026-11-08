@@ -545,7 +545,8 @@ const outcomeKeyPrefix = "outcome\u00b7"
 // outcomeText is a notice's text: where the request stands, the verdict
 // and its summary as the reviewer's side gave them.
 func outcomeText(a AskOut, o messaging.ReviewOutcome, noticeID string) string {
-	text := fmt.Sprintf("Review of %s#%s by %q: %s", a.Ask.Repository, a.Ask.Change, a.Reviewer, o.State)
+	text := fmt.Sprintf("Review of %s#%s by %q (your request %q, %s): %s", a.Ask.Repository, a.Ask.Change, a.Reviewer, a.AskID,
+		theirReviewID(a, o), o.State)
 	if o.Verdict != "" {
 		text += ", verdict " + o.Verdict
 	}
@@ -565,6 +566,20 @@ func outcomeText(a AskOut, o messaging.ReviewOutcome, noticeID string) string {
 // outcomeFollowUp says how to follow an outcome up: a reply to the notice,
 // to the reviewer in that workspace, named by its identity key, which
 // answers the request there (#259).
+// theirReviewID names the review the reviewer's side made of the request,
+// quoted, as kept or as this outcome reports it (#259): unknown until one
+// does, which says nothing of why.
+func theirReviewID(a AskOut, o messaging.ReviewOutcome) string {
+	id := a.ReviewID
+	if id == "" {
+		id = o.ReviewID
+	}
+	if id == "" {
+		return "reviewer ID not reported"
+	}
+	return fmt.Sprintf("their review ID %q", id)
+}
+
 func outcomeFollowUp(a AskOut, noticeID string) string {
 	return fmt.Sprintf("To follow up, reply to this notice (message_id %q) to %q with workspace %q: it answers your request there, as chat, and changes nothing in the review.",
 		noticeID, a.Reviewer, a.Contact)
