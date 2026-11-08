@@ -444,6 +444,35 @@ def ipv4(values):
 
 # --- Sockets and session -----------------------------------------------------
 
+def refusal_hint(error):
+    """Where to look when the network says there is no route."""
+    if error.errno == errno.EHOSTUNREACH:
+        return "; check the route, the firewall and, on macOS, Local Network access"
+    return ""
+
+
+# Linux sends from each interface's own address on the mDNS port. Darwin
+# refuses that bind while mDNSResponder, under another user, holds the port,
+# so it sends from one socket bound to every address on the same port,
+# choosing the interface per datagram. That socket only transmits: nothing
+# is ever read or parsed from it; replies arrive on the group-bound socket.
+SPECIFIC_SENDERS = not sys.platform.startswith("darwin")
+DARWIN_SENDER = "*"
+
+
+def open_sender(address, port):
+    """A transmit socket on the port, bound to address ("" on Darwin)."""
+    out = shared_socket()
+    try:
+        out.bind((address, port))
+        out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+        out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+    except OSError:
+        out.close()
+        raise
+    return out
+
+
 def shared_socket():
     """A UDP socket that shares its port with any system responder
     (mDNSResponder, avahi) through SO_REUSEADDR and SO_REUSEPORT."""
@@ -497,13 +526,15 @@ class Channel:
 
     def retire(self, current):
         """Close the senders, and forget the memberships, of addresses that went away."""
-        for interface in [i for i in self.senders if i not in current]:
+        for interface in [i for i in self.senders if i not in current and i != DARWIN_SENDER]:
             self.senders.pop(interface).close()
         self.joined = {i for i in self.joined if i == "0.0.0.0" or i in current}
 
     def send(self, packet, interface="0.0.0.0"):
         try:
-            self.sender(interface).sendto(packet, (self.group, self.port))
+            out = self.sender(interface)
+            out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
+            out.sendto(packet, (self.group, self.port))
         except OSError as error:
             self.failed("send on " + interface, error)
             return False
@@ -511,30 +542,19 @@ class Channel:
         return True
 
     def sender(self, interface):
-        """The interface's sending socket, from its own address on the port:
-        RFC 6762's source port, never an ephemeral one."""
-        if interface not in self.senders:
-            self.senders[interface] = self.open_sender(interface)
-        return self.senders[interface]
-
-    def open_sender(self, interface):
-        out = shared_socket()
-        try:
-            out.bind((interface, self.port))
-            out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
-            out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-            out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
-        except OSError:
-            out.close()
-            raise
-        return out
+        """The socket that sends on the interface, always from the mDNS port
+        (RFC 6762's source port), never an ephemeral one."""
+        key = interface if SPECIFIC_SENDERS else DARWIN_SENDER
+        if key not in self.senders:
+            self.senders[key] = open_sender(interface if SPECIFIC_SENDERS else "", self.port)
+        return self.senders[key]
 
     def failed(self, where, error):
         """Say once per place and error what the network refused."""
         key = (where, error.errno)
         if key not in self.failures:
             self.failures.add(key)
-            sys.stderr.write("pairtask discovery: %s failed: %s\n" % (where, error.strerror or error))
+            sys.stderr.write("pairtask discovery: %s failed: %s%s\n" % (where, error.strerror or error, refusal_hint(error)))
 
     def receive(self, timeout):
         """The packets waiting, after at most timeout seconds; oversized ones are cut and dropped by parse."""

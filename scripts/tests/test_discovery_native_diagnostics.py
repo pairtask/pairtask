@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import time
 import unittest
@@ -24,6 +25,20 @@ def option(sock, name):
         return "error %s" % error.errno
 
 
+ROUTE = {"darwi": ["route", "-n", "get", "224.0.0.251"], "linux": ["ip", "route", "get", "224.0.0.251"]}
+
+
+def command_output(command):
+    """A command's output for the report, or why there is none."""
+    if not command:
+        return "no route command here"
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        return "unavailable: %s" % error
+    return (result.stdout + result.stderr)[-1500:]
+
+
 def report_for(port):
     channel = engine.Channel(engine.GROUP, port)
     interfaces = engine.interface_addresses()
@@ -38,6 +53,8 @@ def report_for(port):
                                         "loop": option(out, socket.IP_MULTICAST_LOOP)}
     time.sleep(0.5)
     report["received"] = len(channel.receive(0.5))
+    report["route"] = command_output(ROUTE.get(sys.platform[:5], []))
+    report["links"] = command_output(["ifconfig"] if sys.platform == "darwin" else ["ip", "-brief", "link"])
     report["failures"] = sorted("%s errno %s" % key for key in channel.failures)
     channel.close()
     return report
