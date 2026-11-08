@@ -108,6 +108,7 @@ draft. `#n` is a message's number.
 | `/diagram #n [K]` | Save a `mermaid` or `plantuml` block's source to `~/.local/state/pairtask/diagrams` (under `$XDG_STATE_HOME` when set); nothing is run, and no file is overwritten. Simple Mermaid diagrams are also drawn in the transcript ([formatting](chat-formatting.md#diagrams)) |
 | `/close` | Hide the selected conversation; nothing is deleted, and new messages reopen it |
 | `/forget` | Remove the selected group or 1:1 from the bar until `/chat` reopens it, for this chat session (up to 64); its messages stay in All and an unsent draft is kept |
+| `/version` | What the host last reported about versions: the app release the containers run, the host tooling's release, the latest published release with how long ago it was checked (and whether that is stale), and the manual step, which you run on the host. When the host finds a step, the footer says so too (`update: build N available (running M) · host: pk upgrade`); for a deployment the host names with `--project`, `--remote` or `--repo` it points to `pk version` with those flags instead. The chat never updates anything, and a broker restart (every upgrade is one) clears the report until the host sends the next. Before the host reported, or on an older broker, it says so |
 | `/clear`, `/help`, `/quit` | Clear the view, help, quit |
 
 While you type a command's arguments, a picker offers what it can take (room

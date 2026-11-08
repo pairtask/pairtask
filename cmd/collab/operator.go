@@ -21,7 +21,7 @@ import (
 // The operator endpoint exists only in secured and serves only the operator UID.
 const defaultOperatorSocket = "/run/collab-ai-operator/operator.sock"
 
-const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] [--timeout 5s] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]\n       pairtask operator inbox (export PATH | archive PATH (--confirm | --dry-run) [--upper SEQ]) --database DB [--json] (offline: stop the broker first)\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask operator pair [list | open | status | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] (experimental)\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] [--socket PATH] (experimental; the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [--socket PATH] [OPERATION_ID] (experimental)\n       pairtask operator review (request --reviewer AGENT TARGET | list | status REVIEW_ID | cancel REVIEW_ID) [--socket PATH] [--json]\n       pairtask operator peer (send CONTACT TEXT | messages CONTACT [--before CURSOR] | sync CONTACT) [--socket PATH] [--json] (experimental)"
+const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] [--timeout 5s] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]\n       pairtask operator inbox (export PATH | archive PATH (--confirm | --dry-run) [--upper SEQ]) --database DB [--json] (offline: stop the broker first)\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask operator pair [list | open | status | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] (experimental)\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] [--socket PATH] (experimental; the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [--socket PATH] [OPERATION_ID] (experimental)\n       pairtask operator review (request --reviewer AGENT TARGET | list | status REVIEW_ID | cancel REVIEW_ID) [--socket PATH] [--json]\n       pairtask operator peer (send CONTACT TEXT | messages CONTACT [--before CURSOR] | sync CONTACT) [--socket PATH] [--json] (experimental)\n       pairtask operator update-notice set --state STATE --action ACTION [--app-release TAG] [--app-commit SHA] [--host-release TAG] [--available-release TAG] [--available-state STATE] [--scope default|custom] [--checked-at TIME] --observed-at TIME [--socket PATH] [--json] (the host's pairtask version sends it)"
 
 type operatorSend struct {
 	socket, to, group, messageID string
@@ -34,18 +34,19 @@ type operatorSend struct {
 type operatorCommand func(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 var operatorCommands = map[string]operatorCommand{
-	"send":    runOperatorSend,
-	"receive": runOperatorReceive,
-	"ack":     runOperatorAck,
-	"history": runOperatorHistory,
-	"chat":    runOperatorChat,
-	"inbox":   runOperatorInbox,
-	"room":    runOperatorRoom,
-	"pair":    runOperatorPair,
-	"pairing": runOperatorPair, // the name the pairing docs use
-	"contact": runOperatorContact,
-	"review":  runOperatorReview,
-	"peer":    runOperatorPeer,
+	"send":          runOperatorSend,
+	"receive":       runOperatorReceive,
+	"ack":           runOperatorAck,
+	"history":       runOperatorHistory,
+	"chat":          runOperatorChat,
+	"inbox":         runOperatorInbox,
+	"room":          runOperatorRoom,
+	"pair":          runOperatorPair,
+	"pairing":       runOperatorPair, // the name the pairing docs use
+	"contact":       runOperatorContact,
+	"review":        runOperatorReview,
+	"peer":          runOperatorPeer,
+	"update-notice": runOperatorUpdateNotice,
 }
 
 func runOperator(ctx context.Context, args []string, stdout, stderr io.Writer) int {

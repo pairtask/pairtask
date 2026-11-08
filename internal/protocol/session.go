@@ -27,7 +27,7 @@ const (
 )
 
 // SessionCapabilities are advertised in the operator_session response.
-var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityPairingContactSummary, CapabilityReviews, CapabilityContactMessages, CapabilityContactRouting, CapabilityContactReviews, CapabilityContactNames, CapabilityContactAddress, CapabilityContactPause, CapabilityAssignments, CapabilityContactAcks, CapabilityReviewCounts, CapabilityReviewFailures, CapabilityContactShareSync, CapabilityReviewAskRefs, CapabilityAskFindings, CapabilityReviewAdvisories, CapabilityPairedMentions, CapabilityConsentPrompts, CapabilityContactUnpair, CapabilityPairingRepair, CapabilityContactDiscovery, CapabilityContactCandidates}
+var SessionCapabilities = []string{"send", "receive", "received", "ack", "snapshot", "message_stages", "events", "history", CapabilityMentions, CapabilityPairing, CapabilityPairingRedeem, CapabilityPairingContacts, CapabilityPairingContactSummary, CapabilityReviews, CapabilityContactMessages, CapabilityContactRouting, CapabilityContactReviews, CapabilityContactNames, CapabilityContactAddress, CapabilityContactPause, CapabilityAssignments, CapabilityContactAcks, CapabilityReviewCounts, CapabilityReviewFailures, CapabilityContactShareSync, CapabilityReviewAskRefs, CapabilityAskFindings, CapabilityReviewAdvisories, CapabilityPairedMentions, CapabilityConsentPrompts, CapabilityContactUnpair, CapabilityPairingRepair, CapabilityContactDiscovery, CapabilityContactCandidates, CapabilityUpdateNotice}
 
 // SessionCapabilitiesFor are the capabilities advertised to a session
 // opened at version: pairing_history only from PairingHistoryVersion, so
@@ -125,6 +125,9 @@ type OperatorSnapshot struct {
 	// ReviewCounts are the reviews pending, from a broker serving
 	// review_counts (#286); absent from an older one.
 	ReviewCounts *ReviewCounts `json:"review_counts,omitempty"`
+	// UpdateNotice is the host's last update report, from a broker serving
+	// update_notice; absent when none came since the broker started.
+	UpdateNotice *UpdateNotice `json:"update_notice,omitempty"`
 }
 
 type StagePage struct {

@@ -209,7 +209,7 @@ func (m *Model) footer() string {
 // reminders are the footer's non-empty reminders, in priority order.
 func (m *Model) reminders() []string {
 	var parts []string
-	for _, reminder := range []string{m.ackReminder(), m.contactAckReminder(), m.reviewReminder(), m.heldReminder()} {
+	for _, reminder := range []string{m.ackReminder(), m.contactAckReminder(), m.reviewReminder(), m.heldReminder(), m.updateReminder()} {
 		if reminder != "" {
 			parts = append(parts, reminder)
 		}

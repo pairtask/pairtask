@@ -12,6 +12,7 @@ from sandbox_operator_config import deployment_directory, remember
 from sandbox_operator_workflow import run_operation, saved_deletion
 from sandbox_operator_recovery import recover
 import sandbox_discovery_service
+import sandbox_version
 import sandbox_pairing
 from sandbox_releases import release_tag, repository
 from sandbox_incus_version import IncusVersionError, check as check_server_version, query_server
@@ -100,6 +101,19 @@ def main():
     operation(args, directory, metadata["environment"])
     if args.action in ROLLOUTS and hasattr(args, "discovery"):
         sync_discovery(args, directory)
+        report_versions(args)
+
+
+def report_versions(args):
+    """After a rollout from this command line: what the containers run now,
+    observed rather than assumed, told to the chat and printed."""
+    scope = sandbox_version.Scope(args.project, args.remote, args.repo)
+    data = sandbox_version.best_effort(lambda: sandbox_version.report(scope, refresh=True))
+    if data is None:
+        print("version: unknown (the release check failed; pk version retries)")
+        return
+    sandbox_version.publish(data)
+    print(sandbox_version.summary_line(data))
 
 
 def sync_discovery(args, directory):
