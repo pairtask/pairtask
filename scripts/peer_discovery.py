@@ -41,6 +41,8 @@ __all__ = ["Advert", "Browser", "Session", "lease_from", "merge", "parse", "tail
 GROUP, PORT = "224.0.0.251", 5353
 CACHE_MAX = 32         # service bundles a browser keeps
 CANDIDATES_MAX = 8     # endpoints in one submission
+LAN_SLOTS = 4          # of them kept for endpoints found on the LAN, which are pairtask listeners
+INVENTORY_MAX = 256    # tailnet endpoints remembered between submissions
 HOST_ADDRESSES_MAX = 8
 ADVERT_ADDRESSES_MAX = 16
 LEASE_MAX = 90         # seconds a lease holds at most, by this helper's own clock
@@ -100,6 +102,35 @@ def unique(values, limit=CANDIDATES_MAX):
 def merge(*groups):
     """One submission: the groups in order (tailnet names first), de-duplicated, bounded."""
     return unique(value for group in groups for value in group)
+
+
+class Turn:
+    """A window that moves on over a list each time it is taken, so every
+    entry of a long list is offered within a bounded number of turns."""
+
+    def __init__(self):
+        self.offset = 0
+
+    def take(self, items, size):
+        if len(items) <= size:
+            return list(items)
+        start = self.offset % len(items)
+        self.offset = start + size
+        return (items[start:] + items[:start])[:size]
+
+
+class Batches:
+    """Submissions that can't starve an endpoint: LAN endpoints keep their
+    slots, and both they and the tailnet endpoints rotate when more are
+    known than one submission takes."""
+
+    def __init__(self):
+        self.lan, self.tailnet = Turn(), Turn()
+
+    def next(self, tailnet, lan):
+        lan_part = self.lan.take(unique(lan, INVENTORY_MAX), max(LAN_SLOTS, CANDIDATES_MAX - len(tailnet)))
+        tail_part = self.tailnet.take(tailnet, CANDIDATES_MAX - len(lan_part))
+        return merge(tail_part, lan_part)
 
 
 # --- Browser ---------------------------------------------------------------
@@ -666,11 +697,17 @@ def tailnet_candidates(status, ports):
     """Endpoints from `tailscale status --json`: each online peer's DNSName,
     then its TailscaleIPs, crossed with the lease's ports, at most
     CANDIDATES_MAX. Self is never a peer; display names are never used."""
+    return tailnet_inventory(status, ports)[:CANDIDATES_MAX]
+
+
+def tailnet_inventory(status, ports):
+    """Every endpoint tailnet_candidates would offer, not only the first
+    CANDIDATES_MAX, bounded by INVENTORY_MAX."""
     peers = tailnet_peers(status)
     if not peers:
         return []
     usable = [port for port in ports if is_port(port)]
-    return unique(endpoint(host, port) for host in tailnet_hosts(peers, tailnet_self(status)) for port in usable)
+    return unique((endpoint(host, port) for host in tailnet_hosts(peers, tailnet_self(status)) for port in usable), INVENTORY_MAX)
 
 
 def tailnet_hosts(peers, own):

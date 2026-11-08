@@ -182,6 +182,7 @@ class Discovery:
         self.group, self.port = options.group, options.port
         self.advert = engine.Advert(options.host_port) if options.host_port > 0 else None
         self.lease, self.session, self.browse_since = None, None, None
+        self.batches = engine.Batches()
 
     def ask_lease(self):
         asked = time.monotonic()
@@ -268,7 +269,7 @@ class Discovery:
     def submit(self, lan, ports):
         """Tailnet names and addresses, then the LAN's endpoints, to the broker; runs off the loop."""
         status = engine.tailscale_status(self.tailscale) if self.tailscale else None
-        candidates = engine.merge(engine.tailnet_candidates(status or {}, ports), lan)
+        candidates = self.batches.next(engine.tailnet_inventory(status or {}, ports), list(lan))
         if not candidates:
             return None
         answer = self.operator.call("candidates", candidates)
@@ -480,13 +481,14 @@ def arguments(argv=None):
     service = actions.add_parser("service", help="the user service pairing on/off manages: install | remove | restart")
     service.add_argument("change", choices=["install", "remove", "restart"])
     service.add_argument("--dry-run", action="store_true", help="print the unit and commands; change nothing")
-    for each in (run, status, service):
+    for each in (run, status):
         each.add_argument("--state-dir", type=Path, help="default: $PAIRTASK_HOME/discovery")
     for each in (run, service):
         each.add_argument("--project", default="pairtask", type=identifier)
         each.add_argument("--remote", default=default_remote(), type=identifier)
     args = parser.parse_args(argv)
-    args.state_dir = args.state_dir or pairtask_home() / "discovery"
+    if args.action != "service":
+        args.state_dir = args.state_dir or pairtask_home() / "discovery"
     return args
 
 

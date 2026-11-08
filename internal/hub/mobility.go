@@ -136,7 +136,7 @@ func (h *Hub) contactCandidates(ctx context.Context, req operatorRequest) protoc
 	if why := h.addresses.claim(slot); why != "" {
 		return slot.refused(why)
 	}
-	h.startCandidates(req, candidateRun{failing: r.failing, own: h.identity.Fingerprint(), slot: slot})
+	h.startCandidates(req, candidateRun{failing: r.failing, own: h.identity.Fingerprint(), slot: slot, began: h.contactNow()})
 	return answerLater
 }
 
@@ -161,9 +161,11 @@ func (h *Hub) candidatesAnswer(ctx context.Context, msg protocol.Message, result
 }
 
 // candidateRun is one candidates operation: the failing contacts as read
-// when it began, this workspace's fingerprint and its reserved slot.
+// when it began, and when that was, this workspace's fingerprint and its
+// reserved slot.
 type candidateRun struct {
 	failing []peer.Contact
+	began   time.Time
 	own     string
 	slot    addressRequest
 	uid     int
@@ -203,19 +205,20 @@ func (h *Hub) probeCandidates(runCtx context.Context, run candidateRun, candidat
 	return results, moved
 }
 
-// tryCandidate probes one candidate, then moves the contact it proved.
+// tryCandidate probes one candidate against the contacts still failing now,
+// then moves the contact it proved.
 func (h *Hub) tryCandidate(runCtx context.Context, run candidateRun, candidate, n string) protocol.CandidateResult {
 	res := protocol.CandidateResult{Candidate: candidate, Outcome: protocol.CandidateSkipped}
-	if len(run.failing) == 0 {
+	failing := h.stillFailing(runCtx, run)
+	if len(failing) == 0 {
 		return res
 	}
-	started := h.contactNow()
-	found, outcome := h.probeCandidate(runCtx, run.failing, candidate)
+	found, outcome := h.probeCandidate(runCtx, failing, candidate)
 	if outcome != "" {
 		res.Outcome = outcome
 		return res
 	}
-	res.Outcome = h.adoptCandidate(runCtx, run, found, candidateMove{candidate: candidate, started: started, opID: run.opID + "/" + n})
+	res.Outcome = h.adoptCandidate(runCtx, run, found, candidateMove{candidate: candidate, opID: run.opID + "/" + n})
 	if res.Outcome == protocol.CandidateAdopted {
 		res.Contact = found.IdentityKey
 	}
@@ -252,6 +255,36 @@ func (h *Hub) probeCandidate(runCtx context.Context, failing []peer.Contact, can
 	return failing[i], ""
 }
 
+// stillFailing are the operation's contacts that may still authorize a
+// probe: as stored now, active, in the pause generation the operation read,
+// still failing, and not synced since it began. A paused, unpaired or
+// recovered contact authorizes no further probe.
+func (h *Hub) stillFailing(runCtx context.Context, run candidateRun) []peer.Contact {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), PairingGrace)
+	defer cancel()
+	var out []peer.Contact
+	for _, began := range run.failing {
+		if h.mayProbe(ctx, run, began) {
+			out = append(out, began)
+		}
+	}
+	return out
+}
+
+// mayProbe: the contact still stands as when the operation began, and its
+// route still fails.
+func (h *Hub) mayProbe(ctx context.Context, run candidateRun, began peer.Contact) bool {
+	now, found, err := h.store.Contact(ctx, began.IdentityKey)
+	if err != nil || !found || !unchangedSince(began, now, run.own) {
+		return false
+	}
+	active, err := h.activeContact(ctx, now)
+	if err != nil || !active {
+		return false
+	}
+	return h.failingRoute(began.IdentityKey) && !h.routeRecovered(began.IdentityKey, run.began)
+}
+
 // pinsOf are the contacts' identity keys, in a fixed order.
 func pinsOf(contacts []peer.Contact) []string {
 	pins := make([]string, len(contacts))
@@ -262,21 +295,21 @@ func pinsOf(contacts []peer.Contact) []string {
 	return pins
 }
 
-// candidateMove is one proven candidate's move: where, when its probe
-// began, and the address operation it is recorded as.
+// candidateMove is one proven candidate's move: where, and the address
+// operation it is recorded as.
 type candidateMove struct {
 	candidate string
-	started   time.Time
 	opID      string
 }
 
 // adoptCandidate moves the contact to the candidate it proved, unless its
-// own route works again since the probe began, another address check of
+// own route works again since the operation began (a recovery during an
+// earlier candidate counts for every later one), another address check of
 // it runs, or the store's fence refuses: a pause, a newer address, or a
 // side that no longer dials.
 func (h *Hub) adoptCandidate(runCtx context.Context, run candidateRun, c peer.Contact, move candidateMove) string {
 	r := addressRequest{id: move.opID, contact: c.IdentityKey, candidate: move.candidate}
-	if h.routeRecovered(c.IdentityKey, move.started) || h.addresses.claim(r) != "" {
+	if h.routeRecovered(c.IdentityKey, run.began) || h.addresses.claim(r) != "" {
 		return protocol.CandidateSkipped
 	}
 	defer h.addresses.release(r)

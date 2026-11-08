@@ -369,8 +369,12 @@ without `/pair address`. It does nothing unless the secured broker asks:
   Tailscale installed, it also takes each online peer's MagicDNS name and
   Tailscale addresses from `tailscale status`, crossed with the ports the
   failing workspaces were last reached on. It hands the broker at most 8
-  endpoints at a time, Tailscale names first, then addresses, then the
-  local network's, and at most once every 30 seconds.
+  endpoints at a time, at most once every 30 seconds. Up to 4 of them are
+  kept for endpoints announced on the local network, which are pairtask
+  listeners, and the rest come from Tailscale, names before addresses. When
+  it knows more of either kind than fit, each round takes the next ones in
+  turn, so a busy tailnet can't keep the right machine, or the local
+  network, from being tried.
 
 The broker alone decides. It tries each endpoint as a dial would. It moves a
 workspace to an endpoint only when the workspace there presents that
@@ -382,8 +386,8 @@ never replaced. Paused and unpaired workspaces are never matched.
 answer, what it announced and the outcome for each endpoint it handed over.
 `pairtask discovery run --once` runs one round in the foreground.
 
-**Tailscale names come first.** A configured MagicDNS name follows the
-other machine wherever it goes, so it is tried before anything else. Whether
+**Tailscale names come before Tailscale addresses.** A configured MagicDNS
+name follows the other machine wherever it goes. Whether
 the broker's side can resolve it depends on the deployment's DNS (on macOS,
 the Colima VM's), which isn't the host's. When it can't, the Tailscale
 addresses are tried next. The local-network announcement helps only when
