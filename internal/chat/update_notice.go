@@ -52,7 +52,7 @@ func (m *Model) updateReminder() string {
 func hostStep(n *protocol.UpdateNotice) string {
 	switch {
 	case n.Scope == protocol.ScopeCustom:
-		return "on the host: pk version with your --project/--remote shows the command"
+		return "on the host: pk version with the same --project/--remote/--repo shows the command"
 	case n.Action == protocol.UpdateActionUpgradeApp:
 		return "host: pk upgrade"
 	case n.Action == protocol.UpdateActionUpdateHost:
