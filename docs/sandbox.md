@@ -132,6 +132,30 @@ Four different things can be upgraded, each with its own command:
 On Linux the server is your host's Incus: upgrade it from the repository you
 installed it from.
 
+### After an upgrade: restart agent sessions
+
+An upgrade replaces the containers, so it ends every session running in the
+workspace. Start those agents again, and they get the new release's tools and
+instructions.
+
+An agent that runs on your host and connects to the broker from there
+([host integration](host-integration.md)) isn't replaced:
+
+- **Its connection drops.** The upgrade restarts the broker, and the
+  connection is never silently re-established. Unacknowledged durable
+  messages wait for it.
+- **It keeps what it was started with.** Its MCP server and the instructions
+  that server gave it come from the binary it started with, not the one you
+  just installed.
+
+To pick up the new release, restart the agent's session: quit the agent CLI
+and start it again with the same agent ID, or use its own way of restarting
+MCP servers if it has one. Replayed messages arrive on the new session.
+
+Resuming a saved conversation may still carry the older instructions in its
+history. When a release changes agent guidance (new message origins, fields or
+tools), start a new session rather than resuming one.
+
 ### Incus server version
 
 The Incus **server** must be 7.0.x at 7.0.2 or later, or 7.5 or later

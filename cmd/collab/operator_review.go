@@ -170,6 +170,9 @@ func writeReviewResult(w io.Writer, resp protocol.Message) {
 
 func writeReview(w io.Writer, r protocol.ReviewView) {
 	fmt.Fprintf(w, "%q  %s#%s  reviewer %q  %s", r.ID, r.Spec.Repository, r.Spec.Change, r.Spec.Reviewer, r.State)
+	if r.RemoteRequest != "" {
+		fmt.Fprintf(w, "  requester's ask ID %q", r.RemoteRequest) // a paired workspace's request, by its own ID (#259)
+	}
 	if r.Revisions != nil {
 		fmt.Fprintf(w, "  at %s", short(r.Revisions.Head))
 	}
