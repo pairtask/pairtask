@@ -28,6 +28,9 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 PROVENANCE_KEYS = ("collab", "recipe_commit", "files_sha256")  # sandbox_tools_install's rollout check
 DOCUMENT_MAX = 256 * 1024  # a build source or release manifest, with its file digests
+# One page of releases with their asset lists: about 13 KB a release on
+# GitHub today (626 KB for 50), so twice what even 100 would take.
+PAGE_MAX = 2 * 1024 * 1024
 CACHE_MAX = 64 * 1024
 MAPPINGS_MAX = 32
 CANDIDATES_MAX = 3
@@ -123,30 +126,30 @@ class Lookup:
         self.repo, self.base, self.deadline = repository(repo), api_base(), now() + budget
         self.page, self.manifests = None, {}
 
-    def get(self, path, accept=None):
+    def get(self, path, accept=None, limit=DOCUMENT_MAX):
         remaining = self.deadline - now()
         if remaining <= 0:
             raise LookupFailed("the release check ran out of time")
         headers = api_headers()
         if accept:
             headers["Accept"] = accept
-        body = self.fetch(Request(self.base + "/repos/" + self.repo + path, headers=headers), remaining)
+        body = self.fetch(Request(self.base + "/repos/" + self.repo + path, headers=headers), remaining, limit)
         try:
             return json.loads(body)
         except ValueError as error:
             raise LookupFailed("GitHub sent malformed JSON") from error
 
     @staticmethod
-    def fetch(request, remaining):
+    def fetch(request, remaining, limit):
         try:
             with urlopen(request, timeout=min(HTTP_TIMEOUT, remaining)) as response:
-                body = response.read(DOCUMENT_MAX + 1)
+                body = response.read(limit + 1)
         except HTTPError as error:
             raise LookupFailed("GitHub answered HTTP %d" % error.code) from error
         except (URLError, OSError, ValueError) as error:
             raise LookupFailed("GitHub could not be reached") from error
-        if len(body) > DOCUMENT_MAX:
-            raise LookupFailed("a release document exceeds %d bytes" % DOCUMENT_MAX)
+        if len(body) > limit:
+            raise LookupFailed("a release document exceeds %d bytes" % limit)
         return body
 
     def latest(self):
@@ -158,7 +161,7 @@ class Lookup:
     def releases_at(self, commit):
         """Every published build release targeting commit, from one page."""
         if self.page is None:
-            page = self.get("/releases?per_page=%d" % RELEASES_PAGE)
+            page = self.get("/releases?per_page=%d" % RELEASES_PAGE, limit=PAGE_MAX)
             self.page = page if isinstance(page, list) else []
         return [r for r in self.page if published(r) and r.get("target_commitish") == commit]
 

@@ -168,5 +168,28 @@ class BestEffortTests(unittest.TestCase):
                          ["version: unknown", "version: unknown (the release check failed; pk version retries)"])
 
 
+class ReleasePageBoundTests(unittest.TestCase):
+    """GitHub's real page of 50 releases is about 626 KB with its asset lists."""
+
+    def lookup(self, body):
+        import sandbox_version_lookup as lookup
+        with mock.patch.object(lookup, "urlopen", return_value=io.BytesIO(body)):
+            found = lookup.Lookup("pairtask/pairtask")
+            return found.releases_at("a" * 40)
+
+    def test_a_real_sized_page_is_read(self):
+        import json
+        release = {"tag_name": "workspace-v0.0.0-build.871.1", "target_commitish": "a" * 40, "draft": False,
+                   "assets": [{"name": "x", "uploader": {"login": "y" * 13000}}]}
+        page = json.dumps([release] * 50).encode()
+        self.assertGreater(len(page), 600 * 1024)
+        self.assertEqual(len(self.lookup(page)), 50)
+
+    def test_a_page_past_the_bound_is_refused(self):
+        import sandbox_version_lookup as lookup
+        with self.assertRaises(lookup.LookupFailed):
+            self.lookup(b"[" + b" " * lookup.PAGE_MAX + b"]")
+
+
 if __name__ == "__main__":
     unittest.main()
