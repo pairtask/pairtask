@@ -39,6 +39,7 @@ class HostBoundary:
         test.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.repo, self.project, self.remote = REPO, "pairtask", "local"
+        self.system = "Linux"
         self.host_tag, self.host_commit, self.dirty = NEW, "b" * 40, False
         self.latest, self.http_error = NEW, None
         self.manifests = {OLD: manifest("a" * 40, "1" * 64), NEW: manifest("b" * 40, "2" * 64)}
@@ -134,6 +135,7 @@ class HostBoundary:
         env = {"XDG_STATE_HOME": str(self.root), "HOME": str(self.root),
                "PAIRTASK_HOME": str(self.root / "unrelated-checkout"), "GITHUB_REPOSITORY": self.repo}
         with mock.patch.dict(os.environ, env), mock.patch.object(sys, "path", [str(SCRIPTS), *sys.path]), \
+                mock.patch("platform.system", return_value=self.system), \
                 mock.patch("subprocess.run", side_effect=self.process), \
                 mock.patch("urllib.request.urlopen", side_effect=self.http), \
                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
