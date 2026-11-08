@@ -11,6 +11,7 @@ import sys
 from sandbox_operator_config import deployment_directory, remember
 from sandbox_operator_workflow import run_operation, saved_deletion
 from sandbox_operator_recovery import recover
+import sandbox_discovery_service
 import sandbox_pairing
 from sandbox_releases import release_tag, repository
 from sandbox_incus_version import IncusVersionError, check as check_server_version, query_server
@@ -45,6 +46,11 @@ def arguments():
                         help="Optional tools to enable (default: all); required tools are always installed")
     parser.add_argument("--host-port", type=int, help="pairing-on: publish the relay on this port of every host address (0: none; default: the saved port, else 7445)")
     parser.add_argument("--name", help="pairing-on: the name this workspace pairs under, at most 64 bytes; \"\" clears it; default: the saved name")
+    discovery = parser.add_mutually_exclusive_group()
+    discovery.add_argument("--no-discovery", dest="discovery", action="store_false", default=None,
+                           help="pairing-on: don't run the known-peer discovery helper; remembered for later upgrades")
+    discovery.add_argument("--discovery", dest="discovery", action="store_true", default=None,
+                           help="pairing-on: run the discovery helper again after --no-discovery")
     changes = parser.add_mutually_exclusive_group()
     changes.add_argument("--replace", action="store_true", help="Plan replacement of the dev container")
     changes.add_argument("--destroy", action="store_true", help="Explicitly plan deletion; volume guards must be removed first")
@@ -64,7 +70,10 @@ def pairing_on_flags(args):
     if args.action == "pairing-on":
         return []
     given = {"--host-port": args.host_port, "--name": args.name}
-    return [flag for flag, value in given.items() if value is not None]
+    flags = [flag for flag, value in given.items() if value is not None]
+    if args.discovery is not None:
+        flags.append("--discovery" if args.discovery else "--no-discovery")
+    return flags
 
 
 def check_combinations(parser, args):
@@ -89,6 +98,20 @@ def main():
     remember(directory, args.project)
     operation = {"recover": recover, "tools-retry": tools_retry, **dict.fromkeys(ROLLOUTS, rollout)}.get(args.action, run_operation)
     operation(args, directory, metadata["environment"])
+    if args.action in ROLLOUTS and hasattr(args, "discovery"):
+        sync_discovery(args, directory)
+
+
+def sync_discovery(args, directory):
+    """After a rollout from this command line, the host's discovery helper
+    follows the route: installed and (re)started while pairing is on and not
+    opted out, removed otherwise. Callers that build their own arguments
+    (proofs, tests) manage no service."""
+    if args.action == "pairing-on" and args.discovery is not None:
+        sandbox_discovery_service.remember(directory, args.discovery)
+    wanted = (args.action != "pairing-off" and sandbox_pairing.configured(directory)
+              and sandbox_discovery_service.remembered(directory))
+    sandbox_discovery_service.sync(wanted, args.project, args.remote)
 
 
 # VERSIONED are the actions that create or change containers, which need a

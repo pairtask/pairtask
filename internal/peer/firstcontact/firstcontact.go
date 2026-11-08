@@ -163,6 +163,15 @@ func MessageClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity
 	return handshake(ctx, raw, id, clock, pinned{MessageALPN, pin}.role())
 }
 
+// MessageClientAny opens a message session's connection to whichever of
+// pins the endpoint presents (#284), offering MessageALPN alone; raw is
+// owned as by Client. Under TLS 1.3 the endpoint's certificate is checked
+// before this side's is sent, so one that presents none of pins never
+// learns who dialled it. Connection().PeerLeaf names the pin it matched.
+func MessageClientAny(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pins []string) (*Conn, error) {
+	return handshake(ctx, raw, id, clock, anyPinned{MessageALPN, pins}.role())
+}
+
 // ControlClient opens a control session's connection to the contact whose
 // identity is pin, offering ControlALPN alone, so it never falls back to a
 // pairing or message session; raw is owned as by Client. Its frames are

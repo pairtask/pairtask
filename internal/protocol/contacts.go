@@ -338,11 +338,15 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpConsentDecide: {key: true, id: true, decide: true},
 	ContactOpConsentOpt:    {key: true, id: true, consentOn: true},
 	ContactOpConsentReset:  {key: true, id: true, scope: true},
+	// Known-peer mobility (#284): neither names a contact.
+	ContactOpDiscovery:  {noKey: true, id: true},
+	ContactOpCandidates: {noKey: true, id: true, candidates: true},
 }
 
 type contactFieldSet struct {
 	key, text, note, read, before, id, to, agents, grant, ask, approve, ack bool
 	anyKey, consentBefore, decide, consentOn, scope, epoch, confirm         bool
+	noKey, candidates                                                       bool
 }
 
 // ValidateContactRequest checks an operator_contact frame before anything
@@ -352,7 +356,7 @@ func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
 		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, unpair, " +
-			"consent_list, consent_decide, consent_opt or consent_reset")
+			"consent_list, consent_decide, consent_opt, consent_reset, discovery or candidates")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {
 		return err
@@ -360,7 +364,7 @@ func ValidateContactRequest(msg Message) error {
 	return errors.Join(validKeyFor(msg, allowed), validContactID(msg, allowed), validContactText(msg, allowed),
 		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
 		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed), validConsent(msg, allowed),
-		validContactEpoch(msg), validContactUnpair(msg, allowed))
+		validContactEpoch(msg), validContactUnpair(msg, allowed), validContactCandidates(msg, allowed))
 }
 
 // validContactEpoch refuses a pairing epoch below 0; 0 is the current
@@ -418,6 +422,9 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"consent_operation", msg.ConsentOperation != "", allowed.scope},
 		{"consent_page", msg.ConsentPage != nil, false},
 		{"consent_result", msg.ConsentResult != nil, false},
+		{"contact_candidates", msg.ContactCandidates != nil, allowed.candidates},
+		{"contact_discovery", msg.ContactDiscovery != nil, false},
+		{"contact_candidates_result", msg.ContactCandidatesResult != nil, false},
 	} {
 		if f.present && !f.allowed {
 			return fmt.Errorf("%s is not taken by contact_op %s", f.name, msg.ContactOp)

@@ -48,6 +48,7 @@ jobs:
       - name: Prove restricted file access and dedicated host ownership
         env:
           PAIRTASK_MAC_IDENTITY_PROOF: '1'
+          PAIRTASK_MAC_MDNS_PROOF: '1'
         run: python3 -m unittest discover -s scripts/tests -v
 
   checks:

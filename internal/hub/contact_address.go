@@ -84,6 +84,13 @@ func (a *addressChecks) release(r addressRequest) {
 	a.mu.Unlock()
 }
 
+// checking: an address check of the contact runs in this broker now.
+func (a *addressChecks) checking(contact string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.running[contact] != ""
+}
+
 // runs: r is running in this broker now.
 func (a *addressChecks) runs(r addressRequest) bool {
 	a.mu.Lock()
