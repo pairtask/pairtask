@@ -14,9 +14,11 @@ import (
 func TestOperatorTrustPublishedMCPInstructions(t *testing.T) {
 	for _, mode := range []string{"runtime", "manual channel", "automatic channel"} {
 		t.Run(mode, func(t *testing.T) {
+			path, _ := startBroker(t)
+			// Database initialization and socket readiness are fixture setup;
+			// the same 3 s budget begins once the broker is ready for MCP.
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			path, _ := startBroker(t)
 			l := NewListener(ctx, lazyAgent(t, path, "trust-worker"), nil)
 			defer l.Close()
 			server := NewHostMCP(l, mode != "runtime")
