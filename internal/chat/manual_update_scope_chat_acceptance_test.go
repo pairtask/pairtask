@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -16,6 +17,10 @@ func TestManualUpdateScopeChatAcceptanceCustomTargetUsesHostGuidance(t *testing.
 	if strings.Contains(frame, "host: pk upgrade") {
 		t.Fatal("custom deployment offered an upgrade against the default target")
 	}
+	h.input(tea.WindowSizeMsg{Width: 260, Height: 32})
 	v2Command(h, "/version")
-	v3Contains(t, ansi.Strip(h.m.View().Content), "pk version")
+	version := ansi.Strip(h.m.View().Content)
+	for _, word := range []string{"pk version", "--project", "--remote", "--repo"} {
+		v3Contains(t, version, word)
+	}
 }
