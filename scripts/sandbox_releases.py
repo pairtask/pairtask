@@ -51,6 +51,9 @@ def release_error(error, repo, selection):
     if error.code in (403, 429) and error.headers.get("X-RateLimit-Remaining") == "0":
         return (f"GitHub API rate limit reached while looking up release {selection} in {repo}. "
                 "Retry later, or set GITHUB_TOKEN (for example from gh auth token) to use your own limit.")
+    if 500 <= error.code < 600:
+        return (f"GitHub release lookup failed with a server error (HTTP {error.code}) "
+                f"for {selection} in {repo}. Retry shortly.")
     return (f"Cannot find published release {selection} in {repo} (HTTP {error.code}). "
             "A successful main release build must finish before rollout.")
 
