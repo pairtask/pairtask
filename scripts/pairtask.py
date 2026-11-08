@@ -41,6 +41,8 @@ ACTIONS = {
     "share": ("sandbox-share.py", {"plan": "plan", "setup": "setup", "run": "run"}, "macOS writable sharing: plan | setup | run --mounts-file FILE"),
     "pairing": ("sandbox-provision.py", {"on": "pairing-on", "off": "pairing-off", "status": "pairing-status"},
                 "the pairing route: on | off (each an upgrade; ends sessions) | status"),
+    "discovery": ("sandbox-discovery.py", {"run": "run", "status": "status"},
+                  "find paired workspaces again after an address change: run [--once] | status"),
 }
 # Short names for commands, resolved before anything else.
 ALIASES = {"sh": "shell"}

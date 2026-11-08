@@ -55,6 +55,9 @@ func (h *Hub) operatorContact(ctx context.Context, clients map[string]*Client, r
 	if consentOps[msg.ContactOp] {
 		return h.operatorConsent(ctx, req)
 	}
+	if mobilityOps[msg.ContactOp] {
+		return h.operatorMobility(ctx, req)
+	}
 	if rerr := h.contactRefused(ctx, clients, msg); rerr != nil {
 		return rerr.frame(msg.MessageID)
 	}

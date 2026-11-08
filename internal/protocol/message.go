@@ -288,6 +288,10 @@ type Message struct {
 	ConsentOn            *bool                 `json:"consent_on,omitempty"`        // consent_opt
 	ConsentAgent         string                `json:"consent_agent,omitempty"`     // consent_reset
 	ConsentOperation     string                `json:"consent_operation,omitempty"` // consent_reset
+	// Known-peer mobility (#284).
+	ContactCandidates       []string          `json:"contact_candidates,omitempty"`        // candidates: endpoints to try
+	ContactDiscovery        *ContactDiscovery `json:"contact_discovery,omitempty"`         // discovery's answer: the lease
+	ContactCandidatesResult []CandidateResult `json:"contact_candidates_result,omitempty"` // candidates' answer
 }
 
 // Operator inbox paging limits.

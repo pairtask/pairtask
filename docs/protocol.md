@@ -829,6 +829,46 @@ replacement link is kept only on the side that asked.
   `malformed_frame`. The operator's chat sends `supersedes` only to a broker
   that advertises capability `review_supersede`.
 
+## Finding a paired workspace that moved (#284)
+
+Two `operator_contact` operations take no `contact_key` and serve a host
+helper that finds a paired workspace again after its address changed. Each
+is one request on the operator socket, so an operator session that is open
+stays as it is. Capabilities: `contact_discovery`, `contact_candidates`.
+
+- **`discovery`** `{message_id}` answers `contact_discovery: {advertise,
+  browse, ports, expires_at}`, a lease of at most 90 seconds:
+  - `advertise`: a confirmed, active contact that this side doesn't dial
+    exists, so it may be looking for this workspace. This doesn't depend on
+    any failure here.
+  - `browse`: a contact this side dials is failing, with no link open and no
+    address check running.
+  - `ports`: where those contacts were last reached, at most 8, so a name or
+    overlay address can be tried on the right port. Nothing else, and no
+    contact, is named.
+- **`candidates`** `{message_id, contact_candidates: ["HOST:PORT", …]}` takes 1
+  to 8 distinct endpoints. It answers after its probes:
+  `contact_candidates_result: [{candidate, outcome, contact?}]` and the
+  pairing snapshot. Only one runs at a time, sharing the address checks'
+  bound. Each endpoint is dialled the way messages are, and a handshake is
+  completed with whichever failing contact it presents; nothing is exchanged.
+  - **The pin is checked first.** Under TLS 1.3 the endpoint's certificate is
+    checked before this side's is sent, so one that presents none of them
+    never learns who dialled.
+  - **The move is fenced.** It goes through the address operation's store
+    fence. A pause, a newer address, or a side that no longer dials refuses
+    it, and so does the contact's own route syncing again since the probe
+    began. The contact keeps its identity, epoch, grants, history and queued
+    messages, which sync at once.
+  - **Outcomes:**
+    - `adopted`: the contact moved there; `contact` names it.
+    - `no_match`: the workspace there is none of the failing contacts.
+    - `unreachable`: nothing answered, or no handshake completed.
+    - `refused`: egress refused the endpoint (a forbidden address, or a name
+      its lookup can't resolve), or the fence did.
+    - `skipped`: nothing to look for, its route works again, or another check
+      of it runs.
+
 ## State
 
 SQLite retains `agents` (session lifecycle and harness/model) and `messages`

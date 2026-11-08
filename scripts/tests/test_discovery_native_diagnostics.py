@@ -1,0 +1,74 @@
+"""Builder diagnostics for #284 (not an acceptance test): what this host's
+network does with the helper's multicast, printed so a native CI run shows
+why a proof fails. It asserts nothing about the network."""
+
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import time
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import peer_discovery as engine  # noqa: E402
+
+NATIVE = (os.environ.get("PAIRTASK_MDNS_PROOF") == "1" or
+          os.environ.get("PAIRTASK_MAC_MDNS_PROOF") == "1")
+
+
+def option(sock, name):
+    try:
+        return int.from_bytes(sock.getsockopt(socket.IPPROTO_IP, name, 4)[:4], sys.byteorder)
+    except OSError as error:
+        return "error %s" % error.errno
+
+
+ROUTE = {"darwi": ["route", "-n", "get", "224.0.0.251"], "linux": ["ip", "route", "get", "224.0.0.251"]}
+
+
+def command_output(command):
+    """A command's output for the report, or why there is none."""
+    if not command:
+        return "no route command here"
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        return "unavailable: %s" % error
+    return (result.stdout + result.stderr)[-1500:]
+
+
+def report_for(port):
+    channel = engine.Channel(engine.GROUP, port)
+    interfaces = engine.interface_addresses()
+    channel.join([value for values in interfaces.values() for value in engine.ipv4(values)])
+    report = {"platform": sys.platform, "interfaces": interfaces, "joined": sorted(channel.joined),
+              "sends": {}, "senders": {}}
+    for interface in [value for values in interfaces.values() for value in engine.ipv4(values)]:
+        report["sends"][interface] = channel.send(b"pairtask-diagnostic", interface)
+    for interface, out in channel.senders.items():
+        report["senders"][interface] = {"bound": "%s:%d" % out.getsockname()[:2],
+                                        "ttl": option(out, socket.IP_MULTICAST_TTL),
+                                        "loop": option(out, socket.IP_MULTICAST_LOOP)}
+    time.sleep(0.5)
+    report["received"] = len(channel.receive(0.5))
+    report["route"] = command_output(ROUTE.get(sys.platform[:5], []))
+    report["links"] = command_output(["ifconfig"] if sys.platform == "darwin" else ["ip", "-brief", "link"])
+    report["failures"] = sorted("%s errno %s" % key for key in channel.failures)
+    channel.close()
+    return report
+
+
+@unittest.skipUnless(NATIVE, "native multicast diagnostics are opt-in")
+class DiscoveryNativeDiagnostics(unittest.TestCase):
+    def test_print_multicast_path(self):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        print("\nDISCOVERY-DIAGNOSTICS " + json.dumps(report_for(port), sort_keys=True))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -120,7 +121,10 @@ var consentChoices = map[string]bool{ConsentOnce: true, ConsentSession: true, Co
 // validKeyFor requires a contact key, unless the operation spans every
 // contact without one.
 func validKeyFor(msg Message, allowed contactFieldSet) error {
-	if allowed.anyKey && msg.ContactKey == "" {
+	switch {
+	case allowed.noKey && msg.ContactKey != "":
+		return fmt.Errorf("contact_key is not taken by contact_op %s", msg.ContactOp)
+	case allowed.noKey, allowed.anyKey && msg.ContactKey == "":
 		return nil
 	}
 	return validContactKey(msg.ContactKey)

@@ -11,7 +11,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* | reviews | review | decide [--socket PATH] [--json] [--timeout 5s]; reviews: pairtask operator contact reviews --help"
+const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* | reviews | review | decide | discovery | candidates HOST:PORT... [--socket PATH] [--json] [--timeout 5s]; reviews: pairtask operator contact reviews --help"
 
 // contactArgs is how many positional arguments each contact operation
 // takes: the contact's full key, and the text for send; share and unshare
@@ -37,8 +37,12 @@ func (l *agentList) Set(v string) error { *l = append(*l, v); return nil }
 // from the operator socket, as the chat's ⇄ tab does (#210).
 func runOperatorContact(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	parse := parseOperatorContact
-	if len(args) > 0 && contactReviewOps[args[0]] != "" {
+	switch {
+	case len(args) == 0:
+	case contactReviewOps[args[0]] != "":
 		parse = parseContactReview
+	case contactMobilityOps[args[0]]:
+		parse = parseContactMobility
 	}
 	call, req, code := parse(args, stderr)
 	if code != -1 {
@@ -52,6 +56,7 @@ func runOperatorContact(ctx context.Context, args []string, stdout, stderr io.Wr
 		return encodeJSON(stdout, stderr, resp)
 	}
 	writeContact(stdout, resp)
+	writeMobility(stdout, resp)
 	return 0
 }
 

@@ -127,13 +127,24 @@ func contactRole(pin string) tlsRole { return pinned{ContactALPN, pin}.role() }
 type pinned struct{ protocol, fingerprint string }
 
 // role offers the protocol and accepts only the pinned identity.
-func (p pinned) role() tlsRole {
-	pin := p.fingerprint
+func (p pinned) role() tlsRole { return anyPinned{p.protocol, []string{p.fingerprint}}.role() }
+
+// anyPinned is one protocol offered to any of the identities it pins.
+type anyPinned struct {
+	protocol     string
+	fingerprints []string
+}
+
+// role offers the protocol and accepts only an identity among the pins.
+func (p anyPinned) role() tlsRole {
+	pins := slices.Clone(p.fingerprints)
 	return tlsRole{protocols: []string{p.protocol}, accept: func(_, fingerprint string) error {
-		if subtle.ConstantTimeCompare([]byte(fingerprint), []byte(pin)) != 1 {
-			return fmt.Errorf("%w: %w", ErrFirstContact, peer.ErrPeerMismatch)
+		for _, pin := range pins {
+			if subtle.ConstantTimeCompare([]byte(fingerprint), []byte(pin)) == 1 {
+				return nil
+			}
 		}
-		return nil
+		return fmt.Errorf("%w: %w", ErrFirstContact, peer.ErrPeerMismatch)
 	}}
 }
 

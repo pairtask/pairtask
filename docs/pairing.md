@@ -350,6 +350,64 @@ Pairing again from B to the new address (steps 2 to 5) works too. Either
 way, only a newer change moves the address, so one finishing late never
 moves it back.
 
+## Moving between networks
+
+`pairtask pairing on` also starts a small helper on each machine, a user
+service (no root): a launchd agent on macOS, `systemd --user` on Linux. It
+lets a paired workspace find the other again after an address change,
+without `/pair address`. It does nothing unless the secured broker asks:
+
+- **Listening side:** while a paired workspace dials this one, the helper
+  announces on the local network (mDNS, `_pairtask._tcp.local`) that a
+  pairtask listener is at this machine's addresses, on the published
+  `--host-port`. The announcement is presence and port only, under a random
+  name that changes each time the helper starts. It carries no workspace or
+  contact name, no key and no fingerprint. Anyone on the network can still
+  see that a pairtask listener is there.
+- **Dialling side:** while a workspace this side dials shows
+  `last attempt failed`, the helper looks for those announcements. With
+  Tailscale installed, it also takes each online peer's MagicDNS name and
+  Tailscale addresses from `tailscale status`, crossed with the ports the
+  failing workspaces were last reached on. It hands the broker at most 8
+  endpoints at a time, at most once every 30 seconds. Up to 4 of them are
+  kept for endpoints announced on the local network, which are pairtask
+  listeners, and the rest come from Tailscale, names before addresses. When
+  it knows more of either kind than fit, each round takes the next ones in
+  turn, so a busy tailnet can't keep the right machine, or the local
+  network, from being tried.
+
+The broker alone decides. It tries each endpoint as a dial would. It moves a
+workspace to an endpoint only when the workspace there presents that
+workspace's pinned identity, and it checks the identity before it shows its
+own. It then keeps everything as `/pair address` does. A working address is
+never replaced. Paused and unpaired workspaces are never matched.
+
+`pairtask discovery status` shows what the helper last did: the broker's
+answer, what it announced and the outcome for each endpoint it handed over.
+`pairtask discovery run --once` runs one round in the foreground.
+
+**Tailscale names come before Tailscale addresses.** A configured MagicDNS
+name follows the other machine wherever it goes. Whether
+the broker's side can resolve it depends on the deployment's DNS (on macOS,
+the Colima VM's), which isn't the host's. When it can't, the Tailscale
+addresses are tried next. The local-network announcement helps only when
+both machines are on the same network.
+
+**Not covered:** both machines move to different networks, with no stable
+name and no tailnet between them. Neither can find the other, and the
+workspace keeps showing `last attempt failed` until you use `/pair address`
+or pair again. Windows, native or with WSL2, is not a supported host, and
+discovery there is unverified.
+
+To turn the helper off, and keep it off through later upgrades:
+
+```sh
+pairtask pairing on --no-discovery   # --discovery turns it back on
+```
+
+`pairtask pairing off` stops and removes it, and `pairtask upgrade` restarts
+it. Pairing works without it; only automatic recovery is lost.
+
 ## Change or stop
 
 To stop traffic with one paired workspace for a while, open its `⇄` tab:
