@@ -73,9 +73,10 @@ class DiscoveryMulticastAcceptance(unittest.TestCase):
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             try:
-                data, _ = responder.recvfrom(9001)
+                data, sender = responder.recvfrom(9001)
             except socket.timeout:
                 continue
             if b"_pairtask" in data and struct.pack("!3H", 0, 0, 7445) in data:
+                self.assertEqual(sender[1], 5353, "advertisements must retain the mDNS source port")
                 return
         self.fail("helper claimed success but shared-port responder saw no service advertisement")
