@@ -28,8 +28,12 @@ import threading
 import time
 import uuid
 
-import peer_discovery as engine
-from sandbox_remote import default_remote
+HERE = str(Path(__file__).resolve().parent)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)  # loaded by path (tests, runpy): its modules sit beside it
+
+import peer_discovery as engine  # noqa: E402
+from sandbox_remote import default_remote  # noqa: E402
 
 SECURED_OPERATOR = "/run/collab-ai-operator/operator.sock"
 WINDOW = 3.0          # seconds a --once run advertises and listens
@@ -298,7 +302,8 @@ class Discovery:
 
 def run_once(discovery):
     """One lease, one window, at most one submission; 0 also when the lease
-    is off or expired, 1 when the broker could not be asked."""
+    is off or expired, 1 when the broker could not be asked or advertising
+    was due but no datagram left."""
     try:
         lease = discovery.ask_lease()
     except (OperatorError, OSError, subprocess.SubprocessError) as error:
@@ -306,11 +311,20 @@ def run_once(discovery):
         discovery.status.update(lease=None, error=str(error))
         return 1
     discovery.apply(lease)
+    due = discovery.wanted(time.monotonic())[0]
     lan = window(discovery, min(time.monotonic() + WINDOW, lease.deadline) if lease else 0)
+    silent = due and advertised_nothing(discovery)
     discovery.close()
     if discovery.browsing(time.monotonic()):
         submit_once(discovery, lan, lease.ports)
-    return 0
+    return 1 if silent else 0
+
+
+def advertised_nothing(discovery):
+    """With advertising due, no session could be opened, or not one datagram
+    left it: the network refused them."""
+    session = discovery.session
+    return session is None or session.channel.sent == 0
 
 
 def window(discovery, end):

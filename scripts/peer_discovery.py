@@ -14,6 +14,7 @@ malformed or over a bound is dropped without an error.
 
 from collections import OrderedDict, namedtuple
 import datetime
+import errno
 import ipaddress
 import json
 import os
@@ -440,10 +441,12 @@ def ipv4(values):
 
 class Channel:
     """One UDP socket on the mDNS group and port, shared with any system
-    responder (mDNSResponder, avahi) through SO_REUSEADDR/SO_REUSEPORT."""
+    responder (mDNSResponder, avahi) through SO_REUSEADDR/SO_REUSEPORT.
+    Bound to the group, it receives that group's datagrams only."""
 
     def __init__(self, group=GROUP, port=PORT):
         self.group, self.port, self.joined = group, port, set()
+        self.sent, self.failures = 0, set()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             self.setup()
@@ -454,7 +457,7 @@ class Channel:
     def setup(self):
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.reuse_port()
-        self.sock.bind(("", self.port))
+        self.sock.bind((self.group, self.port))
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
         self.sock.setblocking(False)
@@ -479,16 +482,26 @@ class Channel:
         try:
             membership = socket.inet_aton(self.group) + socket.inet_aton(interface)
             self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
-        except OSError:
-            pass  # already joined on that interface, or it went away
+        except OSError as error:
+            if error.errno != errno.EADDRINUSE:  # already joined there through the default interface
+                self.failed("join " + interface, error)
 
     def send(self, packet, interface="0.0.0.0"):
         try:
             self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
             self.sock.sendto(packet, (self.group, self.port))
-            return True
-        except OSError:
+        except OSError as error:
+            self.failed("send on " + interface, error)
             return False
+        self.sent += 1
+        return True
+
+    def failed(self, where, error):
+        """Say once per place and error what the network refused."""
+        key = (where, error.errno)
+        if key not in self.failures:
+            self.failures.add(key)
+            sys.stderr.write("pairtask discovery: %s failed: %s\n" % (where, error.strerror or error))
 
     def receive(self, timeout):
         """The packets waiting, after at most timeout seconds; oversized ones are cut and dropped by parse."""
