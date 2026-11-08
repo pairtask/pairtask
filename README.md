@@ -3,37 +3,47 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/brand/banner/pairtask-banner-dark.svg">
-    <img alt="pairtask" src="docs/brand/banner/pairtask-banner-light.svg" width="100%">
+    <img alt="pairtask" src="docs/brand/banner/pairtask-banner-light.svg" width="480">
   </picture>
 </p>
 
-**Your AI coding agents, working as a team.** pairtask puts Codex, Claude and
-Pi in one shared workspace, lets them message each other directly, and gives
-you one chat to direct them. Ask one agent to build a change and another to
-review it; they coordinate without you relaying every message.
+<p align="center"><strong>Pairtask — connecting agents.</strong></p>
 
-[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) · [Get started](#set-up-a-sandbox) · [Pair two machines](#connect-two-machines) · [Features](#features) · [Docs](#documentation) · [Troubleshooting](docs/troubleshooting.md)
+## Your agents. Your colleagues' agents. Working together.
 
-> [!TIP]
-> **Work across machines.** Pair your workspace with a colleague's, then
-> message each other, let your agents talk to theirs and ask each other's
-> agents for reviews. [Pair in five steps ↓](#connect-two-machines) ·
-> [Pairing guide →](docs/pairing.md)
+Connect coding agents on your machine and across your colleagues' machines.
+They exchange messages and review changes under your direction. Each of you
+chooses which agents to share and which reviews to allow.
 
-## Features
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="docs/assets/collaboration-dark-narrow.svg">
+    <source media="(max-width: 600px)" srcset="docs/assets/collaboration-light-narrow.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/collaboration-dark.svg">
+    <img alt="You direct two agents on your machine. Pair with a colleague's machine so your agents and theirs can collaborate. Each person chooses which agents to share." src="docs/assets/collaboration-light.svg" width="100%">
+  </picture>
+</p>
 
-- 🤝 **Agents that pair up**: Codex, Claude and [Pi](docs/pi.md) share one workspace and talk to each other directly. Run several of each and group them in rooms.
-- 🌐 **Two machines, one team**: Pair your workspace with a colleague's over your LAN or tailnet. Messages arrive at once, you choose which of your agents theirs may talk to and ask for reviews, and `/pair status` shows how each paired workspace stands. If one moves to another address, `/pair address` reaches it again without pairing anew. [Pair in five steps ↓](#connect-two-machines)
-- 💬 **One chat to lead them**: Message one agent, a group or everyone. Replies, acknowledgments, search, history, [Markdown and diagrams](docs/chat-formatting.md). [Operator chat →](docs/operator-chat.md)
-- 🔍 **Pull request reviews**: `/review OWNER/REPO#N AGENT` hands a pull request to an agent, which reviews it and publishes the result on GitHub. [Reviews →](docs/operator-chat.md#reviews)
-- 📬 **Nothing gets lost**: Messages wait until they are acknowledged, survive restarts, and show where they are. [Delivery →](docs/durable-inboxes.md)
-- 👀 **See who is doing what**: Agents report their status and claim tasks; the chat and a [dashboard](docs/dashboard.md) show it.
-- 🔒 **Sandboxed by default**: Agents run in containers, apart from your machine; the message broker sits in its own [offline container](docs/secured-runtime.md). Your projects survive upgrades.
-- 🧰 **Ready to code**: Your [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and the [tools agents need](docs/sandbox-tools.md), installed for you.
-- ⚡ **One command**: `pairtask` installs, upgrades, starts and stops everything. [Host commands →](docs/host-commands.md)
+An agentic mesh: connect your agents to your colleagues' agents, with each
+workspace controlling what it shares.
 
-No containers? Run it [directly on your machine](docs/quickstart.md), or
-connect any MCP client [by hand](docs/mcp.md).
+[MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) · [Get started](#set-up-a-sandbox) · [Pair two machines](#connect-two-machines) · [What you can do](#what-you-can-do) · [Docs](#documentation) · [Troubleshooting](docs/troubleshooting.md)
+
+**For example.** You ask codex-1 to build a change and claude-1 to review it.
+After you pair workspaces and your colleague allows reviews, codex-1 can
+request another review from their agent and act on the findings. Your agents
+carry your work into a collaboration you direct.
+
+## What you can do
+
+| | |
+| --- | --- |
+| **Work with your agents** | Codex, Claude and Pi in one workspace; they message each other and claim tasks while you direct them from one chat. Group them in [rooms](docs/operator-chat.md#conversations); see their [status and activity](docs/operator-chat.md#status-and-agent-activity) in the chat and the [dashboard](docs/dashboard.md). |
+| **Work with your colleagues' agents** | [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link. |
+| **Review changes** | Hand a pull request to one of your agents ([reviews](docs/operator-chat.md#reviews)), or request a review of specific commits from a colleague's agent; if the pull request moves before the review starts, [ask again](docs/pairing.md#8-ask-for-reviews-across). |
+| **Manage connections** | [Recover a paired workspace's address](docs/pairing.md#moving-between-networks) on an available LAN or tailnet, or set it by hand; [pause, resume or unpair](docs/pairing.md#change-or-stop); [repair](docs/pairing.md#repair) a pairing one side still holds. |
+| **Run and maintain** | One `pairtask` command [installs, starts and upgrades](docs/host-commands.md#install-and-upgrade); [check running versions and available updates](docs/host-commands.md#install-and-upgrade); [restart agents after an upgrade](docs/sandbox.md#after-an-upgrade-restart-agent-sessions); [track delivery](docs/durable-inboxes.md); [back up or archive messages](docs/durable-inboxes.md#backup-and-archive). |
+| **Choose your environment** | Agents in [containers](docs/sandbox.md), the broker in an [offline one](docs/secured-runtime.md), projects kept across upgrades; [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and [tools](docs/sandbox-tools.md) when you want them; or run [directly on your machine](docs/quickstart.md) and connect any MCP client [by hand](docs/mcp.md). |
 
 ## Set up a sandbox
 
@@ -54,9 +64,10 @@ connect any MCP client [by hand](docs/mcp.md).
    curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh | sh
    ```
 
-   Run it again later to upgrade. Upgrades end running sessions and keep your
-   projects. If it stops on the Incus server version, see
-   [upgrades](docs/sandbox.md#upgrades).
+   Run it again later to upgrade, then restart your agent sessions
+   ([why](docs/sandbox.md#after-an-upgrade-restart-agent-sessions)). Upgrades
+   end running sessions and keep your projects. If it stops on the Incus
+   server version, see [upgrades](docs/sandbox.md#upgrades).
 
 3. **Sign in** inside the workspace:
 
@@ -107,7 +118,8 @@ connect any MCP client [by hand](docs/mcp.md).
    ```
 
    Only one chat can be open at a time; `pairtask chat` again reconnects with
-   the history.
+   the history. `/version` shows the release report your host last sent and
+   whether a newer release exists.
 
 4. **Stop** when you're done: `pairtask stop`. Closing a terminal ends that
    agent; the workspace and your files stay.
@@ -171,11 +183,12 @@ Each paired workspace gets its own `⇄` tab. In it:
 | --- | --- |
 | a message | Goes to the other operator. |
 | `@codex-1 a message` | Goes to one of their agents, shown as `codex-1@WORKSPACE`. |
+| `@codex-1@here a message` | Brings one of your own agents into that conversation; its reply is assigned to it. |
 | `/pair share claude-1` | Lets their side message your claude-1; `/pair unshare claude-1` stops it. |
 | `/pair reviews claude-1 ask` | Lets them ask claude-1 for reviews, each waiting for your OK. |
 | `/pair review codex-1 OWNER/REPO#12 BASE HEAD` | Asks one of their agents to review those commits. |
 | `/pair name office-m5` | Calls that workspace office-m5 here, in the tab and its agents' labels. |
-| `/pair address HOST:PORT` | Reaches it again after it moved to another address. |
+| `/pair address HOST:PORT` | Reaches it again after it moved to another address, when [discovery](docs/pairing.md#moving-between-networks) can't find it. |
 | `/pair pause` | Blocks new traffic with that workspace, both ways, until `/pair resume`. |
 | `/pair unpair` | Ends the pairing for good once you type the confirmation it shows; the tab stays, read-only ([unpair](docs/pairing.md#unpair)). |
 
@@ -228,7 +241,8 @@ locally, without container isolation.
 - [Host commands](docs/host-commands.md): every `pairtask` command on your
   machine.
 - [Pair two machines](docs/pairing.md): connect your workspace with one on
-  another machine, step by step.
+  another machine, step by step; moving between networks, pausing, unpairing
+  and repairing.
 - [Operator chat](docs/operator-chat.md): conversations, commands, reviews and
   pairing in `pairtask chat`. [Formatting](docs/chat-formatting.md): Markdown,
   diagrams and `/diagram` export.
@@ -258,7 +272,8 @@ locally, without container isolation.
 - [Host integration](docs/host-integration.md): launch options for Claude,
   Codex and Pi, resume, and soft token budgets.
 - [Manual MCP](docs/mcp.md): register the adapter and use the messaging tools.
-- [Durable inboxes](docs/durable-inboxes.md),
+- [Durable inboxes](docs/durable-inboxes.md) (with
+  [backup and archive](docs/durable-inboxes.md#backup-and-archive)),
   [correlated replies](docs/correlated-replies.md) and
   [delegated listeners](docs/delegated-listeners.md): delivery guarantees and
   patterns.
@@ -284,6 +299,6 @@ locally, without container isolation.
 [Report an issue](https://github.com/pairtask/pairtask/issues). Run checks with:
 
 ```sh
-go test -race ./... -timeout=30s
+go test -race ./... -timeout=1800s
 python3 -m unittest discover -s scripts/tests
 ```

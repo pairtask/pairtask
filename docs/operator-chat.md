@@ -33,8 +33,10 @@ leading `@AGENT@WORKSPACE` here (the workspace by its name or full key) holds
 the draft and says which tab, or why that workspace can't be written to
 (unknown, ambiguous, not confirmed, paused). A bare `@AGENT` is always your
 agent; when a paired workspace shares one of that name, the line above the
-draft says so: `codex-1 is your agent here; codex-1@Office is in the Office ⇄
-tab`. `/to` IDs stay this workspace's, as written.
+draft says so once that workspace's tab has loaded in this chat: `codex-1 is
+your agent here; codex-1@Office is in the Office ⇄ tab`. The `@` picker here
+offers this workspace's agents only; a paired workspace's agents are offered
+in its `⇄` tab. `/to` IDs stay this workspace's, as written.
 
 For pairing across hosts, start with the
 [pairing guide](pairing.md). Once both sides
@@ -61,7 +63,7 @@ Office. Send it in * instead`. A name neither side knows still goes; their side
 refuses it.
 
 To bring your own agents in (#278), tag them `@AGENT@here`; the `@` picker
-offers them once you type a letter. The message still goes to that workspace
+offers them from the first `@`. The message still goes to that workspace
 as before, and each tagged agent here gets it too, with the conversation named
 and its reply assigned to it, as a tag in the Square does. The line above the
 draft shows both sides: `→ Office's operator · reviewer@here`. A tagged agent's
