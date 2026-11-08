@@ -39,7 +39,7 @@ class DiscoveryMulticastAcceptance(unittest.TestCase):
 
     def test_real_advertisement_is_browsed_and_submitted_without_manual_address(self):
         reserve = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        reserve.bind(("", 0))
+        reserve.bind(("224.0.0.251", 0))
         port = reserve.getsockname()[1]
         reserve.close()
         advertiser = self.operator(lease(advertise=True))
@@ -61,7 +61,7 @@ class DiscoveryMulticastAcceptance(unittest.TestCase):
         responder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if hasattr(socket, "SO_REUSEPORT"):
             responder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        responder.bind(("", 5353))
+        responder.bind(("224.0.0.251", 5353))
         membership = socket.inet_aton("224.0.0.251") + socket.inet_aton("0.0.0.0")
         responder.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
         responder.settimeout(0.2)
