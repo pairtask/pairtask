@@ -433,21 +433,39 @@ def route_source(family, target):
         return None
 
 
+def ipv4_addresses(interfaces):
+    """Every IPv4 address of the interfaces."""
+    return [value for values in interfaces.values() for value in ipv4(values)]
+
+
 def ipv4(values):
     return [value for value in values if address(value).version == 4]
 
 
 # --- Sockets and session -----------------------------------------------------
 
+def shared_socket():
+    """A UDP socket that shares its port with any system responder
+    (mDNSResponder, avahi) through SO_REUSEADDR and SO_REUSEPORT."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except OSError:
+            pass
+    return sock
+
+
 class Channel:
-    """One UDP socket on the mDNS group and port, shared with any system
-    responder (mDNSResponder, avahi) through SO_REUSEADDR/SO_REUSEPORT.
-    Bound to the group, it receives that group's datagrams only."""
+    """The mDNS group and port: one socket bound to the group receives its
+    datagrams only; each interface sends from its own address on the port,
+    since BSD kernels can't send from a group-bound socket."""
 
     def __init__(self, group=GROUP, port=PORT):
         self.group, self.port, self.joined = group, port, set()
-        self.sent, self.failures = 0, set()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sent, self.failures, self.senders = 0, set(), {}
+        self.sock = shared_socket()
         try:
             self.setup()
         except OSError:
@@ -455,46 +473,61 @@ class Channel:
             raise
 
     def setup(self):
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.reuse_port()
         self.sock.bind((self.group, self.port))
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
         self.sock.setblocking(False)
         self.join([])
 
-    def reuse_port(self):
-        if not hasattr(socket, "SO_REUSEPORT"):
-            return
-        try:
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        except OSError:
-            pass
-
     def join(self, interfaces):
-        """Membership on the default interface and on each IPv4 interface address."""
+        """Membership on the default interface and on each IPv4 interface
+        address; one that failed is tried again on the next join."""
         for interface in ["0.0.0.0"] + list(interfaces):
-            if interface not in self.joined:
+            if interface not in self.joined and self.membership(interface):
                 self.joined.add(interface)
-                self.membership(interface)
 
     def membership(self, interface):
         try:
             membership = socket.inet_aton(self.group) + socket.inet_aton(interface)
             self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
         except OSError as error:
-            if error.errno != errno.EADDRINUSE:  # already joined there through the default interface
-                self.failed("join " + interface, error)
+            if error.errno == errno.EADDRINUSE:  # already joined there through the default interface
+                return True
+            self.failed("join " + interface, error)
+            return False
+        return True
+
+    def retire(self, current):
+        """Close the senders, and forget the memberships, of addresses that went away."""
+        for interface in [i for i in self.senders if i not in current]:
+            self.senders.pop(interface).close()
+        self.joined = {i for i in self.joined if i == "0.0.0.0" or i in current}
 
     def send(self, packet, interface="0.0.0.0"):
         try:
-            self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
-            self.sock.sendto(packet, (self.group, self.port))
+            self.sender(interface).sendto(packet, (self.group, self.port))
         except OSError as error:
             self.failed("send on " + interface, error)
             return False
         self.sent += 1
         return True
+
+    def sender(self, interface):
+        """The interface's sending socket, from its own address on the port:
+        RFC 6762's source port, never an ephemeral one."""
+        if interface not in self.senders:
+            self.senders[interface] = self.open_sender(interface)
+        return self.senders[interface]
+
+    def open_sender(self, interface):
+        out = shared_socket()
+        try:
+            out.bind((interface, self.port))
+            out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface))
+            out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+            out.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+        except OSError:
+            out.close()
+            raise
+        return out
 
     def failed(self, where, error):
         """Say once per place and error what the network refused."""
@@ -526,6 +559,9 @@ class Channel:
             return None
 
     def close(self):
+        for out in self.senders.values():
+            out.close()
+        self.senders = {}
         self.sock.close()
 
 
@@ -545,12 +581,14 @@ class Session:
         self.interfaces = interface_addresses()
         self.channel = Channel(group, port)
         self.refresh_addresses()
-        self.advertising, self.browser = False, None
+        self.advertising, self.browser, self.silent = False, None, False
         self.announce_at, self.query_at, self.query_gap = [], 0.0, 1.0
         self.poll_at, self.answered = clock() + POLL_SECONDS, float("-inf")
 
     def refresh_addresses(self):
-        self.channel.join(value for values in self.interfaces.values() for value in ipv4(values))
+        current = ipv4_addresses(self.interfaces)
+        self.channel.retire(set(current))
+        self.channel.join(current)
         if self.advert is not None:
             every = [value for values in self.interfaces.values() for value in values]
             self.advert.addresses = unique(every, ADVERT_ADDRESSES_MAX)
@@ -613,8 +651,9 @@ class Session:
         self.poll_at = now + POLL_SECONDS
         current = interface_addresses()
         if current == self.interfaces:
+            self.channel.join(ipv4_addresses(current))  # a join that failed is tried again each poll
             return
-        self.interfaces = current
+        self.interfaces, self.silent = current, False
         self.refresh_addresses()
         if self.advertising:
             self.schedule_announcements(now)
@@ -641,14 +680,25 @@ class Session:
             self.browser.accept(message, now)
 
     def send_interfaces(self):
+        """The IPv4 addresses to send from; none means no usable sender, said
+        once, and tried again when the addresses next change."""
         found = [value for values in self.interfaces.values() for value in ipv4(values)]
-        return found or ["0.0.0.0"]
+        if not found:
+            self.no_sender()
+        return found
+
+    def no_sender(self):
+        if not self.silent:
+            self.silent = True
+            sys.stderr.write("pairtask discovery: no usable address to send from; trying again when addresses change\n")
 
     def send_advert(self, ttl):
         """On each IPv4 interface, with only that interface's addresses."""
-        groups = [(value, values) for values in self.interfaces.values() for value in ipv4(values)]
-        for interface, addresses in groups or [("0.0.0.0", self.advert.addresses)]:
-            self.channel.send(self.advert.packet(ttl, addresses), interface)
+        if not self.send_interfaces():
+            return
+        for values in self.interfaces.values():
+            for interface in ipv4(values):
+                self.channel.send(self.advert.packet(ttl, values), interface)
 
     def candidates(self):
         return self.browser.candidates(self.clock()) if self.browser is not None else []

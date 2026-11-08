@@ -29,10 +29,13 @@ def report_for(port):
     interfaces = engine.interface_addresses()
     channel.join([value for values in interfaces.values() for value in engine.ipv4(values)])
     report = {"platform": sys.platform, "interfaces": interfaces, "joined": sorted(channel.joined),
-              "ttl": option(channel.sock, socket.IP_MULTICAST_TTL),
-              "loop": option(channel.sock, socket.IP_MULTICAST_LOOP), "sends": {}}
-    for interface in engine.Session.send_interfaces(type("S", (), {"interfaces": interfaces})()):
+              "sends": {}, "senders": {}}
+    for interface in [value for values in interfaces.values() for value in engine.ipv4(values)]:
         report["sends"][interface] = channel.send(b"pairtask-diagnostic", interface)
+    for interface, out in channel.senders.items():
+        report["senders"][interface] = {"bound": "%s:%d" % out.getsockname()[:2],
+                                        "ttl": option(out, socket.IP_MULTICAST_TTL),
+                                        "loop": option(out, socket.IP_MULTICAST_LOOP)}
     time.sleep(0.5)
     report["received"] = len(channel.receive(0.5))
     report["failures"] = sorted("%s errno %s" % key for key in channel.failures)
