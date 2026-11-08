@@ -10,11 +10,12 @@ it was observed in.
 
 from collections import namedtuple
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
 
-from sandbox_remote import default_remote
+from sandbox_remote import LEGACY_REMOTE, REMOTE, default_remote
 from sandbox_version_lookup import Lookup, latest_release, installed_release, load_cache, now, parse_build, \
     save_cache, stamp
 from sandbox_version_observe import INCUS_TIMEOUT, INSTANCES, OBSERVE_BUDGET, Observer, proof_of
@@ -25,6 +26,26 @@ OPERATOR_SOCKET = "/run/collab-ai-operator/operator.sock"
 
 # The deployment a report is about.
 Scope = namedtuple("Scope", "project remote repo")
+
+# What `pairtask upgrade` accepts (sandbox-provision.py): Linux local or a
+# Colima remote, and its project name. Anything else can be observed, but
+# no upgrade is suggested for it.
+ROLLOUT_REMOTES = ("local", REMOTE, LEGACY_REMOTE)
+ROLLOUT_PROJECT = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]*")
+
+
+def rollout_supported(scope):
+    return scope.remote in ROLLOUT_REMOTES and ROLLOUT_PROJECT.fullmatch(scope.project) is not None
+
+
+def within_rollout(update, step, scope):
+    """The step narrowed to what can run on this deployment: never an
+    upgrade it would refuse, at most refreshing the host tooling."""
+    if rollout_supported(scope) or step == "none":
+        return update, step
+    if step in ("update_host", "update_host_only"):
+        return update, "update_host_only"
+    return dict(update, action="none"), "none"
 
 
 def scope_flags(scope):
@@ -174,11 +195,12 @@ def report(scope, refresh=False, network=True, budget=OBSERVE_BUDGET):
     app = app_summary(instances, installed_releases(lookup, cache, instances))
     if lookup is not None:
         save_cache(scope.repo, cache)
-    update, step = decide(app, host, available)
+    update, step = within_rollout(*decide(app, host, available), scope)
     app.pop("members")
     return {"schema": 1, "repo": scope.repo, "project": scope.project, "remote": scope.remote, "app": app,
             "host": host, "available": available, "update": update, "guidance": guidance(step, scope),
-            "scope": "custom" if scope_flags(scope) else "default"}
+            "scope": "custom" if scope_flags(scope) else "default",
+            "rollout": "supported" if rollout_supported(scope) else "unsupported"}
 
 
 def observed_deployment(data):
@@ -216,12 +238,20 @@ def with_commit(name, commit, suffix=""):
     return name + (" (commit %s%s)" % (commit[:12], suffix) if commit else "")
 
 
+def no_step(data):
+    if data["update"]["state"] == "current":
+        return "up to date"
+    if data["rollout"] == "unsupported":
+        return "no step suggested: pairtask upgrade only takes a local or Colima remote and a project of letters, digits, - and _"
+    return "no step suggested"
+
+
 def lines(data):
     app, host, available, update = data["app"], data["host"], data["available"], data["update"]
     app_name = build_name(app["release"]) if app["state"] == "known" else app["state"]
     host_name = build_name(host["release"]) if host["state"] == "known" else "unknown"
     error = "; " + available["error"] if available["error"] else ""
-    step = data["guidance"] or {"current": "up to date"}.get(update["state"], "no step suggested")
+    step = data["guidance"] or no_step(data)
     return ["app:       " + with_commit(app_name, app["commit"]),
             "host:      " + with_commit(host_name, host["commit"], ", modified" if host["dirty"] else ""),
             "available: %s (%s%s)" % (build_name(available["release"]), age_text(available["age_seconds"]), error),
