@@ -274,8 +274,8 @@ func (h *Hub) stillFailing(runCtx context.Context, run candidateRun) []peer.Cont
 // mayProbe: the contact still stands as when the operation began, and its
 // route still fails.
 func (h *Hub) mayProbe(ctx context.Context, run candidateRun, began peer.Contact) bool {
-	now, found, err := h.store.Contact(ctx, began.IdentityKey)
-	if err != nil || !found || !unchangedSince(began, now, run.own) {
+	now, ok := h.storedContact(ctx, began.IdentityKey)
+	if !ok || !unchangedSince(began, now, run.own) {
 		return false
 	}
 	active, err := h.activeContact(ctx, now)
@@ -283,6 +283,12 @@ func (h *Hub) mayProbe(ctx context.Context, run candidateRun, began peer.Contact
 		return false
 	}
 	return h.failingRoute(began.IdentityKey) && !h.routeRecovered(began.IdentityKey, run.began)
+}
+
+// storedContact is the contact as stored now, if it can be read.
+func (h *Hub) storedContact(ctx context.Context, key string) (peer.Contact, bool) {
+	c, found, err := h.store.Contact(ctx, key)
+	return c, err == nil && found
 }
 
 // pinsOf are the contacts' identity keys, in a fixed order.
@@ -315,11 +321,15 @@ func (h *Hub) adoptCandidate(runCtx context.Context, run candidateRun, c peer.Co
 	defer h.addresses.release(r)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), PairingGrace)
 	defer cancel()
-	if _, _, err := h.store.BeginContactAddress(ctx, store.AddressOp{ID: r.id, Contact: r.contact, Candidate: r.candidate,
-		At: h.contactNow(), PrincipalUID: run.uid}); err != nil {
+	_, known, err := h.store.BeginContactAddress(ctx, store.AddressOp{ID: r.id, Contact: r.contact, Candidate: r.candidate,
+		At: h.contactNow(), PrincipalUID: run.uid})
+	switch {
+	case err != nil:
 		return protocol.CandidateRefused
+	case known:
+		return protocol.CandidateSkipped // a repeated operation ID never moves a contact twice
 	}
-	_, err := h.store.ChangeContactAddress(ctx, store.ContactAddress{OpID: r.id, Contact: r.contact, From: c.Destination, FromAt: c.DestinationAt,
+	_, err = h.store.ChangeContactAddress(ctx, store.ContactAddress{OpID: r.id, Contact: r.contact, From: c.Destination, FromAt: c.DestinationAt,
 		To: r.candidate, At: h.contactNow(), StillDials: func(now peer.Contact) bool { return unchangedSince(c, now, run.own) }})
 	if err != nil {
 		_ = h.store.RefuseContactAddress(ctx, r.id, err.Error())

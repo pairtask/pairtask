@@ -864,7 +864,8 @@ stays as it is. Capabilities: `contact_discovery`, `contact_candidates`.
     - `adopted`: the contact moved there; `contact` names it.
     - `no_match`: the workspace there is none of the failing contacts.
     - `unreachable`: nothing answered, or no handshake completed.
-    - `refused`: egress refused the endpoint, or the fence did.
+    - `refused`: egress refused the endpoint (a forbidden address, or a name
+      its lookup can't resolve), or the fence did.
     - `skipped`: nothing to look for, its route works again, or another check
       of it runs.
 
