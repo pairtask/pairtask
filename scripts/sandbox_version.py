@@ -89,13 +89,13 @@ def app_state(instances, releases):
     return "known" if complete and len(tags) == 1 and None not in tags else "unknown"
 
 
-def app_summary(instances, releases):
+def app_summary(instances, releases, observed_at):
     state = app_state(instances, releases)
     commits = {i["commit"] for i in instances.values() if i["commit"]}
     return {"state": state, "release": next(iter(releases.values())) if state == "known" else None,
             "commit": next(iter(commits)) if len(commits) == 1 else None,
             "instances": {name: {k: i[k] for k in ("status", "image", "commit")} for name, i in instances.items()},
-            "observed_at": stamp(now()), "members": sorted(t for t in releases.values() if t)}
+            "observed_at": observed_at, "members": sorted(t for t in releases.values() if t)}
 
 
 # --- the step --------------------------------------------------------------------
@@ -177,24 +177,33 @@ def open_lookup(scope, network):
         return None
 
 
+def resolve_metadata(scope, lookup, cache, refresh):
+    """Everything that asks GitHub, before the observation the report rests
+    on: the latest release, and which release built each image seen now.
+    Proven mappings go to the cache; without a lookup only the cache counts."""
+    if lookup is None:
+        return latest_release(None, cache, False)
+    seen = Observer(scope.project, scope.remote).app()
+    available = latest_release(lookup, cache, refresh, [i["architecture"] for i in seen.values() if i["architecture"]])
+    installed_releases(lookup, cache, seen)
+    save_cache(scope.repo, cache)
+    return available
+
+
 def report(scope, refresh=False, network=True, budget=OBSERVE_BUDGET):
     """Schema 1: the observed app and host, the available release, the step.
     Without the network it reads cached metadata only and observes once,
     within budget seconds."""
     cache, lookup = load_cache(scope.repo), open_lookup(scope, network)
-    architectures = []
-    if lookup is not None:
-        architectures = [i["architecture"] for i in Observer(scope.project, scope.remote, budget).app().values()
-                         if i["architecture"]]
-    available = latest_release(lookup, cache, refresh, architectures)
-    # Observed (again) after the slow part, so the report is never older
-    # than its release lookup: a rollout meanwhile shows as what now runs.
+    available = resolve_metadata(scope, lookup, cache, refresh)
+    # Then the containers as they are now, judged from metadata already in
+    # hand: no network after this observation, so the report is never
+    # older than its timestamp, whatever a rollout did meanwhile.
     observer = Observer(scope.project, scope.remote, budget)
     instances = observer.app()
+    observed_at = stamp(now())
+    app = app_summary(instances, installed_releases(None, cache, instances), observed_at)
     host = observer.host()
-    app = app_summary(instances, installed_releases(lookup, cache, instances))
-    if lookup is not None:
-        save_cache(scope.repo, cache)
     update, step = within_rollout(*decide(app, host, available), scope)
     app.pop("members")
     return {"schema": 1, "repo": scope.repo, "project": scope.project, "remote": scope.remote, "app": app,
