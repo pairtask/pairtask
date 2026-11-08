@@ -107,7 +107,11 @@ def main():
 def report_versions(args):
     """After a rollout from this command line: what the containers run now,
     observed rather than assumed, told to the chat and printed."""
-    data = sandbox_version.report(sandbox_version.Scope(args.project, args.remote, args.repo), refresh=True)
+    scope = sandbox_version.Scope(args.project, args.remote, args.repo)
+    data = sandbox_version.best_effort(lambda: sandbox_version.report(scope, refresh=True))
+    if data is None:
+        print("version: unknown (the release check failed; pk version retries)")
+        return
     sandbox_version.publish(data)
     print(sandbox_version.summary_line(data))
 

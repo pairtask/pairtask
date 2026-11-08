@@ -40,8 +40,9 @@ def main(argv=None):
     args = parser().parse_args(argv)
     scope = sandbox_version.Scope(args.project, args.remote, args.repo)
     if args.summary:
-        data = sandbox_version.report(scope, network=False)
-        print(sandbox_version.summary_line(data) if sandbox_version.observed_deployment(data) else "version: unknown")
+        data = sandbox_version.best_effort(lambda: sandbox_version.report(scope, network=False))
+        known = data is not None and sandbox_version.observed_deployment(data)
+        print(sandbox_version.summary_line(data) if known else "version: unknown")
         return 0
     data = sandbox_version.report(scope, refresh=args.refresh)
     notified = sandbox_version.publish(data)

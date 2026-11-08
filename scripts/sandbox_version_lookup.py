@@ -11,6 +11,7 @@ such proven mappings and the latest tag are cached, never what is installed.
 from collections import namedtuple
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -198,8 +199,33 @@ def read_cache():
 
 
 def load_cache(repo):
+    """This repository's entry, keeping only well-formed parts: anything else
+    in the file, however it got there, is dropped as if never cached."""
     entry = read_cache().get(repo)
-    return entry if isinstance(entry, dict) else {}
+    entry = entry if isinstance(entry, dict) else {}
+    cache = {"releases": {image: m for image, m in mappings(entry).items() if valid_mapping(image, m)}}
+    if valid_latest(entry.get("latest")):
+        cache["latest"] = entry["latest"]
+    return cache
+
+
+def mappings(entry):
+    found = entry.get("releases")
+    return found if isinstance(found, dict) else {}
+
+
+def valid_latest(latest):
+    if not isinstance(latest, dict) or not is_tag(latest.get("tag")):
+        return False
+    checked = latest.get("checked_at")
+    return isinstance(checked, (int, float)) and not isinstance(checked, bool) and math.isfinite(checked)
+
+
+def valid_mapping(image, mapping):
+    if not FINGERPRINT_RE.match(str(image)) or not isinstance(mapping, dict):
+        return False
+    return is_tag(mapping.get("tag")) and isinstance(mapping.get("arch"), str) and \
+        FINGERPRINT_RE.match(str(mapping.get("provenance"))) is not None
 
 
 def save_cache(repo, entry):

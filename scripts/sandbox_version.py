@@ -262,12 +262,22 @@ def announce(project, remote, budget=CHAT_BUDGET):
     asks GitHub and publishes again. The chat never waits on the network;
     without a deployment to observe nothing is sent or started."""
     started = now()
-    data = report(Scope(project, remote, DEFAULT_REPO), network=False, budget=budget * 0.6)
-    if not observed_deployment(data):
+    data = best_effort(lambda: report(Scope(project, remote, DEFAULT_REPO), network=False, budget=budget * 0.6))
+    if data is None or not observed_deployment(data):
         return False
     publish(data, timeout=max(0.5, budget - (now() - started)))
     refresh_in_background(project, remote)
     return True
+
+
+def best_effort(produce):
+    """The value, or None when producing it failed in any way: version
+    reporting is information, and must never stop a chat, a status or an
+    upgrade that otherwise worked."""
+    try:
+        return produce()
+    except Exception:  # noqa: BLE001 -- informational only; the caller goes on without it
+        return None
 
 
 def refresh_in_background(project, remote):

@@ -117,5 +117,56 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual(output.getvalue().strip(), "version: line")
 
 
+class CorruptCacheTests(unittest.TestCase):
+    CASES = [{"pairtask/pairtask": {"latest": {"tag": "workspace-v0.0.0-build.877.1"}}},
+             {"pairtask/pairtask": {"latest": {"tag": "workspace-v0.0.0-build.877.1", "checked_at": True}}},
+             {"pairtask/pairtask": {"latest": {"tag": "workspace-v0.0.0-build.877.1", "checked_at": float("inf")}}},
+             {"pairtask/pairtask": {"latest": "x", "releases": []}},
+             {"pairtask/pairtask": {"releases": {"f" * 64: {"tag": "$(touch x)", "arch": "amd64", "provenance": "0" * 64}}}},
+             {"pairtask/pairtask": {"releases": {"not-an-image": {}}}},
+             ["not", "a", "mapping"]]
+
+    def test_malformed_entries_are_dropped_not_raised(self):
+        import json
+        import tempfile
+        import sandbox_version_lookup as lookup
+        for whole in self.CASES:
+            with self.subTest(cache=whole), tempfile.TemporaryDirectory() as state, \
+                    mock.patch.dict("os.environ", {"XDG_STATE_HOME": state}):
+                lookup.cache_path().parent.mkdir(parents=True)
+                lookup.cache_path().write_text(json.dumps(whole))
+                cache = lookup.load_cache("pairtask/pairtask")
+                self.assertEqual(cache["releases"], {})
+                self.assertNotIn("latest", cache)
+                self.assertEqual(lookup.latest_release(None, cache, False)["state"], "check_failed")
+
+    def test_a_well_formed_cache_is_kept(self):
+        import json
+        import tempfile
+        import sandbox_version_lookup as lookup
+        entry = {"latest": {"tag": "workspace-v0.0.0-build.877.1", "checked_at": lookup.now()},
+                 "releases": {"a" * 64: {"tag": "workspace-v0.0.0-build.871.1", "arch": "amd64", "provenance": "b" * 64}}}
+        with tempfile.TemporaryDirectory() as state, mock.patch.dict("os.environ", {"XDG_STATE_HOME": state}):
+            lookup.cache_path().parent.mkdir(parents=True)
+            lookup.cache_path().write_text(json.dumps({"pairtask/pairtask": entry}))
+            self.assertEqual(lookup.load_cache("pairtask/pairtask"), entry)
+
+
+class BestEffortTests(unittest.TestCase):
+    def test_a_failing_report_never_stops_chat_status_or_upgrade(self):
+        boom = mock.patch.object(sandbox_version, "report", side_effect=TypeError("broken"))
+        with boom, mock.patch.object(sandbox_version, "publish") as publish:
+            self.assertFalse(sandbox_version.announce("pairtask", "local"))
+            main = runpy.run_path(str(SCRIPTS / "sandbox-version.py"))["main"]
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(main(["--summary", "--remote", "local"]), 0)
+                runpy.run_path(str(SCRIPTS / "sandbox-provision.py"))["report_versions"](
+                    mock.Mock(project="pairtask", remote="local", repo="pairtask/pairtask"))
+        publish.assert_not_called()
+        self.assertEqual(output.getvalue().splitlines(),
+                         ["version: unknown", "version: unknown (the release check failed; pk version retries)"])
+
+
 if __name__ == "__main__":
     unittest.main()
