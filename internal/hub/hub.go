@@ -322,7 +322,7 @@ func checkAsk(msg protocol.Message, version int) *routingError {
 	case msg.InReplyTo != "" || msg.To == protocol.OperatorID:
 		return &routingError{protocol.ErrMalformedFrame, "a review request asks one agent of the workspace and answers nothing"}
 	}
-	return nil
+	return checkSupersedes(msg.ReviewAsk.Supersedes, version)
 }
 
 // checkNoMentions: mentions are the operator's for now (#164).

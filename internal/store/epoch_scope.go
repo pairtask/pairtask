@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -212,13 +213,28 @@ func (imp RemoteImport) source() pairingKey {
 
 // stampNotice keeps, with a notice written here of a paired workspace's
 // review request or its outcome, where it came from and the pairing epoch,
-// so a replay still says whom to answer (#259).
+// so a replay still says whom to answer, and an outcome as it was told
+// (#259).
 func stampNotice(ctx context.Context, tx *sql.Tx, msg protocol.Message, epoch int64) error {
+	if err := stampOutcome(ctx, tx, msg); err != nil {
+		return err
+	}
 	if msg.Remote == nil {
 		return stampSource(ctx, tx, msg.MessageID, epoch)
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE message_metadata SET remote_contact = ?, remote_sender = ?, remote_epoch = ? WHERE message_id = ?`,
 		msg.Remote.Contact, msg.Remote.Sender, epoch, msg.MessageID)
+	return err
+}
+
+// stampOutcome keeps an outcome notice's outcome, so a replay after a
+// restart tells it as delivered, not as the request stands by then.
+func stampOutcome(ctx context.Context, tx *sql.Tx, msg protocol.Message) error {
+	if msg.ReviewOutcome == nil {
+		return nil
+	}
+	outcome, _ := json.Marshal(msg.ReviewOutcome) // plain values always encode
+	_, err := tx.ExecContext(ctx, `UPDATE message_metadata SET review_outcome = ? WHERE message_id = ?`, string(outcome), msg.MessageID)
 	return err
 }
 

@@ -106,7 +106,10 @@ type WorkspaceSend struct {
 	Contact       string // the workspace's identity key
 	Text          string
 	Review        *messaging.ReviewAsk // a review request for Msg.To there (#235)
-	Now           time.Time
+	// Supersedes is the sender's earlier request this one replaces (#259),
+	// "" for none; it stays on this side.
+	Supersedes string
+	Now        time.Time
 }
 
 // QueueWorkspaceSend keeps the message in history and queues it to the
@@ -127,6 +130,6 @@ func (s *Store) QueueWorkspaceSend(ctx context.Context, w WorkspaceSend) (Remote
 		return RemoteReplyResult{}, err
 	}
 	defer tx.Rollback()
-	o := outgoing{key: messageKey{w.Contact, messaging.DirOut, m.ID}, m: m, now: w.Now, localID: m.ID}
+	o := outgoing{key: messageKey{w.Contact, messaging.DirOut, m.ID}, m: m, now: w.Now, localID: m.ID, supersedes: w.Supersedes}
 	return queueFromAgent(ctx, tx, agentMessage{local: w.Msg, session: w.SenderSession, out: o})
 }

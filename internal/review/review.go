@@ -120,6 +120,38 @@ func Prepare(r Record, revisions protocol.Revisions, now time.Time) (Record, boo
 	return touched(r, now), true, nil
 }
 
+// CheckPins compares the change as resolved now with a request's pins (#259):
+// the same change nothing; others decline it as moved, which tells the side
+// that asked. Only a requested or ready review with pins is checked; one
+// declined already as moved to these revisions answers as it is.
+func CheckPins(r Record, revisions protocol.Revisions, now time.Time) (Record, bool, error) {
+	v := r.View
+	switch {
+	case v.Pinned == nil:
+		return r, false, ErrConflict
+	case movedTo(v, revisions):
+		return r, false, nil
+	case v.State != protocol.ReviewRequested && v.State != protocol.ReviewReady:
+		return r, false, ErrConflict
+	case revisions == *v.Pinned:
+		return r, false, nil
+	}
+	return DeclineMoved(r, revisions, now), true, nil
+}
+
+// movedTo: the review was declined as moved to these revisions.
+func movedTo(v protocol.ReviewView, revisions protocol.Revisions) bool {
+	return v.State == protocol.ReviewDeclined && v.MovedTo != nil && *v.MovedTo == revisions
+}
+
+// DeclineMoved declines a request whose change no longer has its pins,
+// saying where it moved; its pins and policy stay as asked.
+func DeclineMoved(r Record, to protocol.Revisions, now time.Time) Record {
+	r = finish(r, protocol.ReviewDeclined, protocol.MovedReason(to), now)
+	r.View.MovedTo = &to
+	return r
+}
+
 // Accept dispatches the review of a ready request: attempt 1, and the time
 // to finish it. Repeating it while the review runs changes nothing.
 func Accept(r Record, now time.Time) (Record, bool, error) {

@@ -207,7 +207,60 @@ func outcomeHead(ws workspaceLabel, o *protocol.ReviewOutcomeView, l dotLook) st
 	if o.URL != "" {
 		head += " " + safe(o.URL)
 	}
+	for _, words := range outcomeLinks(o).words() {
+		head += " · " + words
+	}
 	return head
+}
+
+// askLinks are where a request's change moved, as the reviewer reported
+// it, and the requests it replaces or that replaced it (#259).
+type askLinks struct {
+	askID                    string
+	movedTo                  *protocol.Revisions
+	supersedes, supersededBy string
+	pruned                   bool
+}
+
+func outcomeLinks(o *protocol.ReviewOutcomeView) askLinks {
+	return askLinks{o.AskID, o.MovedTo, o.Supersedes, o.SupersededBy, o.SupersedesPruned}
+}
+
+func askedLinks(it protocol.ReviewAskedItem) askLinks {
+	return askLinks{it.AskID, it.MovedTo, it.Supersedes, it.SupersededBy, it.SupersedesPruned}
+}
+
+// words say each link, escaped; none for a request without any.
+func (l askLinks) words() []string {
+	var words []string
+	if l.movedTo != nil {
+		words = append(words, l.movedWords())
+	}
+	if l.supersedes != "" {
+		words = append(words, l.replacesWords())
+	}
+	if l.supersededBy != "" {
+		words = append(words, "replaced by "+safe(l.supersededBy))
+	}
+	return words
+}
+
+// movedWords say where the change moved and, until it is, how to ask again.
+func (l askLinks) movedWords() string {
+	words := "moved to " + safe(shortSHA(l.movedTo.Base)) + ".." + safe(shortSHA(l.movedTo.Head)) + " (as reported)"
+	if l.supersededBy == "" {
+		words += ": ask again with /review --replaces " + safe(l.askID)
+	}
+	return words
+}
+
+// replacesWords name the request this one replaces, and whether its record
+// is gone.
+func (l askLinks) replacesWords() string {
+	if l.pruned {
+		return "replaces " + safe(l.supersedes) + " (its record was pruned)"
+	}
+	return "replaces " + safe(l.supersedes)
 }
 
 // reviewIDRows name a review request on both sides, escaped: for one sent

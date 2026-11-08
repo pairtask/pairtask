@@ -25,6 +25,9 @@ type Step struct {
 	// Acquired: this call took the write intent, so its caller may write to
 	// the forge. A replay of the same token never acquires it again.
 	Acquired bool
+	// Moved: this call declined the request because its change moved
+	// (#259); a prepare reports it after the decline is kept.
+	Moved bool
 }
 
 // Publish applies one publication step of the current attempt's verdict.

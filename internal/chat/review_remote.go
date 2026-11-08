@@ -19,7 +19,8 @@ import (
 // A review asked of a paired workspace's agent from /review (#297): name
 // it AGENT@WORKSPACE and give the change. This side looks up the change's
 // base and head with its own access, pins them and sends the request to
-// that workspace; --pin BASE..HEAD pins them instead. The workspace is
+// that workspace; --pin BASE..HEAD pins them instead, and --replaces
+// ASK_ID names this side's earlier, final request it replaces (#259). The workspace is
 // fixed when the command runs, never by a name that changes meanwhile, and
 // a lookup the operator left behind never sends anything.
 
@@ -32,6 +33,7 @@ const lookupTimeout = 20 * time.Second
 type askFlags struct {
 	publish, noPublish, formal, noFormal bool
 	pin                                  *protocol.Revisions
+	replaces                             string // the request this one replaces, "" for none
 }
 
 // readReviewFlags takes the leading flags off a request's words.
@@ -46,25 +48,43 @@ func readReviewFlags(words []string) (askFlags, []string, error) {
 	return f, words, f.conflict()
 }
 
-// take reads the first flag, and --pin's value, off words.
+// take reads the first flag, and --pin's or --replaces' value, off words.
 func (f *askFlags) take(words []string) ([]string, error) {
 	switches := map[string]*bool{"--publish": &f.publish, "--no-publish": &f.noPublish, "--formal": &f.formal, "--no-formal": &f.noFormal}
 	if b, ok := switches[words[0]]; ok {
 		*b = true
 		return words[1:], nil
 	}
-	if words[0] != "--pin" {
-		return nil, fmt.Errorf("unknown flag %s; %s", safe(words[0]), reviewUsage)
+	switch words[0] {
+	case "--pin":
+		if len(words) < 2 {
+			return nil, errPin
+		}
+		pin, err := pinWord(words[1]).revisions()
+		f.pin = pin
+		return words[2:], err
+	case "--replaces":
+		if len(words) < 2 || !replacesWord(words[1]) {
+			return nil, errReplaces
+		}
+		f.replaces = words[1]
+		return words[2:], nil
 	}
-	if len(words) < 2 {
-		return nil, errPin
-	}
-	pin, err := pinWord(words[1]).revisions()
-	f.pin = pin
-	return words[2:], err
+	return nil, fmt.Errorf("unknown flag %s; %s", safe(words[0]), reviewUsage)
 }
 
-var errPin = errors.New("--pin needs full commit IDs: BASE..HEAD, 40 or 64 lowercase hex each")
+var (
+	errPin      = errors.New("--pin needs full commit IDs: BASE..HEAD, 40 or 64 lowercase hex each")
+	errReplaces = errors.New("--replaces needs the ID of the request it replaces, at most 128 bytes")
+)
+
+// replacesWord: a request's ID, never another flag.
+func replacesWord(w string) bool {
+	return w != "" && len(w) <= 128 && !strings.HasPrefix(w, "--")
+}
+
+// flagWords are the flags that take the word after them as their value.
+var flagWords = map[string]bool{"--pin": true, "--replaces": true}
 
 // pinWord is --pin's value: BASE..HEAD.
 type pinWord string
@@ -137,6 +157,7 @@ type remoteAsk struct {
 	target          protocol.ReviewTarget
 	scope           string
 	publish, formal bool
+	replaces        string // this side's request it replaces (#259), "" for none
 }
 
 // remoteLookup is the change lookup in flight, if any.
@@ -151,6 +172,21 @@ type remoteLookupMsg struct {
 	gen  uint64
 	pins protocol.Revisions
 	err  error
+}
+
+// replacesGate refuses a replacement a broker before #259 can't take, so
+// the line stays to send once it is upgraded.
+func (m *Model) replacesGate(arg argument) error {
+	if !replacing(arg) || m.session.HasCapability(protocol.CapabilityReviewSupersede) {
+		return nil
+	}
+	return errors.New("this broker can't replace a review request; upgrade it to use --replaces")
+}
+
+// replacing: the line asks for a request that replaces another.
+func replacing(arg argument) bool {
+	f, _, err := readReviewFlags(reviewLine(arg).fields())
+	return err == nil && f.replaces != ""
 }
 
 // isRemoteReview: the request names a paired workspace's agent.
@@ -214,7 +250,7 @@ func (m *Model) remoteAskFor(words []string) (remoteAsk, *protocol.Revisions, st
 	}
 	publish, formal := f.remotePolicy()
 	return remoteAsk{key: key, who: who, target: target, scope: strings.Join(rest[2:], " "),
-		publish: publish, formal: formal}, f.pin, ""
+		publish: publish, formal: formal, replaces: f.replaces}, f.pin, ""
 }
 
 // startLookup looks the change up off the update loop, bounded, and
@@ -304,7 +340,7 @@ func (m *Model) sendRemoteReview(ask remoteAsk, pins protocol.Revisions) tea.Cmd
 	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpReviewAsk, ContactKey: string(ask.key),
 		ContactTo: []string{ask.who.agent}, MessageID: uuid.NewString(),
 		ReviewAsk: &protocol.ReviewAsk{ReviewTarget: ask.target, Base: pins.Base, Head: pins.Head, Scope: ask.scope,
-			Publish: ask.publish, Formal: ask.formal}}
+			Publish: ask.publish, Formal: ask.formal, Supersedes: ask.replaces}}
 	if problem := validReviewWords(msg); problem != "" {
 		m.status = problem
 		m.cardFails(ask.card, "Not sent: "+problem)

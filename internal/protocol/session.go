@@ -37,7 +37,11 @@ func SessionCapabilitiesFor(version int) []string {
 	if version < PairingHistoryVersion {
 		return SessionCapabilities
 	}
-	return append(slices.Clone(SessionCapabilities), CapabilityPairingHistory)
+	caps := append(slices.Clone(SessionCapabilities), CapabilityPairingHistory)
+	if version >= ReviewSupersedeVersion {
+		caps = append(caps, CapabilityReviewSupersede) // #259
+	}
+	return caps
 }
 
 // CapabilityMentions: operator_send to a room or group may carry mentions

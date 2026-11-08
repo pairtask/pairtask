@@ -130,7 +130,7 @@ var operatorHandlers = map[string]operatorHandler{
 
 func (h *Hub) routeOperator(ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message {
 	if handle := operatorHandlers[req.msg.Type]; handle != nil {
-		return handle(h, ctx, clients, req)
+		return protocol.ReviewsFor(handle(h, ctx, clients, req), req.msg.ProtocolVersion)
 	}
 	rerr := &routingError{protocol.ErrUnsupportedOperation, "unsupported operator request type"}
 	if req.msg.Type == protocol.TypeOperatorSessionOpen || req.msg.Type == protocol.TypeOperatorSnapshot {

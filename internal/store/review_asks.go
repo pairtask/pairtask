@@ -72,6 +72,11 @@ type AskOut struct {
 	// Findings are the newest verdict's findings received (#303), nil
 	// while none are known.
 	Findings *protocol.AskFindings
+	// Supersedes is the request this one replaces and SupersededBy the one
+	// that replaced it (#259), "" for none; SupersedesPruned that the
+	// replaced one's record was collected since.
+	Supersedes, SupersededBy string
+	SupersedesPruned         bool
 }
 
 // askRanks order the open states; a request's outcomes never go back.
@@ -86,6 +91,9 @@ var askFinal = map[string]bool{"declined": true, "expired": true, "withheld": tr
 // recordedAsk records the request a queued message is, if it is one.
 func recordedAsk(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	if o.m.Review == nil || o.key.direction != messaging.DirOut {
+		if o.supersedes != "" {
+			return ErrNotSupersedable // only a review request replaces one
+		}
 		return nil
 	}
 	return recordAsk(ctx, tx, o)
@@ -98,11 +106,14 @@ func recordAsk(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	if err := askRoom(ctx, tx, o); err != nil {
 		return err
 	}
+	if err := supersedeParent(ctx, tx, o); err != nil {
+		return err
+	}
 	ask, _ := json.Marshal(o.m.Review) // strings and bools always encode
 	_, err := tx.ExecContext(ctx, `INSERT INTO review_asks_out
-(contact, pairing_epoch, ask_id, reviewer, requester_agent, local_id, ask, state, created_at, updated_at)
-VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4, ?5, ?6, 'asked', ?7, ?7)`,
-		o.key.contact, o.key.id, o.m.To[0], o.m.From, o.localID, string(ask), msgStamp(o.now))
+(contact, pairing_epoch, ask_id, reviewer, requester_agent, local_id, ask, state, created_at, updated_at, supersedes)
+VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4, ?5, ?6, 'asked', ?7, ?7, ?8)`,
+		o.key.contact, o.key.id, o.m.To[0], o.m.From, o.localID, string(ask), msgStamp(o.now), o.supersedes)
 	return err
 }
 
@@ -163,11 +174,13 @@ func loadAsk(ctx context.Context, q rowQuerier, k pairingKey, askID string) (Ask
 	var digest []byte
 	var settled, reviewID sql.NullString
 	var f keptFindings
+	var kept bool
 	err := q.QueryRowContext(ctx, `SELECT pairing_epoch, contact, ask_id, reviewer, requester_agent, local_id, ask, state, seq, digest, attempt, intent,
-    verdict, summary, url, reason, review_id, updated_at, settled_at, findings, findings_seq, findings_attempt
-FROM review_asks_out WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`, k.contact, k.epoch, askID).Scan(
+    verdict, summary, url, reason, review_id, updated_at, settled_at, findings, findings_seq, findings_attempt, supersedes, superseded_by,
+    `+parentKept("r")+`
+FROM review_asks_out r WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`, k.contact, k.epoch, askID).Scan(
 		&a.Epoch, &a.Contact, &a.AskID, &a.Reviewer, &a.RequesterAgent, &a.LocalID, &ask, &a.State, &a.Seq, &digest, &a.Attempt, &a.Intent,
-		&a.Verdict, &a.Summary, &a.URL, &a.Reason, &reviewID, &updated, &settled, &f.envelope, &f.seq, &f.attempt)
+		&a.Verdict, &a.Summary, &a.URL, &a.Reason, &reviewID, &updated, &settled, &f.envelope, &f.seq, &f.attempt, &a.Supersedes, &a.SupersededBy, &kept)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, nil, false, nil
 	}
@@ -175,6 +188,7 @@ FROM review_asks_out WHERE contact = ? AND pairing_epoch = ? AND ask_id = ?`, k.
 		return a, nil, false, err
 	}
 	a.Settled, a.ReviewID, a.Findings = settled.Valid, reviewID.String, f.view(protocol.FindingsAll)
+	a.SupersedesPruned = a.Supersedes != "" && !kept
 	if a.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
 		return a, nil, false, err
 	}
@@ -581,7 +595,7 @@ func collectAsks(ctx context.Context, tx *sql.Tx, contact string, now time.Time)
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM review_asks_out WHERE contact = ?1 AND settled_at IS NOT NULL AND settled_at < ?2
+	_, err = tx.ExecContext(ctx, `DELETE FROM review_asks_out WHERE contact = ?1 AND settled_at IS NOT NULL AND settled_at < ?2 AND `+keptForReplacement+`
     AND NOT EXISTS (SELECT 1 FROM remote_imports ri JOIN durable_inbox d ON d.message_id = ri.local_id
         WHERE ri.contact = ?1 AND ri.pairing_epoch = review_asks_out.pairing_epoch AND ri.kind = 'outcome'
             AND ri.reply_id = review_asks_out.ask_id AND d.acknowledged_at IS NULL)
@@ -783,5 +797,6 @@ func (p *PeerMessages) AskOutIn(ctx context.Context, k MessageKey) (AskOut, bool
 func (a AskOut) View() protocol.ReviewOutcomeView {
 	return protocol.ReviewOutcomeView{AskID: a.AskID, Workspace: a.Contact, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
 		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason,
-		ReviewID: a.ReviewID, Findings: a.Findings, PairingEpoch: a.Epoch}
+		ReviewID: a.ReviewID, Findings: a.Findings, PairingEpoch: a.Epoch,
+		MovedTo: movedFrom(a.State, a.Reason), Supersedes: a.Supersedes, SupersededBy: a.SupersededBy, SupersedesPruned: a.SupersedesPruned}
 }

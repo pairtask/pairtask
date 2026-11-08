@@ -89,8 +89,9 @@ func openSession(ctx context.Context, conn net.Conn) (Transport, protocol.Sessio
 
 func (t *socketTransport) handshake() (protocol.Message, error) {
 	var resp protocol.Message
-	// The chat reads every pairing's history, tagged (#276).
-	open := protocol.Message{Type: protocol.TypeOperatorSessionOpen, RequestID: "open", Client: "chat", ProtocolVersion: protocol.PairingHistoryVersion}
+	// The chat reads every pairing's history, tagged (#276), and where a
+	// request's change moved and what replaced it (#259).
+	open := protocol.Message{Type: protocol.TypeOperatorSessionOpen, RequestID: "open", Client: "chat", ProtocolVersion: protocol.ReviewSupersedeVersion}
 	if err := t.write(open); err != nil {
 		return resp, err
 	}

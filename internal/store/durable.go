@@ -153,7 +153,7 @@ func (s *Store) ClaimPendingReport(ctx context.Context, recipient protocol.Recip
 	}
 	defer tx.Rollback()
 	shows := replayable{origin: version >= protocol.OriginVersion, room: version >= protocol.RoomVersion, remote: version >= protocol.RemoteVersion,
-		assignment: version >= protocol.AssignVersion}
+		assignment: version >= protocol.AssignVersion, version: version}
 	var reclaimed []string
 	if shows.origin {
 		if reclaimed, err = pendingOperatorIDs(ctx, tx, recipient.AgentID, shows.room); err != nil {
@@ -211,6 +211,7 @@ const remoteRow = `EXISTS (SELECT 1 FROM message_metadata x WHERE x.message_id =
 type replayable struct {
 	origin, room, remote bool
 	assignment           bool // the agent reads assignments (#278)
+	version              int  // what an outcome told is trimmed to (#259)
 }
 
 // AgentProtocolVersion returns the version negotiated at the agent's last durable
@@ -224,7 +225,7 @@ func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error
 	return int(version.Int64), err
 }
 
-const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, ` + remoteColumns
+const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, mm.review_outcome, ` + remoteColumns
 
 // groupColumn is a group send's canonical members (JSON), or NULL: an
 // operator group's, or a paired workspace's message to several agents, as
@@ -251,6 +252,7 @@ func readPending(ctx context.Context, tx *sql.Tx, id string, shows replayable) (
 			return nil, err
 		}
 		msg.Replayed = true
+		msg.ReviewOutcome = protocol.OutcomeFor(msg.ReviewOutcome, shows.version)
 		messages = append(messages, msg)
 	}
 	if err := rows.Err(); err != nil {
@@ -289,11 +291,14 @@ type scanner interface{ Scan(...any) error }
 func scanDurableMessage(row scanner) (protocol.Message, error) {
 	msg := protocol.Message{Type: protocol.TypeMsg, Durable: true, AckRequested: true}
 	var payload string
-	var origin, group, room, mentions, reviewID sql.NullString
+	var origin, group, room, mentions, reviewID, outcome sql.NullString
 	var remote remoteFields
 	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group, &room, &mentions, &reviewID,
-		&remote.contact, &remote.label, &remote.sender, &remote.replyID, &remote.replyAuthor)
+		&outcome, &remote.contact, &remote.label, &remote.sender, &remote.replyID, &remote.replyAuthor)
 	if err != nil {
+		return msg, err
+	}
+	if msg.ReviewOutcome, err = outcomeSnapshot(outcome); err != nil {
 		return msg, err
 	}
 	msg.Remote = remote.view()
@@ -305,6 +310,19 @@ func scanDurableMessage(row scanner) (protocol.Message, error) {
 	msg.Origin = protocol.DisplayOrigin(origin.String)
 	msg.Group, err = groupList(group)
 	return msg, err
+}
+
+// outcomeSnapshot decodes an outcome notice's outcome as delivered (#259);
+// NULL is none, as for any other message.
+func outcomeSnapshot(stored sql.NullString) (*protocol.ReviewOutcomeView, error) {
+	if !stored.Valid {
+		return nil, nil
+	}
+	var view protocol.ReviewOutcomeView
+	if err := json.Unmarshal([]byte(stored.String), &view); err != nil {
+		return nil, fmt.Errorf("review outcome: %w", err)
+	}
+	return &view, nil
 }
 
 // groupList decodes stored group members; NULL is no group.

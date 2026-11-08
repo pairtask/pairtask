@@ -14,15 +14,16 @@ import (
 
 // RequestReviewArgs ask a paired workspace's agent for a review (#235).
 type RequestReviewArgs struct {
-	Workspace string `json:"workspace" jsonschema:"A paired workspace you may write to, by name or key from the workspaces tool"`
-	To        string `json:"to" jsonschema:"The agent there to ask"`
-	Target    string `json:"target" jsonschema:"The pull request: OWNER/REPO#N or its link"`
-	Base      string `json:"base" jsonschema:"The base commit you resolved; the review is pinned to it"`
-	Head      string `json:"head" jsonschema:"The head commit you resolved; the review is pinned to it"`
-	Scope     string `json:"scope,omitempty" jsonschema:"What to focus on, at most 1 KiB"`
-	Publish   bool   `json:"publish,omitempty" jsonschema:"Ask for the verdict published on the forge; that workspace allows at most what it granted"`
-	Formal    bool   `json:"formal,omitempty" jsonschema:"With publish: ask for a formal approval or change request rather than a comment"`
-	MessageID string `json:"message_id,omitempty" jsonschema:"Stable ID, maximum 128 bytes; generated when omitted. Retry with the same ID and content"`
+	Workspace  string `json:"workspace" jsonschema:"A paired workspace you may write to, by name or key from the workspaces tool"`
+	To         string `json:"to" jsonschema:"The agent there to ask"`
+	Target     string `json:"target" jsonschema:"The pull request: OWNER/REPO#N or its link"`
+	Base       string `json:"base" jsonschema:"The base commit you resolved; the review is pinned to it"`
+	Head       string `json:"head" jsonschema:"The head commit you resolved; the review is pinned to it"`
+	Scope      string `json:"scope,omitempty" jsonschema:"What to focus on, at most 1 KiB"`
+	Publish    bool   `json:"publish,omitempty" jsonschema:"Ask for the verdict published on the forge; that workspace allows at most what it granted"`
+	Formal     bool   `json:"formal,omitempty" jsonschema:"With publish: ask for a formal approval or change request rather than a comment"`
+	MessageID  string `json:"message_id,omitempty" jsonschema:"Stable ID, maximum 128 bytes; generated when omitted. Retry with the same ID and content"`
+	Supersedes string `json:"supersedes,omitempty" jsonschema:"The ask_id of a request of yours this one replaces: final already (for example declined because its change moved), to the same agent and pull request. Nothing is re-pinned for you"`
 }
 
 type reviewAsker interface {
@@ -48,6 +49,10 @@ func addReviewAskTools(s *mcp.Server, client messagingClient) {
 
 var errReviewAskUnsupported = errors.New("review requests to paired workspaces are unsupported by this broker (protocol version 14 required); upgrade the broker")
 
+// errSupersedeUnsupported refuses a replacement a broker would take as a
+// plain new request (#259).
+var errSupersedeUnsupported = fmt.Errorf("replacing a review request is unsupported by this broker (protocol version %d required); upgrade the broker", protocol.ReviewSupersedeVersion)
+
 // message is the request as an agent's msg to the workspace.
 func (a RequestReviewArgs) message() (protocol.Message, error) {
 	target, err := review.ParseTarget(a.Target)
@@ -61,7 +66,8 @@ func (a RequestReviewArgs) message() (protocol.Message, error) {
 	if id == "" {
 		id = uuid.NewString()
 	}
-	ask := &protocol.ReviewAsk{ReviewTarget: target, Scope: a.Scope, Base: a.Base, Head: a.Head, Publish: a.Publish, Formal: a.Formal && a.Publish}
+	ask := &protocol.ReviewAsk{ReviewTarget: target, Scope: a.Scope, Base: a.Base, Head: a.Head, Publish: a.Publish, Formal: a.Formal && a.Publish,
+		Supersedes: a.Supersedes}
 	return protocol.Message{Type: protocol.TypeMsg, To: a.To, Workspace: a.Workspace, ReviewAsk: ask, MessageID: id,
 		AckRequested: true, Durable: true}, nil
 }
@@ -70,6 +76,9 @@ func (a RequestReviewArgs) message() (protocol.Message, error) {
 func (c *Client) RequestReview(ctx context.Context, args RequestReviewArgs) (SendResult, error) {
 	if c.protocolVersion < protocol.ReviewAskVersion {
 		return SendResult{}, errReviewAskUnsupported
+	}
+	if args.Supersedes != "" && c.protocolVersion < protocol.ReviewSupersedeVersion {
+		return SendResult{}, errSupersedeUnsupported
 	}
 	msg, err := args.message()
 	if err != nil {

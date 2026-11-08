@@ -121,6 +121,14 @@ type ReviewAskedItem struct {
 	// PairingEpoch is the pairing with the contact it was asked under
 	// (#276); set only for a client at PairingHistoryVersion.
 	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
+	// MovedTo is where the reviewer's side reported the change moved, for
+	// a request it declined as moved; Supersedes, SupersededBy and
+	// SupersedesPruned link it to the request it replaces or that replaced
+	// it (#259). All from ReviewSupersedeVersion.
+	MovedTo          *Revisions `json:"moved_to,omitempty"`
+	Supersedes       string     `json:"supersedes,omitempty"`
+	SupersededBy     string     `json:"superseded_by,omitempty"`
+	SupersedesPruned bool       `json:"supersedes_pruned,omitempty"`
 }
 
 // AskFindings are a request's findings as received: how many the verdict
@@ -369,9 +377,12 @@ type ReviewView struct {
 	Stale         *Revisions  `json:"stale,omitempty"` // the change as last seen, when it moved
 	Publication   Publication `json:"publication"`
 	Reason        string      `json:"reason,omitempty"` // why declined, cancelled or expired
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
-	ExpiresAt     *time.Time  `json:"expires_at,omitempty"`
+	// MovedTo is the change as resolved when a request was declined
+	// because it no longer had its pins (#259); nil otherwise.
+	MovedTo   *Revisions `json:"moved_to,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // ReviewPage is a bounded list of reviews with the total.
@@ -392,6 +403,10 @@ type ReviewAsk struct {
 	Head    string `json:"head"`
 	Publish bool   `json:"publish,omitempty"`
 	Formal  bool   `json:"formal,omitempty"`
+	// Supersedes is a request of the same asker's this one replaces (#259):
+	// final already, to the same reviewer and change. It is kept on this
+	// side only and never sent.
+	Supersedes string `json:"supersedes,omitempty"`
 }
 
 // ReviewOutcomeView is where a review request this workspace sent stands,
@@ -421,6 +436,15 @@ type ReviewOutcomeView struct {
 	// PairingEpoch is the pairing with the workspace the request was asked
 	// under (#276); set only for a client at PairingHistoryVersion.
 	PairingEpoch int64 `json:"pairing_epoch,omitempty"`
+	// MovedTo is where a request declined as moved says its change went
+	// (#259): as the reviewer's side reported it, never proof. Supersedes
+	// is the request this one replaces, SupersededBy the one that replaced
+	// it, and SupersedesPruned that the replaced one's record is gone. All
+	// from ReviewSupersedeVersion.
+	MovedTo          *Revisions `json:"moved_to,omitempty"`
+	Supersedes       string     `json:"supersedes,omitempty"`
+	SupersededBy     string     `json:"superseded_by,omitempty"`
+	SupersedesPruned bool       `json:"supersedes_pruned,omitempty"`
 }
 
 // ReviewAdvisory is advice on a review request (#304): something known here

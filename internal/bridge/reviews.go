@@ -21,6 +21,9 @@ import (
 type reviewClient interface {
 	ReviewCall(ctx context.Context, msg protocol.Message) (protocol.Message, error)
 	ReviewForges(ctx context.Context) (forge.Registry, error)
+	// ReviewProtocol is the protocol version negotiated with the broker,
+	// which decides the review frames it takes (#259).
+	ReviewProtocol() int
 }
 
 // ReviewResult is a review tool's answer: the review as the broker holds it
@@ -31,6 +34,10 @@ type ReviewResult struct {
 	Reviews *protocol.ReviewPage `json:"reviews,omitempty"`
 	Task    *ReviewTask          `json:"task,omitempty"`
 	Forge   *ForgeOutcome        `json:"forge,omitempty"`
+	// Accepted answers accept_review from ReviewSupersedeVersion: false
+	// when the request was declined instead because its change moved
+	// (#259), with no task; nil for any other tool.
+	Accepted *bool `json:"accepted,omitempty"`
 }
 
 // ReviewTask is what to review: exactly base..head, fetched with your own
@@ -153,12 +160,26 @@ func (c *Client) ReviewCall(ctx context.Context, msg protocol.Message) (protocol
 // ReviewForges is this side's forge adapters.
 func (c *Client) ReviewForges(context.Context) (forge.Registry, error) { return c.forges, nil }
 
+// ReviewProtocol is the version negotiated with the broker.
+func (c *Client) ReviewProtocol() int { return c.protocolVersion }
+
 func (c *LazyClient) ReviewCall(ctx context.Context, msg protocol.Message) (protocol.Message, error) {
 	client, err := c.connection(ctx)
 	if err != nil {
 		return protocol.Message{}, err
 	}
 	return client.ReviewCall(ctx, msg)
+}
+
+// ReviewProtocol is the connected broker's version, 0 before a connection;
+// every review tool reads its review first, which connects.
+func (c *LazyClient) ReviewProtocol() int {
+	c.gate <- struct{}{}
+	defer func() { <-c.gate }()
+	if c.client == nil {
+		return 0
+	}
+	return c.client.ReviewProtocol()
 }
 
 func (c *LazyClient) ReviewForges(ctx context.Context) (forge.Registry, error) {
@@ -208,19 +229,22 @@ func ownReview(ctx context.Context, c reviewClient, id string) (protocol.ReviewV
 	return *got.Review, f, err
 }
 
-// acceptReview pins the revisions once, then dispatches the review. A ready
-// or running review keeps its stored pins: nothing is resolved again.
+// acceptReview pins the revisions once, then dispatches the review. From
+// ReviewSupersedeVersion a requested or ready review with pins is first
+// checked against the change as resolved now (#259): one that moved is
+// declined, not accepted, and answered with no task. An older broker keeps
+// a ready review's stored pins.
 func acceptReview(ctx context.Context, c reviewClient, id string) (ReviewResult, error) {
 	v, f, err := ownReview(ctx, c, id)
 	if err != nil {
 		return ReviewResult{}, err
 	}
+	now, err := pinsNow(ctx, c, v, f)
+	if err != nil || now.declined {
+		return notAccepted(now.checked), err
+	}
 	if v.State == protocol.ReviewRequested {
-		revisions, err := f.Resolve(ctx, v.Spec.ReviewTarget)
-		if err != nil {
-			return ReviewResult{}, forgeFailure("resolve", err)
-		}
-		if _, err := reviewStep(ctx, c, protocol.Message{Type: protocol.TypeReviewPrepare, ReviewID: id, Revisions: &revisions}); err != nil {
+		if _, err := reviewStep(ctx, c, protocol.Message{Type: protocol.TypeReviewPrepare, ReviewID: id, Revisions: now.revisions}); err != nil {
 			return ReviewResult{}, err
 		}
 	}
@@ -229,7 +253,69 @@ func acceptReview(ctx context.Context, c reviewClient, id string) (ReviewResult,
 		return ReviewResult{}, err
 	}
 	accepted.Task = taskOf(*accepted.Review)
+	if c.ReviewProtocol() >= protocol.ReviewSupersedeVersion {
+		yes := true
+		accepted.Accepted = &yes
+	}
 	return accepted, nil
+}
+
+// resolved is what accepting a review found before accepting it: the
+// change as it is now, and, once the broker compared it with the pins, the
+// review then and whether that declined it.
+type resolved struct {
+	revisions *protocol.Revisions
+	checked   ReviewResult
+	declined  bool
+}
+
+// pinsNow resolves the change for a requested review to pin and, from
+// ReviewSupersedeVersion, for the broker to compare with its pins. A ready
+// review on an older broker resolves nothing.
+func pinsNow(ctx context.Context, c reviewClient, v protocol.ReviewView, f forge.Forge) (resolved, error) {
+	checks := checksPins(c, v)
+	if !checks && v.State != protocol.ReviewRequested {
+		return resolved{}, nil
+	}
+	current, err := f.Resolve(ctx, v.Spec.ReviewTarget)
+	if err != nil {
+		return resolved{}, forgeFailure("resolve", err)
+	}
+	out := resolved{revisions: &current}
+	if !checks {
+		return out, nil
+	}
+	if out.checked, err = reviewStep(ctx, c, protocol.Message{Type: protocol.TypeReviewCheckPins, ReviewID: v.ID, Revisions: &current}); err != nil {
+		return out, err
+	}
+	out.declined = out.checked.Review.State == protocol.ReviewDeclined
+	return out, nil
+}
+
+// notAccepted is an accept answered with a decline: no task, and said so.
+func notAccepted(r ReviewResult) ReviewResult {
+	no := false
+	r.Accepted, r.Task = &no, nil
+	return r
+}
+
+// checksPins: a broker that takes review_check_pins, and a review it
+// checks, one with pins not yet accepted (#259).
+func checksPins(c reviewClient, v protocol.ReviewView) bool {
+	if c.ReviewProtocol() < protocol.ReviewSupersedeVersion || v.Pinned == nil {
+		return false
+	}
+	return v.State == protocol.ReviewRequested || v.State == protocol.ReviewReady
+}
+
+// checkPins sends the change as resolved now to be compared with the
+// review's pins; a forge failure sends nothing.
+func checkPins(ctx context.Context, c reviewClient, v protocol.ReviewView, f forge.Forge) (ReviewResult, error) {
+	current, err := f.Resolve(ctx, v.Spec.ReviewTarget)
+	if err != nil {
+		return ReviewResult{}, forgeFailure("resolve", err)
+	}
+	return reviewStep(ctx, c, protocol.Message{Type: protocol.TypeReviewCheckPins, ReviewID: v.ID, Revisions: &current})
 }
 
 func taskOf(v protocol.ReviewView) *ReviewTask {

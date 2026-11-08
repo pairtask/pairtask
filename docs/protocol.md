@@ -779,6 +779,56 @@ v5, 11 at v6 and 12 at v7.
   more were received (`reviews_asked` with the ask ID and workspace), apart
   from how many weren't transferred.
 
+## Moved pins and replacing a request (v26)
+
+A request a paired workspace pinned can be declined there once its change
+moved, before anyone reviews it, and asked again on purpose (#259). Peer
+frames don't change: what moved travels as the outcome's reason, and a
+replacement link is kept only on the side that asked.
+
+- **Checking pins.** `review_check_pins` `{review_id, revisions: {base,
+  head}}` (v26), from the reviewer's agent with the change as resolved now,
+  for a requested or ready review with `pinned` revisions. The same revisions
+  change nothing, and nothing is accepted or published. Others decline it,
+  in the same transaction, with reason `moved base=BASE head=HEAD`, and
+  `moved_to` on the review. Checking again with those revisions answers as
+  it stands; any other check of a review declined, or without pins, is
+  `review_conflict`. The broker has no code host access: the agent resolves
+  the change, and a failed lookup checks nothing.
+- **Older agents.** A `review_prepare` with other revisions than the pins
+  declines the review the same way, then answers `review_conflict`. A
+  `review_accept` of a ready review can't tell that the change moved since it
+  was prepared: an agent checks its pins first. The bridge's `accept_review`
+  does, from v26, and answers `accepted: false` without a task when the
+  review was declined as moved; `check_review` checks them too.
+- **What the requester reads.** `moved_to: {base, head}` on `review_outcome`,
+  `reviews_asked` and the operator's asked page, read only from a reason in
+  exactly that form, each a full commit ID (40 or 64 lowercase hex). It is
+  what the reviewer's side reported, never proof of the change; any other
+  reason stays text.
+- **Replacing.** `review_ask.supersedes` names the asker's earlier request it
+  replaces: from an agent at v26, or the operator's `review_ask` contact op.
+  The request replaced must be final, the same asker's (the same agent, or
+  the operator), to the same contact in its current pairing, to the same
+  reviewer and for the same forge, repository and change. Its pins may
+  differ; nothing is re-pinned on its own. The link and the new request
+  commit together, and only one request ever replaces another: anything else
+  is `not_supersedable`, and nothing is queued. A retry with the same ID
+  must name the same request it replaces, or it is a conflict.
+  - Reads show `supersedes` on the new request, `superseded_by` on the one
+    it replaced, and `supersedes_pruned: true` once the replaced request's
+    record was collected.
+  - A settled request is kept while a request replacing it directly is still
+    open; after that, its own settled time decides as before.
+- **Notices.** An outcome notice keeps the outcome as it was delivered, so a
+  replay after a restart says what the notice said, not where the request
+  stands by then. An offline archive clears it with the message's body.
+- **Older clients.** Below v26, `moved_to`, `supersedes`, `superseded_by` and
+  `supersedes_pruned` are left out of every outcome a client reads, live or
+  replayed; `review_check_pins` and `review_ask.supersedes` from an agent are
+  `malformed_frame`. The operator's chat sends `supersedes` only to a broker
+  that advertises capability `review_supersede`.
+
 ## State
 
 SQLite retains `agents` (session lifecycle and harness/model) and `messages`
