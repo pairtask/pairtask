@@ -9,7 +9,7 @@ from update_host_fixture import HostBoundary, NEW, OLD
 class ManualUpdateScopeAcceptance(unittest.TestCase):
     def setUp(self):
         self.host = HostBoundary(self)
-        self.host.project, self.host.remote, self.host.repo = "team-two", "other-host", "example/another"
+        self.host.project, self.host.remote, self.host.repo = "team-two", "colima-pairtask", "example/another"
 
     def check(self):
         return self.host.command(["version", "--json", "--refresh", "--project", self.host.project,
@@ -50,6 +50,22 @@ class ManualUpdateScopeAcceptance(unittest.TestCase):
         for argv in notices:
             self.assertIn("--scope", argv)
             self.assertEqual(argv[argv.index("--scope") + 1], "custom")
+
+    def test_observable_remote_without_supported_rollout_has_no_upgrade_action(self):
+        self.host.remote = "other-host"
+        report = self.check()
+        self.assertEqual(report["app"]["release"], OLD)
+        self.assertEqual(report["update"]["action"], "none")
+        self.assertNotEqual(report["update"]["state"], "current")
+        self.assertNotIn("pk upgrade", report["guidance"])
+
+    def test_observable_project_rejected_by_rollout_has_no_upgrade_action(self):
+        self.host.project = "team.two"
+        report = self.check()
+        self.assertEqual(report["app"]["release"], OLD)
+        self.assertEqual(report["update"]["action"], "none")
+        self.assertNotEqual(report["update"]["state"], "current")
+        self.assertNotIn("pk upgrade", report["guidance"])
 
 
 if __name__ == "__main__":
