@@ -96,11 +96,12 @@ func (m *Model) contactMessagesChanged(ev *protocol.SessionEvent) tea.Cmd {
 // refreshEvents read again what changed; they carry nothing to apply.
 var refreshEvents = map[string]func(*Model) tea.Cmd{
 	// The snapshot carries statuses, claims and rooms.
-	protocol.EventStatusChanged:  (*Model).refreshStatuses,
-	protocol.EventClaimsChanged:  (*Model).refreshStatuses,
-	protocol.EventRoomsChanged:   (*Model).refreshStatuses,
-	protocol.EventPairingChanged: (*Model).pairingChanged,
-	protocol.EventReviewsChanged: func(m *Model) tea.Cmd { return tea.Batch(m.reviewsChanged(), m.reviewsMoved(), m.cardAsksChanged()) },
+	protocol.EventStatusChanged:       (*Model).refreshStatuses,
+	protocol.EventClaimsChanged:       (*Model).refreshStatuses,
+	protocol.EventRoomsChanged:        (*Model).refreshStatuses,
+	protocol.EventPairingChanged:      (*Model).pairingChanged,
+	protocol.EventUpdateNoticeChanged: (*Model).updateNoticeChanged,
+	protocol.EventReviewsChanged:      func(m *Model) tea.Cmd { return tea.Batch(m.reviewsChanged(), m.reviewsMoved(), m.cardAsksChanged()) },
 }
 
 func (m *Model) conversationChanged(ev *protocol.SessionEvent) tea.Cmd {
@@ -238,6 +239,7 @@ func (m *Model) snapshotLoaded(resp protocol.Message) tea.Cmd {
 	m.statuses.set(snap)
 	m.claims.set(snap)
 	m.rooms, m.roomsCut = snap.Rooms, snap.RoomsTruncated
+	m.setUpdateNotice(snap)
 	m.statuses.inFlight, m.statuses.dirty = false, false // a new baseline supersedes any refresh
 	m.inbox.pending, m.inbox.headSeq = snap.InboxPending, snap.InboxHeadSeq
 	m.timeline.resetStages()

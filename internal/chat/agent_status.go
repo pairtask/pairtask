@@ -98,6 +98,7 @@ func (m *Model) statusRefreshed(_ pendingRequest, resp protocol.Message) tea.Cmd
 	m.statuses.set(resp.Snapshot)
 	m.claims.set(resp.Snapshot)
 	m.rooms, m.roomsCut = resp.Snapshot.Rooms, resp.Snapshot.RoomsTruncated
+	m.setUpdateNotice(resp.Snapshot)
 	m.refreshDirectory()
 	counts := m.setReviewCounts(resp.Snapshot)
 	if m.statuses.dirty {

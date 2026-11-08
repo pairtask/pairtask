@@ -33,6 +33,7 @@ SCRIPTED = {
     "download": ("sandbox-download.py", [], "fetch and verify a release image without provisioning"),
     "shell": ("sandbox-session.py", ["shell"], "SSH into the workspace; restores your terminal after"),
     "chat": ("sandbox-session.py", ["chat"], "the operator chat; restores your terminal after"),
+    "version": ("sandbox-version.py", [], "the app and host releases, the latest one and the command to update; changes nothing"),
 }
 ACTIONS = {
     "vm": ("sandbox-host.py", {"plan": "plan", "apply": "apply", "incus-plan": "incus-plan", "incus-apply": "incus-apply"},
@@ -152,8 +153,11 @@ def stop_steps(rest, system, instances):
 
 
 def status_steps(rest, system, instances):
+    """The containers, then one line on the running and latest releases from
+    cached metadata (#78): no network, and never the command's failure."""
     opts = composite_options("status", rest, system)
-    return [incus(opts.project, "list", opts.remote + ":")]
+    return [incus(opts.project, "list", opts.remote + ":"),
+            script("sandbox-version.py", "--summary", "--project", opts.project, "--remote", opts.remote)]
 
 
 COMPOSITES = {"install": install_steps, "start": start_steps, "stop": stop_steps, "status": status_steps}
@@ -188,7 +192,8 @@ def list_instances(remote, project):
 # The scripts' own argument parsers, by file, so every script step is parsed
 # before the first step changes anything on the host.
 PARSERS = {"sandbox-provision.py": "arguments", "sandbox-host.py": "parse_args",
-           "sandbox-share.py": "arguments", "sandbox-session.py": "parser"}
+           "sandbox-share.py": "arguments", "sandbox-session.py": "parser",
+           "sandbox-version.py": "parser"}
 
 
 def preflight(steps):

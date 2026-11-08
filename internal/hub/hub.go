@@ -56,18 +56,20 @@ type Hub struct {
 	operator   chan operatorRequest
 	startedAt  time.Time
 	// Live operator session state, owned by the Run goroutine.
-	owner       *OperatorSession
-	epoch       string
-	revision    uint64
-	gen         uint64
-	statuses    statusState
-	pairing     *peer.Invitations       // operator pairing (#178); memory only
-	identity    *peer.WorkspaceIdentity // loaded at Run's start or on a pairing request; never replaced
-	pair        pairingWiring           // redemption and the inbound endpoint
-	msgs        messageWiring           // message sessions with contacts (#210)
-	addresses   addressChecks           // /pair address probes running now
-	live        liveWiring              // their live links (#222)
-	reviewClock func() time.Time        // review lifecycle times (#201); nil is time.Now
+	owner *OperatorSession
+	// updateNotice is the host's last update report (#78); memory only.
+	updateNotice *protocol.UpdateNotice
+	epoch        string
+	revision     uint64
+	gen          uint64
+	statuses     statusState
+	pairing      *peer.Invitations       // operator pairing (#178); memory only
+	identity     *peer.WorkspaceIdentity // loaded at Run's start or on a pairing request; never replaced
+	pair         pairingWiring           // redemption and the inbound endpoint
+	msgs         messageWiring           // message sessions with contacts (#210)
+	addresses    addressChecks           // /pair address probes running now
+	live         liveWiring              // their live links (#222)
+	reviewClock  func() time.Time        // review lifecycle times (#201); nil is time.Now
 }
 
 // New creates a Hub. startSeq is the last persisted sequence number

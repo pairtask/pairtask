@@ -8,6 +8,7 @@ import sys
 
 from sandbox_remote import default_remote
 from sandbox_terminal import run_session
+import sandbox_version
 
 SSH_CONFIG = Path(__file__).resolve().parents[1] / "infra/incus/ssh/config"
 
@@ -46,6 +47,8 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    if args.session == "chat" and args.secured == "secured":
+        sandbox_version.announce(args.project, args.remote)  # bounded; never waits on GitHub
     return run_session(args.build(args))
 
 

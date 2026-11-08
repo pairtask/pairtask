@@ -183,6 +183,7 @@ func (h *Hub) buildSnapshot(ctx context.Context, clients map[string]*Client, ver
 		return snap, err
 	}
 	snap.ReviewCounts = &counts
+	snap.UpdateNotice = h.snapshotUpdateNotice()
 	return fitSnapshot(snap)
 }
 

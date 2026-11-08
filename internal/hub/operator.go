@@ -106,14 +106,15 @@ type operatorHandler func(h *Hub, ctx context.Context, clients map[string]*Clien
 // operatorHandlers route a request by its type; session-only types are
 // refused here, since they need an open operator session.
 var operatorHandlers = map[string]operatorHandler{
-	protocol.TypeOperatorSend:     (*Hub).routeOperatorSend,
-	protocol.TypeOperatorRoom:     (*Hub).operatorRoom,
-	protocol.TypeOperatorPairing:  (*Hub).operatorPairing,
-	protocol.TypeOperatorReview:   (*Hub).operatorReview,
-	protocol.TypeOperatorContact:  (*Hub).operatorContact,
-	protocol.TypeOperatorReceived: (*Hub).operatorReceived,
-	protocol.TypeOperatorAck:      (*Hub).operatorAck,
-	protocol.TypeOperatorAckMany:  (*Hub).operatorAckMany,
+	protocol.TypeOperatorSend:         (*Hub).routeOperatorSend,
+	protocol.TypeOperatorRoom:         (*Hub).operatorRoom,
+	protocol.TypeOperatorPairing:      (*Hub).operatorPairing,
+	protocol.TypeOperatorReview:       (*Hub).operatorReview,
+	protocol.TypeOperatorContact:      (*Hub).operatorContact,
+	protocol.TypeOperatorUpdateNotice: (*Hub).operatorUpdateNotice,
+	protocol.TypeOperatorReceived:     (*Hub).operatorReceived,
+	protocol.TypeOperatorAck:          (*Hub).operatorAck,
+	protocol.TypeOperatorAckMany:      (*Hub).operatorAckMany,
 	protocol.TypeOperatorReceive: func(h *Hub, ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
 		return h.operatorRead(ctx, req, "receive", h.readInbox)
 	},

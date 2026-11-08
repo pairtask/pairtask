@@ -164,10 +164,11 @@ type Model struct {
 	found          uint64 // seq of the last /find match
 	keyboard       bool
 	status         string
-	bulk           *bulkAck              // a running /ack all or /ack from
-	bulkSeq        int                   // numbers bulk runs for their request tokens
-	usageDirty     bool                  // an inbox change since the last usage read
-	usage          *protocol.InboxStatus // the last inbox status read, for the header
+	update         *protocol.UpdateNotice // the host's last update report (#78), nil when none
+	bulk           *bulkAck               // a running /ack all or /ack from
+	bulkSeq        int                    // numbers bulk runs for their request tokens
+	usageDirty     bool                   // an inbox change since the last usage read
+	usage          *protocol.InboxStatus  // the last inbox status read, for the header
 	width          int
 	height         int
 }
