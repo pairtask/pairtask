@@ -40,6 +40,8 @@ func manualOperatorSnapshot(t *testing.T, p *sessionProbe) sessionWire {
 func TestManualUpdateOperatorAcceptanceOneShotPreservesHumanSessionAndEmitsEvent(t *testing.T) {
 	f := newOperatorFixture(t, os.Getuid(), "")
 	p := sessionOpen(f)
+	initial := manualOperatorSnapshot(t, p)
+	operatorEqual(t, "initial notice absent", len(initial["update_notice"]) == 0 || string(initial["update_notice"]) == "null", true)
 	response := manualOperatorSet(t, f, manualOperatorNotice())
 	operatorEqual(t, "host notice accepted", response.text("type"), "operator_update_notice_result")
 	event := p.frame()
