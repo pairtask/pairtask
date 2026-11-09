@@ -167,34 +167,6 @@ Broker settings, all off by default:
 - `PAIRTASK_PAIRING_NAME` is the name this workspace pairs under
   (`workspace` by default).
 
-### Classifier (shadow mode)
-
-Off by default. With `PAIRTASK_CLASSIFIER=shadow`, the broker asks a hosted
-decision model which agent each untagged operator message to everyone was
-for, and records the answer without acting on it: routing, assignments and
-claims are unchanged, delivery never waits for the model, and a provider
-that fails or times out is recorded as such. This is the first rollout step
-of an optional classifier; nothing here suggests or assigns yet, and the
-confidence threshold is uncalibrated until the recorded predictions have
-been evaluated.
-
-- `PAIRTASK_CLASSIFIER_KEY_FILE=/PATH` holds the provider credential: a
-  regular file owned by the broker user, readable by it only. Unset, missing
-  or empty, the classifier stays off and the broker log says why; a file
-  others can read is refused.
-- `PAIRTASK_CLASSIFIER_PROVIDER=workers-ai` (default; Cloudflare Workers AI,
-  needs `PAIRTASK_CLASSIFIER_ACCOUNT=ID`) or `typesafe`. Each provider has a
-  fixed endpoint; redirects are never followed.
-- `PAIRTASK_CLASSIFIER_MODEL` (default `clef` on Workers AI, `jev-latest` on
-  TypeSafe), `PAIRTASK_CLASSIFIER_THRESHOLD` (0 to 1, default 0.7),
-  `PAIRTASK_CLASSIFIER_TIMEOUT` (default `5s`), and
-  `PAIRTASK_CLASSIFIER_ROLES=/PATH`, a JSON object of agent ID to a one-line
-  role the model is shown.
-
-With it on, the text of each such message, its room name and the eligible
-agents' IDs and roles leave the host for the chosen provider. The
-credential never appears in logs, command lines or the database.
-
 A shared pairing or egress socket's directory must neither be, contain nor
 sit inside the agent socket's, the operator socket's, the database's (its
 configured and its real location) or the key's directory; the broker
@@ -213,6 +185,37 @@ between the brokers. Neither starts by default:
   is loopback, link-local, multicast, unspecified, zoned or one of
   connector's own interface addresses, then dials that address. Private LAN
   and tailnet addresses are allowed: they are where other workspaces live.
+
+### Classifier (shadow mode)
+
+Off by default. With `PAIRTASK_CLASSIFIER=shadow`, the broker asks a hosted
+decision model which agent each untagged operator message to everyone was
+for, and records the answer without acting on it: routing, assignments and
+claims are unchanged, delivery never waits for the model, and a provider
+that fails or times out is recorded as such. This is the first rollout step
+of an optional classifier; nothing here suggests or assigns yet, and the
+confidence threshold is uncalibrated until the recorded predictions have
+been evaluated. The work queue is in memory: a broker exit can lose
+predictions not yet made, so the report counts recorded samples, not every
+accepted message.
+
+- `PAIRTASK_CLASSIFIER_KEY_FILE=/PATH` holds the provider credential: a
+  regular file owned by the broker user, readable by it only. Unset, missing
+  or empty, the classifier stays off and the broker log says why; a file
+  others can read is refused.
+- `PAIRTASK_CLASSIFIER_PROVIDER=workers-ai` (default; Cloudflare Workers AI,
+  needs `PAIRTASK_CLASSIFIER_ACCOUNT=ID`) or `typesafe`. Each provider has a
+  fixed endpoint; redirects are never followed.
+- `PAIRTASK_CLASSIFIER_MODEL` (default `clef` on Workers AI, `jev-latest` on
+  TypeSafe), `PAIRTASK_CLASSIFIER_THRESHOLD` (0 to 1, default 0.7),
+  `PAIRTASK_CLASSIFIER_TIMEOUT` (default `5s`), and
+  `PAIRTASK_CLASSIFIER_ROLES=/PATH`, a JSON object of agent ID to a one-line
+  role the model is shown.
+
+With it on, the text of each such message, its room name and the eligible
+agents' IDs and roles leave the host for the chosen provider. The
+credential never appears in logs, command lines or the database.
+
 
 Both take `--max-conns`, `--max-bytes` and `--idle` (16 connections, 1 MiB
 per direction and 30 s by default).
