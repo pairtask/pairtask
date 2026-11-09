@@ -11,6 +11,7 @@ the daemon fall silent. One resolve per (interface, instance), stopped at
 its first reply; one address lookup per (interface, host), kept open for
 additions and removals."""
 
+from collections import namedtuple
 import ctypes
 import socket
 import sys
@@ -39,6 +40,11 @@ RESOLVE_REPLY = ctypes.CFUNCTYPE(None, Ref, ctypes.c_uint32, ctypes.c_uint32, ct
                                  ctypes.POINTER(ctypes.c_ubyte), ctypes.c_void_p)
 ADDRESS_REPLY = ctypes.CFUNCTYPE(None, Ref, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int32,
                                  ctypes.c_char_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p)
+# The daemon's replies, as its C API passes them; context is never used.
+Browse = namedtuple("Browse", "ref flags interface code name regtype domain context")
+Resolve = namedtuple("Resolve", "ref flags interface code fullname target port length txt context")
+Address = namedtuple("Address", "ref flags interface code hostname sockaddr ttl context")
+Target = namedtuple("Target", "interface name regtype domain")  # an instance seen on an interface
 SIGNATURES = {
     "DNSServiceBrowse": (ctypes.c_int32, [ctypes.POINTER(Ref), ctypes.c_uint32, ctypes.c_uint32,
                                           ctypes.c_char_p, ctypes.c_char_p, BROWSE_REPLY, ctypes.c_void_p]),
@@ -88,8 +94,8 @@ class Daemon:
     def browse(self, callback):
         return self.start("DNSServiceBrowse", callback, 0, ALL_INTERFACES, REGTYPE, DOMAIN)
 
-    def resolve(self, interface, name, regtype, domain, callback):
-        return self.start("DNSServiceResolve", callback, 0, interface, name, regtype, domain)
+    def resolve(self, target, callback):
+        return self.start("DNSServiceResolve", callback, 0, *target)
 
     def addresses(self, interface, host, callback):
         return self.start("DNSServiceGetAddrInfo", callback, 0, interface, PROTOCOLS, host)
@@ -145,18 +151,19 @@ class Feed:
         self.looking = {}     # (interface, host) -> ref
         self.present = {}     # instance -> {interface: host once resolved, else None}
         self.addresses = {}   # host -> {value: {interface: expiry}}
-        self.open("browse", None, self.daemon.browse, BROWSE_REPLY(self.found))
+        self.handles[self.daemon.browse(BROWSE_REPLY(self.found))] = "browse"
 
     # --- handles ---------------------------------------------------------------
 
-    def open(self, kind, key, start, callback, *arguments):
-        ref = start(*arguments, callback)
-        self.handles[ref] = kind
-        if kind == "resolve":
-            self.resolving[key] = ref
-        elif kind == "address":
-            self.looking[key] = ref
-        return ref
+    def start_resolve(self, key, target):
+        reply = RESOLVE_REPLY(lambda *arguments: self.resolved(key, Resolve(*arguments)))
+        self.resolving[key] = ref = self.daemon.resolve(target, reply)
+        self.handles[ref] = "resolve"
+
+    def start_lookup(self, key, target):
+        reply = ADDRESS_REPLY(lambda *arguments: self.addressed(key, Address(*arguments)))
+        self.looking[key] = ref = self.daemon.addresses(key[0], target, reply)
+        self.handles[ref] = "address"
 
     def stop(self, ref):
         if ref in self.handles:
@@ -195,27 +202,32 @@ class Feed:
 
     # --- browse ----------------------------------------------------------------
 
-    def found(self, ref, flags, interface, code, name, regtype, domain, context):
-        if code:
-            self.fail(DaemonError(describe(code)))
+    def found(self, *arguments):
+        reply = Browse(*arguments)
+        if reply.code:
+            self.fail(DaemonError(describe(reply.code)))
             return
-        instance = "%s.%s" % (name.decode("utf-8", "replace"), SERVICE)
-        if flags & FLAG_ADD:
-            self.appeared(instance, interface, name, regtype, domain)
+        instance = "%s.%s" % (reply.name.decode("utf-8", "replace"), SERVICE)
+        if reply.flags & FLAG_ADD:
+            self.appeared(instance, Target(reply.interface, reply.name, reply.regtype, reply.domain))
         else:
-            self.vanished(instance, interface)
+            self.vanished(instance, reply.interface)
 
-    def appeared(self, instance, interface, name, regtype, domain):
+    def appeared(self, instance, target):
         if self.browser.is_own(instance):
             return
-        now = self.clock()
-        self.present.setdefault(instance, {}).setdefault(interface, None)
-        self.browser.service_record(instance, LIFETIME, now, None)
-        key = (interface, instance)
-        if key not in self.resolving and self.present[instance][interface] is None:
-            reply = RESOLVE_REPLY(lambda *arguments: self.resolved(key, *arguments))
-            self.open("resolve", key, self.daemon.resolve, reply, interface, name, regtype, domain)
+        self.present.setdefault(instance, {}).setdefault(target.interface, None)
+        self.browser.service_record(instance, LIFETIME, self.clock(), None)
+        key = (target.interface, instance)
+        if key not in self.resolving and self.unresolved(key):
+            self.start_resolve(key, target)
         self.prune()
+
+    def unresolved(self, key):
+        """The instance is still reported on the interface and has no host yet."""
+        interface, instance = key
+        places = self.present.get(instance, {})
+        return interface in places and places[interface] is None
 
     def prune(self):
         """Instances the cache has already dropped need no native work."""
@@ -242,30 +254,29 @@ class Feed:
 
     # --- resolve ---------------------------------------------------------------
 
-    def resolved(self, key, ref, flags, interface, code, fullname, target, port, length, txt, context):
+    def resolved(self, key, reply):
         self.stop_resolve(key)
+        if reply.code or not self.unresolved(key):
+            return  # failed, or gone meanwhile
         interface, instance = key
-        places = self.present.get(instance, {})
-        if code or interface not in places or places[interface] is not None:
-            return  # failed, gone meanwhile, or resolved already
-        host, now = target.decode("utf-8", "replace").rstrip("."), self.clock()
-        self.browser.service_record(instance, LIFETIME, now, (host, socket.ntohs(port)))
-        self.browser.text_record(instance, strings_of(txt, length), LIFETIME, now)
+        host, now = reply.target.decode("utf-8", "replace").rstrip("."), self.clock()
+        self.browser.service_record(instance, LIFETIME, now, (host, socket.ntohs(reply.port)))
+        self.browser.text_record(instance, strings_of(reply.txt, reply.length), LIFETIME, now)
         self.present[instance][interface] = host
         if (interface, host) not in self.looking:
-            reply = ADDRESS_REPLY(lambda *arguments: self.addressed((interface, host), *arguments))
-            self.open("address", (interface, host), self.daemon.addresses, reply, interface, target)
+            self.start_lookup((interface, host), reply.target)
 
     # --- addresses -------------------------------------------------------------
 
-    def addressed(self, key, ref, flags, interface, code, hostname, sockaddr, ttl, context):
-        if code:
+    def addressed(self, key, reply):
+        if reply.code:
             self.stop_lookup(key)
             return
-        value = unpack(sockaddr)
+        value = unpack(reply.sockaddr)
         if value is not None:
             interface, host = key
-            self.set_address(host, value, interface, self.clock() + ttl if flags & FLAG_ADD else None)
+            expiry = self.clock() + reply.ttl if reply.flags & FLAG_ADD else None
+            self.set_address(host, value, interface, expiry)
 
     def set_address(self, host, value, interface, expiry):
         values = self.addresses.setdefault(host, {})
