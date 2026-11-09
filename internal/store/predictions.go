@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 // Classifier predictions (#339, shadow mode): one row per operator message
@@ -102,19 +104,43 @@ func (s *Store) Prediction(ctx context.Context, messageID string) (*Prediction, 
 	return &found[0], nil
 }
 
-// PredictionsSince lists the decisions recorded at or after since, oldest
-// first, at most limit of them.
-func (s *Store) PredictionsSince(ctx context.Context, since time.Time, limit int) ([]Prediction, error) {
+// PredictionsSince lists the newest decisions recorded at or after since,
+// at most limit of them, oldest first; more says whether older ones were
+// left out.
+func (s *Store) PredictionsSince(ctx context.Context, since time.Time, limit int) (found []Prediction, more bool, err error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+predictionColumns+` FROM classifier_predictions WHERE created_at >= ? ORDER BY created_at, operator_message_id LIMIT ?`,
-		stamp(since), limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+predictionColumns+` FROM classifier_predictions WHERE created_at >= ? ORDER BY created_at DESC, operator_message_id DESC LIMIT ?`,
+		stamp(since), limit+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
-	return scanPredictions(rows)
+	newest, err := scanPredictions(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(newest) > limit {
+		newest, more = newest[:limit], true
+	}
+	for i, j := 0, len(newest)-1; i < j; i, j = i+1, j-1 {
+		newest[i], newest[j] = newest[j], newest[i]
+	}
+	return newest, more, nil
+}
+
+// ReplyOwner is the agent holding the message's reply claim as owner,
+// active or done, or ""; a released claim holds nothing. Read directly,
+// for the operator's report; no recipient check applies.
+func (s *Store) ReplyOwner(ctx context.Context, messageID string) (string, error) {
+	var agent string
+	err := s.db.QueryRowContext(ctx, `SELECT agent_id FROM claims WHERE operator_message_id = ? AND task = ? AND role = ? AND state != ? ORDER BY claimed_at LIMIT 1`,
+		messageID, protocol.TaskReply, protocol.RoleOwner, protocol.ClaimReleased).Scan(&agent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return agent, err
 }
 
 func scanPredictions(rows *sql.Rows) ([]Prediction, error) {

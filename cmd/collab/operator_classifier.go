@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -76,18 +77,32 @@ func writeClassifierReport(w io.Writer, r protocol.ClassifierReport) {
 	fmt.Fprintf(w, "Agreement with the reply claim (a weak label): %d agreed, %d disagreed of %d compared; %d predicted and unclaimed\n",
 		a.Agreed, a.Disagreed, a.Compared, a.Unclaimed)
 	for _, p := range r.Predictions {
-		line := fmt.Sprintf("  %s %s %s", p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"), p.MessageID, p.Outcome)
+		line := fmt.Sprintf("  %s %s %s", p.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"), printable(p.MessageID), printable(p.Outcome))
 		if p.Reason != "" {
-			line += " (" + p.Reason + ")"
+			line += " (" + printable(p.Reason) + ")"
 		}
 		if p.AgentID != "" {
-			line += fmt.Sprintf(" → %s %.2f", p.AgentID, p.Confidence)
+			line += fmt.Sprintf(" → %s %.2f", printable(p.AgentID), p.Confidence)
 		}
 		if p.Claimant != "" {
-			line += " claim: " + p.Claimant
+			line += " claim: " + printable(p.Claimant)
 		}
 		fmt.Fprintln(w, line)
 	}
+}
+
+// printable shows broker-supplied text without control characters: each
+// non-printable rune becomes its \u escape, so nothing drives the terminal.
+func printable(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsPrint(r) {
+			b.WriteRune(r)
+		} else {
+			fmt.Fprintf(&b, "\\u%04x", r)
+		}
+	}
+	return b.String()
 }
 
 func truncatedNote(truncated bool) string {
@@ -106,7 +121,7 @@ func counts(m map[string]int) string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s %d", k, m[k]))
+		parts = append(parts, fmt.Sprintf("%s %d", printable(k), m[k]))
 	}
 	if len(parts) == 0 {
 		return "none"

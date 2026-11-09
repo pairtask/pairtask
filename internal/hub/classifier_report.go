@@ -17,23 +17,21 @@ func (h *Hub) readClassifierReport(ctx context.Context, req operatorRequest, _ p
 	if req.msg.ClassifierRequest != nil && !req.msg.ClassifierRequest.Since.IsZero() {
 		since = req.msg.ClassifierRequest.Since
 	}
-	rows, err := h.store.PredictionsSince(ctx, since, protocol.ClassifierReportMax+1)
+	rows, more, err := h.store.PredictionsSince(ctx, since, protocol.ClassifierReportMax)
 	if err != nil {
 		return protocol.Message{}, "", err
 	}
-	report := h.classifierReport(ctx, since, rows)
+	report := h.classifierReport(ctx, since, rows, more)
 	detail := fmt.Sprintf("since=%s count=%d", since.UTC().Format(time.RFC3339), report.Count)
 	return protocol.Message{Type: protocol.TypeOperatorClassifierReport, ClassifierReport: &report}, detail, nil
 }
 
-// classifierReport counts outcomes, reasons and models, takes latency
+// classifierReport counts outcomes, reasons and models over the newest
+// window (truncated says older rows were left out), takes latency
 // percentiles over the asked predictions, and compares each predicted
 // agent with the reply claim's holder, a weak label.
-func (h *Hub) classifierReport(ctx context.Context, since time.Time, rows []store.Prediction) protocol.ClassifierReport {
-	report := protocol.ClassifierReport{Since: since, Outcomes: map[string]int{}, Reasons: map[string]int{}, Models: map[string]int{}}
-	if len(rows) > protocol.ClassifierReportMax {
-		rows, report.Truncated = rows[:protocol.ClassifierReportMax], true
-	}
+func (h *Hub) classifierReport(ctx context.Context, since time.Time, rows []store.Prediction, more bool) protocol.ClassifierReport {
+	report := protocol.ClassifierReport{Since: since, Outcomes: map[string]int{}, Reasons: map[string]int{}, Models: map[string]int{}, Truncated: more}
 	report.Count = len(rows)
 	var latencies []int64
 	for _, p := range rows {
@@ -81,18 +79,15 @@ func (h *Hub) classifierListed(ctx context.Context, rows []store.Prediction) ([]
 	return listed, agreement
 }
 
-// replyClaimant is the agent holding the message's reply claim as owner, or "".
+// replyClaimant is the agent holding the message's reply claim as owner,
+// active or done (a finished answer is still the weak label), or "".
 func (h *Hub) replyClaimant(ctx context.Context, messageID string) string {
-	set, err := h.store.Claims(ctx, messageID, "")
+	agent, err := h.store.ReplyOwner(ctx, messageID)
 	if err != nil {
+		h.log.Error("classifier report: reply claim unavailable", "message_id", messageID, "error", err)
 		return ""
 	}
-	for _, c := range set.Claims {
-		if c.Task == protocol.TaskReply && c.Role == protocol.RoleOwner && c.FinishedAt == nil {
-			return c.AgentID
-		}
-	}
-	return ""
+	return agent
 }
 
 // latency is p50, p95 and max over the values; zero without any.
