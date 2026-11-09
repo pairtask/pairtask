@@ -63,8 +63,11 @@ necessarily a pairtask listener; it uses port 7445 unless you edit it. The
 panel refreshes by itself for up to two minutes from opening. It says
 `searching` until the host helper has reported for this search, which
 usually takes about 15 seconds, then `nothing heard yet` while the network
-stays quiet. Without
-the helper, or on separate networks, type A's address by hand: its LAN or
+stays quiet. On macOS the helper hears through the system Bonjour service,
+which needs Local Network access for the helper (System Settings › Privacy &
+Security › Local Network); without it there is no error, only silence.
+`pairtask discovery status` shows the last error, if any. Without the
+helper, or on separate networks, type A's address by hand: its LAN or
 tailnet IP (the Mac's own, not the Colima VM's).
 
 ## 4. Check it is really B, then accept on A
@@ -400,7 +403,9 @@ without `/pair address`. It does nothing unless the secured broker asks:
   workspace's name ([step 2](#2-on-a-open-an-invitation)), under a fresh
   random instance; it stops with the invitation.
 - **Dialling side:** while a workspace this side dials shows
-  `last attempt failed`, the helper looks for those announcements. With
+  `last attempt failed`, the helper looks for those announcements: on macOS
+  through the system Bonjour service, with no multicast socket of its own;
+  on Linux by listening on the multicast group itself. With
   Tailscale installed, it also takes each online peer's MagicDNS name and
   Tailscale addresses from `tailscale status`, crossed with the ports the
   failing workspaces were last reached on. It hands the broker at most 8

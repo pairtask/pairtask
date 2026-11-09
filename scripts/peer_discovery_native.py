@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""Browsing through the system DNS-SD daemon (Bonjour on macOS) over its C
+API, stdlib ctypes only. The daemon browses for the service on every
+interface, resolves each instance and looks its host up; the replies feed
+the same Browser cache the multicast path fills, so what the helper reports
+does not depend on the backend, and no multicast socket is opened for it.
+
+An instance or an address stays listed while any interface still reports
+it; the daemon's add and remove replies decide, bounded by LIFETIME should
+the daemon fall silent. One resolve per (interface, instance), stopped at
+its first reply; one address lookup per (interface, host), kept open for
+additions and removals."""
+
+import ctypes
+import socket
+import sys
+
+from peer_discovery_wire import Malformed, SERVICE, txt_value
+
+LIBRARY = "/usr/lib/libSystem.B.dylib"
+REGTYPE = b"_pairtask._tcp"
+DOMAIN = b"local."
+ALL_INTERFACES = 0
+FLAG_ADD = 0x2
+PROTOCOLS = 0x1 | 0x2        # kDNSServiceProtocol_IPv4 | kDNSServiceProtocol_IPv6
+AF_INET6_DARWIN = 30
+SOCKADDR_MAX = 28
+LIFETIME = 4500              # seconds an instance stays without the daemon's removal: the mDNS PTR TTL
+ADDRESSES_MAX = 16           # values tracked per host
+ERRORS = {-65537: "unknown", -65540: "bad parameter", -65550: "firewall", -65553: "refused",
+          -65563: "service not running", -65568: "timeout", -65569: "defunct connection",
+          -65570: "policy denied"}
+
+Ref = ctypes.c_void_p
+BROWSE_REPLY = ctypes.CFUNCTYPE(None, Ref, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int32,
+                                ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p)
+RESOLVE_REPLY = ctypes.CFUNCTYPE(None, Ref, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int32,
+                                 ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint16, ctypes.c_uint16,
+                                 ctypes.POINTER(ctypes.c_ubyte), ctypes.c_void_p)
+ADDRESS_REPLY = ctypes.CFUNCTYPE(None, Ref, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int32,
+                                 ctypes.c_char_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p)
+SIGNATURES = {
+    "DNSServiceBrowse": (ctypes.c_int32, [ctypes.POINTER(Ref), ctypes.c_uint32, ctypes.c_uint32,
+                                          ctypes.c_char_p, ctypes.c_char_p, BROWSE_REPLY, ctypes.c_void_p]),
+    "DNSServiceResolve": (ctypes.c_int32, [ctypes.POINTER(Ref), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p,
+                                           ctypes.c_char_p, ctypes.c_char_p, RESOLVE_REPLY, ctypes.c_void_p]),
+    "DNSServiceGetAddrInfo": (ctypes.c_int32, [ctypes.POINTER(Ref), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+                                               ctypes.c_char_p, ADDRESS_REPLY, ctypes.c_void_p]),
+    "DNSServiceRefSockFD": (ctypes.c_int, [Ref]),
+    "DNSServiceProcessResult": (ctypes.c_int32, [Ref]),
+    "DNSServiceRefDeallocate": (None, [Ref]),
+}
+
+
+def wanted(group, port, default_group, default_port):
+    """Whether browsing goes through the system daemon: on Darwin, for the
+    standard mDNS group and port; a custom endpoint keeps the multicast path."""
+    return sys.platform.startswith("darwin") and (group, port) == (default_group, default_port)
+
+
+def describe(code):
+    return "%s (%d)" % (ERRORS.get(code, "error"), code)
+
+
+class DaemonError(OSError):
+    """The daemon refused or dropped an operation."""
+
+
+class Daemon:
+    """The DNS-SD C API: each start returns the operation's handle or raises
+    DaemonError; the callbacks stay referenced for as long as their handles."""
+
+    def __init__(self):
+        self.lib = ctypes.CDLL(LIBRARY)
+        for name, (result, arguments) in SIGNATURES.items():
+            function = getattr(self.lib, name)
+            function.restype, function.argtypes = result, arguments
+        self.callbacks = {}
+
+    def start(self, name, callback, *arguments):
+        ref = Ref()
+        code = getattr(self.lib, name)(ctypes.pointer(ref), *arguments, callback, None)
+        if code:
+            raise DaemonError(describe(code))
+        self.callbacks[ref.value] = callback
+        return ref.value
+
+    def browse(self, callback):
+        return self.start("DNSServiceBrowse", callback, 0, ALL_INTERFACES, REGTYPE, DOMAIN)
+
+    def resolve(self, interface, name, regtype, domain, callback):
+        return self.start("DNSServiceResolve", callback, 0, interface, name, regtype, domain)
+
+    def addresses(self, interface, host, callback):
+        return self.start("DNSServiceGetAddrInfo", callback, 0, interface, PROTOCOLS, host)
+
+    def descriptor(self, ref):
+        return self.lib.DNSServiceRefSockFD(ref)
+
+    def process(self, ref):
+        """Deliver the reply waiting on the handle; only called when its descriptor is readable."""
+        code = self.lib.DNSServiceProcessResult(ref)
+        if code:
+            raise DaemonError(describe(code))
+
+    def stop(self, ref):
+        self.lib.DNSServiceRefDeallocate(ref)
+        self.callbacks.pop(ref, None)
+
+
+def unpack(sockaddr):
+    """The address in a BSD sockaddr, or None for other families."""
+    if not sockaddr:
+        return None
+    size = ctypes.string_at(sockaddr, 1)[0] or SOCKADDR_MAX
+    data = ctypes.string_at(sockaddr, min(size, SOCKADDR_MAX))
+    if len(data) >= 8 and data[1] == socket.AF_INET:
+        return socket.inet_ntop(socket.AF_INET, data[4:8])
+    if len(data) >= 24 and data[1] == AF_INET6_DARWIN:
+        return socket.inet_ntop(socket.AF_INET6, data[8:24])
+    return None
+
+
+def strings_of(txt, length):
+    """The TXT strings the daemon handed over, or none when malformed."""
+    if not txt or not length:
+        return ()
+    data = ctypes.string_at(txt, length)
+    try:
+        return txt_value(data, 0, length)
+    except Malformed:
+        return ()
+
+
+class Feed:
+    """Drives a Browser from the daemon's replies. error holds why the feed
+    stopped, once it has; everything is closed by then."""
+
+    def __init__(self, browser, clock):
+        self.browser, self.clock = browser, clock
+        self.daemon = Daemon()
+        self.error = None
+        self.handles = {}     # ref -> kind
+        self.resolving = {}   # (interface, instance) -> ref
+        self.looking = {}     # (interface, host) -> ref
+        self.present = {}     # instance -> {interface: host once resolved, else None}
+        self.addresses = {}   # host -> {value: {interface: expiry}}
+        self.open("browse", None, self.daemon.browse, BROWSE_REPLY(self.found))
+
+    # --- handles ---------------------------------------------------------------
+
+    def open(self, kind, key, start, callback, *arguments):
+        ref = start(*arguments, callback)
+        self.handles[ref] = kind
+        if kind == "resolve":
+            self.resolving[key] = ref
+        elif kind == "address":
+            self.looking[key] = ref
+        return ref
+
+    def stop(self, ref):
+        if ref in self.handles:
+            del self.handles[ref]
+            self.daemon.stop(ref)
+
+    def stop_resolve(self, key):
+        self.stop(self.resolving.pop(key, None))
+
+    def stop_lookup(self, key):
+        self.stop(self.looking.pop(key, None))
+
+    def descriptors(self):
+        return {self.daemon.descriptor(ref): ref for ref in list(self.handles)}
+
+    def pump(self, ready):
+        """Deliver the replies on the ready descriptors; a daemon failure closes everything."""
+        for fd, ref in self.descriptors().items():
+            if fd in ready and ref in self.handles:
+                try:
+                    self.daemon.process(ref)
+                except DaemonError as error:
+                    self.fail(error)
+
+    def fail(self, error):
+        self.error = str(error)
+        self.close()
+
+    def close(self):
+        for ref in list(self.handles):
+            self.stop(ref)
+        self.resolving.clear()
+        self.looking.clear()
+        self.present.clear()
+        self.addresses.clear()
+
+    # --- browse ----------------------------------------------------------------
+
+    def found(self, ref, flags, interface, code, name, regtype, domain, context):
+        if code:
+            self.fail(DaemonError(describe(code)))
+            return
+        instance = "%s.%s" % (name.decode("utf-8", "replace"), SERVICE)
+        if flags & FLAG_ADD:
+            self.appeared(instance, interface, name, regtype, domain)
+        else:
+            self.vanished(instance, interface)
+
+    def appeared(self, instance, interface, name, regtype, domain):
+        if self.browser.is_own(instance):
+            return
+        now = self.clock()
+        self.present.setdefault(instance, {}).setdefault(interface, None)
+        self.browser.service_record(instance, LIFETIME, now, None)
+        key = (interface, instance)
+        if key not in self.resolving and self.present[instance][interface] is None:
+            reply = RESOLVE_REPLY(lambda *arguments: self.resolved(key, *arguments))
+            self.open("resolve", key, self.daemon.resolve, reply, interface, name, regtype, domain)
+        self.prune()
+
+    def prune(self):
+        """Instances the cache has already dropped need no native work."""
+        for instance in [value for value in self.present if value not in self.browser.services]:
+            self.forget(instance)
+
+    def forget(self, instance):
+        for interface, host in self.present.pop(instance, {}).items():
+            self.stop_resolve((interface, instance))
+            if host is not None:
+                self.release(interface, host)
+
+    def vanished(self, instance, interface):
+        places = self.present.get(instance)
+        if places is None:
+            return
+        host = places.pop(interface, None)
+        self.stop_resolve((interface, instance))
+        if host is not None:
+            self.release(interface, host)
+        if not places:
+            del self.present[instance]
+            self.browser.service_record(instance, 0, self.clock(), None)
+
+    # --- resolve ---------------------------------------------------------------
+
+    def resolved(self, key, ref, flags, interface, code, fullname, target, port, length, txt, context):
+        self.stop_resolve(key)
+        interface, instance = key
+        places = self.present.get(instance, {})
+        if code or interface not in places or places[interface] is not None:
+            return  # failed, gone meanwhile, or resolved already
+        host, now = target.decode("utf-8", "replace").rstrip("."), self.clock()
+        self.browser.service_record(instance, LIFETIME, now, (host, socket.ntohs(port)))
+        self.browser.text_record(instance, strings_of(txt, length), LIFETIME, now)
+        self.present[instance][interface] = host
+        if (interface, host) not in self.looking:
+            reply = ADDRESS_REPLY(lambda *arguments: self.addressed((interface, host), *arguments))
+            self.open("address", (interface, host), self.daemon.addresses, reply, interface, target)
+
+    # --- addresses -------------------------------------------------------------
+
+    def addressed(self, key, ref, flags, interface, code, hostname, sockaddr, ttl, context):
+        if code:
+            self.stop_lookup(key)
+            return
+        value = unpack(sockaddr)
+        if value is not None:
+            interface, host = key
+            self.set_address(host, value, interface, self.clock() + ttl if flags & FLAG_ADD else None)
+
+    def set_address(self, host, value, interface, expiry):
+        values = self.addresses.setdefault(host, {})
+        places = values.setdefault(value, {})
+        if expiry is None:
+            places.pop(interface, None)
+        else:
+            places[interface] = expiry
+        while len(values) > ADDRESSES_MAX:
+            values.pop(next(iter(values)))
+        self.publish(host, value)
+
+    def publish(self, host, value):
+        """The cache sees one record per address: alive until the last interface's expiry."""
+        now = self.clock()
+        places = self.addresses.get(host, {}).get(value, {})
+        self.browser.address_record(host, value, max(max(places.values()) - now, 0) if places else 0, now)
+        if not places:
+            self.addresses.get(host, {}).pop(value, None)
+            if not self.addresses.get(host):
+                self.addresses.pop(host, None)
+
+    def release(self, interface, host):
+        """The interface's lookup of the host, once no instance there needs it."""
+        if any(places.get(interface) == host for places in self.present.values()):
+            return
+        self.stop_lookup((interface, host))
+        for value in list(self.addresses.get(host, {})):
+            self.set_address(host, value, interface, None)
