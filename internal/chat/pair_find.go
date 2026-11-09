@@ -86,15 +86,22 @@ func (m *Model) discoveryResult(req pendingRequest, resp protocol.Message) tea.C
 	m.discovery = m.discoveryViewOf(*resp.ContactFind)
 	m.panel = &panel{kind: panelFind}
 	switch {
-	case !m.helperAlive(): // the panel keeps re-reading: a helper started now shows up
-		m.status = "discovery helper is off or not installed: pairtask pairing on --discovery on the host"
-	case len(m.discovery.endpoints) == 0:
-		m.status = scanStatus(m.discovery.snapshot.ScanState)
+	case len(m.discovery.endpoints) == 0: // the panel keeps re-reading: a helper started now shows up
+		m.status = m.emptyFindStatus()
 	default:
 		m.status = "pick one to fill /pair redeem; then type the code you were given"
 		m.offerRedeemEndpoints()
 	}
 	return m.scheduleDiscoveryRefresh()
+}
+
+// emptyFindStatus is the status line for a find without rows: the helper
+// gone, or where its search for this find stands.
+func (m *Model) emptyFindStatus() string {
+	if !m.helperAlive() {
+		return "discovery helper is off or not installed: pairtask pairing on --discovery on the host"
+	}
+	return scanStatus(m.discovery.snapshot.ScanState)
 }
 
 // scanStatus says where an empty find stands: before the helper's first
@@ -153,6 +160,7 @@ func (m *Model) discoveryRefreshed(req pendingRequest, resp protocol.Message) te
 // line is open; a line they are typing on is left alone.
 func (m *Model) offerRefreshedEndpoints() {
 	if len(m.discovery.endpoints) == 0 {
+		m.status = m.emptyFindStatus() // the state moved on even when no row did; the command line is untouched
 		return
 	}
 	switch {
