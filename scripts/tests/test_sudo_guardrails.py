@@ -23,8 +23,8 @@ def load(name):
 
 
 class HostUserGuardrailTests(unittest.TestCase):
-    def run_script(self, name, *args, sudo_user="operator"):
-        env = dict(os.environ, SUDO_USER=sudo_user)
+    def run_script(self, name, *args, sudo_user="operator", **overrides):
+        env = dict(os.environ, SUDO_USER=sudo_user, **overrides)
         return subprocess.run([sys.executable, str(SCRIPTS / (name + ".py")), *args],
                               env=env, capture_output=True, text=True, timeout=10)
 
@@ -58,6 +58,16 @@ class HostUserGuardrailTests(unittest.TestCase):
 
     def test_direct_provision_rejects_sudo_before_parsing_or_state_access(self):
         self.assert_refused(self.run_script("sandbox-provision", "plan"), "sandbox-provision")
+
+    def test_ci_opt_in_is_exact_and_allows_sudo_dry_run(self):
+        for value in ("", "0", "true"):
+            with self.subTest(value=value):
+                self.assert_refused(self.run_script("pairtask", "--dry-run", "status",
+                                                    PAIRTASK_ALLOW_ROOT=value), "pairtask")
+        allowed = self.run_script("pairtask", "--dry-run", "status", PAIRTASK_ALLOW_ROOT="1")
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertIn("incus", allowed.stdout)
+        self.assertEqual(allowed.stderr, "")
 
 
 class DiscoveryDiagnosticTests(unittest.TestCase):
