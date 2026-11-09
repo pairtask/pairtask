@@ -117,10 +117,31 @@ class Manager:
             self.path().write_text(self.text())
         if self.system == "Darwin":
             self.step(["launchctl", "bootout", self.domain() + "/" + LABEL], quiet=True)
-            return self.step(["launchctl", "bootstrap", self.domain(), str(self.path())])
+            return self.bootstrap()
         started = (self.step(["systemctl", "--user", "daemon-reload"]) and
                    self.step(["systemctl", "--user", "enable", "--now", UNIT]))
         return started and (not existed or self.restart())
+
+    def bootstrap(self):
+        """Load the agent. launchctl answers "Bootstrap failed: 5" for a
+        bootstrap right after a bootout of the same label while launchd has
+        registered and spawned the job all the same, so launchd's own listing
+        decides: a loaded job is a start, and only an absent one is the
+        failure launchctl reported."""
+        command = ["launchctl", "bootstrap", self.domain(), str(self.path())]
+        if self.dry_run:
+            print("Would run: " + " ".join(command))
+            return True
+        ok, detail = self.run(command)
+        if ok or self.loaded():
+            return True
+        self.report(command, detail)
+        return False
+
+    def loaded(self):
+        """Whether launchd lists the agent, whatever launchctl said."""
+        ok, _ = self.run(["launchctl", "print", self.domain() + "/" + LABEL])
+        return ok
 
     def restart(self):
         """Restart an installed unit; nothing when none is installed."""
@@ -152,9 +173,12 @@ class Manager:
             return True
         ok, detail = self.run(command)
         if not ok and not quiet:
-            print("Discovery helper: %s failed (%s); the pairing route is unaffected. "
-                  "See docs/pairing.md#moving-between-networks." % (" ".join(command[:3]), detail))
+            self.report(command, detail)
         return ok
+
+    def report(self, command, detail):
+        print("Discovery helper: %s failed (%s); the pairing route is unaffected. "
+              "See docs/pairing.md#moving-between-networks." % (" ".join(command[:3]), detail))
 
     def execute(self, command):
         try:
