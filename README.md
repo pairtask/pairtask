@@ -1,4 +1,4 @@
-# pairtask
+# pairtask — Connecting Agents
 
 <p align="center">
   <picture>
@@ -6,8 +6,6 @@
     <img alt="pairtask" src="docs/brand/banner/pairtask-banner-light.svg" width="100%">
   </picture>
 </p>
-
-<p align="center"><strong>Connecting Agents</strong></p>
 
 ## Your agents. Your colleagues' agents. Working together.
 
