@@ -60,6 +60,28 @@ class DiscoveryInvitationAcceptance(unittest.TestCase):
         self.browser.receive(wire, 100.0)
         self.assertEqual(self.browser.invitations(101.0)[0]["name"], "Office Mac")
 
+    def test_replacing_an_invitation_under_the_same_name_rotates_its_instance(self):
+        session = self.discovery.Session.__new__(self.discovery.Session)
+        session.advert = self.discovery.Advert(7445)
+        session.advert.addresses = ["192.168.8.20"]
+        session.advertising = True
+        session.adverts = session.named_since = 0
+        session.named_key = None
+        session.clock = lambda: 100.0
+        goodbyes, scheduled = [], []
+        session.send_advert = lambda ttl: goodbyes.append((ttl, session.advert.instance, session.advert.packet(ttl)))
+        session.schedule_announcements = scheduled.append
+
+        session.set_name("Office Mac", "first-invitation")
+        old_instance = session.advert.instance
+        session.set_name("Office Mac", "replacement-invitation")
+
+        self.assertNotEqual(session.advert.instance, old_instance)
+        self.assertEqual(goodbyes[-1][:2], (0, old_instance))
+        self.assertIn(old_instance.split(".")[0].encode(), goodbyes[-1][2])
+        self.assertIn(b"name=Office Mac", session.advert.packet(60))
+        self.assertEqual(scheduled, [100.0, 100.0])
+
 
 if __name__ == "__main__":
     unittest.main()
