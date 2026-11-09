@@ -24,10 +24,11 @@ const (
 	kindContactFindRefresh = "contact find refresh"
 	panelFind              = "find"
 	// The panel re-reads the broker's snapshot every refreshEvery while it
-	// is open, at most refreshesMax times (FindWindow): the helper reports
-	// within a lease or two, and the operator should not have to ask again.
+	// is open, at most refreshesMax times, inside the broker's FindWindow
+	// so a re-read never starts a new one: the helper reports within a
+	// lease or two, and the operator should not have to ask again.
 	refreshEvery = 5 * time.Second
-	refreshesMax = 24
+	refreshesMax = 22
 	// discoverableWord is open's one option.
 	discoverableWord = "--discoverable"
 	// tailnetPort is the published port a tailnet device is tried on; the
