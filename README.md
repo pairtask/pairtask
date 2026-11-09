@@ -293,7 +293,9 @@ locally, without container isolation.
 
 ## Contributing
 
-[Report an issue](https://github.com/pairtask/pairtask/issues). Run checks with:
+[Report an issue](https://github.com/pairtask/pairtask/issues). Contributions
+are accepted under the [Contributor License Agreement](CLA.md);
+[CONTRIBUTING.md](CONTRIBUTING.md) has the steps. Run checks with:
 
 ```sh
 go test -race ./... -timeout=1800s
