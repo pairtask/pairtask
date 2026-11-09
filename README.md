@@ -1,4 +1,4 @@
-# pairtask — Connecting Agents
+# Pairtask. Connecting Agents
 
 <p align="center">
   <picture>
