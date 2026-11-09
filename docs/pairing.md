@@ -65,8 +65,9 @@ panel refreshes by itself for up to two minutes from opening. It says
 usually takes about 15 seconds, then `nothing heard yet` while the network
 stays quiet. On macOS the helper hears through the system Bonjour service,
 which needs Local Network access for the helper (System Settings › Privacy &
-Security › Local Network); without it there is no error, only silence.
-`pairtask discovery status` shows the last error, if any. Without the
+Security › Local Network). Denied access can appear as no results; check
+that permission if the list stays empty, and `pairtask discovery status`
+for the last error, if any. Without the
 helper, or on separate networks, type A's address by hand: its LAN or
 tailnet IP (the Mac's own, not the Colima VM's).
 

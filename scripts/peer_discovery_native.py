@@ -6,10 +6,12 @@ the same Browser cache the multicast path fills, so what the helper reports
 does not depend on the backend, and no multicast socket is opened for it.
 
 An instance or an address stays listed while any interface still reports
-it; the daemon's add and remove replies decide, bounded by LIFETIME should
-the daemon fall silent. One resolve per (interface, instance), stopped at
-its first reply; one address lookup per (interface, host), kept open for
-additions and removals."""
+it: the daemon's add and remove replies decide, and a daemon failure, a
+close or a lookup's own error drops what they fed. One resolve per
+(interface, instance), stopped at its first reply; one address lookup per
+(interface, host), kept open for additions and removals: while it is, a
+result holds until its removal reply (dns_sd.h: the TTL in the reply
+applies only once the query is cancelled), so no TTL expires anything here."""
 
 from collections import namedtuple
 import ctypes
@@ -26,7 +28,7 @@ FLAG_ADD = 0x2
 PROTOCOLS = 0x1 | 0x2        # kDNSServiceProtocol_IPv4 | kDNSServiceProtocol_IPv6
 AF_INET6_DARWIN = 30
 SOCKADDR_MAX = 28
-LIFETIME = 4500              # seconds an instance stays without the daemon's removal: the mDNS PTR TTL
+ACTIVE = float("inf")        # a record's lifetime in the cache while the daemon still tracks it
 ADDRESSES_MAX = 16           # values tracked per host
 ERRORS = {-65537: "unknown", -65538: "no such name", -65540: "bad parameter", -65545: "not initialized",
           -65550: "firewall", -65553: "refused", -65554: "no such record", -65563: "service not running",
@@ -234,7 +236,7 @@ class Feed:
         if self.browser.is_own(instance):
             return
         self.present.setdefault(instance, {}).setdefault(target.interface, None)
-        self.browser.service_record(instance, LIFETIME, self.clock(), None)
+        self.browser.service_record(instance, ACTIVE, self.clock(), None)
         key = (target.interface, instance)
         if key not in self.resolving and self.unresolved(key):
             self.start_resolve(key, target)
@@ -280,8 +282,8 @@ class Feed:
             return  # gone meanwhile
         interface, instance = key
         host, now = reply.target.decode("utf-8", "replace").rstrip("."), self.clock()
-        self.browser.service_record(instance, LIFETIME, now, (host, socket.ntohs(reply.port)))
-        self.browser.text_record(instance, strings_of(reply.txt, reply.length), LIFETIME, now)
+        self.browser.service_record(instance, ACTIVE, now, (host, socket.ntohs(reply.port)))
+        self.browser.text_record(instance, strings_of(reply.txt, reply.length), ACTIVE, now)
         self.present[instance][interface] = host
         if (interface, host) not in self.looking:
             self.start_lookup((interface, host), reply.target)
@@ -291,12 +293,13 @@ class Feed:
     def addressed(self, key, reply):
         if reply.code:
             self.stop_lookup(key)
+            self.drop_addresses(*key)
             self.trouble(reply.code)
             return
         value = unpack(reply.sockaddr)
         if value is not None:
             interface, host = key
-            expiry = self.clock() + reply.ttl if reply.flags & FLAG_ADD else None
+            expiry = self.clock() + ACTIVE if reply.flags & FLAG_ADD else None
             self.set_address(host, value, interface, expiry)
 
     def set_address(self, host, value, interface, expiry):
@@ -325,5 +328,9 @@ class Feed:
         if any(places.get(interface) == host for places in self.present.values()):
             return
         self.stop_lookup((interface, host))
+        self.drop_addresses(interface, host)
+
+    def drop_addresses(self, interface, host):
+        """What the interface's lookup of the host had fed."""
         for value in list(self.addresses.get(host, {})):
             self.set_address(host, value, interface, None)
