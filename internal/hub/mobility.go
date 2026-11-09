@@ -32,15 +32,18 @@ const candidateProbeBudget = 3 * time.Second
 const candidatesKey = "\x00candidates"
 
 // mobilityOps are served by operatorMobility: neither names a contact.
-var mobilityOps = map[string]bool{protocol.ContactOpDiscovery: true, protocol.ContactOpCandidates: true}
+var mobilityOps = map[string]bool{protocol.ContactOpDiscovery: true, protocol.ContactOpCandidates: true, protocol.ContactOpFind: true}
 
 // operatorMobility serves discovery and candidates.
 func (h *Hub) operatorMobility(ctx context.Context, req operatorRequest) protocol.Message {
 	if problem := h.loadIdentity(ctx); problem != "" {
 		return (&routingError{protocol.ErrInternal, "this workspace's identity is unavailable"}).frame(req.msg.MessageID)
 	}
-	if req.msg.ContactOp == protocol.ContactOpDiscovery {
+	switch req.msg.ContactOp {
+	case protocol.ContactOpDiscovery:
 		return h.discoveryLease(ctx, req.msg)
+	case protocol.ContactOpFind:
+		return h.operatorFind(ctx, req.msg)
 	}
 	return h.contactCandidates(ctx, req)
 }
@@ -93,19 +96,32 @@ func (h *Hub) failingRoute(contact string) bool {
 	return s.LastFailure != "" && !s.Live && !h.addresses.checking(contact)
 }
 
-// discoveryLease answers discovery: what the helper may do until when.
+// discoveryLease answers discovery: what the helper may do until when. The
+// request carries the helper's report, taken whole (#284); the lease is
+// short while an invitation is announced or the operator is finding.
 func (h *Hub) discoveryLease(ctx context.Context, msg protocol.Message) protocol.Message {
+	now := h.contactNow()
+	h.find.helperSeen(msg, now)
 	r, err := h.readMobility(ctx)
 	if err != nil {
 		return (&routingError{protocol.ErrInternal, "contacts unavailable"}).frame(msg.MessageID)
 	}
 	browse := len(r.failing) > 0 && h.canDial()
 	lease := protocol.ContactDiscovery{Advertise: r.listened, Browse: browse, Ports: []int{},
-		ExpiresAt: h.contactNow().Add(protocol.DiscoveryLease)}
+		Invitation: h.discoverableInvitation(), Find: h.find.wanted(now)}
 	if browse {
 		lease.Ports = failingPorts(r.failing)
 	}
+	lease.ExpiresAt = now.Add(leaseLength(lease))
 	return protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactOp: msg.ContactOp, ContactDiscovery: &lease}
+}
+
+// leaseLength: short while something the operator can cancel is going on.
+func leaseLength(lease protocol.ContactDiscovery) time.Duration {
+	if lease.Invitation != nil || lease.Find {
+		return protocol.DiscoveryShortLease
+	}
+	return protocol.DiscoveryLease
 }
 
 // failingPorts are the distinct ports failing contacts were last reached

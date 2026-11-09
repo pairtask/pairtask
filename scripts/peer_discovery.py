@@ -8,15 +8,17 @@ the contact's pinned identity, whether a workspace it knows is there.
 
 An advert says only that a pairtask listener is at an address and port: a
 random instance and host name, new for every process, TXT v=1 and nothing
-else. Every parse is bounded (peer_discovery_wire); a packet that is
-malformed or over a bound is dropped without an error.
+else. While the operator keeps an invitation discoverable (#284), the
+advert also carries the workspace's display name in TXT (name=, at most
+NAME_BYTES_MAX bytes of UTF-8), under a fresh random instance; never a
+code, a key or a contact. Every parse is bounded (peer_discovery_wire); a
+packet that is malformed or over a bound is dropped without an error.
 """
 
 from collections import OrderedDict, namedtuple
 import datetime
 import errno
 import ipaddress
-import json
 import os
 import re
 import secrets
@@ -35,75 +37,37 @@ if HERE not in sys.path:
 from peer_discovery_wire import (  # noqa: E402
     A, AAAA, ANY, PACKET_MAX, PTR, RECORD_MAX, SERVICE, SRV, TTL_MAX, TXT,
     Entry, Malformed, Message, Record, encode_name, encode_record, parse, query, response)
+from peer_discovery_net import (  # noqa: E402
+    CANDIDATES_MAX, INVENTORY_MAX, address, eligible, endpoint, is_ipv6, is_port, merge, unique)
+from peer_discovery_tailnet import (  # noqa: E402,F401  re-exported for the helper and its tests
+    DEVICES_MAX, TAILSCALE_TIMEOUT, dns_name, hostname, online, peer_ips, tailnet_candidates, tailnet_devices,
+    tailnet_hosts, tailnet_inventory, tailnet_peers, tailnet_self, tailscale_status)
 
 __all__ = ["Advert", "Browser", "Session", "lease_from", "merge", "parse", "tailnet_candidates",
            "tailscale_status", "Entry", "Malformed", "Message", "Record"]
 
 GROUP, PORT = "224.0.0.251", 5353
 CACHE_MAX = 32         # service bundles a browser keeps
-CANDIDATES_MAX = 8     # endpoints in one submission
 LAN_SLOTS = 4          # of them kept for endpoints found on the LAN, which are pairtask listeners
-INVENTORY_MAX = 256    # tailnet endpoints remembered between submissions
 HOST_ADDRESSES_MAX = 8
+INVITATIONS_MAX = 16   # named invitations a browser lists
+NAME_BYTES_MAX = 63    # bytes of UTF-8 in an advertised name: one TXT string
 ADVERT_ADDRESSES_MAX = 16
 LEASE_MAX = 90         # seconds a lease holds at most, by this helper's own clock
 POLL_SECONDS = 5       # interface addresses are polled: a change re-announces within 10 s
 QUERY_GAP_MAX = 30
-TAILSCALE_TIMEOUT = 5
 ADDRESS_KINDS = (A, AAAA)
 ASKED_KINDS = (PTR, SRV, TXT, A, AAAA, ANY)
 
-Lease = namedtuple("Lease", "advertise browse ports expires_at deadline")
+# invitation: the display name to announce while the operator keeps an
+# invitation discoverable, or None, and invitation_id its ID, so that a
+# replacement under the same name is a fresh announcement; find: browse for
+# others' invitations and list tailnet devices for the operator's picker (#284).
+Lease = namedtuple("Lease", "advertise browse ports expires_at deadline invitation find invitation_id",
+                   defaults=(None, False, None))
 
 
-# --- Addresses and endpoints -----------------------------------------------
-
-def address(value):
-    """The IP in value, without an IPv6 zone, or None."""
-    try:
-        return ipaddress.ip_address(str(value).split("%", 1)[0])
-    except ValueError:
-        return None
-
-
-def special(ip):
-    """Loopback, link-local, multicast, unspecified, reserved or IPv4-mapped."""
-    return any((ip.is_loopback, ip.is_link_local, ip.is_multicast, ip.is_unspecified, ip.is_reserved,
-                getattr(ip, "ipv4_mapped", None) is not None))
-
-
-def eligible(value):
-    """A unicast address another machine could dial."""
-    ip = address(value)
-    return ip is not None and not special(ip)
-
-
-def is_ipv6(ip):
-    return ip is not None and ip.version == 6
-
-
-def endpoint(host, port):
-    """HOST:PORT, with an IPv6 literal in brackets."""
-    ip = address(host)
-    return ("[%s]:%d" if is_ipv6(ip) else "%s:%d") % (ip or host, port)
-
-
-def is_port(value):
-    return type(value) is int and 0 < value < 65536
-
-
-def unique(values, limit=CANDIDATES_MAX):
-    result = []
-    for value in values:
-        if value not in result:
-            result.append(value)
-    return result[:limit]
-
-
-def merge(*groups):
-    """One submission: the groups in order (tailnet names first), de-duplicated, bounded."""
-    return unique(value for group in groups for value in group)
-
+# --- Submissions -------------------------------------------------------------
 
 class Turn:
     """A window that moves on over a list each time it is taken, so every
@@ -163,8 +127,47 @@ def is_service_location(record):
     return record.kind == SRV and locates_instance(record)
 
 
+def is_service_text(record):
+    """An instance's TXT strings."""
+    return record.kind == TXT and in_service(record.name) and record.value is not None
+
+
 def is_address(record):
     return record.kind in ADDRESS_KINDS and record.value is not None
+
+
+def display_name(raw):
+    """The name in a name= TXT string, or None: UTF-8 of at most
+    NAME_BYTES_MAX bytes, printable, not blank."""
+    text = decoded_name(raw)
+    return text if text is not None and plain_text(text) else None
+
+
+def decoded_name(raw):
+    """The bytes as text when they are bounded, valid UTF-8; else None."""
+    if not isinstance(raw, (bytes, bytearray)) or not 0 < len(raw) <= NAME_BYTES_MAX:
+        return None
+    try:
+        return bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def plain_text(text):
+    """Not blank, every character printable, and no whitespace but the space."""
+    return bool(text.strip()) and all(plain_char(ch) for ch in text)
+
+
+def plain_char(ch):
+    return ch.isprintable() and (ch == " " or not ch.isspace())
+
+
+def text_name(strings):
+    """The display name among TXT strings, or None."""
+    for value in strings:
+        if value.startswith(b"name="):
+            return display_name(value[5:])
+    return None
 
 
 def is_answer(message):
@@ -172,14 +175,18 @@ def is_answer(message):
 
 
 class Service:
-    """One instance's bundle: its PTR and SRV, by expiry."""
+    """One instance's bundle: its PTR and SRV, by expiry, and the display
+    name its TXT carries while that holds."""
 
     def __init__(self):
-        self.ptr = self.srv = 0.0
-        self.target, self.port = None, 0
+        self.ptr = self.srv = self.txt = self.seen = 0.0
+        self.target, self.port, self.name = None, 0, None
 
     def alive(self, now):
         return self.ptr > now and self.srv > now
+
+    def named(self, now):
+        return self.alive(now) and self.name is not None and self.txt > now
 
     def stale(self, now):
         return self.ptr <= now and self.srv <= now
@@ -213,6 +220,8 @@ class Browser:
             self.service_record(record.value, record.ttl, now, None)
         elif is_service_location(record):
             self.service_record(record.name, record.ttl, now, record.value)
+        elif is_service_text(record):
+            self.text_record(record.name, record.value, record.ttl, now)
 
     def address_entries(self, records, now):
         """Addresses only for the host names a known SRV points at."""
@@ -231,6 +240,19 @@ class Browser:
         else:
             service.target, service.port = srv
             service.srv = now + ttl
+        self.keep(instance, service, now)
+
+    def text_record(self, instance, strings, ttl, now):
+        """An instance's name, for as long as its TXT lives; a goodbye drops the instance."""
+        if ttl == 0:
+            self.services.pop(instance, None)
+            return
+        service = self.services.pop(instance, None) or Service()
+        service.name, service.txt = text_name(strings), now + ttl
+        self.keep(instance, service, now)
+
+    def keep(self, instance, service, now):
+        service.seen = now
         self.services[instance] = service  # most recently seen last
         while len(self.services) > self.max_entries:
             self.services.popitem(last=False)
@@ -270,6 +292,19 @@ class Browser:
         own = self.own.endpoints() if self.own else set()
         return unique(value for value in found if value not in own)
 
+    def invitations(self, now):
+        """The named instances still alive, most recently seen first, at
+        most INVITATIONS_MAX: name, host, port and when last seen. Nothing
+        here is verified; the pairing exchange decides who is there."""
+        found = []
+        for instance, service in reversed(self.services.items()):
+            if not service.named(now) or self.is_own(instance):
+                continue
+            for value in self.endpoints_of(service, now)[:1]:
+                host, _, port = value.rpartition(":")
+                found.append({"name": service.name, "host": host.strip("[]"), "port": int(port), "seen_at": service.seen})
+        return found[:INVITATIONS_MAX]
+
     def listed(self, instance, service, now):
         return service.alive(now) and not self.is_own(instance)
 
@@ -291,20 +326,34 @@ def address_entry(host, value):
 
 class Advert:
     """This process's presence: a random 16-hex instance and .local host,
-    the published port, TXT v=1 and the eligible addresses; no names, keys
-    or contacts."""
+    the published port, TXT v=1 and the eligible addresses; no keys or
+    contacts, and a display name only for a discoverable invitation."""
 
-    def __init__(self, port):
-        self.instance = secrets.token_hex(8) + "." + SERVICE
-        self.host = secrets.token_hex(8) + ".local"
+    def __init__(self, port, invitation_name=None):
         self.port = port
         self.addresses = []
+        self.invitation_name = None
+        self.rotate(invitation_name)
+
+    def rotate(self, invitation_name=None):
+        """A fresh instance and host, named for an invitation or not; an
+        invalid name is dropped, never truncated."""
+        self.instance = secrets.token_hex(8) + "." + SERVICE
+        self.host = secrets.token_hex(8) + ".local"
+        raw = invitation_name.encode("utf-8") if isinstance(invitation_name, str) else None
+        self.invitation_name = display_name(raw) if raw is not None else None
+
+    def text(self):
+        strings = [b"v=1"]
+        if self.invitation_name is not None:
+            strings.append(b"name=" + self.invitation_name.encode("utf-8"))
+        return b"".join(bytes([len(value)]) + value for value in strings)
 
     def entries(self, addresses):
         location = struct.pack("!3H", 0, 0, self.port) + encode_name(self.host)
         return [Entry(SERVICE, PTR, encode_name(self.instance), flush=False),
                 Entry(self.instance, SRV, location),
-                Entry(self.instance, TXT, b"\x03v=1")] + [address_entry(self.host, v) for v in addresses]
+                Entry(self.instance, TXT, self.text())] + [address_entry(self.host, v) for v in addresses]
 
     def packet(self, ttl, addresses=None):
         """The advert, or its goodbye at ttl 0, with these addresses (default all)."""
@@ -602,6 +651,7 @@ class Session:
         self.channel = Channel(group, port)
         self.refresh_addresses()
         self.advertising, self.browser, self.silent = False, None, False
+        self.adverts, self.named_since, self.named_key = 0, 0, None  # advert datagrams sent, the count and key when the name was last set
         self.announce_at, self.query_at, self.query_gap = [], 0.0, 1.0
         self.poll_at, self.answered = clock() + POLL_SECONDS, float("-inf")
 
@@ -613,9 +663,27 @@ class Session:
             every = [value for values in self.interfaces.values() for value in values]
             self.advert.addresses = unique(every, ADVERT_ADDRESSES_MAX)
 
-    def update(self, advertise, browse):
+    def update(self, advertise, browse, name=None, key=None):
+        self.set_name(name, key)
         self.set_advertising(bool(advertise) and self.advert is not None)
         self.set_browsing(browse)
+
+    def set_name(self, name, key=None):
+        """Announce under a fresh instance when the invitation changes, by
+        its key even under the same name: a goodbye for the old one while
+        advertising, then the new one."""
+        if self.advert is None or (name, key) == (self.advert.invitation_name, self.named_key):
+            return
+        if self.advertising:
+            self.send_advert(0)
+        self.advert.rotate(name)
+        self.named_key, self.named_since = key, self.adverts
+        if self.advertising:
+            self.schedule_announcements(self.clock())
+
+    def sent_named(self):
+        """Whether an advert left since the current name was set; queries don't count."""
+        return self.adverts > self.named_since
 
     def set_advertising(self, advertise):
         if advertise and not self.advertising:
@@ -718,7 +786,9 @@ class Session:
             return
         for values in self.interfaces.values():
             for interface in ipv4(values):
+                before = self.channel.sent
                 self.channel.send(self.advert.packet(ttl, values), interface)
+                self.adverts += self.channel.sent - before
 
     def candidates(self):
         return self.browser.candidates(self.clock()) if self.browser is not None else []
@@ -730,91 +800,6 @@ class Session:
             self.advertising = False
         self.browser = None
         self.channel.close()
-
-
-# --- Tailnet -----------------------------------------------------------------
-
-DNS_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\Z")
-
-
-def dns_name(value):
-    """A peer's configured MagicDNS name without its trailing dot, or None."""
-    if not isinstance(value, str):
-        return None
-    name = value.rstrip(".").lower()
-    return name if hostname(name) else None
-
-
-def hostname(name):
-    """At most 253 bytes of at least two DNS labels, and not an IP literal."""
-    labels = name.split(".")
-    if any((len(name) > 253, len(labels) < 2, address(name) is not None)):
-        return False
-    return all(DNS_LABEL.match(label) for label in labels)
-
-
-def online(peer):
-    """A peer entry not marked offline; a missing Online counts as online."""
-    return isinstance(peer, dict) and peer.get("Online", True) is not False
-
-
-def tailnet_peers(status):
-    """The online peers of `tailscale status --json`, in key order."""
-    peers = status.get("Peer") if isinstance(status, dict) else None
-    if not isinstance(peers, dict):
-        return []
-    return [peer for _, peer in sorted(peers.items()) if online(peer)]
-
-
-def tailnet_self(status):
-    own = status.get("Self")
-    return dns_name(own.get("DNSName")) if isinstance(own, dict) else None
-
-
-def peer_ips(peer):
-    listed = peer.get("TailscaleIPs")
-    return [str(address(v)) for v in (listed if isinstance(listed, list) else []) if eligible(v)]
-
-
-def tailnet_candidates(status, ports):
-    """Endpoints from `tailscale status --json`: each online peer's DNSName,
-    then its TailscaleIPs, crossed with the lease's ports, at most
-    CANDIDATES_MAX. Self is never a peer; display names are never used."""
-    return tailnet_inventory(status, ports)[:CANDIDATES_MAX]
-
-
-def tailnet_inventory(status, ports):
-    """Every endpoint tailnet_candidates would offer, not only the first
-    CANDIDATES_MAX, bounded by INVENTORY_MAX."""
-    peers = tailnet_peers(status)
-    if not peers:
-        return []
-    usable = [port for port in ports if is_port(port)]
-    return unique((endpoint(host, port) for host in tailnet_hosts(peers, tailnet_self(status)) for port in usable), INVENTORY_MAX)
-
-
-def tailnet_hosts(peers, own):
-    """Every peer's DNSName, then every peer's TailscaleIPs, de-duplicated;
-    a peer listed under this machine's own name is skipped."""
-    names, ips = [], []
-    for peer in peers:
-        name = dns_name(peer.get("DNSName"))
-        if name is not None and name == own:
-            continue
-        names += [name] if name else []
-        ips += peer_ips(peer)
-    return unique(names + ips, 10 ** 4)
-
-
-def tailscale_status(command):
-    """The parsed `tailscale status --json`, or None; run as given, no shell."""
-    try:
-        result = subprocess.run([command, "status", "--json"], capture_output=True, text=True,
-                                timeout=TAILSCALE_TIMEOUT, check=False)
-        data = json.loads(result.stdout) if result.returncode == 0 else None
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 # --- Lease -----------------------------------------------------------------
@@ -856,5 +841,24 @@ def lease_from(answer, asked_at, now, wall):
     if expiry is None:
         return None
     deadline = min(now + (expiry - wall), asked_at + LEASE_MAX)
+    name, invitation_id = lease_invitation(data)
     return Lease(data.get("advertise") is True, data.get("browse") is True, lease_ports(data),
-                 data.get("expires_at"), deadline)
+                 data.get("expires_at"), deadline, name, data.get("find") is True, invitation_id)
+
+
+def lease_invitation(data):
+    """(name, id) of the invitation a lease asks to announce; (None, None)
+    for an absent or invalid one. The ID stays on this private channel."""
+    invitation = data.get("invitation")
+    if not isinstance(invitation, dict):
+        return None, None
+    name, invitation_id = invitation.get("name"), invitation.get("id")
+    if not isinstance(name, str) or not invitation_key(invitation_id):
+        return None, None
+    name = display_name(name.encode("utf-8"))
+    return (name, invitation_id) if name is not None else (None, None)
+
+
+def invitation_key(value):
+    """An invitation ID as the broker spells it: text of 1 to 128 bytes."""
+    return isinstance(value, str) and 0 < len(value) <= 128

@@ -27,7 +27,7 @@ func TestPairUXAcceptanceVerbsAndPendingRequestRows(t *testing.T) {
 		{IdentityKey: "sha256:" + strings.Repeat("c", 64), Name: "already accepted", State: "accepted"},
 	}, false)
 	commandCompleteLine(h, "pair ")
-	commandCompleteItems(t, h, []string{"open", "status", "cancel", "accept", "reject", "redeem", "settle"})
+	commandCompleteItems(t, h, []string{"open", "find", "status", "cancel", "accept", "reject", "redeem", "settle"})
 	h.input(chatKey(tea.KeyEscape, 0))
 	h.input(chatKey(tea.KeyEscape, 0))
 	commandCompleteLine(h, "pair accept ")

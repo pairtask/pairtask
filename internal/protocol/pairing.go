@@ -47,6 +47,8 @@ const (
 	CapabilityPairingRedeem = "pairing_redeem"
 	// CapabilityPairingContacts: the broker settles joins and reports contacts.
 	CapabilityPairingContacts = "pairing_contacts"
+	// CapabilityPairingDiscoverable: open takes pairing_discoverable (#284).
+	CapabilityPairingDiscoverable = "pairing_discoverable"
 	// CapabilityPairingContactSummary: each listed contact carries its sync
 	// state and the review requests waiting for this side.
 	CapabilityPairingContactSummary = "pairing_contact_summary"
@@ -192,6 +194,11 @@ type InvitationView struct {
 	Consumed     bool      `json:"consumed"`
 	Expired      bool      `json:"expired"`
 	Code         string    `json:"code,omitempty"`
+	// Discoverable: announced by PublicName on the local network while open
+	// (#284); AnnounceState is what the helper reported (Announce* values).
+	Discoverable  bool   `json:"discoverable,omitempty"`
+	PublicName    string `json:"public_name,omitempty"`
+	AnnounceState string `json:"announce_state,omitempty"`
 }
 
 // PairingRequestView is one pairing request. Until accepted it is not a

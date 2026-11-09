@@ -68,6 +68,7 @@ type Hub struct {
 	pair         pairingWiring           // redemption and the inbound endpoint
 	msgs         messageWiring           // message sessions with contacts (#210)
 	addresses    addressChecks           // /pair address probes running now
+	find         findState               // the discovery helper's latest report (#284); memory only
 	live         liveWiring              // their live links (#222)
 	reviewClock  func() time.Time        // review lifecycle times (#201); nil is time.Now
 }

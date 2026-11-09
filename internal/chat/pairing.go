@@ -24,7 +24,7 @@ import (
 const (
 	kindPairing  = "pairing"
 	panelPairing = "pairing"
-	pairUsage    = "usage: /pair [open | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|* | pause | resume | unpair [NAME|KEY] | invite --repair NAME | redeem --repair NAME CODE@HOST:PORT | consent [ID | contact:NAME | on NAME | off NAME | reset NAME [AGENT [OPERATION]]]]"
+	pairUsage    = "usage: /pair [open [--discoverable] | find | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|* | pause | resume | unpair [NAME|KEY] | invite --repair NAME | redeem --repair NAME CODE@HOST:PORT | consent [ID | contact:NAME | on NAME | off NAME | reset NAME [AGENT [OPERATION]]]]"
 )
 
 // pairingView is the last pairing snapshot, its code removed.
@@ -43,7 +43,7 @@ type pairingView struct {
 
 // pairVerbArgs is how many words each /pair verb takes, itself included.
 var pairVerbArgs = map[string][]int{
-	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1}, protocol.PairingOpStatus: {1, 2},
+	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1, 2}, protocol.PairingOpStatus: {1, 2}, pairFind: {1},
 	protocol.PairingOpCancel: {1, 2}, protocol.PairingOpAccept: {2}, protocol.PairingOpReject: {2},
 	protocol.PairingOpRedeem: {3, 4}, protocol.PairingOpSettle: {1, 2}, pairAddress: {2},
 	pairPause: {1}, pairResume: {1}, pairConsent: {1, 2, 3, 4, 5},
@@ -115,7 +115,9 @@ var pairingStatus = map[string]string{
 
 // pairCommands are the /pair words with their own command.
 var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
+	protocol.PairingOpOpen:   (*Model).openCommand,
 	protocol.PairingOpRedeem: (*Model).redeemCommand,
+	pairFind:                 (*Model).pairFindCommand,
 	pairShare:                (*Model).shareCommand,
 	pairName:                 (*Model).nameCommand,
 	pairAddress:              (*Model).addressCommand,
@@ -298,7 +300,7 @@ func (m *Model) pairingRows() []string {
 	rows = append(rows, m.invitationRows()...)
 	rows = append(rows, m.selfRow())
 	rows = append(rows, m.settledRows()...)
-	return append(rows, "", mutedStyle.Render("  /pair open · /pair cancel · /pair accept KEY · /pair reject KEY · /pair settle · /pair name NAME in a ⇄ tab"))
+	return append(rows, "", mutedStyle.Render("  /pair open [--discoverable] · /pair find · /pair cancel · /pair accept KEY · /pair reject KEY · /pair settle · /pair name NAME in a ⇄ tab"))
 }
 
 func (m *Model) invitationRows() []string {
@@ -307,7 +309,7 @@ func (m *Model) invitationRows() []string {
 		return []string{"  no open invitation; /pair open makes one"}
 	}
 	inv := s.Invitation
-	rows := []string{fmt.Sprintf("  invitation %s: %s · expires %s", safe(inv.ID), inv.Summary(), when(inv.ExpiresAt))}
+	rows := []string{fmt.Sprintf("  invitation %s: %s · expires %s", safe(inv.ID), inv.Summary(), when(inv.ExpiresAt)) + invitationNote(inv)}
 	if m.panel.code != "" {
 		return append(rows, "  code "+titleStyle.Render(safe(m.panel.code))+"  one-time; never send it in chat")
 	}
@@ -327,7 +329,16 @@ func (m *Model) requestRow(r protocol.PairingRequestView) []string {
 
 // redeemResult reports a recorded redemption; /pair shows its progress.
 func (m *Model) redeemResult(j protocol.PairingJoinView) {
-	m.status = fmt.Sprintf("redemption %s at %s: %s; /pair status shows its progress", safe(j.OperationID), safe(j.Destination), safe(j.State))
+	m.status = fmt.Sprintf("redemption %s at %s: %s%s; /pair status shows its progress", safe(j.OperationID), safe(j.Destination), safe(j.State), peerNote(j))
+}
+
+// peerNote names the key the other side presented, shortened, once the
+// exchange reached it: what their operator compares before accepting.
+func peerNote(j protocol.PairingJoinView) string {
+	if j.Peer == "" {
+		return ""
+	}
+	return " · their key " + safe(protocol.ShortKey(j.Peer))
 }
 
 // pairingRefused reports a refusal, unless a redemption was just reported.

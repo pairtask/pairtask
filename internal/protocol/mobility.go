@@ -3,7 +3,12 @@ package protocol
 import (
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/pairtask/pairtask/internal/peer"
 )
@@ -33,9 +38,80 @@ const (
 	// lease's port hints.
 	MaxCandidates  = 8
 	DiscoveryPorts = 8
-	// DiscoveryLease is how long a lease holds at most.
-	DiscoveryLease = 90 * time.Second
+	// DiscoveryLease is how long a lease holds at most; DiscoveryShortLease
+	// while an invitation is announced or the operator is finding, so the
+	// helper comes back within seconds and a cancel is off the air quickly.
+	DiscoveryLease      = 90 * time.Second
+	DiscoveryShortLease = 20 * time.Second
+	// DiscoveryHelperStale: a helper that asked for no lease this long is
+	// off, or not installed, for every decision that needs it.
+	DiscoveryHelperStale = 90 * time.Second
 )
+
+// Finding colleagues (#284): an invitation the operator made discoverable is
+// announced by name on the local network while it is open; /pair find lists
+// the named invitations the helper hears and the online tailnet devices.
+// Nothing listed is verified: the pairing exchange decides who is there.
+const (
+	// ContactOpFind reads the helper's latest snapshot, under message_id.
+	ContactOpFind = "find"
+	// CapabilityContactFind: the broker serves find and takes the helper's
+	// report with discovery.
+	CapabilityContactFind = "contact_find"
+	// MaxFound and MaxDevices bound a report; NameBytesMax an announced
+	// name (one TXT string).
+	MaxFound     = 16
+	MaxDevices   = 32
+	NameBytesMax = 63
+)
+
+// Announcement states of a discoverable invitation, as the broker knows
+// them from the helper's reports; none says a peer heard anything.
+const (
+	AnnounceRequested  = "requested"   // no report since the invitation opened
+	AnnounceAnnouncing = "announcing"  // the helper reported an advert left within DiscoveryHelperStale
+	AnnounceFailed     = "failed"      // the helper reported it could not send
+	AnnounceHelperLost = "helper_lost" // no lease asked for DiscoveryHelperStale
+)
+
+// DiscoveryInvitation is what a lease asks the helper to announce.
+type DiscoveryInvitation struct {
+	ID        string    `json:"id"` // the invitation's ID, so a replacement with the same name is a new announcement; never announced
+	Name      string    `json:"name"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// FoundInvitation is a named invitation the helper heard on the local
+// network: an untrusted announcement, not an identity.
+type FoundInvitation struct {
+	Name   string    `json:"name"`
+	Host   string    `json:"host"`
+	Port   int       `json:"port"`
+	SeenAt time.Time `json:"seen_at"`
+}
+
+// TailnetDevice is an online tailnet node: a device, not a listener.
+type TailnetDevice struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
+
+// Announcing is the helper's word on the invitation it was asked to
+// announce: whether an advert datagram left this host, and the failure if not.
+type Announcing struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Sent  bool   `json:"sent"`
+	Error string `json:"error,omitempty"`
+}
+
+// ContactFind is find's answer: when the helper last asked for a lease
+// (nil: never since this broker started) and its latest snapshot.
+type ContactFind struct {
+	HelperSeenAt *time.Time        `json:"helper_seen_at"`
+	Invitations  []FoundInvitation `json:"invitations"`
+	Devices      []TailnetDevice   `json:"devices"`
+}
 
 // Candidate outcomes.
 const (
@@ -49,12 +125,97 @@ const (
 // ContactDiscovery is a lease. Advertise: a contact this side doesn't dial
 // may be looking for it. Browse: a contact this side dials is failing.
 // Ports are where those failing contacts were last reached, so a name or
-// overlay address can be tried on the right port; nothing else is said.
+// overlay address can be tried on the right port. Invitation: announce
+// this name while it is set. Find: the operator is looking for colleagues.
 type ContactDiscovery struct {
-	Advertise bool      `json:"advertise"`
-	Browse    bool      `json:"browse"`
-	Ports     []int     `json:"ports"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Advertise  bool                 `json:"advertise"`
+	Browse     bool                 `json:"browse"`
+	Ports      []int                `json:"ports"`
+	ExpiresAt  time.Time            `json:"expires_at"`
+	Invitation *DiscoveryInvitation `json:"invitation,omitempty"`
+	Find       bool                 `json:"find,omitempty"`
+}
+
+// validContactReport bounds the helper's report on discovery: at most
+// MaxFound invitations and MaxDevices devices, each name within
+// NameBytesMax bytes of valid UTF-8 without control characters, each
+// found host and port a destination the broker could dial.
+func validContactReport(msg Message, allowed contactFieldSet) error {
+	if !allowed.report {
+		return nil
+	}
+	if len(msg.ContactFound) > MaxFound || len(msg.ContactDevices) > MaxDevices {
+		return fmt.Errorf("contact_found takes at most %d invitations and contact_devices at most %d devices", MaxFound, MaxDevices)
+	}
+	return errors.Join(validFound(msg.ContactFound), validDevices(msg.ContactDevices), validAnnouncing(msg.ContactAnnouncing))
+}
+
+func validFound(found []FoundInvitation) error {
+	for _, f := range found {
+		if !ValidDisplayName(f.Name) || peer.CheckDestination(net.JoinHostPort(f.Host, strconv.Itoa(f.Port))) != nil {
+			return errors.New("contact_found entries have a display name, a host and a port from 1 to 65535")
+		}
+	}
+	return nil
+}
+
+func validDevices(devices []TailnetDevice) error {
+	for _, d := range devices {
+		if !d.valid() {
+			return errors.New("contact_devices entries have a name or an address, each printable and bounded")
+		}
+	}
+	return nil
+}
+
+// valid: a name (DNS-sized) or an address, both printable.
+func (d TailnetDevice) valid() bool {
+	if d.Name == "" && d.Address == "" {
+		return false
+	}
+	return len(d.Name) <= 253 && len(d.Address) <= 64 && printable(d.Name) && printable(d.Address)
+}
+
+func validAnnouncing(a *Announcing) error {
+	if a == nil {
+		return nil
+	}
+	if !ValidDisplayName(a.Name) || len(a.ID) > 128 {
+		return errors.New("contact_announcing has an invitation ID of at most 128 bytes and a display name")
+	}
+	if len(a.Error) > 256 || !printable(a.Error) {
+		return errors.New("contact_announcing's error is printable text of at most 256 bytes")
+	}
+	return nil
+}
+
+// ValidDisplayName: at most NameBytesMax bytes of valid UTF-8, printable
+// with no whitespace but the space, not blank; the same rule the host
+// helper applies, so a name the broker accepts is one it announces.
+func ValidDisplayName(name string) bool {
+	return nameSized(name) && strings.TrimSpace(name) != "" && printable(name)
+}
+
+// nameSized: 1 to NameBytesMax bytes of valid UTF-8.
+func nameSized(name string) bool {
+	return name != "" && len(name) <= NameBytesMax && utf8.ValidString(name)
+}
+
+// printable: every rune prints, and the only whitespace is the space.
+func printable(text string) bool {
+	for _, r := range text {
+		if !plainRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func plainRune(r rune) bool {
+	if r == ' ' {
+		return true
+	}
+	return unicode.IsPrint(r) && !unicode.IsSpace(r)
 }
 
 // CandidateResult is what became of one endpoint; Contact is set only

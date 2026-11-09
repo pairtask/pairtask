@@ -215,6 +215,7 @@ var panelBuilders = map[string]func(*Model) []string{
 	panelClaims:  (*Model).claimRows,
 	panelRooms:   (*Model).roomRows,
 	panelPairing: (*Model).pairingRows,
+	panelFind:    (*Model).discoveryRows,
 	panelUnpair:  (*Model).unpairRows,
 	panelReviews: (*Model).reviewRows,
 	panelConsent: (*Model).consentRows,

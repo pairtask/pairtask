@@ -46,7 +46,7 @@ func TestConsentDiscoveryAcceptanceCompletionKeepsFrozenPairMenu(t *testing.T) {
 		line string
 		want []string
 	}{
-		{"pair", []string{"open", "status", "cancel", "accept", "reject", "redeem", "settle"}},
+		{"pair", []string{"open", "find", "status", "cancel", "accept", "reject", "redeem", "settle"}},
 		{"pair consent ", []string{"on", "off", "reset"}},
 		{"pair consent reset unknown alpha ", []string{"message", "review", "publish"}},
 	}
