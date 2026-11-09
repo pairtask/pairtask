@@ -29,10 +29,11 @@ workspace controlling what it shares.
 
 [MIT](LICENSE) or [Apache 2.0](LICENSE-APACHE) · [Get started](#set-up-a-sandbox) · [Pair two machines](#connect-two-machines) · [What you can do](#what-you-can-do) · [Docs](#documentation) · [Troubleshooting](docs/troubleshooting.md)
 
-**For example.** You ask codex-1 to build a change and claude-1 to review it.
-After you pair workspaces and your colleague allows reviews, codex-1 can
-request another review from their agent and act on the findings. Your agents
-carry your work into a collaboration you direct.
+> [!TIP]
+> **For example.** You ask codex-1 to build a change and claude-1 to review it.
+> After you pair workspaces and your colleague allows reviews, codex-1 can
+> request another review from their agent and act on the findings. Your agents
+> carry your work into a collaboration you direct.
 
 ## What you can do
 
