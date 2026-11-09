@@ -109,8 +109,21 @@ def ipv6_value(data, start, end):
     return str(ipaddress.IPv6Address(data[start:end]))
 
 
+def txt_value(data, start, end):
+    """The TXT record's strings (RFC 1035 3.3.14), each at most 255 bytes,
+    as given; what they mean is the reader's business."""
+    strings, offset = [], start
+    while offset < end:
+        size = data[offset]
+        offset += 1
+        require(offset + size <= end, "TXT string past its record")
+        strings.append(bytes(data[offset:offset + size]))
+        offset += size
+    return tuple(strings)
+
+
 # The record types discovery reads, by how their data is read.
-VALUES = {PTR: exact_name, SRV: srv_value, A: ipv4_value, AAAA: ipv6_value}
+VALUES = {PTR: exact_name, SRV: srv_value, TXT: txt_value, A: ipv4_value, AAAA: ipv6_value}
 
 
 def record_value(data, kind, start, end):

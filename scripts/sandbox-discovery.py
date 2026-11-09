@@ -4,9 +4,13 @@
 `run` asks the broker for its lease, one-shot, then advertises this host's
 pairing port and browses the LAN and tailnet only as far as the lease
 allows, and hands what it found to the broker, which moves a contact only
-where that contact's pinned identity answers. It stops advertising and
-browsing when the lease ends, by its own clock. `status` shows the last
-lease, advert and outcomes; nothing in it is secret.
+where that contact's pinned identity answers. While the operator keeps an
+invitation discoverable, the lease names it and the advert carries that
+name; while the operator looks for colleagues, the helper reports the
+named invitations it hears and the online tailnet devices with each lease
+request. It stops advertising and browsing when the lease ends, by its own
+clock. `status` shows the last lease, advert, report and outcomes; nothing
+in it is secret.
 
 Operator operations are one-shot, never a session: `--socket PATH` speaks
 to a broker's socket directly (Linux direct, tests); otherwise each goes
@@ -84,10 +88,11 @@ class DirectOperator:
     def __init__(self, path):
         self.path = path
 
-    def call(self, op, candidates=None):
+    def call(self, op, candidates=None, report=None):
         request = {"type": "operator_contact", "contact_op": op, "message_id": "discovery-" + uuid.uuid4().hex}
         if candidates:
             request["contact_candidates"] = list(candidates)
+        request.update(report_fields(report))
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(CALL_TIMEOUT[op])
             connection.connect(self.path)
@@ -103,19 +108,27 @@ class IncusOperator:
         self.base = ["incus", "--project", project, "exec", remote.rstrip(":") + ":secured", "-T", "--",
                      "pairtask", "operator", "contact"]
 
-    def command(self, op, candidates=None):
+    def command(self, op, candidates=None, report=None):
         # The CLI's own default timeout (5s) would end a candidates call
         # while its probes still run, so it waits as long as this side does.
-        return self.base + [op] + list(candidates or []) + ["--json", "--socket", SECURED_OPERATOR,
-                                                            "--timeout", "%ds" % CALL_TIMEOUT[op]]
+        fields = report_fields(report)
+        extra = ["--report", json.dumps(fields, separators=(",", ":"))] if fields else []
+        return self.base + [op] + list(candidates or []) + extra + ["--json", "--socket", SECURED_OPERATOR,
+                                                                    "--timeout", "%ds" % CALL_TIMEOUT[op]]
 
-    def call(self, op, candidates=None):
-        result = subprocess.run(self.command(op, candidates), capture_output=True, text=True,
+    def call(self, op, candidates=None, report=None):
+        result = subprocess.run(self.command(op, candidates, report), capture_output=True, text=True,
                                 timeout=CALL_TIMEOUT[op] + 15, check=False)
         if result.returncode != 0:
             lines = result.stderr.strip().splitlines()
             raise OperatorError("operator %s: %s" % (op, lines[-1] if lines else "exit %d" % result.returncode))
         return answer_of(result.stdout, op)
+
+
+def report_fields(report):
+    """The helper's observations as request fields, only those with content."""
+    names = {"found": "contact_found", "devices": "contact_devices", "announcing": "contact_announcing"}
+    return {names[key]: value for key, value in (report or {}).items() if key in names and value}
 
 
 class Status:
@@ -188,16 +201,37 @@ class Discovery:
         self.lease, self.session, self.browse_since = None, None, None
         self.batches = engine.Batches()
 
-    def ask_lease(self):
+    def ask_lease(self, report=None):
+        """The lease, with this helper's report (built on the loop's thread);
+        the tailnet is read here, off the loop, when the lease asks for it."""
+        report = dict(report or {})
+        if self.lease is not None and self.lease.find and self.tailscale:
+            report["devices"] = engine.tailnet_devices(engine.tailscale_status(self.tailscale) or {})
+        self.status.update(report=report)
         asked = time.monotonic()
-        answer = self.operator.call("discovery")
+        answer = self.operator.call("discovery", report=report)
         return engine.lease_from(answer, asked, time.monotonic(), time.time())
+
+    def report(self):
+        """What the loop knows now: the invitations heard, and whether the
+        announcement the lease asked for has left this host."""
+        now, report = time.monotonic(), {}
+        if self.session is not None and self.session.browser is not None:
+            found = self.session.browser.invitations(now)
+            for entry in found:
+                entry["seen_at"] = stamp(time.time() - (now - entry["seen_at"]))
+            report["found"] = found
+        if self.lease is not None and self.lease.invitation is not None and self.advert is not None:
+            sent = self.session is not None and self.session.sent_named()
+            report["announcing"] = {"name": self.lease.invitation, "sent": sent, "error": self.status.data.get("error")}
+        return report
 
     def apply(self, lease):
         self.lease = lease
         shown = None
         if lease is not None:
             shown = {"advertise": lease.advertise, "browse": lease.browse, "ports": lease.ports,
+                     "invitation": lease.invitation, "find": lease.find,
                      "expires_at": lease.expires_at, "received_at": stamp(time.time())}
         self.status.update(lease=shown, error=None)
         self.reconcile(time.monotonic())
@@ -206,14 +240,16 @@ class Discovery:
         return self.lease is not None and now < self.lease.deadline
 
     def browsing(self, now):
-        """Whether the current lease asks to browse."""
+        """Whether the current lease asks to browse for moved contacts."""
         return self.active(now) and self.lease.browse
 
     def wanted(self, now):
-        """(advertise, browse) as the lease allows them now."""
+        """(advertise, browse) as the lease allows them now: a discoverable
+        invitation advertises, looking for colleagues browses."""
         if not self.active(now):
             return False, False
-        return self.lease.advertise and self.advert is not None, self.lease.browse
+        lease = self.lease
+        return (lease.advertise or lease.invitation is not None) and self.advert is not None, lease.browse or lease.find
 
     def expire(self, now):
         """Close the session the moment the lease ends."""
@@ -229,7 +265,7 @@ class Discovery:
         if self.session is None and not self.open():
             return
         self.track_browsing(browse, now)
-        self.session.update(advertise, browse)
+        self.session.update(advertise, browse, self.lease.invitation)
         self.show(advertise, browse)
 
     def track_browsing(self, browse, now):
@@ -265,7 +301,7 @@ class Discovery:
 
     def advert_status(self):
         return {"instance": self.advert.instance, "host": self.advert.host, "port": self.advert.port,
-                "addresses": list(self.advert.addresses)}
+                "addresses": list(self.advert.addresses), "name": self.advert.invitation_name}
 
     def lan(self):
         return self.session.candidates() if self.session is not None else []
@@ -305,7 +341,7 @@ def run_once(discovery):
     is off or expired, 1 when the broker could not be asked or advertising
     was due but no datagram left."""
     try:
-        lease = discovery.ask_lease()
+        lease = discovery.ask_lease(discovery.report())
     except (OperatorError, OSError, subprocess.SubprocessError) as error:
         log(str(error))
         discovery.status.update(lease=None, error=str(error))
@@ -367,7 +403,7 @@ class Loop:
         elif self.worker.busy():
             return
         elif now >= self.next_lease:
-            self.worker.start("lease", self.discovery.ask_lease)
+            self.worker.start("lease", lambda report=self.discovery.report(): self.discovery.ask_lease(report))
             self.next_lease = now + self.interval
         elif self.submission_due(now):
             self.start_submission(now)
@@ -539,6 +575,7 @@ def describe(data):
     """The status lines: lease, advert, browsing, last submission, last error."""
     lines = ["Discovery: updated %s" % data.get("updated_at", "never"), lease_line(data.get("lease")),
              advert_line(data.get("advertising")), "Browsing: " + yes(data.get("browsing"))]
+    lines += report_lines(data.get("report"))
     lines += submission_lines(data.get("submission"))
     if data.get("error"):
         lines.append("Last error: " + data["error"])
@@ -556,7 +593,24 @@ def lease_line(lease):
 def advert_line(advert):
     if not advert:
         return "Advertising: no"
-    return "Advertising: port %s on %s" % (advert.get("port"), ", ".join(advert.get("addresses") or []) or "no address")
+    named = " as %r" % advert["name"] if advert.get("name") else ""
+    return "Advertising: port %s%s on %s" % (advert.get("port"), named, ", ".join(advert.get("addresses") or []) or "no address")
+
+
+def report_lines(report):
+    """The last report to the broker: the announcement, invitations heard, tailnet devices."""
+    if not report:
+        return []
+    lines = []
+    announcing = report.get("announcing")
+    if isinstance(announcing, dict):
+        lines.append("Invitation %r: announced %s%s" % (announcing.get("name"), yes(announcing.get("sent")),
+                                                         " (%s)" % announcing["error"] if announcing.get("error") else ""))
+    found = [f for f in report.get("found") or [] if isinstance(f, dict)]
+    lines += ["Invitations heard: %d" % len(found)] + ["  %r at %s:%s, seen %s" % (f.get("name"), f.get("host"), f.get("port"), f.get("seen_at")) for f in found]
+    if report.get("devices") is not None:
+        lines.append("Tailnet devices: %d" % len(report["devices"]))
+    return lines
 
 
 def submission_lines(submission):
