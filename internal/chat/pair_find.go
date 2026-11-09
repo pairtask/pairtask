@@ -89,12 +89,23 @@ func (m *Model) discoveryResult(req pendingRequest, resp protocol.Message) tea.C
 	case !m.helperAlive(): // the panel keeps re-reading: a helper started now shows up
 		m.status = "discovery helper is off or not installed: pairtask pairing on --discovery on the host"
 	case len(m.discovery.endpoints) == 0:
-		m.status = "looking on this network and the tailnet; the helper reports within seconds"
+		m.status = scanStatus(m.discovery.snapshot.ScanState)
 	default:
 		m.status = "pick one to fill /pair redeem; then type the code you were given"
 		m.offerRedeemEndpoints()
 	}
 	return m.scheduleDiscoveryRefresh()
+}
+
+// scanStatus says where an empty find stands: before the helper's first
+// report for this find nothing has been searched yet, so nothing is "not
+// heard"; no promised time, the helper's idle poll is the one number we
+// own and the docs give it.
+func scanStatus(state string) string {
+	if state == protocol.ScanScanning {
+		return "searching on this network and the tailnet; nothing heard yet"
+	}
+	return "searching… the helper usually starts within ~15 s, then reports what it hears"
 }
 
 // scheduleDiscoveryRefresh re-reads the snapshot while the panel is open.
@@ -235,7 +246,7 @@ func (m *Model) discoveryRows() []string {
 	rows = append(rows, mutedStyle.Render("  helper reported "+when(*s.HelperSeenAt)+"; rows are announcements, not identities: the code and the key decide"), "",
 		titleStyle.Render("  Open invitations on this network"))
 	if len(s.Invitations) == 0 {
-		rows = append(rows, mutedStyle.Render("    none heard; your colleague runs /pair open --discoverable on the same network"))
+		rows = append(rows, mutedStyle.Render("    "+emptyInvitations(s.ScanState)))
 	}
 	for _, inv := range s.Invitations {
 		rows = append(rows, fmt.Sprintf("    %s  %s  seen %s", safe(inv.Name), safe(net.JoinHostPort(inv.Host, strconv.Itoa(inv.Port))), when(inv.SeenAt)))
@@ -248,6 +259,15 @@ func (m *Model) discoveryRows() []string {
 		rows = append(rows, "    "+strings.TrimSpace(safe(d.Name)+"  "+safe(d.Address)))
 	}
 	return append(rows, "", mutedStyle.Render("  pick a row below to fill /pair redeem HOST:PORT, then type the code; a tailnet row uses port 7445 unless you change it"))
+}
+
+// emptyInvitations is the LAN group's line when it has no rows: a search
+// not yet begun is not an empty result.
+func emptyInvitations(state string) string {
+	if state == protocol.ScanScanning {
+		return "nothing heard yet; your colleague runs /pair open --discoverable on the same network"
+	}
+	return "searching; your colleague runs /pair open --discoverable on the same network"
 }
 
 // invitationNote says how a discoverable invitation stands, for /pair status.

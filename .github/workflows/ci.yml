@@ -55,7 +55,7 @@ jobs:
         env:
           PAIRTASK_MAC_MDNS_PROOF: '1'
           PYTHONPATH: scripts/tests
-        run: python3 -m unittest -v test_discovery_native_diagnostics test_discovery_multicast_acceptance
+        run: python3 -m unittest -v test_discovery_native_diagnostics test_discovery_multicast_acceptance test_discovery_named_host_acceptance
 
   checks:
     runs-on: ubuntu-24.04

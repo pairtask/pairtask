@@ -63,8 +63,11 @@ ASKED_KINDS = (PTR, SRV, TXT, A, AAAA, ANY)
 # invitation discoverable, or None, and invitation_id its ID, so that a
 # replacement under the same name is a fresh announcement; find: browse for
 # others' invitations and list tailnet devices for the operator's picker (#284).
-Lease = namedtuple("Lease", "advertise browse ports expires_at deadline invitation find invitation_id",
-                   defaults=(None, False, None))
+# find_generation numbers the operator's find window on the broker; the helper
+# echoes it with its report once its browser is up for that lease, so the
+# broker knows which reports belong to the current window.
+Lease = namedtuple("Lease", "advertise browse ports expires_at deadline invitation find invitation_id find_generation",
+                   defaults=(None, False, None, 0))
 
 
 # --- Submissions -------------------------------------------------------------
@@ -843,7 +846,14 @@ def lease_from(answer, asked_at, now, wall):
     deadline = min(now + (expiry - wall), asked_at + LEASE_MAX)
     name, invitation_id = lease_invitation(data)
     return Lease(data.get("advertise") is True, data.get("browse") is True, lease_ports(data),
-                 data.get("expires_at"), deadline, name, data.get("find") is True, invitation_id)
+                 data.get("expires_at"), deadline, name, data.get("find") is True, invitation_id,
+                 find_generation(data))
+
+
+def find_generation(data):
+    """The broker's find window number, 0 when absent or malformed."""
+    value = data.get("find_generation")
+    return value if type(value) is int and value > 0 else 0
 
 
 def lease_invitation(data):

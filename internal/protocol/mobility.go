@@ -106,12 +106,24 @@ type Announcing struct {
 }
 
 // ContactFind is find's answer: when the helper last asked for a lease
-// (nil: never since this broker started) and its latest snapshot.
+// (nil: never since this broker started), its latest snapshot, and how far
+// the current find window got (Scan* values).
 type ContactFind struct {
 	HelperSeenAt *time.Time        `json:"helper_seen_at"`
+	ScanState    string            `json:"scan_state"`
 	Invitations  []FoundInvitation `json:"invitations"`
 	Devices      []TailnetDevice   `json:"devices"`
 }
+
+// Scan states of a find window. Only a report that echoes the window's
+// generation moves it past pending: the first lease request after a find
+// still carries what the helper knew before it.
+const (
+	ScanHelperOff = "helper_off" // no lease asked for DiscoveryHelperStale
+	ScanPending   = "pending"    // the helper hasn't reported for this window yet
+	ScanScanning  = "scanning"   // it has, and heard nothing
+	ScanListed    = "listed"     // it has, with rows
+)
 
 // Candidate outcomes.
 const (
@@ -134,6 +146,9 @@ type ContactDiscovery struct {
 	ExpiresAt  time.Time            `json:"expires_at"`
 	Invitation *DiscoveryInvitation `json:"invitation,omitempty"`
 	Find       bool                 `json:"find,omitempty"`
+	// FindGeneration numbers the operator's find window; the helper echoes
+	// it (contact_find_generation) once its browser is up for that lease.
+	FindGeneration int `json:"find_generation,omitempty"`
 }
 
 // validContactReport bounds the helper's report on discovery: at most
@@ -146,6 +161,9 @@ func validContactReport(msg Message, allowed contactFieldSet) error {
 	}
 	if len(msg.ContactFound) > MaxFound || len(msg.ContactDevices) > MaxDevices {
 		return fmt.Errorf("contact_found takes at most %d invitations and contact_devices at most %d devices", MaxFound, MaxDevices)
+	}
+	if msg.ContactFindGeneration < 0 {
+		return errors.New("contact_find_generation is a window number, 0 or more")
 	}
 	return errors.Join(validFound(msg.ContactFound), validDevices(msg.ContactDevices), validAnnouncing(msg.ContactAnnouncing))
 }

@@ -25,6 +25,7 @@ type discoveryReport struct {
 	Found      []protocol.FoundInvitation `json:"contact_found"`
 	Devices    []protocol.TailnetDevice   `json:"contact_devices"`
 	Announcing *protocol.Announcing       `json:"contact_announcing"`
+	Generation int                        `json:"contact_find_generation"`
 }
 
 // parseContactMobility reads discovery, with no arguments, or candidates,
@@ -70,6 +71,7 @@ func applyReport(req *protocol.Message, op, raw string) error {
 		return fmt.Errorf("--report: %w", err)
 	}
 	req.ContactFound, req.ContactDevices, req.ContactAnnouncing = r.Found, r.Devices, r.Announcing
+	req.ContactFindGeneration = r.Generation
 	return nil
 }
 
@@ -101,7 +103,7 @@ func writeFind(w io.Writer, f protocol.ContactFind) {
 	if f.HelperSeenAt == nil {
 		fmt.Fprintln(w, "helper: not seen since this broker started")
 	} else {
-		fmt.Fprintf(w, "helper: seen %s\n", f.HelperSeenAt.Local().Format("15:04:05"))
+		fmt.Fprintf(w, "helper: seen %s, scan %s\n", f.HelperSeenAt.Local().Format("15:04:05"), f.ScanState)
 	}
 	for _, inv := range f.Invitations {
 		fmt.Fprintf(w, "invitation %q at %s:%d, seen %s\n", inv.Name, inv.Host, inv.Port, inv.SeenAt.Local().Format("15:04:05"))
