@@ -126,9 +126,11 @@ class IncusOperator:
 
 
 def report_fields(report):
-    """The helper's observations as request fields, only those with content."""
+    """The helper's observations as request fields. Each request replaces
+    the broker's whole snapshot, so an empty list is sent as such: it is
+    how the last invitation heard, or device seen, disappears there."""
     names = {"found": "contact_found", "devices": "contact_devices", "announcing": "contact_announcing"}
-    return {names[key]: value for key, value in (report or {}).items() if key in names and value}
+    return {names[key]: value for key, value in (report or {}).items() if key in names and value is not None}
 
 
 class Status:

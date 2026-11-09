@@ -684,6 +684,7 @@ class Session:
         self.channel = Channel(group, port)
         self.refresh_addresses()
         self.advertising, self.browser, self.silent = False, None, False
+        self.adverts, self.named_since = 0, 0  # advert datagrams sent, and the count when the name was last set
         self.announce_at, self.query_at, self.query_gap = [], 0.0, 1.0
         self.poll_at, self.answered = clock() + POLL_SECONDS, float("-inf")
 
@@ -708,13 +709,13 @@ class Session:
         if self.advertising:
             self.send_advert(0)
         self.advert.rotate(name)
-        self.named_since = self.channel.sent
+        self.named_since = self.adverts
         if self.advertising:
             self.schedule_announcements(self.clock())
 
     def sent_named(self):
-        """Whether a datagram left since the current name was set."""
-        return self.channel.sent > getattr(self, "named_since", 0)
+        """Whether an advert left since the current name was set; queries don't count."""
+        return self.adverts > self.named_since
 
     def set_advertising(self, advertise):
         if advertise and not self.advertising:
@@ -817,7 +818,9 @@ class Session:
             return
         for values in self.interfaces.values():
             for interface in ipv4(values):
+                before = self.channel.sent
                 self.channel.send(self.advert.packet(ttl, values), interface)
+                self.adverts += self.channel.sent - before
 
     def candidates(self):
         return self.browser.candidates(self.clock()) if self.browser is not None else []
