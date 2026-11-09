@@ -44,10 +44,10 @@ type Inbound struct {
 type Hub struct {
 	membership chan membership
 	inbound    chan Inbound
-	importAt   int64       // where the next import pass goes on; owned by Run
-	rescan     atomic.Bool // an import pass was asked for since the scan began
-	importDue  atomic.Bool // an import pass is due; signalled on pair.changed (#222)
-	consent    hubConsent  // held requests and session authority (#293)
+	importAt   int64         // where the next import pass goes on; owned by Run
+	rescan     atomic.Bool   // an import pass was asked for since the scan began
+	importDue  atomic.Bool   // an import pass is due; signalled on pair.changed (#222)
+	consent    hubConsent    // held requests and session authority (#293)
 	classify   hubClassifier // shadow predictions for untagged operator sends (#339)
 	store      *store.Store
 	seq        uint64
