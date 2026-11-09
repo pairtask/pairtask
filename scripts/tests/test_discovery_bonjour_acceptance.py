@@ -96,7 +96,7 @@ class BonjourDiscoveryAcceptance(unittest.TestCase):
         self.assertEqual(session.candidates(), [])
         self.assertEqual(len(self.api.operations), 1, "removed services left native handles open")
 
-    def test_address_removal_and_expiry_clear_unusable_rows(self):
+    def test_active_native_lookup_keeps_cached_address_until_daemon_removes_it(self):
         session = self.start()
         address_ref = self.add(session, ttl=5)
         self.api.address(address_ref, add=False)
@@ -105,7 +105,12 @@ class BonjourDiscoveryAcceptance(unittest.TestCase):
         self.api.address(address_ref, ttl=5)
         self.pump(session)
         self.assertTrue(self.rows(session))
-        self.now += 6
+        self.now += 5000
+        # DNS-SD's TTL is for clients that cancel the query; a continuous
+        # GetAddrInfo remains authoritative until its Remove callback.
+        self.assertTrue(self.rows(session), "cached TTL hid an address still tracked by the daemon")
+        self.api.address(address_ref, add=False)
+        self.pump(session)
         self.assertEqual(self.rows(session), [])
 
     def test_ipv6_and_ineligible_addresses_follow_existing_endpoint_rules(self):
