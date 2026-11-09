@@ -207,9 +207,11 @@ func (m *Model) offerRedeemEndpoints() {
 	m.refreshCommandPicker()
 }
 
-// endpointChoices are redeem's first word after a find: the endpoints seen.
+// endpointChoices are redeem's first word while the find panel is open:
+// the endpoints seen. Once the panel closes the rows are no longer kept
+// fresh, so a later redeem offers nothing rather than a stale address.
 func (m *Model) endpointChoices(l argLine) []string {
-	if len(l.words) != 1 {
+	if len(l.words) != 1 || !m.findPanelOpen() {
 		return nil
 	}
 	return withPrefix(m.discovery.endpoints, l.current)
