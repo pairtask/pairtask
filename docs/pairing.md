@@ -23,22 +23,46 @@ Allow incoming connections if macOS asks.
 Run `pairtask chat`, then:
 
 ```text
-/pair open
+/pair open --discoverable
 ```
 
 Send the code to B's operator over a trusted channel (a call, a chat you
 trust). It works once and expires.
 
-## 3. On B: redeem it
+`--discoverable` lets B find A on the same network instead of typing its
+address: while the invitation is open, A's host announces the name from
+`pairtask pairing on --name` and the pairing port, and nothing else: not the
+code, not the key. The announcement ends when the code is used, cancelled or
+expires. `/pair status` says `announcing "my-laptop" on this network` once
+the host confirms, or why it can't (no name set, or the
+[discovery helper](#moving-between-networks) off). A plain `/pair open`
+announces nothing.
 
-Run `pairtask chat`, then redeem with A's LAN or tailnet IP. The last word is
-optional: a name for your own machine, which is how A will see you.
+## 3. On B: find A, or type its address
+
+Run `pairtask chat`, then:
+
+```text
+/pair find
+```
+
+It lists **Open invitations on this network**, the discoverable invitations
+the host hears, by the name and address they announce, and **Tailnet devices
+(unverified)**, the machines online in your tailnet, by MagicDNS name and
+Tailscale address. Pick one (↑/↓, Enter): it fills `/pair redeem HOST:PORT`
+and waits. Add the code, and optionally a name for your own machine, which is
+how A will see you, then press Enter:
 
 ```text
 /pair redeem 192.168.1.20:7445 CODE my-laptop
 ```
 
-Use the Mac's own address, not the Colima VM's.
+A listing is an announcement, not an identity: the code and the keys in the
+next step decide who you pair with. A tailnet row is a device, not
+necessarily a pairtask listener; it uses port 7445 unless you edit it. The
+list refreshes for two minutes; without the helper, or on separate networks,
+type A's address by hand: its LAN or tailnet IP (the Mac's own, not the
+Colima VM's).
 
 ## 4. Check it is really B, then accept on A
 
@@ -48,12 +72,16 @@ Use the Mac's own address, not the Colima VM's.
   key and name. Pick the one whose key starts with what B read out (↑/↓) and
   press Enter to accept it.
 - If nothing matches, use `/pair reject` the same way.
+- On B, the redemption under **Waiting for them** shows `their key`, the key A
+  presented, and warns when it differs from a contact B already holds under
+  that name or address.
 
-## 5. On B: settle
+## 5. The pairing completes by itself
 
-```text
-/pair settle
-```
+Once A accepts, B's broker finishes the pairing on its own: it tries within
+seconds, again over the next two minutes, then every five minutes for a
+week. If `/pair status` shows a settle error beside the redemption, or you
+don't want to wait, `/pair settle` tries at once.
 
 `/pair status` on both sides now lists the other workspace first, under
 **Paired workspaces**, with a colored dot and words for how it stands:
@@ -363,7 +391,10 @@ without `/pair address`. It does nothing unless the secured broker asks:
   `--host-port`. The announcement is presence and port only, under a random
   name that changes each time the helper starts. It carries no workspace or
   contact name, no key and no fingerprint. Anyone on the network can still
-  see that a pairtask listener is there.
+  see that a pairtask listener is there. Only while an invitation opened with
+  `/pair open --discoverable` is open does the announcement also carry this
+  workspace's name ([step 2](#2-on-a-open-an-invitation)), under a fresh
+  random instance; it stops with the invitation.
 - **Dialling side:** while a workspace this side dials shows
   `last attempt failed`, the helper looks for those announcements. With
   Tailscale installed, it also takes each online peer's MagicDNS name and
@@ -383,7 +414,8 @@ own. It then keeps everything as `/pair address` does. A working address is
 never replaced. Paused and unpaired workspaces are never matched.
 
 `pairtask discovery status` shows what the helper last did: the broker's
-answer, what it announced and the outcome for each endpoint it handed over.
+answer, what it announced, the invitations it heard and tailnet devices it
+reported for `/pair find`, and the outcome for each endpoint it handed over.
 `pairtask discovery run --once` runs one round in the foreground.
 
 **Tailscale names come before Tailscale addresses.** A configured MagicDNS
