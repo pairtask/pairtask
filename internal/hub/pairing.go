@@ -230,10 +230,8 @@ func (h *Hub) pairingResponse(ctx context.Context, op pairingOp, msg protocol.Me
 		resp.PairingJoin = view
 		msg.PairingTarget = ""
 	}
-	if msg.PairingDiscoverable {
-		if rerr := h.discoverableRefusal(); rerr != nil {
-			return resp, rerr // nothing opened: the private invitation, if any, stays
-		}
+	if rerr := h.discoverableRefusal(msg); rerr != nil {
+		return resp, rerr // nothing opened: the private invitation, if any, stays
 	}
 	snapshot, rerr := h.applyPairing(ctx, op, pairingArgs{msg.PairingTarget, msg.PairingRepair, msg.PairingDiscoverable})
 	resp.PairingResult = snapshot

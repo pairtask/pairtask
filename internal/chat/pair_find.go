@@ -109,10 +109,14 @@ func (m *Model) scheduleDiscoveryRefresh() tea.Cmd {
 // refreshDiscovery is the timer: a quiet re-read while the find panel is
 // still open, nothing once it closed.
 func (m *Model) refreshDiscovery() tea.Cmd {
-	if m.panel == nil || m.panel.kind != panelFind || m.requested(kindContactFindRefresh, pairFind) {
+	if !m.findPanelOpen() || m.requested(kindContactFindRefresh, pairFind) {
 		return nil
 	}
 	return m.request(kindContactFindRefresh, protocol.Message{Type: protocol.TypeOperatorContact, MessageID: uuid.NewString(), ContactOp: pairFind}, pairFind)
+}
+
+func (m *Model) findPanelOpen() bool {
+	return m.panel != nil && m.panel.kind == panelFind
 }
 
 // discoveryRefreshed takes a re-read: new rows join the panel and, when the
@@ -126,16 +130,27 @@ func (m *Model) discoveryRefreshed(req pendingRequest, resp protocol.Message) te
 	refreshes := m.discovery.refreshes
 	m.discovery = m.discoveryViewOf(*resp.ContactFind)
 	m.discovery.refreshes = refreshes
-	if m.panel == nil || m.panel.kind != panelFind {
+	if !m.findPanelOpen() {
 		return nil
 	}
-	if len(m.discovery.endpoints) > 0 && m.onRedeemLine() {
+	m.offerRefreshedEndpoints()
+	return m.scheduleDiscoveryRefresh()
+}
+
+// offerRefreshedEndpoints puts new rows where the operator is: into the
+// picker on the redeem line, or onto a fresh redeem line when no command
+// line is open; a line they are typing on is left alone.
+func (m *Model) offerRefreshedEndpoints() {
+	if len(m.discovery.endpoints) == 0 {
+		return
+	}
+	switch {
+	case m.onRedeemLine():
 		m.refreshCommandPicker()
-	} else if len(m.discovery.endpoints) > 0 && m.compose.cmd == nil {
+	case m.compose.cmd == nil:
 		m.status = "pick one to fill /pair redeem; then type the code you were given"
 		m.offerRedeemEndpoints()
 	}
-	return m.scheduleDiscoveryRefresh()
 }
 
 // onRedeemLine: the command line waits for redeem's endpoint.
@@ -262,12 +277,21 @@ func (m *Model) identityNote(j protocol.PairingJoinView) string {
 		if c.IdentityKey == j.Peer {
 			return ""
 		}
-		switch {
-		case c.Destination != "" && c.Destination == j.Destination:
-			return " · identity differs from your contact " + safe(c.Name) + " (matched by address)"
-		case c.Name != "" && c.Name == j.Name:
-			return " · identity differs from your contact " + safe(c.Name) + " (matched by name)"
+		if matched := matchedBy(c, j); matched != "" {
+			return " · identity differs from your contact " + safe(c.Name) + " (matched by " + matched + ")"
 		}
+	}
+	return ""
+}
+
+// matchedBy: what a redemption shares with a contact, "address" or "name",
+// or nothing.
+func matchedBy(c protocol.PairingContactView, j protocol.PairingJoinView) string {
+	switch {
+	case c.Destination != "" && c.Destination == j.Destination:
+		return "address"
+	case c.Name != "" && c.Name == j.Name:
+		return "name"
 	}
 	return ""
 }

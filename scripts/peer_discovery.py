@@ -19,7 +19,6 @@ from collections import OrderedDict, namedtuple
 import datetime
 import errno
 import ipaddress
-import json
 import os
 import re
 import secrets
@@ -38,15 +37,18 @@ if HERE not in sys.path:
 from peer_discovery_wire import (  # noqa: E402
     A, AAAA, ANY, PACKET_MAX, PTR, RECORD_MAX, SERVICE, SRV, TTL_MAX, TXT,
     Entry, Malformed, Message, Record, encode_name, encode_record, parse, query, response)
+from peer_discovery_net import (  # noqa: E402
+    CANDIDATES_MAX, INVENTORY_MAX, address, eligible, endpoint, is_ipv6, is_port, merge, unique)
+from peer_discovery_tailnet import (  # noqa: E402,F401  re-exported for the helper and its tests
+    DEVICES_MAX, TAILSCALE_TIMEOUT, dns_name, hostname, online, peer_ips, tailnet_candidates, tailnet_devices,
+    tailnet_hosts, tailnet_inventory, tailnet_peers, tailnet_self, tailscale_status)
 
 __all__ = ["Advert", "Browser", "Session", "lease_from", "merge", "parse", "tailnet_candidates",
            "tailscale_status", "Entry", "Malformed", "Message", "Record"]
 
 GROUP, PORT = "224.0.0.251", 5353
 CACHE_MAX = 32         # service bundles a browser keeps
-CANDIDATES_MAX = 8     # endpoints in one submission
 LAN_SLOTS = 4          # of them kept for endpoints found on the LAN, which are pairtask listeners
-INVENTORY_MAX = 256    # tailnet endpoints remembered between submissions
 HOST_ADDRESSES_MAX = 8
 INVITATIONS_MAX = 16   # named invitations a browser lists
 NAME_BYTES_MAX = 63    # bytes of UTF-8 in an advertised name: one TXT string
@@ -54,7 +56,6 @@ ADVERT_ADDRESSES_MAX = 16
 LEASE_MAX = 90         # seconds a lease holds at most, by this helper's own clock
 POLL_SECONDS = 5       # interface addresses are polled: a change re-announces within 10 s
 QUERY_GAP_MAX = 30
-TAILSCALE_TIMEOUT = 5
 ADDRESS_KINDS = (A, AAAA)
 ASKED_KINDS = (PTR, SRV, TXT, A, AAAA, ANY)
 
@@ -64,57 +65,9 @@ ASKED_KINDS = (PTR, SRV, TXT, A, AAAA, ANY)
 # others' invitations and list tailnet devices for the operator's picker (#284).
 Lease = namedtuple("Lease", "advertise browse ports expires_at deadline invitation find invitation_id",
                    defaults=(None, False, None))
-DEVICES_MAX = 32       # tailnet devices reported for the picker
 
 
-# --- Addresses and endpoints -----------------------------------------------
-
-def address(value):
-    """The IP in value, without an IPv6 zone, or None."""
-    try:
-        return ipaddress.ip_address(str(value).split("%", 1)[0])
-    except ValueError:
-        return None
-
-
-def special(ip):
-    """Loopback, link-local, multicast, unspecified, reserved or IPv4-mapped."""
-    return any((ip.is_loopback, ip.is_link_local, ip.is_multicast, ip.is_unspecified, ip.is_reserved,
-                getattr(ip, "ipv4_mapped", None) is not None))
-
-
-def eligible(value):
-    """A unicast address another machine could dial."""
-    ip = address(value)
-    return ip is not None and not special(ip)
-
-
-def is_ipv6(ip):
-    return ip is not None and ip.version == 6
-
-
-def endpoint(host, port):
-    """HOST:PORT, with an IPv6 literal in brackets."""
-    ip = address(host)
-    return ("[%s]:%d" if is_ipv6(ip) else "%s:%d") % (ip or host, port)
-
-
-def is_port(value):
-    return type(value) is int and 0 < value < 65536
-
-
-def unique(values, limit=CANDIDATES_MAX):
-    result = []
-    for value in values:
-        if value not in result:
-            result.append(value)
-    return result[:limit]
-
-
-def merge(*groups):
-    """One submission: the groups in order (tailnet names first), de-duplicated, bounded."""
-    return unique(value for group in groups for value in group)
-
+# --- Submissions -------------------------------------------------------------
 
 class Turn:
     """A window that moves on over a list each time it is taken, so every
@@ -186,15 +139,27 @@ def is_address(record):
 def display_name(raw):
     """The name in a name= TXT string, or None: UTF-8 of at most
     NAME_BYTES_MAX bytes, printable, not blank."""
+    text = decoded_name(raw)
+    return text if text is not None and plain_text(text) else None
+
+
+def decoded_name(raw):
+    """The bytes as text when they are bounded, valid UTF-8; else None."""
     if not isinstance(raw, (bytes, bytearray)) or not 0 < len(raw) <= NAME_BYTES_MAX:
         return None
     try:
-        text = bytes(raw).decode("utf-8")
+        return bytes(raw).decode("utf-8")
     except UnicodeDecodeError:
         return None
-    if not text.strip() or any(ch.isspace() and ch != " " or not ch.isprintable() for ch in text):
-        return None
-    return text
+
+
+def plain_text(text):
+    """Not blank, every character printable, and no whitespace but the space."""
+    return bool(text.strip()) and all(plain_char(ch) for ch in text)
+
+
+def plain_char(ch):
+    return ch.isprintable() and (ch == " " or not ch.isspace())
 
 
 def text_name(strings):
@@ -837,104 +802,6 @@ class Session:
         self.channel.close()
 
 
-# --- Tailnet -----------------------------------------------------------------
-
-DNS_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\Z")
-
-
-def dns_name(value):
-    """A peer's configured MagicDNS name without its trailing dot, or None."""
-    if not isinstance(value, str):
-        return None
-    name = value.rstrip(".").lower()
-    return name if hostname(name) else None
-
-
-def hostname(name):
-    """At most 253 bytes of at least two DNS labels, and not an IP literal."""
-    labels = name.split(".")
-    if any((len(name) > 253, len(labels) < 2, address(name) is not None)):
-        return False
-    return all(DNS_LABEL.match(label) for label in labels)
-
-
-def online(peer):
-    """A peer entry not marked offline; a missing Online counts as online."""
-    return isinstance(peer, dict) and peer.get("Online", True) is not False
-
-
-def tailnet_peers(status):
-    """The online peers of `tailscale status --json`, in key order."""
-    peers = status.get("Peer") if isinstance(status, dict) else None
-    if not isinstance(peers, dict):
-        return []
-    return [peer for _, peer in sorted(peers.items()) if online(peer)]
-
-
-def tailnet_self(status):
-    own = status.get("Self")
-    return dns_name(own.get("DNSName")) if isinstance(own, dict) else None
-
-
-def peer_ips(peer):
-    listed = peer.get("TailscaleIPs")
-    return [str(address(v)) for v in (listed if isinstance(listed, list) else []) if eligible(v)]
-
-
-def tailnet_devices(status):
-    """Online tailnet peers for the operator's picker, at most DEVICES_MAX:
-    each one's MagicDNS name and first Tailscale address. Devices, not
-    pairtask listeners; nothing here is verified."""
-    own, devices = tailnet_self(status), []
-    for peer in tailnet_peers(status):
-        name, ips = dns_name(peer.get("DNSName")), peer_ips(peer)
-        if (name is not None and name == own) or not (name or ips):
-            continue
-        devices.append({"name": name or "", "address": ips[0] if ips else ""})
-    return devices[:DEVICES_MAX]
-
-
-def tailnet_candidates(status, ports):
-    """Endpoints from `tailscale status --json`: each online peer's DNSName,
-    then its TailscaleIPs, crossed with the lease's ports, at most
-    CANDIDATES_MAX. Self is never a peer; display names are never used."""
-    return tailnet_inventory(status, ports)[:CANDIDATES_MAX]
-
-
-def tailnet_inventory(status, ports):
-    """Every endpoint tailnet_candidates would offer, not only the first
-    CANDIDATES_MAX, bounded by INVENTORY_MAX."""
-    peers = tailnet_peers(status)
-    if not peers:
-        return []
-    usable = [port for port in ports if is_port(port)]
-    return unique((endpoint(host, port) for host in tailnet_hosts(peers, tailnet_self(status)) for port in usable), INVENTORY_MAX)
-
-
-def tailnet_hosts(peers, own):
-    """Every peer's DNSName, then every peer's TailscaleIPs, de-duplicated;
-    a peer listed under this machine's own name is skipped."""
-    names, ips = [], []
-    for peer in peers:
-        name = dns_name(peer.get("DNSName"))
-        if name is not None and name == own:
-            continue
-        names += [name] if name else []
-        ips += peer_ips(peer)
-    return unique(names + ips, 10 ** 4)
-
-
-def tailscale_status(command):
-    """The parsed `tailscale status --json`, or None; run as given, no shell."""
-    try:
-        result = subprocess.run([command, "status", "--json"], capture_output=True, text=True,
-                                timeout=TAILSCALE_TIMEOUT, check=False)
-        data = json.loads(result.stdout) if result.returncode == 0 else None
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
 # --- Lease -----------------------------------------------------------------
 
 STAMP = re.compile(r"(\d{4})-(\d\d)-(\d\d)[Tt](\d\d):(\d\d):(\d\d)(\.\d+)?([Zz]|[+-]\d\d:\d\d)\Z")
@@ -986,7 +853,12 @@ def lease_invitation(data):
     if not isinstance(invitation, dict):
         return None, None
     name, invitation_id = invitation.get("name"), invitation.get("id")
-    if not isinstance(name, str) or not isinstance(invitation_id, str) or not 0 < len(invitation_id) <= 128:
+    if not isinstance(name, str) or not invitation_key(invitation_id):
         return None, None
     name = display_name(name.encode("utf-8"))
     return (name, invitation_id) if name is not None else (None, None)
+
+
+def invitation_key(value):
+    """An invitation ID as the broker spells it: text of 1 to 128 bytes."""
+    return isinstance(value, str) and 0 < len(value) <= 128

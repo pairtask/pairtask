@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -116,21 +117,42 @@ func (h *Hub) operatorFind(_ context.Context, msg protocol.Message) protocol.Mes
 // discoverable invitation under this workspace's name, or nil.
 func (h *Hub) discoverableInvitation() *protocol.DiscoveryInvitation {
 	status, ok := h.pairing.Status()
-	if !ok || !status.Discoverable || status.Consumed || status.Expired {
+	if !ok || !announceable(status) {
 		return nil
 	}
 	return &protocol.DiscoveryInvitation{ID: status.ID, Name: h.pair.cfg.Name, ExpiresAt: status.ExpiresAt}
 }
 
-// discoverableRefusal says why a discoverable invitation can't be opened
-// now: this workspace has no name of its own, or no helper is asking for
-// leases; nothing is opened then.
-func (h *Hub) discoverableRefusal() *routingError {
-	if !protocol.ValidDisplayName(h.pair.cfg.Name) || h.pair.cfg.Name == peer.DefaultPairingName {
-		return &routingError{protocol.ErrPairing, "name this workspace first: pairtask pairing on --name NAME"}
+// announceable: a discoverable invitation still open for a code.
+func announceable(status peer.InvitationStatus) bool {
+	return status.Discoverable && !status.Consumed && !status.Expired
+}
+
+// discoverableRefusal says why a discoverable open can't happen now: this
+// workspace has no name of its own, or one too long to announce, or no
+// helper is asking for leases; nothing is opened then. A plain open passes.
+func (h *Hub) discoverableRefusal(msg protocol.Message) *routingError {
+	if !msg.PairingDiscoverable {
+		return nil
+	}
+	if rerr := announceNameRefusal(h.pair.cfg.Name); rerr != nil {
+		return rerr
 	}
 	if !h.find.helperLive(h.contactNow()) {
 		return &routingError{protocol.ErrPairing, "the discovery helper is off or not installed: pairtask pairing on --discovery"}
+	}
+	return nil
+}
+
+// announceNameRefusal: why this workspace's name can't be announced, if it can't.
+func announceNameRefusal(name string) *routingError {
+	switch {
+	case name == "" || name == peer.DefaultPairingName:
+		return &routingError{protocol.ErrPairing, "name this workspace first: pairtask pairing on --name NAME"}
+	case len(name) > protocol.NameBytesMax:
+		return &routingError{protocol.ErrPairing, fmt.Sprintf("the workspace name is over %d bytes; a shorter one announces: pairtask pairing on --name NAME", protocol.NameBytesMax)}
+	case !protocol.ValidDisplayName(name):
+		return &routingError{protocol.ErrPairing, "the workspace name has characters that can't be announced; use letters, digits, spaces and punctuation: pairtask pairing on --name NAME"}
 	}
 	return nil
 }

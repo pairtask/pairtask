@@ -55,15 +55,24 @@ func (h *Hub) settleSoon(ctx context.Context, id string) {
 			case <-after(at - elapsed):
 			}
 			elapsed = at
-			r, found, err := h.store.GetJoin(ctx, id)
-			if err != nil || !found || !h.liveCandidate(ctx, r) {
-				return // settled, refused or gone: nothing more to try
-			}
-			if h.pair.settle.due(id, h.pair.cfg.Clock()) { // a backoff skips this slot, not the later ones
-				h.pair.settle.enqueue([]string{id}, true)
+			if !h.settleSoonPass(ctx, id) {
+				return
 			}
 		}
 	}()
+}
+
+// settleSoonPass queues one early pass; false once the join is settled,
+// refused or gone. A backoff skips this slot, not the later ones.
+func (h *Hub) settleSoonPass(ctx context.Context, id string) bool {
+	r, found, err := h.store.GetJoin(ctx, id)
+	if err != nil || !found || !h.liveCandidate(ctx, r) {
+		return false
+	}
+	if h.pair.settle.due(id, h.pair.cfg.Clock()) {
+		h.pair.settle.enqueue([]string{id}, true)
+	}
+	return true
 }
 
 // settleAttempt is one join's automatic retry state: every automatic pass

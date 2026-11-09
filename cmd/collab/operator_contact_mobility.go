@@ -86,6 +86,15 @@ func mobilityArity(op string, n int) error {
 	return nil
 }
 
+// writeLease prints a lease on one line.
+func writeLease(w io.Writer, l protocol.ContactDiscovery) {
+	fmt.Fprintf(w, "advertise %t, browse %t, ports %v, until %s", l.Advertise, l.Browse, l.Ports, l.ExpiresAt.Local().Format("15:04:05"))
+	if l.Invitation != nil {
+		fmt.Fprintf(w, ", announce %q", l.Invitation.Name)
+	}
+	fmt.Fprintf(w, ", find %t\n", l.Find)
+}
+
 // writeFind prints find's snapshot: when the helper last reported, the
 // invitations heard and the tailnet devices.
 func writeFind(w io.Writer, f protocol.ContactFind) {
@@ -108,11 +117,7 @@ func candidateCount(n int) bool { return n >= 1 && n <= protocol.MaxCandidates }
 // writeMobility prints a lease, or each candidate's outcome.
 func writeMobility(w io.Writer, resp protocol.Message) {
 	if l := resp.ContactDiscovery; l != nil {
-		fmt.Fprintf(w, "advertise %t, browse %t, ports %v, until %s", l.Advertise, l.Browse, l.Ports, l.ExpiresAt.Local().Format("15:04:05"))
-		if l.Invitation != nil {
-			fmt.Fprintf(w, ", announce %q", l.Invitation.Name)
-		}
-		fmt.Fprintf(w, ", find %t\n", l.Find)
+		writeLease(w, *l)
 	}
 	if f := resp.ContactFind; f != nil {
 		writeFind(w, *f)

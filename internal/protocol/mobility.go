@@ -147,18 +147,44 @@ func validContactReport(msg Message, allowed contactFieldSet) error {
 	if len(msg.ContactFound) > MaxFound || len(msg.ContactDevices) > MaxDevices {
 		return fmt.Errorf("contact_found takes at most %d invitations and contact_devices at most %d devices", MaxFound, MaxDevices)
 	}
-	for _, f := range msg.ContactFound {
+	return errors.Join(validFound(msg.ContactFound), validDevices(msg.ContactDevices), validAnnouncing(msg.ContactAnnouncing))
+}
+
+func validFound(found []FoundInvitation) error {
+	for _, f := range found {
 		if !ValidDisplayName(f.Name) || peer.CheckDestination(net.JoinHostPort(f.Host, strconv.Itoa(f.Port))) != nil {
 			return errors.New("contact_found entries have a display name, a host and a port from 1 to 65535")
 		}
 	}
-	for _, d := range msg.ContactDevices {
-		if len(d.Name) > 253 || len(d.Address) > 64 || (d.Name == "" && d.Address == "") || !printable(d.Name) || !printable(d.Address) {
+	return nil
+}
+
+func validDevices(devices []TailnetDevice) error {
+	for _, d := range devices {
+		if !d.valid() {
 			return errors.New("contact_devices entries have a name or an address, each printable and bounded")
 		}
 	}
-	if a := msg.ContactAnnouncing; a != nil && (!ValidDisplayName(a.Name) || len(a.ID) > 128 || len(a.Error) > 256 || !printable(a.Error)) {
-		return errors.New("contact_announcing has an invitation ID, a display name and an error of at most 256 bytes")
+	return nil
+}
+
+// valid: a name (DNS-sized) or an address, both printable.
+func (d TailnetDevice) valid() bool {
+	if d.Name == "" && d.Address == "" {
+		return false
+	}
+	return len(d.Name) <= 253 && len(d.Address) <= 64 && printable(d.Name) && printable(d.Address)
+}
+
+func validAnnouncing(a *Announcing) error {
+	if a == nil {
+		return nil
+	}
+	if !ValidDisplayName(a.Name) || len(a.ID) > 128 {
+		return errors.New("contact_announcing has an invitation ID of at most 128 bytes and a display name")
+	}
+	if len(a.Error) > 256 || !printable(a.Error) {
+		return errors.New("contact_announcing's error is printable text of at most 256 bytes")
 	}
 	return nil
 }
@@ -167,20 +193,29 @@ func validContactReport(msg Message, allowed contactFieldSet) error {
 // with no whitespace but the space, not blank; the same rule the host
 // helper applies, so a name the broker accepts is one it announces.
 func ValidDisplayName(name string) bool {
-	if name == "" || len(name) > NameBytesMax || strings.TrimSpace(name) == "" || !utf8.ValidString(name) {
-		return false
-	}
-	return printable(name)
+	return nameSized(name) && strings.TrimSpace(name) != "" && printable(name)
+}
+
+// nameSized: 1 to NameBytesMax bytes of valid UTF-8.
+func nameSized(name string) bool {
+	return name != "" && len(name) <= NameBytesMax && utf8.ValidString(name)
 }
 
 // printable: every rune prints, and the only whitespace is the space.
 func printable(text string) bool {
 	for _, r := range text {
-		if !unicode.IsPrint(r) || (unicode.IsSpace(r) && r != ' ') {
+		if !plainRune(r) {
 			return false
 		}
 	}
 	return true
+}
+
+func plainRune(r rune) bool {
+	if r == ' ' {
+		return true
+	}
+	return unicode.IsPrint(r) && !unicode.IsSpace(r)
 }
 
 // CandidateResult is what became of one endpoint; Contact is set only

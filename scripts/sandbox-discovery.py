@@ -207,7 +207,7 @@ class Discovery:
         """The lease, with this helper's report (built on the loop's thread);
         the tailnet is read here, off the loop, when the lease asks for it."""
         report = dict(report or {})
-        if self.lease is not None and self.lease.find and self.tailscale:
+        if self.reads_tailnet():
             report["devices"] = engine.tailnet_devices(engine.tailscale_status(self.tailscale) or {})
         self.status.update(report=report)
         asked = time.monotonic()
@@ -223,11 +223,19 @@ class Discovery:
             for entry in found:
                 entry["seen_at"] = stamp(time.time() - (now - entry["seen_at"]))
             report["found"] = found
-        if self.lease is not None and self.lease.invitation is not None and self.advert is not None:
+        if self.announces():
             sent = self.session is not None and self.session.sent_named()
             report["announcing"] = {"id": self.lease.invitation_id, "name": self.lease.invitation, "sent": sent,
                                     "error": self.status.data.get("error")}
         return report
+
+    def reads_tailnet(self):
+        """The lease asks to find, and a tailscale CLI is at hand."""
+        return self.lease is not None and self.lease.find and bool(self.tailscale)
+
+    def announces(self):
+        """The lease names an invitation and this host has a port to announce."""
+        return self.lease is not None and self.lease.invitation is not None and self.advert is not None
 
     def apply(self, lease):
         self.lease = lease
