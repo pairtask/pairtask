@@ -1,7 +1,6 @@
 # pairtask Individual Contributor License Agreement
 
-**Draft for review; not yet in force.** To be checked by a German IP lawyer
-before any contributor is asked to agree to it. Draft 2, 2026-11-09.
+Version 1, 2026-11-09.
 
 Thank you for contributing to pairtask (the "Project"). This agreement is
 between you and **Siamion Makarski, in his personal capacity** (the
@@ -96,14 +95,11 @@ of any kind.
 
 This agreement is governed by the law of the Federal Republic of Germany.
 The competent courts follow from that law; no venue is chosen here.
-[Counsel to confirm: the form in which the agreement is validly made, and
-how the author's mandatory rights, including statutory remuneration, are
-to be addressed.]
 
 ## 9. Consent record
 
-You agree in the form CONTRIBUTING.md states once a lawyer has approved it;
-until then this document is a draft and no agreement is collected. Each
+You agree by posting on your pull request the statement CONTRIBUTING.md
+gives for this document's version. Each
 agreement is a record of your assent that names this document's version
 and date and identifies the Contribution it covers: the repository, the
 pull request, its full head commit SHA and the files changed. A revision of

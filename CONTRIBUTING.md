@@ -6,21 +6,23 @@ licensed under MIT or Apache 2.0, at your choice.
 Before a contribution can be merged, it must be covered by an accepted
 [Contributor License Agreement (CLA)](CLA.md).
 
-**The agreement is a draft until a lawyer has reviewed it.** Until then,
-outside pull requests are welcome for discussion and review but are not
-merged.
-
 ## Before your first pull request
 
-Read the [agreement](CLA.md). The way to agree will be stated here once a
-lawyer has approved it. A pull request is merged only with a consent record
-that covers it. Each record holds:
+Read the [agreement](CLA.md). To agree, post this comment on your pull
+request, with its full head commit SHA filled in:
+
+```
+I have read CLA.md version 1 (2026-11-09) and agree to it for this pull request's head commit <SHA>.
+```
+
+A pull request is merged only with a consent record that covers it. Each
+record holds:
 
 - the agreement version and date;
 - the repository, the pull request number, its full head commit SHA and the
   files it changes;
-- your confirmation, for each later revision of that pull request, that it
-  has the same provenance;
+- your confirmation, posted the same way, for each later revision of that
+  pull request;
 - privately, who agreed and on what authority (an employer's permission
   where one could hold rights); publicly, the pull request shows only the
   agreement version and the covered commit.
@@ -47,4 +49,4 @@ The pull request template repeats these points as a checklist.
 
 A maintainer reviews the pinned commit and sends findings back to the
 author; the owner decides the merge. Merges happen on green CI with the
-agreement recorded. Issues: https://github.com/pairtask/pairtask/issues.
+agreement posted. Issues: https://github.com/pairtask/pairtask/issues.
