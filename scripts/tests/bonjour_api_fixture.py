@@ -3,7 +3,11 @@
 import ctypes
 import os
 import socket
-from collections import deque
+from collections import deque, namedtuple
+
+
+Resolved = namedtuple("Resolved", "name port txt error", defaults=("Office Mac", 7445, None, 0))
+Address = namedtuple("Address", "host ttl add error", defaults=("192.168.1.164", 60, True, 0))
 
 
 def number(value):
@@ -35,28 +39,30 @@ class BonjourAPI:
                 "DNSServiceRefDeallocate": self.deallocate}.items():
             setattr(self, name, Function(implementation))
 
-    def allocate(self, output, kind, callback, context, **values):
+    def allocate(self, output, operation):
         if self.start_error:
             return self.start_error
         ref = self.next_id
         self.next_id += 1
         reader, writer = os.pipe()
-        self.operations[ref] = dict(kind=kind, callback=callback, context=context,
-                                    reader=reader, writer=writer, events=deque(), **values)
+        self.operations[ref] = dict(operation, reader=reader, writer=writer, events=deque())
         ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = ref
         return 0
 
-    def browse(self, output, flags, interface, regtype, domain, callback, context):
-        return self.allocate(output, "browse", callback, context,
-                             interface=number(interface), regtype=regtype, domain=domain)
+    def browse(self, *arguments):
+        output, flags, interface, regtype, domain, callback, context = arguments
+        return self.allocate(output, dict(kind="browse", callback=callback, context=context,
+                                          interface=number(interface), regtype=regtype, domain=domain))
 
-    def resolve(self, output, flags, interface, name, regtype, domain, callback, context):
-        return self.allocate(output, "resolve", callback, context,
-                             interface=number(interface), name=name, regtype=regtype, domain=domain)
+    def resolve(self, *arguments):
+        output, flags, interface, name, regtype, domain, callback, context = arguments
+        return self.allocate(output, dict(kind="resolve", callback=callback, context=context,
+                                          interface=number(interface), name=name, regtype=regtype, domain=domain))
 
-    def addresses(self, output, flags, interface, protocol, host, callback, context):
-        return self.allocate(output, "address", callback, context,
-                             interface=number(interface), host=host)
+    def addresses(self, *arguments):
+        output, flags, interface, protocol, host, callback, context = arguments
+        return self.allocate(output, dict(kind="address", callback=callback, context=context,
+                                          interface=number(interface), host=host))
 
     def descriptor(self, ref):
         return self.operations[number(ref)]["reader"]
@@ -100,26 +106,29 @@ class BonjourAPI:
         kinds = getattr(callback, "argtypes", None)
         return ctypes.cast(buffer, kinds[index] if kinds else ctypes.c_void_p)
 
-    def resolved(self, ref, name="Office Mac", port=7445, txt=None, error=0):
+    def resolved(self, ref, **changes):
+        result = Resolved(**changes)
         operation = self.operations[ref]
-        raw = txt if txt is not None else b"\x03v=1" + bytes([len(name.encode()) + 5]) + b"name=" + name.encode()
+        name = result.name.encode()
+        raw = result.txt if result.txt is not None else b"\x03v=1" + bytes([len(name) + 5]) + b"name=" + name
         buffer = ctypes.create_string_buffer(raw)
 
         def event(callback, ref, context):
-            callback(ref, 0, operation["interface"], error,
+            callback(ref, 0, operation["interface"], result.error,
                      operation["name"] + b"._pairtask._tcp.local.", b"random.local.",
-                     socket.htons(port), len(raw), self.pointer(callback, 8, buffer), context)
+                     socket.htons(result.port), len(raw), self.pointer(callback, 8, buffer), context)
         self.queue(ref, event)
 
-    def address(self, ref, host="192.168.1.164", ttl=60, add=True, error=0):
+    def address(self, ref, **changes):
+        result = Address(**changes)
         operation = self.operations[ref]
-        if ":" in host:
-            packed = bytes([28, 30]) + b"\0" * 6 + socket.inet_pton(socket.AF_INET6, host) + b"\0" * 4
+        if ":" in result.host:
+            packed = bytes([28, 30]) + b"\0" * 6 + socket.inet_pton(socket.AF_INET6, result.host) + b"\0" * 4
         else:
-            packed = bytes([16, 2]) + b"\0" * 2 + socket.inet_aton(host) + b"\0" * 8
+            packed = bytes([16, 2]) + b"\0" * 2 + socket.inet_aton(result.host) + b"\0" * 8
         buffer = ctypes.create_string_buffer(packed)
 
         def event(callback, ref, context):
-            callback(ref, 2 if add else 0, operation["interface"], error,
-                     operation["host"], self.pointer(callback, 5, buffer), ttl, context)
+            callback(ref, 2 if result.add else 0, operation["interface"], result.error,
+                     operation["host"], self.pointer(callback, 5, buffer), result.ttl, context)
         self.queue(ref, event)

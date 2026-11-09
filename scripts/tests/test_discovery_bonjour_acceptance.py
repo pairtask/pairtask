@@ -2,6 +2,9 @@
 
 import ctypes
 import ctypes.util
+from collections import namedtuple
+import contextlib
+import io
 import socket
 import unittest
 from unittest import mock
@@ -9,6 +12,10 @@ from unittest import mock
 from bonjour_api_fixture import BonjourAPI
 from discovery_test_support import engine
 from test_discovery_report_acceptance import helper
+
+
+Service = namedtuple("Service", "instance interface name host txt ttl",
+                     defaults=(b"0123456789abcdef", 14, "Office Mac", "192.168.1.164", None, 60))
 
 
 class BonjourDiscoveryAcceptance(unittest.TestCase):
@@ -43,25 +50,25 @@ class BonjourDiscoveryAcceptance(unittest.TestCase):
         for _ in range(8):
             session.step(0)
 
-    def add(self, session, instance=b"0123456789abcdef", interface=14,
-            name="Office Mac", host="192.168.1.164", txt=None, ttl=60):
+    def add(self, session, **changes):
+        service = Service(**changes)
         before = set(self.api.refs("resolve"))
-        self.api.service(instance, interface)
+        self.api.service(service.instance, service.interface)
         self.pump(session)
         refs = set(self.api.refs("resolve")) - before
         self.assertEqual(len(refs), 1)
         resolved = refs.pop()
-        self.assertEqual(self.api.operations[resolved]["interface"], interface)
+        self.assertEqual(self.api.operations[resolved]["interface"], service.interface)
         before = set(self.api.refs("address"))
-        self.api.resolved(resolved, name=name, txt=txt)
+        self.api.resolved(resolved, name=service.name, txt=service.txt)
         self.pump(session)
         refs = set(self.api.refs("address")) - before
         if not refs:  # Invalid TXT can be rejected before resolving the address.
             return None
         self.assertEqual(len(refs), 1)
         address_ref = refs.pop()
-        self.assertEqual(self.api.operations[address_ref]["interface"], interface)
-        self.api.address(address_ref, host=host, ttl=ttl)
+        self.assertEqual(self.api.operations[address_ref]["interface"], service.interface)
+        self.api.address(address_ref, host=service.host, ttl=service.ttl)
         self.pump(session)
         return address_ref
 
@@ -206,6 +213,57 @@ class BonjourDiscoveryAcceptance(unittest.TestCase):
         self.assertNotIn("contact_find_generation", report,
                          "a failed daemon connection was still acknowledged as a live scan")
         self.assertEqual(self.api.operations, {})
+
+    def assert_failed_scan(self, host, discovery):
+        self.assertNotIn("contact_find_generation", host.report_fields(discovery.report()))
+        self.assertEqual(self.api.operations, {})
+
+    def test_resolve_start_failure_inside_c_callback_withdraws_scan(self):
+        host, discovery = self.finding()
+        self.api.start_error = -65570
+        self.api.service()
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.pump(discovery.session)
+        self.assert_failed_scan(host, discovery)
+
+    def resolving(self, discovery):
+        self.api.service()
+        self.pump(discovery.session)
+        ref, = self.api.refs("resolve")
+        return ref
+
+    def test_address_start_failure_inside_c_callback_withdraws_scan(self):
+        host, discovery = self.finding()
+        ref = self.resolving(discovery)
+        self.api.start_error = -65563
+        self.api.resolved(ref)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.pump(discovery.session)
+        self.assert_failed_scan(host, discovery)
+
+    def test_resolve_callback_daemon_failure_withdraws_scan(self):
+        host, discovery = self.finding()
+        self.api.resolved(self.resolving(discovery), error=-65563)
+        self.pump(discovery.session)
+        self.assert_failed_scan(host, discovery)
+
+    def test_address_callback_daemon_failure_withdraws_scan(self):
+        host, discovery = self.finding()
+        self.api.resolved(self.resolving(discovery))
+        self.pump(discovery.session)
+        ref, = self.api.refs("address")
+        self.api.address(ref, error=-65570)
+        self.pump(discovery.session)
+        self.assert_failed_scan(host, discovery)
+
+    def test_loop_reports_late_daemon_failure_promptly_in_status(self):
+        host, discovery = self.finding()
+        loop = host.Loop(discovery, 15)
+        self.api.service(error=-65563)
+        with mock.patch.object(loop, "dispatch"), contextlib.redirect_stderr(io.StringIO()):
+            loop.tick(mock.Mock())
+        self.assertTrue(any(call.kwargs.get("error") for call in discovery.status.update.call_args_list),
+                        "late daemon failure stayed absent from discovery status")
 
     def test_linux_and_custom_multicast_endpoint_keep_udp_browser(self):
         self.raw.stop()
