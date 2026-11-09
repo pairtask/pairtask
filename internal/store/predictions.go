@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS classifier_predictions (
     agent_id            TEXT NOT NULL DEFAULT '',
     confidence          REAL NOT NULL DEFAULT 0,
     probabilities       TEXT NOT NULL DEFAULT '{}',
+    abstain_probability REAL NOT NULL DEFAULT 0,
     eligible            TEXT NOT NULL DEFAULT '[]',
     provider            TEXT NOT NULL DEFAULT '',
     model               TEXT NOT NULL DEFAULT '',
@@ -41,22 +42,23 @@ const (
 
 // Prediction is one recorded decision.
 type Prediction struct {
-	MessageID     string
-	Outcome       string
-	Reason        string
-	AgentID       string
-	Confidence    float64
-	Probabilities map[string]float64 // by agent ID, plus "none"
-	Eligible      []string
-	Provider      string
-	Model         string
-	ModelVersion  string
-	Threshold     float64
-	LatencyMS     int64
-	CreatedAt     time.Time
+	MessageID          string
+	Outcome            string
+	Reason             string
+	AgentID            string
+	Confidence         float64
+	Probabilities      map[string]float64 // by agent ID
+	AbstainProbability float64            // the abstain choice's
+	Eligible           []string
+	Provider           string
+	Model              string
+	ModelVersion       string
+	Threshold          float64
+	LatencyMS          int64
+	CreatedAt          time.Time
 }
 
-const predictionColumns = `operator_message_id, outcome, reason, agent_id, confidence, probabilities, eligible, provider, model, model_version, threshold, latency_ms, created_at`
+const predictionColumns = `operator_message_id, outcome, reason, agent_id, confidence, probabilities, abstain_probability, eligible, provider, model, model_version, threshold, latency_ms, created_at`
 
 // RecordPrediction stores the decision unless one is already there for the
 // message; inserted says which.
@@ -76,8 +78,8 @@ func (s *Store) RecordPrediction(ctx context.Context, p Prediction) (inserted bo
 	if at.IsZero() {
 		at = time.Now()
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO classifier_predictions (`+predictionColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.MessageID, p.Outcome, p.Reason, p.AgentID, p.Confidence, string(probabilities), string(eligible),
+	result, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO classifier_predictions (`+predictionColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.MessageID, p.Outcome, p.Reason, p.AgentID, p.Confidence, string(probabilities), p.AbstainProbability, string(eligible),
 		p.Provider, p.Model, p.ModelVersion, p.Threshold, p.LatencyMS, stamp(at))
 	if err != nil {
 		return false, err
@@ -120,7 +122,7 @@ func scanPredictions(rows *sql.Rows) ([]Prediction, error) {
 	for rows.Next() {
 		var p Prediction
 		var probabilities, eligible, at string
-		if err := rows.Scan(&p.MessageID, &p.Outcome, &p.Reason, &p.AgentID, &p.Confidence, &probabilities, &eligible,
+		if err := rows.Scan(&p.MessageID, &p.Outcome, &p.Reason, &p.AgentID, &p.Confidence, &probabilities, &p.AbstainProbability, &eligible,
 			&p.Provider, &p.Model, &p.ModelVersion, &p.Threshold, &p.LatencyMS, &at); err != nil {
 			return nil, err
 		}

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -215,7 +216,7 @@ func statusClass(code int) string {
 type choiceAnswer struct {
 	Type          string             `json:"type"`
 	Choice        string             `json:"choice"`
-	Confidence    float64            `json:"confidence"`
+	Confidence    *float64           `json:"confidence"` // absent is malformed
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
@@ -254,11 +255,27 @@ func decode(provider string, data []byte) (Answer, bool) {
 		model, answers = env.Model, env.Answers
 	}
 	a, ok := answers[Question]
-	if !ok || a.Choice == "" {
+	if !ok || !a.valid() {
 		return Answer{}, false
 	}
-	return Answer{Choice: a.Choice, Confidence: a.Confidence, Probabilities: a.Probabilities, Model: model}, true
+	return Answer{Choice: a.Choice, Confidence: *a.Confidence, Probabilities: a.Probabilities, Model: model}, true
 }
+
+// valid: a choice answer with a choice, a confidence in [0, 1] and
+// probabilities in [0, 1].
+func (a choiceAnswer) valid() bool {
+	if (a.Type != "" && a.Type != "choice") || a.Choice == "" || a.Confidence == nil || !unit(*a.Confidence) {
+		return false
+	}
+	for _, p := range a.Probabilities {
+		if !unit(p) {
+			return false
+		}
+	}
+	return true
+}
+
+func unit(v float64) bool { return !math.IsNaN(v) && v >= 0 && v <= 1 }
 
 // State is the text the model judges: the message, cut on a UTF-8 boundary,
 // with the room named when there is one.
@@ -292,12 +309,9 @@ type Roster struct {
 	Agents   map[string]string
 }
 
-// NewRoster builds the choice for the sorted eligible agents (at most
-// AgentsMax of them are offered).
+// NewRoster builds the choice for the sorted eligible agents; the caller
+// keeps the roster within AgentsMax.
 func NewRoster(agents []string, roles map[string]string) Roster {
-	if len(agents) > AgentsMax {
-		agents = agents[:AgentsMax]
-	}
 	r := Roster{Criteria: make(map[string]string, len(agents)+1), Agents: make(map[string]string, len(agents))}
 	for i, id := range agents {
 		alias := fmt.Sprintf("a%d", i+1)
@@ -316,12 +330,13 @@ func NewRoster(agents []string, roles map[string]string) Roster {
 // choice and for anything outside the roster.
 func (r Roster) Agent(choice string) string { return r.Agents[choice] }
 
-// Eligible are the sorted, de-duplicated agent IDs, never the abstain key.
+// Eligible are the sorted, de-duplicated agent IDs. An agent may be
+// named "none": the aliases keep it apart from the abstain choice.
 func Eligible(ids []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, id := range ids {
-		if id == "" || id == AbstainChoice || seen[id] {
+		if id == "" || seen[id] {
 			continue
 		}
 		seen[id] = true

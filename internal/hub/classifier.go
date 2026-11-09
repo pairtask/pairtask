@@ -103,6 +103,10 @@ func (h *Hub) classifyLater(ctx context.Context, out protocol.Message, recipient
 		h.recordSkip(ctx, out.MessageID, "single_recipient", eligible)
 		return
 	}
+	if len(eligible) > classifier.AgentsMax {
+		h.recordSkip(ctx, out.MessageID, "roster_too_large", eligible)
+		return
+	}
 	text, _ := payloadText(out.Payload)
 	job := classifierJob{messageID: out.MessageID, text: text, room: out.Room, eligible: eligible}
 	select {
@@ -166,7 +170,7 @@ func decided(p store.Prediction, roster classifier.Roster, answer classifier.Ans
 		if agent := roster.Agent(alias); agent != "" {
 			p.Probabilities[agent] = probability
 		} else if alias == classifier.AbstainChoice {
-			p.Probabilities[classifier.AbstainChoice] = probability
+			p.AbstainProbability = probability
 		}
 	}
 	agent := roster.Agent(answer.Choice)
