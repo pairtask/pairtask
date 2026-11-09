@@ -59,9 +59,11 @@ ADDRESS_KINDS = (A, AAAA)
 ASKED_KINDS = (PTR, SRV, TXT, A, AAAA, ANY)
 
 # invitation: the display name to announce while the operator keeps an
-# invitation discoverable, or None; find: browse for others' invitations and
-# list tailnet devices for the operator's picker (#284).
-Lease = namedtuple("Lease", "advertise browse ports expires_at deadline invitation find", defaults=(None, False))
+# invitation discoverable, or None, and invitation_id its ID, so that a
+# replacement under the same name is a fresh announcement; find: browse for
+# others' invitations and list tailnet devices for the operator's picker (#284).
+Lease = namedtuple("Lease", "advertise browse ports expires_at deadline invitation find invitation_id",
+                   defaults=(None, False, None))
 DEVICES_MAX = 32       # tailnet devices reported for the picker
 
 
@@ -684,7 +686,7 @@ class Session:
         self.channel = Channel(group, port)
         self.refresh_addresses()
         self.advertising, self.browser, self.silent = False, None, False
-        self.adverts, self.named_since = 0, 0  # advert datagrams sent, and the count when the name was last set
+        self.adverts, self.named_since, self.named_key = 0, 0, None  # advert datagrams sent, the count and key when the name was last set
         self.announce_at, self.query_at, self.query_gap = [], 0.0, 1.0
         self.poll_at, self.answered = clock() + POLL_SECONDS, float("-inf")
 
@@ -696,20 +698,21 @@ class Session:
             every = [value for values in self.interfaces.values() for value in values]
             self.advert.addresses = unique(every, ADVERT_ADDRESSES_MAX)
 
-    def update(self, advertise, browse, name=None):
-        self.set_name(name)
+    def update(self, advertise, browse, name=None, key=None):
+        self.set_name(name, key)
         self.set_advertising(bool(advertise) and self.advert is not None)
         self.set_browsing(browse)
 
-    def set_name(self, name):
-        """Announce under a fresh instance when the invitation name changes:
-        a goodbye for the old one while advertising, then the new one."""
-        if self.advert is None or name == self.advert.invitation_name:
+    def set_name(self, name, key=None):
+        """Announce under a fresh instance when the invitation changes, by
+        its key even under the same name: a goodbye for the old one while
+        advertising, then the new one."""
+        if self.advert is None or (name, key) == (self.advert.invitation_name, self.named_key):
             return
         if self.advertising:
             self.send_advert(0)
         self.advert.rotate(name)
-        self.named_since = self.adverts
+        self.named_key, self.named_since = key, self.adverts
         if self.advertising:
             self.schedule_announcements(self.clock())
 
@@ -971,12 +974,19 @@ def lease_from(answer, asked_at, now, wall):
     if expiry is None:
         return None
     deadline = min(now + (expiry - wall), asked_at + LEASE_MAX)
+    name, invitation_id = lease_invitation(data)
     return Lease(data.get("advertise") is True, data.get("browse") is True, lease_ports(data),
-                 data.get("expires_at"), deadline, lease_invitation(data), data.get("find") is True)
+                 data.get("expires_at"), deadline, name, data.get("find") is True, invitation_id)
 
 
 def lease_invitation(data):
-    """The name a lease asks to announce, or None for an absent or invalid one."""
+    """(name, id) of the invitation a lease asks to announce; (None, None)
+    for an absent or invalid one. The ID stays on this private channel."""
     invitation = data.get("invitation")
-    name = invitation.get("name") if isinstance(invitation, dict) else None
-    return display_name(name.encode("utf-8")) if isinstance(name, str) else None
+    if not isinstance(invitation, dict):
+        return None, None
+    name, invitation_id = invitation.get("name"), invitation.get("id")
+    if not isinstance(name, str) or not isinstance(invitation_id, str) or not 0 < len(invitation_id) <= 128:
+        return None, None
+    name = display_name(name.encode("utf-8"))
+    return (name, invitation_id) if name is not None else (None, None)

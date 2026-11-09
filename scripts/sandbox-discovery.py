@@ -225,7 +225,8 @@ class Discovery:
             report["found"] = found
         if self.lease is not None and self.lease.invitation is not None and self.advert is not None:
             sent = self.session is not None and self.session.sent_named()
-            report["announcing"] = {"name": self.lease.invitation, "sent": sent, "error": self.status.data.get("error")}
+            report["announcing"] = {"id": self.lease.invitation_id, "name": self.lease.invitation, "sent": sent,
+                                    "error": self.status.data.get("error")}
         return report
 
     def apply(self, lease):
@@ -267,7 +268,7 @@ class Discovery:
         if self.session is None and not self.open():
             return
         self.track_browsing(browse, now)
-        self.session.update(advertise, browse, self.lease.invitation)
+        self.session.update(advertise, browse, self.lease.invitation, self.lease.invitation_id)
         self.show(advertise, browse)
 
     def track_browsing(self, browse, now):
