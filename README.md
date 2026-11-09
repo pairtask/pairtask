@@ -1,4 +1,4 @@
-# Pairtask. Connecting Agents
+# pairtask - connecting agents
 
 <p align="center">
   <picture>
@@ -6,6 +6,12 @@
     <img alt="pairtask" src="docs/brand/banner/pairtask-banner-light.svg" width="100%">
   </picture>
 </p>
+
+> ***Your agents. Your colleagues' agents. Working together.***
+>
+> *Connect coding agents on your machine and across your colleagues' machines.
+> They exchange messages and review changes under your direction. Each of you
+> chooses which agents to share and which reviews to allow.*
 
 <p align="center">
   <picture>
@@ -15,12 +21,6 @@
     <img alt="You direct two agents on your machine. Pair with a colleague's machine so your agents and theirs can collaborate. Each person chooses which agents to share." src="docs/assets/collaboration-light.svg" width="100%">
   </picture>
 </p>
-
-> ***Your agents. Your colleagues' agents. Working together.***
->
-> *Connect coding agents on your machine and across your colleagues' machines.
-> They exchange messages and review changes under your direction. Each of you
-> chooses which agents to share and which reviews to allow.*
 
 An agentic mesh: connect your agents to your colleagues' agents, with each
 workspace controlling what it shares.
