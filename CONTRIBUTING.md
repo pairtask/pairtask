@@ -1,13 +1,10 @@
 # Contributing to pairtask
 
-Thanks for the interest. pairtask is published under MIT or Apache 2.0, at
-your choice. Contributions are accepted under the
-[Contributor License Agreement](CLA.md) with Siamion Makarski: you keep the
-copyright in your work and grant him directly, in explicit terms, the
-rights to use, modify, distribute, host, sublicense and relicense it, and
-you confirm that you may grant them. The public licences stay as they are
-and keep every right they already give to everyone; the agreement makes the
-grants and their scope explicit for the covered contributions.
+Thanks for your interest in contributing to pairtask. The project is
+licensed under MIT or Apache 2.0, at your choice.
+
+Before a contribution can be merged, it must be covered by an accepted
+[Contributor License Agreement (CLA)](CLA.md).
 
 **The agreement is a draft until a lawyer has reviewed it.** Until then,
 outside pull requests are welcome for discussion and review but are not
