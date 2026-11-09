@@ -31,12 +31,12 @@ trust). It works once and expires.
 
 `--discoverable` lets B find A on the same network instead of typing its
 address: while the invitation is open, A's host announces the name from
-`pairtask pairing on --name` and the pairing port, and nothing else: not the
-code, not the key. The announcement ends when the code is used, cancelled or
-expires. `/pair status` says `announcing "my-laptop" on this network` once
-the host confirms, or why it can't (no name set, or the
-[discovery helper](#moving-between-networks) off). A plain `/pair open`
-announces nothing.
+`pairtask pairing on --name` (at most 63 bytes to be announced) and the
+pairing port, and nothing else: not the code, not the key. The announcement
+ends when the code is used, cancelled or expires. `/pair status` says
+`announcing "my-laptop" on this network` once the host confirms, or why it
+can't (no name set, or the [discovery helper](#moving-between-networks)
+off). A plain `/pair open` announces nothing.
 
 ## 3. On B: find A, or type its address
 
@@ -79,9 +79,10 @@ Colima VM's).
 ## 5. The pairing completes by itself
 
 Once A accepts, B's broker finishes the pairing on its own: it tries within
-seconds, again over the next two minutes, then every five minutes for a
-week. If `/pair status` shows a settle error beside the redemption, or you
-don't want to wait, `/pair settle` tries at once.
+seconds, again over the next two minutes, then at five-minute intervals,
+within a bounded number of attempts over a week. If `/pair status` shows a
+settle error beside the redemption, or you don't want to wait, `/pair settle`
+tries at once.
 
 `/pair status` on both sides now lists the other workspace first, under
 **Paired workspaces**, with a colored dot and words for how it stands:
