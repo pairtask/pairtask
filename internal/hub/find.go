@@ -30,6 +30,8 @@ type findState struct {
 	devices     []protocol.TailnetDevice
 	announcing  *protocol.Announcing
 	wantedUntil time.Time // /pair find keeps the helper looking until then
+	generation  int       // the current find window's number; 0 before the first
+	reported    int       // the window the last report said its browser was up for
 }
 
 // helperSeen records a lease request and takes its report whole.
@@ -37,6 +39,7 @@ func (f *findState) helperSeen(msg protocol.Message, now time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seen = now
+	f.reported = msg.ContactFindGeneration
 	f.found = append([]protocol.FoundInvitation{}, msg.ContactFound...)
 	f.devices = append([]protocol.TailnetDevice{}, msg.ContactDevices...)
 	f.announcing = nil
@@ -60,20 +63,22 @@ func (f *findState) want(now time.Time) {
 	defer f.mu.Unlock()
 	if now.After(f.wantedUntil) {
 		f.wantedUntil = now.Add(FindWindow)
+		f.generation++ // a new window, a new number for the helper to echo
 	}
 }
 
-func (f *findState) wanted(now time.Time) bool {
+// wanted reports whether a find window is open, and which.
+func (f *findState) wanted(now time.Time) (bool, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return now.Before(f.wantedUntil)
+	return now.Before(f.wantedUntil), f.generation
 }
 
 // snapshot is find's answer: nothing listed from a stale helper.
 func (f *findState) snapshot(now time.Time) protocol.ContactFind {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	view := protocol.ContactFind{Invitations: []protocol.FoundInvitation{}, Devices: []protocol.TailnetDevice{}}
+	view := protocol.ContactFind{ScanState: protocol.ScanHelperOff, Invitations: []protocol.FoundInvitation{}, Devices: []protocol.TailnetDevice{}}
 	if f.seen.IsZero() {
 		return view
 	}
@@ -84,7 +89,20 @@ func (f *findState) snapshot(now time.Time) protocol.ContactFind {
 	}
 	view.Invitations = append(view.Invitations, f.found...)
 	view.Devices = append(view.Devices, f.devices...)
+	view.ScanState = f.scanState()
 	return view
+}
+
+// scanState: pending until a report echoes this window's number, then
+// scanning or listed by what that report held. Called with the lock held.
+func (f *findState) scanState() string {
+	switch {
+	case f.generation == 0 || f.reported != f.generation:
+		return protocol.ScanPending
+	case len(f.found) == 0:
+		return protocol.ScanScanning
+	}
+	return protocol.ScanListed
 }
 
 // announceState is what the helper last said about announcing the

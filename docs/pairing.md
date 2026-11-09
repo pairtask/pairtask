@@ -60,9 +60,12 @@ how A will see you, then press Enter:
 A listing is an announcement, not an identity: the code and the keys in the
 next step decide who you pair with. A tailnet row is a device, not
 necessarily a pairtask listener; it uses port 7445 unless you edit it. The
-list refreshes for two minutes; without the helper, or on separate networks,
-type A's address by hand: its LAN or tailnet IP (the Mac's own, not the
-Colima VM's).
+panel refreshes by itself for up to two minutes from opening. It says
+`searching` until the host helper has reported for this search, which
+usually takes about 15 seconds, then `nothing heard yet` while the network
+stays quiet. Without
+the helper, or on separate networks, type A's address by hand: its LAN or
+tailnet IP (the Mac's own, not the Colima VM's).
 
 ## 4. Check it is really B, then accept on A
 

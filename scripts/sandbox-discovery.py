@@ -129,8 +129,19 @@ def report_fields(report):
     """The helper's observations as request fields. Each request replaces
     the broker's whole snapshot, so an empty list is sent as such: it is
     how the last invitation heard, or device seen, disappears there."""
-    names = {"found": "contact_found", "devices": "contact_devices", "announcing": "contact_announcing"}
+    names = {"found": "contact_found", "devices": "contact_devices", "announcing": "contact_announcing",
+             "find_generation": "contact_find_generation"}
     return {names[key]: value for key, value in (report or {}).items() if key in names and value is not None}
+
+
+def report_key(report):
+    """What in a report matters to the broker: the rows and the announcement,
+    never when a row was last seen. A change here is worth a lease request."""
+    found = sorted((row.get("name"), row.get("host"), row.get("port")) for row in report.get("found") or []
+                   if isinstance(row, dict))
+    devices = tuple((d.get("name"), d.get("address")) for d in report.get("devices") or [] if isinstance(d, dict))
+    announcing = report.get("announcing") or {}
+    return (tuple(found), devices, (announcing.get("id"), announcing.get("sent"), announcing.get("error")))
 
 
 class Status:
@@ -215,19 +226,27 @@ class Discovery:
         return engine.lease_from(answer, asked, time.monotonic(), time.time())
 
     def report(self):
-        """What the loop knows now: the invitations heard, and whether the
-        announcement the lease asked for has left this host."""
+        """What the loop knows now: the invitations heard, the find window
+        this browser is up for, and whether the announcement the lease
+        asked for has left this host."""
         now, report = time.monotonic(), {}
         if self.session is not None and self.session.browser is not None:
             found = self.session.browser.invitations(now)
             for entry in found:
                 entry["seen_at"] = stamp(time.time() - (now - entry["seen_at"]))
             report["found"] = found
+            if self.finding(now):
+                report["find_generation"] = self.lease.find_generation
         if self.announces():
             sent = self.session is not None and self.session.sent_named()
             report["announcing"] = {"id": self.lease.invitation_id, "name": self.lease.invitation, "sent": sent,
                                     "error": self.status.data.get("error")}
         return report
+
+    def finding(self, now):
+        """The current lease asks to find and still holds: the browser is up
+        for that window, so its number may be echoed."""
+        return self.active(now) and self.lease.find and self.lease.find_generation > 0
 
     def reads_tailnet(self):
         """The lease asks to find, and a tailscale CLI is at hand."""
@@ -388,14 +407,21 @@ def submit_once(discovery, lan, ports):
         discovery.submitted(None, error)
 
 
+PROMPT_GAP = 5        # seconds between lease requests a changed report brings forward, at least
+
+
 class Loop:
-    """The lease every interval (sooner when it nears its end), at most one
+    """The lease every interval (sooner when it nears its end, and within
+    PROMPT_GAP of a change in what the helper would report), at most one
     submission per SUBMIT_GAP while browsing, and the session closed the
-    moment the lease ends, whatever a call is doing."""
+    moment the lease ends, whatever a call is doing. Leases and submissions
+    have a worker each: a slow probe never holds up a lease or a report."""
 
     def __init__(self, discovery, interval):
         self.discovery, self.interval = discovery, interval
-        self.worker, self.next_lease, self.next_submit = Worker(), 0.0, 0.0
+        self.leases, self.probes = Worker(), Worker()
+        self.next_lease, self.next_submit, self.last_lease = 0.0, 0.0, float("-inf")
+        self.reported = None  # report_key of the report the last lease request carried
 
     def tick(self, stopping):
         now = time.monotonic()
@@ -407,24 +433,36 @@ class Loop:
             stopping.wait(0.25)
 
     def dispatch(self, now):
-        """Take an ended call, or start the next one that is due."""
-        done = self.worker.take()
+        """Take ended calls, then start the lease or the submission that is due."""
+        done = self.leases.take()
         if done is not None:
             self.next_lease = finish(self.discovery, done, self.interval, self.next_lease)
-        elif self.worker.busy():
-            return
-        elif now >= self.next_lease:
-            self.worker.start("lease", lambda report=self.discovery.report(): self.discovery.ask_lease(report))
-            self.next_lease = now + self.interval
-        elif self.submission_due(now):
+        done = self.probes.take()
+        if done is not None:
+            finish(self.discovery, done, self.interval, self.next_lease)
+        if not self.leases.busy():
+            report = self.discovery.report()
+            if now >= self.next_lease or self.changed(report, now):
+                self.start_lease(report, now)
+        if not self.probes.busy() and self.submission_due(now):
             self.start_submission(now)
+
+    def changed(self, report, now):
+        """A report whose rows or announcement differ from the last one sent,
+        once PROMPT_GAP has passed since that request."""
+        return self.reported is not None and report_key(report) != self.reported and now - self.last_lease >= PROMPT_GAP
+
+    def start_lease(self, report, now):
+        self.reported, self.last_lease = report_key(report), now
+        self.leases.start("lease", lambda report=report: self.discovery.ask_lease(report))
+        self.next_lease = now + self.interval
 
     def submission_due(self, now):
         return self.discovery.browsing(now) and self.discovery.submission_open(now, self.next_submit)
 
     def start_submission(self, now):
         discovery = self.discovery
-        self.worker.start("candidates", lambda lan=discovery.lan(), ports=discovery.lease.ports:
+        self.probes.start("candidates", lambda lan=discovery.lan(), ports=discovery.lease.ports:
                           discovery.submit(lan, ports))
         self.next_submit = now + SUBMIT_GAP
 
@@ -534,7 +572,7 @@ def arguments(argv=None):
     actions = parser.add_subparsers(dest="action", required=True)
     run = actions.add_parser("run", help="the helper: lease, advertise or browse, submit")
     run.add_argument("--once", action="store_true", help="one lease, a few seconds of mDNS, at most one submission")
-    run.add_argument("--interval", type=seconds, default=30, help="how often to ask for the lease (default 30s)")
+    run.add_argument("--interval", type=seconds, default=15, help="how often to ask for the lease (default 15s)")
     run.add_argument("--socket", help="the broker's operator socket, directly (default: incus exec into secured)")
     run.add_argument("--host-port", type=host_port, help="the published pairing port to advertise (0: never; default: the deployment's)")
     status = actions.add_parser("status", help="the last lease, advert and candidate outcomes")

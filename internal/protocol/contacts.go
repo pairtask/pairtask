@@ -429,6 +429,7 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"contact_found", msg.ContactFound != nil, allowed.report},
 		{"contact_devices", msg.ContactDevices != nil, allowed.report},
 		{"contact_announcing", msg.ContactAnnouncing != nil, allowed.report},
+		{"contact_find_generation", msg.ContactFindGeneration != 0, allowed.report},
 		{"contact_find", msg.ContactFind != nil, false},
 	} {
 		if f.present && !f.allowed {

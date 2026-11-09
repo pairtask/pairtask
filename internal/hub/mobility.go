@@ -107,8 +107,12 @@ func (h *Hub) discoveryLease(ctx context.Context, msg protocol.Message) protocol
 		return (&routingError{protocol.ErrInternal, "contacts unavailable"}).frame(msg.MessageID)
 	}
 	browse := len(r.failing) > 0 && h.canDial()
+	finding, generation := h.find.wanted(now)
 	lease := protocol.ContactDiscovery{Advertise: r.listened, Browse: browse, Ports: []int{},
-		Invitation: h.discoverableInvitation(), Find: h.find.wanted(now)}
+		Invitation: h.discoverableInvitation()}
+	if finding {
+		lease.Find, lease.FindGeneration = true, generation
+	}
 	if browse {
 		lease.Ports = failingPorts(r.failing)
 	}

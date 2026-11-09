@@ -297,6 +297,7 @@ type Message struct {
 	ContactFound            []FoundInvitation `json:"contact_found,omitempty"`             // discovery: the helper's report, named invitations heard (#284)
 	ContactDevices          []TailnetDevice   `json:"contact_devices,omitempty"`           // discovery: the helper's report, online tailnet devices
 	ContactAnnouncing       *Announcing       `json:"contact_announcing,omitempty"`        // discovery: the helper's report on the announcement asked of it
+	ContactFindGeneration   int               `json:"contact_find_generation,omitempty"`   // discovery: the find window the helper's browser is up for
 	ContactFind             *ContactFind      `json:"contact_find,omitempty"`              // find's answer
 }
 
