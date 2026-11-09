@@ -80,4 +80,18 @@ func TestPairFindAcceptancePickerLabelsUnverifiedTailnetAndHoldsRedeem(t *testin
 	if h.m.State().InFlight != 0 {
 		t.Fatal("selecting a discovery row started pairing without the code")
 	}
+	assertFindSuggestionsEndWithPanel(t, h)
+}
+
+func assertFindSuggestionsEndWithPanel(t *testing.T, h *chatHarness) {
+	t.Helper()
+	h.input(chatKey(tea.KeyEscape, 0)) // leave the redeem line
+	h.input(chatKey(tea.KeyEscape, 0)) // close find
+	if got := h.m.State().Panel; got != "" {
+		t.Fatalf("find panel still open after Esc: %q", got)
+	}
+	commandCompleteLine(h, "pair redeem ")
+	if p := h.m.State().Picker; p != nil {
+		chatEqual(t, "closed find offered stale endpoints", len(p.Items), 0)
+	}
 }
