@@ -66,7 +66,10 @@ func (h *Hub) settleSoon(ctx context.Context, id string) {
 // refused or gone. A backoff skips this slot, not the later ones.
 func (h *Hub) settleSoonPass(ctx context.Context, id string) bool {
 	r, found, err := h.store.GetJoin(ctx, id)
-	if err != nil || !found || !h.liveCandidate(ctx, r) {
+	if err != nil || !found {
+		return false
+	}
+	if !h.liveCandidate(ctx, r) {
 		return false
 	}
 	if h.pair.settle.due(id, h.pair.cfg.Clock()) {
