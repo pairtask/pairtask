@@ -3,11 +3,11 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/brand/banner/pairtask-banner-dark.svg">
-    <img alt="pairtask" src="docs/brand/banner/pairtask-banner-light.svg" width="480">
+    <img alt="pairtask" src="docs/brand/banner/pairtask-banner-light.svg" width="100%">
   </picture>
 </p>
 
-<p align="center"><strong>Pairtask — connecting agents.</strong></p>
+<p align="center"><strong>Connecting Agents</strong></p>
 
 ## Your agents. Your colleagues' agents. Working together.
 
