@@ -281,6 +281,12 @@ class Discovery:
         lease = self.lease
         return (lease.advertise or lease.invitation is not None) and self.advert is not None, lease.browse or lease.find
 
+    def step(self, timeout):
+        """One turn of the session; a browse that fell over since the lease
+        was applied is said at once, not at the next lease."""
+        self.session.step(timeout)
+        self.note_browse_error(self.wanted(time.monotonic())[1])
+
     def expire(self, now):
         """Close the session the moment the lease ends."""
         if self.session is not None and not self.active(now):
@@ -418,7 +424,7 @@ def advertised_nothing(discovery):
 def window(discovery, end):
     """Advertise and listen until end; what the LAN answered."""
     while discovery.session is not None and time.monotonic() < end:
-        discovery.session.step(min(0.25, max(0.0, end - time.monotonic())))
+        discovery.step(min(0.25, max(0.0, end - time.monotonic())))
     return discovery.lan()
 
 
@@ -450,7 +456,7 @@ class Loop:
         self.discovery.expire(now)
         self.dispatch(now)
         if self.discovery.session is not None:
-            self.discovery.session.step(0.25)
+            self.discovery.step(0.25)
         else:
             stopping.wait(0.25)
 

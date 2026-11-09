@@ -28,9 +28,10 @@ AF_INET6_DARWIN = 30
 SOCKADDR_MAX = 28
 LIFETIME = 4500              # seconds an instance stays without the daemon's removal: the mDNS PTR TTL
 ADDRESSES_MAX = 16           # values tracked per host
-ERRORS = {-65537: "unknown", -65540: "bad parameter", -65550: "firewall", -65553: "refused",
-          -65563: "service not running", -65568: "timeout", -65569: "defunct connection",
-          -65570: "policy denied"}
+ERRORS = {-65537: "unknown", -65538: "no such name", -65540: "bad parameter", -65545: "not initialized",
+          -65550: "firewall", -65553: "refused", -65554: "no such record", -65563: "service not running",
+          -65568: "timeout", -65569: "defunct connection", -65570: "policy denied"}
+SYSTEMIC = {-65545, -65550, -65553, -65563, -65569, -65570}  # the daemon or its connection, not one record
 
 Ref = ctypes.c_void_p
 BROWSE_REPLY = ctypes.CFUNCTYPE(None, Ref, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int32,
@@ -156,12 +157,12 @@ class Feed:
     # --- handles ---------------------------------------------------------------
 
     def start_resolve(self, key, target):
-        reply = RESOLVE_REPLY(lambda *arguments: self.resolved(key, Resolve(*arguments)))
+        reply = RESOLVE_REPLY(lambda *arguments: self.guard(self.resolved, key, Resolve(*arguments)))
         self.resolving[key] = ref = self.daemon.resolve(target, reply)
         self.handles[ref] = "resolve"
 
     def start_lookup(self, key, target):
-        reply = ADDRESS_REPLY(lambda *arguments: self.addressed(key, Address(*arguments)))
+        reply = ADDRESS_REPLY(lambda *arguments: self.guard(self.addressed, key, Address(*arguments)))
         self.looking[key] = ref = self.daemon.addresses(key[0], target, reply)
         self.handles[ref] = "address"
 
@@ -188,8 +189,22 @@ class Feed:
                 except DaemonError as error:
                     self.fail(error)
 
+    def guard(self, action, *arguments):
+        """Nothing may escape a C callback: ctypes would swallow it and the
+        browse would look healthy; a failure here ends the feed instead."""
+        try:
+            action(*arguments)
+        except Exception as error:  # noqa: BLE001  anything, by design
+            self.fail(error)
+
+    def trouble(self, code):
+        """A reply's error: the daemon's own failures end the feed; one
+        record's (no such record, timeout) end only its operation."""
+        if code in SYSTEMIC:
+            self.fail(DaemonError(describe(code)))
+
     def fail(self, error):
-        self.error = str(error)
+        self.error = str(error) or type(error).__name__
         self.close()
 
     def close(self):
@@ -203,7 +218,9 @@ class Feed:
     # --- browse ----------------------------------------------------------------
 
     def found(self, *arguments):
-        reply = Browse(*arguments)
+        self.guard(self.heard, Browse(*arguments))
+
+    def heard(self, reply):
         if reply.code:
             self.fail(DaemonError(describe(reply.code)))
             return
@@ -256,8 +273,11 @@ class Feed:
 
     def resolved(self, key, reply):
         self.stop_resolve(key)
-        if reply.code or not self.unresolved(key):
-            return  # failed, or gone meanwhile
+        if reply.code:
+            self.trouble(reply.code)
+            return
+        if not self.unresolved(key):
+            return  # gone meanwhile
         interface, instance = key
         host, now = reply.target.decode("utf-8", "replace").rstrip("."), self.clock()
         self.browser.service_record(instance, LIFETIME, now, (host, socket.ntohs(reply.port)))
@@ -271,6 +291,7 @@ class Feed:
     def addressed(self, key, reply):
         if reply.code:
             self.stop_lookup(key)
+            self.trouble(reply.code)
             return
         value = unpack(reply.sockaddr)
         if value is not None:
