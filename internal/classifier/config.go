@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +80,9 @@ func Load(lookup config.LookupFunc, files Files) (cfg Config, status string, err
 	}
 	if mode != ModeShadow {
 		return cfg, "", fmt.Errorf("%s must be %s or %s, not %q", config.Name(SettingMode), ModeOff, ModeShadow, mode)
+	}
+	if files.Owner == nil { // the real owner, unless a test fakes the file system
+		files.Owner, files.UID = FileOwner, os.Getuid()
 	}
 	status, err = loadKey(lookup, files, &cfg)
 	if err != nil || status != "" {
@@ -181,10 +185,8 @@ func loadKey(lookup config.LookupFunc, files Files, cfg *Config) (status string,
 	if info.Mode().Perm()&0o077 != 0 {
 		return "", fmt.Errorf("%s must be readable by its owner only (mode %04o)", config.Name(SettingKeyFile), info.Mode().Perm())
 	}
-	if files.Owner != nil {
-		if uid, known := files.Owner(info); known && uid != files.UID {
-			return "", fmt.Errorf("%s must be owned by the broker user (uid %d), not uid %d", config.Name(SettingKeyFile), files.UID, uid)
-		}
+	if uid, known := files.Owner(info); known && uid != files.UID {
+		return "", fmt.Errorf("%s must be owned by the broker user (uid %d), not uid %d", config.Name(SettingKeyFile), files.UID, uid)
 	}
 	data, err := files.ReadFile(path)
 	if err != nil {

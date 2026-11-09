@@ -246,6 +246,11 @@ Message text renders a small Markdown subset (lists, tables, headings, bold,
 italics, underline, code): see [chat formatting](chat-formatting.md). Delivery
 and acknowledgment are not the same as approval: agents decide and you approve.
 
+A message to everyone with no `@` tag is settled by the agents' claims. The
+optional [classifier](host-commands.md#classifier-shadow-mode), when the broker
+runs it in shadow mode, records which agent a model thinks it was for; nothing
+in the chat changes until that record has been evaluated.
+
 ## Status and agent activity
 
 `/agents` and the conversation rows show each agent's declared status and

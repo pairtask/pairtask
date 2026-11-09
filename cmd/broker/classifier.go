@@ -18,7 +18,7 @@ import (
 // loadClassifier reads the settings; an invalid explicit value stops the
 // broker, a missing credential only disables the classifier.
 func loadClassifier(lookup settings.LookupFunc) (classifier.Config, string, error) {
-	return classifier.Load(lookup, classifier.Files{ReadFile: os.ReadFile, Stat: os.Stat, Owner: classifier.FileOwner, UID: os.Getuid()})
+	return classifier.Load(lookup, classifier.Files{ReadFile: os.ReadFile, Stat: os.Stat})
 }
 
 // attachClassifier gives the hub a client when shadow mode is on, and says

@@ -47,6 +47,7 @@ var operatorCommands = map[string]operatorCommand{
 	"review":        runOperatorReview,
 	"peer":          runOperatorPeer,
 	"update-notice": runOperatorUpdateNotice,
+	"classifier":    runOperatorClassifier,
 }
 
 func runOperator(ctx context.Context, args []string, stdout, stderr io.Writer) int {
