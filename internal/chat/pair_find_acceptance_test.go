@@ -74,6 +74,7 @@ func TestPairFindAcceptancePickerLabelsUnverifiedTailnetAndHoldsRedeem(t *testin
 	if len(h.m.State().Entries) != 0 || h.m.State().InFlight != 0 {
 		t.Fatal("viewing discovery results sent a message or started pairing")
 	}
+	commandCompleteItems(t, h, []string{"192.168.8.20:8445", "work.tailnet.ts.net:7445", "100.70.1.2:7445"})
 	h.input(chatKey(tea.KeyEnter, 0))
 	if got := h.m.State().CommandLine.Text; !strings.Contains(got, "pair redeem 192.168.8.20:8445 ") {
 		t.Fatalf("choosing LAN invitation should fill, not send, redeem command: %q", got)
