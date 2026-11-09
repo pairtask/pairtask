@@ -48,6 +48,7 @@ type Hub struct {
 	rescan     atomic.Bool // an import pass was asked for since the scan began
 	importDue  atomic.Bool // an import pass is due; signalled on pair.changed (#222)
 	consent    hubConsent  // held requests and session authority (#293)
+	classify   hubClassifier // shadow predictions for untagged operator sends (#339)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -145,8 +146,10 @@ func (h *Hub) Run(ctx context.Context) {
 	clients := make(map[string]*Client)
 	defer close(h.done)
 	defer h.settlePairing()
+	defer h.settleClassifier()
 	defer h.disconnectAll(clients)
 	h.beginPairing(ctx)
+	h.startClassifier(ctx)
 	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {
