@@ -281,6 +281,12 @@ class Discovery:
         lease = self.lease
         return (lease.advertise or lease.invitation is not None) and self.advert is not None, lease.browse or lease.find
 
+    def step(self, timeout):
+        """One turn of the session; a browse that fell over since the lease
+        was applied is said at once, not at the next lease."""
+        self.session.step(timeout)
+        self.note_browse_error(self.wanted(time.monotonic())[1])
+
     def expire(self, now):
         """Close the session the moment the lease ends."""
         if self.session is not None and not self.active(now):
@@ -295,8 +301,30 @@ class Discovery:
         if self.session is None and not self.open():
             return
         self.track_browsing(browse, now)
-        self.session.update(advertise, browse, self.lease.invitation, self.lease.invitation_id)
+        try:
+            self.session.update(advertise, browse, self.lease.invitation, self.lease.invitation_id)
+        except OSError as error:
+            self.unavailable(error)
+            return
+        self.note_browse_error(browse)
         self.show(advertise, browse)
+
+    def unavailable(self, error):
+        """The multicast channel could not open: no session until the next cycle tries again."""
+        self.session.stop()
+        self.session = None
+        self.complain("mDNS unavailable on %s:%d: %s" % (self.group, self.port, error))
+
+    def note_browse_error(self, browse):
+        """Asked to browse but no browser came up: the session says why."""
+        if browse and self.session.browser is None:
+            self.complain(self.session.browse_error or "browse not started")
+
+    def complain(self, message):
+        """The error in the status, logged when it changes."""
+        if self.status.data.get("error") != message:
+            log(message)
+        self.status.update(error=message)
 
     def track_browsing(self, browse, now):
         if not browse:
@@ -310,23 +338,23 @@ class Discovery:
 
     def show(self, advertise, browse):
         shown = self.advert_status() if advertise else None
-        if self.shown_changed(shown, browse):
-            self.status.update(advertising=shown, browsing=browse)
-            log("advertising %s, browsing %s" % ("port %d" % self.advert.port if advertise else "no", yes(browse)))
+        backend = self.session.backend() if browse else None
+        if self.shown_changed(shown, browse, backend):
+            self.status.update(advertising=shown, browsing=browse, browse_backend=backend)
+            log("advertising %s, browsing %s" % ("port %d" % self.advert.port if advertise else "no",
+                                                 backend if browse else "no"))
 
-    def shown_changed(self, shown, browse):
+    def shown_changed(self, shown, browse, backend):
         data = self.status.data
-        return shown != data.get("advertising") or data.get("browsing") != browse
+        return (shown != data.get("advertising") or data.get("browsing") != browse
+                or data.get("browse_backend") != backend)
 
     def open(self):
         try:
             self.session = engine.Session(self.advert, self.group, self.port)
             return True
         except OSError as error:
-            message = "mDNS unavailable on %s:%d: %s" % (self.group, self.port, error)
-            if self.status.data.get("error") != message:
-                log(message)
-            self.status.update(error=message)
+            self.complain("mDNS unavailable on %s:%d: %s" % (self.group, self.port, error))
             return False
 
     def advert_status(self):
@@ -363,7 +391,7 @@ class Discovery:
             log("stopped advertising and browsing")
         self.browse_since = None
         if self.status.data.get("advertising") or self.status.data.get("browsing"):
-            self.status.update(advertising=None, browsing=False)
+            self.status.update(advertising=None, browsing=False, browse_backend=None)
 
 
 def run_once(discovery):
@@ -390,13 +418,13 @@ def advertised_nothing(discovery):
     """With advertising due, no session could be opened, or not one datagram
     left it: the network refused them."""
     session = discovery.session
-    return session is None or session.channel.sent == 0
+    return session is None or session.datagrams() == 0
 
 
 def window(discovery, end):
     """Advertise and listen until end; what the LAN answered."""
     while discovery.session is not None and time.monotonic() < end:
-        discovery.session.step(min(0.25, max(0.0, end - time.monotonic())))
+        discovery.step(min(0.25, max(0.0, end - time.monotonic())))
     return discovery.lan()
 
 
@@ -428,7 +456,7 @@ class Loop:
         self.discovery.expire(now)
         self.dispatch(now)
         if self.discovery.session is not None:
-            self.discovery.session.step(0.25)
+            self.discovery.step(0.25)
         else:
             stopping.wait(0.25)
 
@@ -623,7 +651,7 @@ def show(args):
 def describe(data):
     """The status lines: lease, advert, browsing, last submission, last error."""
     lines = ["Discovery: updated %s" % data.get("updated_at", "never"), lease_line(data.get("lease")),
-             advert_line(data.get("advertising")), "Browsing: " + yes(data.get("browsing"))]
+             advert_line(data.get("advertising")), browsing_line(data)]
     lines += report_lines(data.get("report"))
     lines += submission_lines(data.get("submission"))
     if data.get("error"):
@@ -638,6 +666,14 @@ def lease_line(lease):
     announce = ", announce %r" % lease["invitation"] if lease.get("invitation") else ""
     return "Lease: advertise %s, browse %s, find %s%s, ports %s, expires %s" % (
         yes(lease.get("advertise")), yes(lease.get("browse")), yes(lease.get("find")), announce, ports, lease.get("expires_at"))
+
+
+def browsing_line(data):
+    """Whether the helper looks for others, and through what."""
+    if not data.get("browsing"):
+        return "Browsing: no"
+    backend = data.get("browse_backend")
+    return "Browsing: yes (%s)" % ("system Bonjour" if backend == "native" else "own multicast socket")
 
 
 def advert_line(advert):

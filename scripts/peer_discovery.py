@@ -18,15 +18,12 @@ packet that is malformed or over a bound is dropped without an error.
 from collections import OrderedDict, namedtuple
 import datetime
 import errno
-import ipaddress
 import os
 import re
 import secrets
 import select
-import shutil
 import socket
 import struct
-import subprocess
 import sys
 import time
 
@@ -37,6 +34,8 @@ if HERE not in sys.path:
 from peer_discovery_wire import (  # noqa: E402
     A, AAAA, ANY, PACKET_MAX, PTR, RECORD_MAX, SERVICE, SRV, TTL_MAX, TXT,
     Entry, Malformed, Message, Record, encode_name, encode_record, parse, query, response)
+from peer_discovery_interfaces import interface_addresses  # noqa: E402,F401  patched by tests
+import peer_discovery_native as native  # noqa: E402
 from peer_discovery_net import (  # noqa: E402
     CANDIDATES_MAX, INVENTORY_MAX, address, eligible, endpoint, is_ipv6, is_port, merge, unique)
 from peer_discovery_tailnet import (  # noqa: E402,F401  re-exported for the helper and its tests
@@ -374,117 +373,6 @@ class Advert:
 
 # --- Interfaces ----------------------------------------------------------------
 
-SIOCGIFADDR = 0x8915  # Linux
-IPV6_SKIPPED = 0x01 | 0x20 | 0x40  # temporary, deprecated, tentative
-IFCONFIG_SKIPPED = {"temporary", "deprecated", "tentative", "detached"}
-IFCONFIG_FAMILIES = ("inet", "inet6")
-
-
-def interface_addresses():
-    """This host's eligible unicast addresses, by interface; {} when none."""
-    try:
-        found = linux_addresses() if sys.platform.startswith("linux") else ifconfig_addresses()
-    except (OSError, ValueError, subprocess.SubprocessError):
-        found = {}
-    result = {}
-    for name, values in sorted(found.items()):
-        kept = sorted({str(address(v)) for v in values if eligible(v)})
-        if kept:
-            result[name] = kept
-    return result or fallback_addresses()
-
-
-def linux_addresses():
-    """IPv4 by ioctl, one per interface; IPv6 from /proc, stable ones only."""
-    found = {}
-    linux_ipv4(found)
-    linux_ipv6(found)
-    return found
-
-
-def linux_ipv4(found):
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        for _, name in socket.if_nameindex():
-            value = interface_ipv4(probe, name)
-            if value:
-                found.setdefault(name, []).append(value)
-
-
-def interface_ipv4(probe, name):
-    """The interface's IPv4 address, or None without one."""
-    import fcntl
-    try:
-        raw = fcntl.ioctl(probe.fileno(), SIOCGIFADDR, struct.pack("256s", name.encode()[:15]))
-    except OSError:
-        return None
-    return socket.inet_ntoa(raw[20:24])
-
-
-def linux_ipv6(found):
-    for fields in (line.split() for line in file_lines("/proc/net/if_inet6")):
-        if stable_ipv6(fields):
-            found.setdefault(fields[5], []).append(str(ipaddress.IPv6Address(bytes.fromhex(fields[0]))))
-
-
-def file_lines(path):
-    try:
-        with open(path) as stream:
-            return stream.read().splitlines()
-    except OSError:
-        return []
-
-
-def stable_ipv6(fields):
-    """An if_inet6 line that is not temporary, deprecated or tentative."""
-    return len(fields) == 6 and not int(fields[4], 16) & IPV6_SKIPPED
-
-
-def ifconfig_addresses():
-    """macOS and other BSDs: the inet and inet6 lines of ifconfig."""
-    command = shutil.which("ifconfig") or "/sbin/ifconfig"
-    output = subprocess.run([command], capture_output=True, text=True, timeout=3, check=False).stdout
-    return ifconfig_parse(output)
-
-
-def ifconfig_parse(output):
-    found, name = {}, None
-    for line in output.splitlines():
-        name = interface_header(line) or name
-        value = ifconfig_address(line.split())
-        if name and value:
-            found.setdefault(name, []).append(value)
-    return found
-
-
-def interface_header(line):
-    """The interface an unindented ifconfig line starts, else None."""
-    return line.split(":", 1)[0] if line[:1].strip() else None
-
-
-def ifconfig_address(words):
-    """The address of an inet or inet6 line, unless it is temporary or going away."""
-    if len(words) < 2 or words[0] not in IFCONFIG_FAMILIES:
-        return None
-    return None if IFCONFIG_SKIPPED & set(words) else words[1]
-
-
-def fallback_addresses():
-    """The source address of the default routes; a connect sends nothing."""
-    found = [route_source(family, target) for family, target in
-             ((socket.AF_INET, ("192.0.2.1", 9)), (socket.AF_INET6, ("2001:db8::1", 9)))]
-    kept = [str(address(value)) for value in found if eligible(value)]
-    return {"default": kept} if kept else {}
-
-
-def route_source(family, target):
-    try:
-        with socket.socket(family, socket.SOCK_DGRAM) as probe:
-            probe.connect(target)
-            return probe.getsockname()[0]
-    except OSError:
-        return None
-
-
 def ipv4_addresses(interfaces):
     """Every IPv4 address of the interfaces."""
     return [value for values in interfaces.values() for value in ipv4(values)]
@@ -643,25 +531,36 @@ def due(times, now):
 
 
 class Session:
-    """mDNS for the lease's current flags on one channel: the advert,
-    announced and answered while advertising, and a browser fed by every
-    answer while browsing. Interface addresses are polled; a change
-    re-announces."""
+    """mDNS for the lease's current flags: the advert, announced and answered
+    on the multicast channel while advertising, and a browser while browsing,
+    fed by the system daemon on Darwin (no socket of our own) or by every
+    answer on the channel elsewhere. The channel opens when first needed.
+    Interface addresses are polled; a change re-announces."""
 
     def __init__(self, advert, group=GROUP, port=PORT, clock=time.monotonic):
-        self.advert, self.clock = advert, clock
+        self.advert, self.clock, self.group, self.port = advert, clock, group, port
         self.interfaces = interface_addresses()
-        self.channel = Channel(group, port)
+        self.channel, self.feed, self.browse_error = None, None, None
         self.refresh_addresses()
         self.advertising, self.browser, self.silent = False, None, False
         self.adverts, self.named_since, self.named_key = 0, 0, None  # advert datagrams sent, the count and key when the name was last set
         self.announce_at, self.query_at, self.query_gap = [], 0.0, 1.0
         self.poll_at, self.answered = clock() + POLL_SECONDS, float("-inf")
 
+    def open_channel(self):
+        """The multicast channel, opened when advertising or UDP browsing first needs it."""
+        if self.channel is None:
+            self.channel = Channel(self.group, self.port)
+            self.refresh_addresses()
+
+    def datagrams(self):
+        return self.channel.sent if self.channel is not None else 0
+
     def refresh_addresses(self):
         current = ipv4_addresses(self.interfaces)
-        self.channel.retire(set(current))
-        self.channel.join(current)
+        if self.channel is not None:
+            self.channel.retire(set(current))
+            self.channel.join(current)
         if self.advert is not None:
             every = [value for values in self.interfaces.values() for value in values]
             self.advert.addresses = unique(every, ADVERT_ADDRESSES_MAX)
@@ -690,6 +589,7 @@ class Session:
 
     def set_advertising(self, advertise):
         if advertise and not self.advertising:
+            self.open_channel()
             self.schedule_announcements(self.clock())
         if self.advertising and not advertise:
             self.send_advert(0)
@@ -700,16 +600,68 @@ class Session:
 
     def set_browsing(self, browse):
         if not browse:
-            self.browser = None
+            self.close_browser()
+        elif self.browser is None and native.wanted(self.group, self.port, GROUP, PORT):
+            self.open_native()
         elif self.browser is None:
-            self.browser = Browser()
-            self.browser.own = self.advert
+            self.open_channel()
+            self.browser = self.new_browser()
             self.query_at, self.query_gap = self.clock(), 1.0
+
+    def new_browser(self):
+        browser = Browser()
+        browser.own = self.advert
+        return browser
+
+    def open_native(self):
+        """Browse through the system daemon; a refusal is kept in browse_error
+        and tried again on the next update."""
+        browser = self.new_browser()
+        try:
+            self.feed = native.Feed(browser, self.clock)
+        except OSError as error:
+            self.browse_error = "Bonjour browse failed: %s" % error
+            return
+        self.browser, self.browse_error = browser, None
+
+    def close_browser(self):
+        if self.feed is not None:
+            self.feed.close()
+            self.feed = None
+        self.browser = None
+
+    def backend(self):
+        """Which path browsing takes here, whether or not it is up."""
+        return "native" if native.wanted(self.group, self.port, GROUP, PORT) else "udp"
 
     def step(self, timeout):
         self.timers(self.clock())
+        if self.feed is None:
+            self.receive(timeout)
+            return
+        descriptors = self.feed.descriptors()
+        ready = self.wait(timeout, list(descriptors) + ([self.channel.sock] if self.channel is not None else []))
+        if self.channel is not None and self.channel.sock in ready:
+            self.receive(0)
+        self.feed.pump(ready)
+        if self.feed.error is not None:
+            self.browse_error = "Bonjour browse failed: %s" % self.feed.error
+            self.close_browser()
+
+    def receive(self, timeout):
+        if self.channel is None:
+            self.wait(timeout, [])
+            return
         for packet in self.channel.receive(timeout):
             self.handle(packet)
+
+    @staticmethod
+    def wait(timeout, sources):
+        """The sources readable within timeout; with none, the pause itself."""
+        try:
+            return set(select.select(sources, [], [], max(timeout, 0))[0])
+        except (OSError, ValueError):
+            return set()
 
     def timers(self, now):
         if now >= self.poll_at:
@@ -723,7 +675,7 @@ class Session:
         return self.advertising and due(self.announce_at, now)
 
     def query_due(self, now):
-        return self.browser is not None and now >= self.query_at
+        return self.browser is not None and self.feed is None and now >= self.query_at
 
     def announce(self, now):
         self.announce_at.pop(0)
@@ -742,7 +694,8 @@ class Session:
         self.poll_at = now + POLL_SECONDS
         current = interface_addresses()
         if current == self.interfaces:
-            self.channel.join(ipv4_addresses(current))  # a join that failed is tried again each poll
+            if self.channel is not None:
+                self.channel.join(ipv4_addresses(current))  # a join that failed is tried again each poll
             return
         self.interfaces, self.silent = current, False
         self.refresh_addresses()
@@ -801,8 +754,9 @@ class Session:
         if self.advertising:
             self.send_advert(0)
             self.advertising = False
-        self.browser = None
-        self.channel.close()
+        self.close_browser()
+        if self.channel is not None:
+            self.channel.close()
 
 
 # --- Lease -----------------------------------------------------------------
