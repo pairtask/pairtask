@@ -67,6 +67,9 @@ type Invitation struct {
 	ID        string
 	Code      string `json:"-"` // grouped for reading, e.g. "482-913"; never serialized
 	ExpiresAt time.Time
+	// Discoverable: the operator asked for it to be announced by name on
+	// the local network while open (#284); the code is never announced.
+	Discoverable bool
 }
 
 // InvitationStatus describes the open invitation without its code.
@@ -77,6 +80,7 @@ type InvitationStatus struct {
 	InFlight     bool
 	Consumed     bool
 	Expired      bool
+	Discoverable bool
 }
 
 type invitation struct {
@@ -87,6 +91,7 @@ type invitation struct {
 	inFlight     *Attempt
 	consumed     bool
 	repair       string // the declared repair, "" for none
+	discoverable bool
 }
 
 // Invitations holds at most one open invitation.
@@ -178,7 +183,16 @@ func grouped(code string) string {
 
 // Open replaces any open invitation, including one with an attempt in flight.
 // On a randomness failure nothing changes.
-func (iv *Invitations) Open() (Invitation, error) { return iv.open("") }
+func (iv *Invitations) Open() (Invitation, error) { return iv.open("", false) }
+
+// OpenDiscoverable opens an invitation as Open does, to be announced by
+// name on the local network while it is open (#284).
+func (iv *Invitations) OpenDiscoverable(repair string) (Invitation, error) {
+	if repair != "" && ValidIdentityKey(repair) != nil {
+		return Invitation{}, ErrInvalidBinding
+	}
+	return iv.open(repair, true)
+}
 
 // OpenRepair opens an invitation as Open does, declaring that it repairs
 // the pairing with identityKey (#276): its outcome carries the declared
@@ -187,10 +201,10 @@ func (iv *Invitations) OpenRepair(identityKey string) (Invitation, error) {
 	if ValidIdentityKey(identityKey) != nil {
 		return Invitation{}, ErrInvalidBinding
 	}
-	return iv.open(identityKey)
+	return iv.open(identityKey, false)
 }
 
-func (iv *Invitations) open(repair string) (Invitation, error) {
+func (iv *Invitations) open(repair string, discoverable bool) (Invitation, error) {
 	iv.mu.Lock()
 	defer iv.mu.Unlock()
 	now, ok := iv.now()
@@ -206,8 +220,9 @@ func (iv *Invitations) open(repair string) (Invitation, error) {
 		return Invitation{}, err
 	}
 	iv.close()
-	iv.current = &invitation{id: id, code: code, expiresAt: now.Add(iv.policy.TTL), attemptsLeft: iv.policy.MaxAttempts, repair: repair}
-	return Invitation{ID: id, Code: grouped(code), ExpiresAt: iv.current.expiresAt, Repair: repair}, nil
+	iv.current = &invitation{id: id, code: code, expiresAt: now.Add(iv.policy.TTL), attemptsLeft: iv.policy.MaxAttempts, repair: repair,
+		discoverable: discoverable}
+	return Invitation{ID: id, Code: grouped(code), ExpiresAt: iv.current.expiresAt, Repair: repair, Discoverable: discoverable}, nil
 }
 
 // Cancel ends the open invitation and any attempt in flight.
@@ -232,7 +247,7 @@ func (iv *Invitations) Status() (InvitationStatus, bool) {
 	iv.settle(now)
 	inv := iv.current
 	return InvitationStatus{ID: inv.id, ExpiresAt: inv.expiresAt, AttemptsLeft: inv.attemptsLeft,
-		InFlight: inv.inFlight != nil, Consumed: inv.consumed, Expired: !now.Before(inv.expiresAt)}, true
+		InFlight: inv.inFlight != nil, Consumed: inv.consumed, Expired: !now.Before(inv.expiresAt), Discoverable: inv.discoverable}, true
 }
 
 // Begin starts one attempt, charging it before returning. Refusals are not

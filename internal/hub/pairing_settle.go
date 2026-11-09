@@ -30,6 +30,42 @@ const (
 	SettleQueue       = 64
 )
 
+// SettleSoon are the early automatic passes after a redemption (#284),
+// measured from its end: the inviter usually accepts within a minute or
+// two, and the operator should not wait for the next SettleInterval tick to
+// see the contact. Each pass counts against SettleMaxAttempts and respects
+// the backoff like any other.
+var SettleSoon = []time.Duration{10 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute}
+
+// settleSoon queues the join at each SettleSoon time while it still needs
+// settling, then leaves it to the ticker.
+func (h *Hub) settleSoon(ctx context.Context, id string) {
+	after := h.pair.cfg.After
+	if after == nil {
+		after = time.After
+	}
+	h.pair.workers.Add(1)
+	go func() {
+		defer h.pair.workers.Done()
+		var elapsed time.Duration
+		for _, at := range SettleSoon {
+			select {
+			case <-ctx.Done():
+				return
+			case <-after(at - elapsed):
+			}
+			elapsed = at
+			r, found, err := h.store.GetJoin(ctx, id)
+			if err != nil || !found || !h.liveCandidate(ctx, r) {
+				return // settled, refused or gone: nothing more to try
+			}
+			if h.pair.settle.due(id, h.pair.cfg.Clock()) { // a backoff skips this slot, not the later ones
+				h.pair.settle.enqueue([]string{id}, true)
+			}
+		}
+	}()
+}
+
 // settleAttempt is one join's automatic retry state: every automatic pass
 // counts against SettleMaxAttempts whatever its result, and only failures
 // back off. An operator's settle resets both.

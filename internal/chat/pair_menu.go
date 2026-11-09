@@ -17,7 +17,8 @@ import (
 
 // pairMenu says what each /pair word does, beside it in the picker.
 var pairMenu = map[string]string{
-	"open":    "show a one-time code for the other workspace",
+	"open":    "show a one-time code for the other workspace; --discoverable announces it here",
+	"find":    "open invitations on this network, tailnet devices",
 	"status":  "the invitation, requests and redemptions",
 	"cancel":  "close the open invitation; paired workspaces stay",
 	"accept":  "let a pairing request in",
@@ -227,6 +228,7 @@ var pairWordLabels = map[string]func(*Model, string) (string, bool){
 	protocol.PairingOpAccept: (*Model).pendingRequestLabel,
 	protocol.PairingOpReject: (*Model).pendingRequestLabel,
 	protocol.PairingOpCancel: (*Model).invitationLabel,
+	protocol.PairingOpRedeem: (*Model).endpointLabel,
 	pairShare:                (*Model).shareLabel,
 	pairReviews:              (*Model).shareLabel,
 	pairUnshare:              (*Model).shareLabel,

@@ -43,6 +43,9 @@ type PairingConfig struct {
 	// SettleTick drives automatic settlement passes; nil ticks every
 	// SettleInterval. Tests send on it instead of waiting.
 	SettleTick <-chan time.Time
+	// After times the early passes after a redemption (SettleSoon); nil is
+	// time.After. Tests replace it instead of waiting.
+	After func(time.Duration) <-chan time.Time
 	// MessageTick drives message sync passes (#210); nil ticks every
 	// MessageActiveInterval.
 	MessageTick <-chan time.Time
@@ -211,6 +214,9 @@ func redeemFields(msg protocol.Message) *routingError {
 	if msg.PairingOp != protocol.PairingOpRedeem && slices.ContainsFunc(fields, func(f string) bool { return f != "" }) {
 		return &routingError{protocol.ErrMalformedFrame, "pairing_destination, pairing_code and pairing_name belong to redeem only"}
 	}
+	if msg.PairingDiscoverable && msg.PairingOp != protocol.PairingOpOpen {
+		return &routingError{protocol.ErrMalformedFrame, "pairing_discoverable belongs to open only"}
+	}
 	return repairField(msg)
 }
 
@@ -368,6 +374,9 @@ func (h *Hub) startRedeem(pending *peer.PendingJoin, destination string) {
 		}
 		h.PairingChanged()
 		h.log.Info("pairing redemption ended", "operation", rec.OperationID, "state", rec.State, "cause", PairingCause(err))
+		if settleCandidate(rec) {
+			h.settleSoon(runCtx, rec.OperationID)
+		}
 	}()
 }
 

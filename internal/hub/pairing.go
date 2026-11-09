@@ -105,13 +105,17 @@ type pairingOp struct {
 	apply    func(h *Hub, ctx context.Context, args pairingArgs) (code string, err error)
 }
 
-// pairingArgs are what an operation applies to: its target, and for open
-// the identity key it declares it repairs (#276).
-type pairingArgs struct{ target, repair string }
+// pairingArgs are what an operation applies to: its target, for open the
+// identity key it declares it repairs (#276) and whether to announce it by
+// name on the local network while open (#284).
+type pairingArgs struct {
+	target, repair string
+	discoverable   bool
+}
 
 var pairingOps = map[string]pairingOp{
 	protocol.PairingOpOpen: {false, true, func(h *Hub, _ context.Context, args pairingArgs) (string, error) {
-		inv, err := h.openInvitation(args.repair)
+		inv, err := h.openInvitation(args.repair, args.discoverable)
 		return inv.Code, err
 	}},
 	protocol.PairingOpCancel: {true, false, func(h *Hub, _ context.Context, args pairingArgs) (string, error) {
@@ -132,8 +136,11 @@ var pairingOps = map[string]pairingOp{
 func noPairingChange(*Hub, context.Context, pairingArgs) (string, error) { return "", nil }
 
 // openInvitation opens an invitation, declaring the repair if one is named.
-func (h *Hub) openInvitation(repair string) (peer.Invitation, error) {
-	if repair == "" {
+func (h *Hub) openInvitation(repair string, discoverable bool) (peer.Invitation, error) {
+	switch {
+	case discoverable:
+		return h.pairing.OpenDiscoverable(repair)
+	case repair == "":
 		return h.pairing.Open()
 	}
 	return h.pairing.OpenRepair(repair)
@@ -223,7 +230,12 @@ func (h *Hub) pairingResponse(ctx context.Context, op pairingOp, msg protocol.Me
 		resp.PairingJoin = view
 		msg.PairingTarget = ""
 	}
-	snapshot, rerr := h.applyPairing(ctx, op, pairingArgs{msg.PairingTarget, msg.PairingRepair})
+	if msg.PairingDiscoverable {
+		if rerr := h.discoverableRefusal(); rerr != nil {
+			return resp, rerr // nothing opened: the private invitation, if any, stays
+		}
+	}
+	snapshot, rerr := h.applyPairing(ctx, op, pairingArgs{msg.PairingTarget, msg.PairingRepair, msg.PairingDiscoverable})
 	resp.PairingResult = snapshot
 	return resp, rerr
 }
@@ -319,6 +331,7 @@ func (h *Hub) pairingSnapshot(ctx context.Context) (*protocol.PairingSnapshot, e
 	if status, ok := h.pairing.Status(); ok {
 		snapshot.Invitation = &protocol.InvitationView{ID: status.ID, ExpiresAt: status.ExpiresAt, AttemptsLeft: status.AttemptsLeft,
 			InFlight: status.InFlight, Consumed: status.Consumed, Expired: status.Expired}
+		h.invitationView(snapshot.Invitation, status.Discoverable)
 	}
 	return snapshot, nil
 }

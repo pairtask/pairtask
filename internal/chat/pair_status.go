@@ -114,8 +114,10 @@ func (m *Model) joinRow(j protocol.PairingJoinView) string {
 	}
 	if c, ok := m.contact(j.Peer); ok && j.Peer != "" {
 		row += " · with " + safe(contactDisplay(c))
+	} else {
+		row += peerNote(j)
 	}
-	row += kindNote(j.Kind, j.RepairsUnpairedAt != nil)
+	row += m.identityNote(j) + kindNote(j.Kind, j.RepairsUnpairedAt != nil)
 	return row + mutedStyle.Render("  "+safe(j.OperationID))
 }
 

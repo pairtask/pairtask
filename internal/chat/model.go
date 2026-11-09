@@ -144,6 +144,7 @@ type Model struct {
 	rooms     []protocol.RoomInfo // rooms and members, from the snapshot (bounded)
 	roomsCut  bool                // the snapshot left rooms out
 	pairing   pairingView         // the last /pair snapshot, never its code
+	discovery discoveryView       // the last /pair find snapshot (#284)
 	reviews   reviewState         // review requests (#201): the last list and a request in flight
 	contacts  contactState        // messages with paired workspaces (#210)
 	unpair    unpairState         // an unpair's card and its one request (#276)
@@ -329,6 +330,8 @@ func (m *Model) connectionUpdate(msg tea.Msg) (tea.Cmd, bool) {
 		return m.retry(msg), true
 	case receiptRetryMsg:
 		return m.retryReceipts(msg), true
+	case discoveryRefreshMsg:
+		return m.refreshDiscovery(), true
 	}
 	return m.tickUpdate(msg)
 }

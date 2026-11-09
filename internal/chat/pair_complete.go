@@ -14,7 +14,7 @@ import (
 
 const pendingAcceptance = "pending_acceptance"
 
-var pairVerbs = []string{"open", "status", "cancel", "accept", "reject", "redeem", "settle"}
+var pairVerbs = []string{"open", "find", "status", "cancel", "accept", "reject", "redeem", "settle"}
 
 // contactPairVerbs are offered too in a contact's tab, where they act.
 var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairReview, pairApprove, pairDecline, pairName, pairAddress, pairPause, pairResume, pairUnpair}
@@ -30,7 +30,8 @@ func (m *Model) pairVerbsHere() []string {
 
 // pairUsages say what each /pair word takes, in the input box's label.
 var pairUsages = map[string]string{
-	"open":    "open: show a one-time code for the other workspace",
+	"open":    "open [--discoverable]: show a one-time code for the other workspace; --discoverable announces it by name on this network while open",
+	"find":    "find: list open invitations on this network and tailnet devices; pick one to fill redeem",
 	"status":  "status [OPERATION_ID]",
 	"cancel":  "cancel: close the open invitation",
 	"accept":  "accept KEY: the start of the request's key; Tab lists requests",
@@ -88,6 +89,7 @@ var pairWordChoices = map[string]func(*Model, argLine) []string{
 	"accept":                 (*Model).requestKeyChoices,
 	"reject":                 (*Model).requestKeyChoices,
 	protocol.PairingOpCancel: (*Model).invitationChoices,
+	protocol.PairingOpRedeem: (*Model).endpointChoices,
 	pairShare:                (*Model).shareCompletions,
 	pairReviews:              (*Model).reviewsCompletions,
 	pairUnshare:              (*Model).unshareCompletions,
