@@ -117,10 +117,31 @@ class Manager:
             self.path().write_text(self.text())
         if self.system == "Darwin":
             self.step(["launchctl", "bootout", self.domain() + "/" + LABEL], quiet=True)
-            return self.step(["launchctl", "bootstrap", self.domain(), str(self.path())])
+            return self.bootstrap()
         started = (self.step(["systemctl", "--user", "daemon-reload"]) and
                    self.step(["systemctl", "--user", "enable", "--now", UNIT]))
         return started and (not existed or self.restart())
+
+    def bootstrap(self):
+        """Load the agent. launchctl answers "Bootstrap failed: 5" for a
+        bootstrap right after a bootout of the same label while launchd has
+        registered and spawned the job all the same, so launchd's own listing
+        decides: a loaded job is a start, and only an absent one is the
+        failure launchctl reported."""
+        command = ["launchctl", "bootstrap", self.domain(), str(self.path())]
+        if self.dry_run:
+            print("Would run: " + " ".join(command))
+            return True
+        ok, detail = self.run(command)
+        if ok or self.loaded():
+            return True
+        self.report(command, detail)
+        return False
+
+    def loaded(self):
+        """Whether launchd lists the agent, whatever launchctl said."""
+        ok, _ = self.run(["launchctl", "print", self.domain() + "/" + LABEL])
+        return ok
 
     def restart(self):
         """Restart an installed unit; nothing when none is installed."""
@@ -152,17 +173,36 @@ class Manager:
             return True
         ok, detail = self.run(command)
         if not ok and not quiet:
-            print("Discovery helper: %s failed (%s); the pairing route is unaffected. "
-                  "See docs/pairing.md#moving-between-networks." % (" ".join(command[:3]), detail))
+            self.report(command, detail)
         return ok
+
+    def report(self, command, detail):
+        print("Discovery helper: %s failed (%s); the pairing route is unaffected. "
+              "See docs/pairing.md#moving-between-networks." % (" ".join(command[:3]), detail))
 
     def execute(self, command):
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=TIMEOUT, check=False)
         except (OSError, subprocess.SubprocessError) as error:
             return False, str(error)
-        lines = result.stderr.strip().splitlines()
-        return result.returncode == 0, lines[-1] if lines else "exit %d" % result.returncode
+        return result.returncode == 0, failure_detail(result)
+
+
+ROOT_HINT = "Try re-running the command as root"  # launchctl's advice; never passed on
+
+
+def failure_detail(result):
+    """What the service manager said: its first line, which launchctl and
+    systemctl use for the cause ("Bootstrap failed: 5: ..."), then the last
+    when it adds something; its hint to retry as root is dropped, since a
+    root run would break the deployment."""
+    lines = [line for line in result.stderr.strip().splitlines() if line.strip() and ROOT_HINT not in line]
+    if not lines:
+        return "exit %d" % result.returncode
+    detail = lines[0].strip()
+    if len(lines) > 1 and lines[-1].strip() != detail:
+        detail += "; " + lines[-1].strip()
+    return detail
 
 
 def sync(wanted, project, remote, manager=None):

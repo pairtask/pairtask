@@ -13,6 +13,14 @@ the dev container you SSH into; **secured** is the offline control container
 (when `secured_runtime = true`). "Ends sessions" means running agents and
 shells in the containers are stopped.
 
+Run every host command as your normal user. `pairtask`, `pk` and the
+provisioning script refuse to run as root or under `sudo` before they read
+or change anything: the host checkout and your pairtask state belong to
+your user, and a root run would leave root-owned files behind and manage
+the deployment from root's point of view. (Continuous integration sets
+`PAIRTASK_ALLOW_ROOT=1` for its throwaway root-only runners; never set it
+on a machine you keep.)
+
 ## Install and upgrade
 
 | Command | Runs on | What it does | Ends sessions |

@@ -14,6 +14,7 @@ from sandbox_operator_recovery import recover
 import sandbox_discovery_service
 import sandbox_version
 import sandbox_pairing
+from sandbox_host_user import refuse_root
 from sandbox_releases import release_tag, repository
 from sandbox_incus_version import IncusVersionError, check as check_server_version, query_server
 from sandbox_remote import REMOTE, colima_profile, default_remote
@@ -88,6 +89,8 @@ def check_combinations(parser, args):
 
 
 def main():
+    if refuse_root("sandbox-provision"):  # before the arguments: nothing is read or planned as root
+        return 1
     args = arguments()
     if args.action == "pairing-status":
         return sandbox_pairing.status(args)

@@ -76,6 +76,32 @@ class ServiceUnitTests(ServiceFixture):
         self.assertEqual(agent["ProgramArguments"][1:3], ["discovery", "run"])
         self.assertEqual(self.commands[-1], ["launchctl", "bootstrap", "gui/%d" % os.getuid(), str(path)])
 
+    def test_macos_bootstrap_error_is_not_reported_when_job_loaded(self):
+        commands = []
+
+        def run(command):
+            commands.append(command)
+            if command[1] == "bootstrap":
+                return False, "Bootstrap failed: 5: Input/output error"
+            return command[1] == "print", "state = running" if command[1] == "print" else "not loaded"
+
+        manager = service.Manager(host=service.Host("Darwin", self.home, run))
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertTrue(manager.install())
+        self.assertNotIn("failed", output.getvalue())
+        self.assertEqual(commands[-1], ["launchctl", "print", "gui/%d/%s" % (os.getuid(), service.LABEL)])
+
+    def test_macos_bootstrap_error_is_reported_when_job_not_loaded(self):
+        def run(command):
+            if command[1] == "bootstrap":
+                return False, "Bootstrap failed: 5: Input/output error"
+            return False, "not loaded"
+
+        manager = service.Manager(host=service.Host("Darwin", self.home, run))
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertFalse(manager.install())
+        self.assertIn("Bootstrap failed: 5: Input/output error", output.getvalue())
+
     def test_dry_run_prints_the_unit_and_writes_nothing(self):
         manager = self.manager("Linux", dry_run=True)
         with contextlib.redirect_stdout(io.StringIO()) as output:

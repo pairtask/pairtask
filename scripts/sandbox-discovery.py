@@ -597,8 +597,9 @@ def lease_line(lease):
     if not lease:
         return "Lease: none (nothing to advertise or look for)"
     ports = ", ".join(map(str, lease.get("ports") or [])) or "none"
-    return "Lease: advertise %s, browse %s, ports %s, expires %s" % (
-        yes(lease.get("advertise")), yes(lease.get("browse")), ports, lease.get("expires_at"))
+    announce = ", announce %r" % lease["invitation"] if lease.get("invitation") else ""
+    return "Lease: advertise %s, browse %s, find %s%s, ports %s, expires %s" % (
+        yes(lease.get("advertise")), yes(lease.get("browse")), yes(lease.get("find")), announce, ports, lease.get("expires_at"))
 
 
 def advert_line(advert):

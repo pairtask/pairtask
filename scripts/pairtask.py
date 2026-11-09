@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from sandbox_host_user import refuse_root
 from sandbox_remote import REMOTE
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -235,6 +236,8 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(usage())
         return 0
+    if refuse_root("pairtask"):  # before any plan, dry run included: nothing runs as root
+        return 1
     if argv[0] not in set(COMPOSITE) | set(SCRIPTED) | set(ACTIONS) | set(ALIASES):
         print(usage(), file=sys.stderr)
         return 2
