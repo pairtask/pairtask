@@ -67,9 +67,7 @@ func TestPairFindAcceptancePickerLabelsUnverifiedTailnetAndHoldsRedeem(t *testin
 	h.await(func() bool { return h.m.State().InFlight == 0 })
 	view := ansi.Strip(h.m.View().Content)
 	for _, want := range []string{"Open invitations on this network", "Office Mac", "192.168.8.20:8445", "Tailnet devices (unverified)", "work.tailnet.ts.net"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("find picker lacks %q: %s", want, view)
-		}
+		v3Contains(t, view, want)
 	}
 	if len(h.m.State().Entries) != 0 || h.m.State().InFlight != 0 {
 		t.Fatal("viewing discovery results sent a message or started pairing")

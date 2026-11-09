@@ -6,8 +6,9 @@ import unittest
 from discovery_test_support import SERVICE, engine, name, packet, record, service_records
 
 
-def invitation_packet(display, index=1, address="192.168.8.20", port=7445, ttl=60):
-    records = service_records(index, address, ttl)
+def invitation_packet(display, port=7445):
+    index, ttl = 1, 60
+    records = service_records(index, "192.168.8.20", ttl)
     if port != 7445:
         instance = "node%d.%s" % (index, SERVICE)
         records[1] = record(instance, 33, struct.pack("!3H", 0, 0, port) + name("random%d.local." % index), ttl)
