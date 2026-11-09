@@ -40,12 +40,21 @@ func TestPairFindProgressExplainsWaitingBeforeFirstScan(t *testing.T) {
 			if !strings.Contains(shown, tc.want) {
 				t.Fatalf("%s view did not explain %q: %s", tc.state, tc.want, shown)
 			}
-			if tc.state == "pending" && (strings.Contains(shown, "none heard") || strings.Contains(shown, "nothing heard yet")) {
-				t.Fatalf("pending scan prematurely claimed an empty result: %s", shown)
+			if tc.state == "pending" {
+				assertNoPrematureFindResult(t, shown)
 			}
 			if strings.Contains(shown, "reports within seconds") {
 				t.Fatalf("view promised a report before the helper has begun: %s", shown)
 			}
 		})
+	}
+}
+
+func assertNoPrematureFindResult(t *testing.T, shown string) {
+	t.Helper()
+	for _, forbidden := range []string{"none heard", "nothing heard yet"} {
+		if strings.Contains(shown, forbidden) {
+			t.Fatalf("pending scan prematurely claimed an empty result: %s", shown)
+		}
 	}
 }
