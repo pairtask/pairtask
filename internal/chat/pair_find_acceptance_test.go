@@ -14,7 +14,7 @@ import (
 
 func findChat(t *testing.T) *chatHarness {
 	t.Helper()
-	caps := append(slices.Clone(protocol.SessionCapabilities), "pairing_discoverable", "contact_find")
+	caps := slices.Clone(protocol.SessionCapabilities)
 	return pairingChatCapabilities(t, caps)
 }
 

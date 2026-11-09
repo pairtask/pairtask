@@ -14,7 +14,7 @@ func TestPairMenuAcceptanceBareEnterOffersCommandsWithoutRunning(t *testing.T) {
 	h := pairingChatHarness(t, true)
 	v2Type(h, "keep my draft")
 	v2Command(h, "/pair")
-	commandCompleteItems(t, h, []string{"open", "status", "cancel", "accept", "reject", "redeem", "settle"})
+	commandCompleteItems(t, h, []string{"open", "find", "status", "cancel", "accept", "reject", "redeem", "settle"})
 	chatEqual(t, "menu sends nothing", h.m.State().InFlight, 0)
 	chatEqual(t, "draft retained", h.m.State().Draft, "keep my draft")
 	v3Contains(t, ansi.Strip(h.m.View().Content), "paired workspaces stay")

@@ -1,12 +1,18 @@
 package chat_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/pairtask/pairtask/internal/protocol"
 )
 
 func TestPairFindCompatibilityOlderBrokerRefusesBeforeOpeningAnInvitation(t *testing.T) {
-	h := pairingChatHarness(t, true) // pairing, without the discovery capabilities
+	caps := slices.DeleteFunc(slices.Clone(protocol.SessionCapabilities), func(cap string) bool {
+		return cap == protocol.CapabilityPairingDiscoverable || cap == protocol.CapabilityContactFind
+	})
+	h := pairingChatCapabilities(t, caps) // pairing, without the discovery capabilities
 	v2Command(h, "/pair open --discoverable")
 	if h.m.State().InFlight != 0 || len(h.requests) != 0 {
 		t.Fatal("older broker received an open it could silently treat as private")
