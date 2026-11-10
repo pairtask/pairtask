@@ -19,6 +19,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -267,18 +268,35 @@ type typesafeEnvelope struct {
 	Usage   map[string]json.RawMessage `json:"usage"`
 }
 
-// usageCounts keeps the integer-valued fields of a usage object, at most
-// UsageMax of them, by the provider's own names.
+// canonicalUsage are the counters kept first, whatever else a reply carries.
+var canonicalUsage = []string{"input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "total_tokens"}
+
+// usageCounts keeps the non-negative integer fields of a usage object by
+// the provider's own names: the canonical token counters first, then the
+// rest in name order, at most UsageMax in all.
 func usageCounts(raw map[string]json.RawMessage) map[string]int64 {
 	if len(raw) == 0 {
 		return nil
 	}
-	out := map[string]int64{}
-	for key, value := range raw {
-		var n int64
-		if json.Unmarshal(value, &n) == nil && len(out) < UsageMax {
-			out[key] = n
+	names := append([]string(nil), canonicalUsage...)
+	rest := make([]string, 0, len(raw))
+	for key := range raw {
+		if !slices.Contains(canonicalUsage, key) {
+			rest = append(rest, key)
 		}
+	}
+	sort.Strings(rest)
+	out := map[string]int64{}
+	for _, key := range append(names, rest...) {
+		value, present := raw[key]
+		var n int64
+		if !present || json.Unmarshal(value, &n) != nil || n < 0 {
+			continue
+		}
+		if len(out) >= UsageMax {
+			break
+		}
+		out[key] = n
 	}
 	return out
 }

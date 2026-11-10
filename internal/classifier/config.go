@@ -177,11 +177,13 @@ func threshold(raw string) (float64, error) {
 // timeout is a duration up to a minute.
 func timeout(raw string) (time.Duration, error) {
 	value, err := time.ParseDuration(raw)
-	if err != nil || value <= 0 || value > time.Minute {
+	if err != nil || !withinMinute(value) {
 		return 0, errors.New(config.Name(SettingTimeout) + " must be a duration up to 1m")
 	}
 	return value, nil
 }
+
+func withinMinute(d time.Duration) bool { return d > 0 && d <= time.Minute }
 
 // loadRoles reads the optional roles file: a JSON object, agent ID → role line.
 func loadRoles(lookup config.LookupFunc, files Files, cfg *Config) error {
