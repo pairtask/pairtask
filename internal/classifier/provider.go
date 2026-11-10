@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -292,17 +293,10 @@ func usageCounts(raw map[string]json.RawMessage) map[string]int64 {
 
 // usageOrder: the canonical names that are present, then the others sorted.
 func usageOrder(raw map[string]json.RawMessage) []string {
-	var order, rest []string
-	for _, key := range canonicalUsage {
-		if _, present := raw[key]; present {
-			order = append(order, key)
-		}
-	}
-	for key := range raw {
-		if !slices.Contains(canonicalUsage, key) {
-			rest = append(rest, key)
-		}
-	}
+	absent := func(key string) bool { _, present := raw[key]; return !present }
+	canonical := func(key string) bool { return slices.Contains(canonicalUsage, key) }
+	order := slices.DeleteFunc(slices.Clone(canonicalUsage), absent)
+	rest := slices.DeleteFunc(slices.Collect(maps.Keys(raw)), canonical)
 	sort.Strings(rest)
 	return append(order, rest...)
 }
