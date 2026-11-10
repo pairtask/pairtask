@@ -296,7 +296,7 @@ type answer struct {
 var statusRules = []struct {
 	match  func(answer) bool
 	class  string
-	reason string
+	reason forge.Reason
 	text   string
 }{
 	{func(a answer) bool { return a.status == http.StatusUnauthorized }, forge.ClassForbidden, forge.ReasonTokenRejected, "GitHub refused the token (401)"},

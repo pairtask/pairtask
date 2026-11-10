@@ -322,7 +322,7 @@ var lookupFailures = map[string]string{
 }
 
 // lookupRefusals say which refusal, when the forge said.
-var lookupRefusals = map[string]string{
+var lookupRefusals = map[forge.Reason]string{
 	forge.ReasonNoToken:       "no GitHub token on this side: set GH_TOKEN or run gh auth login",
 	forge.ReasonTokenRejected: "GitHub rejected your token (401): expired or revoked; run gh auth login",
 	forge.ReasonRepository:    "your GitHub token was refused for this repository (403): it can't read it, or the head is in a fork it can't read",

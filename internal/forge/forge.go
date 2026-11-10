@@ -112,17 +112,20 @@ const (
 	ClassInvalid     = "invalid"   // the forge refused what was sent
 )
 
-// Refusal reasons: which forbidden it was, since the fix differs.
+// Reason says which forbidden it was, since the fix differs.
+type Reason string
+
+// Refusal reasons.
 const (
-	ReasonNoToken       = "no_token"       // this side has no credential for the forge
-	ReasonTokenRejected = "token_rejected" // the forge rejected the credential (401)
-	ReasonRepository    = "repository"     // the credential may not read this repository (403)
+	ReasonNoToken       Reason = "no_token"       // this side has no credential for the forge
+	ReasonTokenRejected Reason = "token_rejected" // the forge rejected the credential (401)
+	ReasonRepository    Reason = "repository"     // the credential may not read this repository (403)
 )
 
 // Error is a forge failure of one class; a forbidden one may say why.
 type Error struct {
 	Class  string
-	Reason string
+	Reason Reason
 	Err    error
 }
 
@@ -135,12 +138,12 @@ func Errorf(class, format string, args ...any) error {
 }
 
 // Refusedf is a forbidden Error that says which refusal.
-func Refusedf(reason, format string, args ...any) error {
+func Refusedf(reason Reason, format string, args ...any) error {
 	return &Error{Class: ClassForbidden, Reason: reason, Err: fmt.Errorf(format, args...)}
 }
 
 // ReasonOf is err's refusal reason, empty when it carries none.
-func ReasonOf(err error) string {
+func ReasonOf(err error) Reason {
 	var e *Error
 	if errors.As(err, &e) {
 		return e.Reason
