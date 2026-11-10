@@ -82,11 +82,10 @@ def key_from_prompt(provider, stdin, prompt):
 
 def check_on(args):
     """The provider and account go together: clef needs one, jev takes none."""
-    if args.provider == "clef" and not args.account:
-        raise ValueError("clef needs --account ID (the Cloudflare account)")
-    if args.provider != "clef" and args.account:
-        raise ValueError("--account applies to clef only")
-    if args.account and not valid_account(args.account):
+    wants, has = args.provider == "clef", bool(args.account)
+    if wants != has:
+        raise ValueError("clef needs --account ID (the Cloudflare account)" if wants else "--account applies to clef only")
+    if has and not valid_account(args.account):
         raise ValueError("--account must be letters, digits, - or _, at most %d characters" % ACCOUNT_MAX)
 
 
