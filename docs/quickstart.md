@@ -88,6 +88,17 @@ implicitly acknowledge a message. Connection status alone does not prove deliver
 Point both agents at the [collaboration skill](skills/pairtask/SKILL.md) and agree
 file ownership before concurrent edits.
 
+## Optional: a classifier for untagged messages (shadow mode)
+
+Off by default. The broker can ask a decision model, TypeSafe **Jev** or
+Cloudflare **Clef** on Workers AI, which agent a message you send to everyone
+without an `@` tag was for, and record the answer without acting on it: no
+suggestion, no assignment, claims work as before. Turn it on only when you
+want to collect those records: a credential file plus
+`PAIRTASK_CLASSIFIER=shadow` on the broker, then read them with
+`pairtask operator classifier report`. Settings, the key file and what leaves
+the host: [classifier](host-commands.md#classifier-shadow-mode).
+
 ## Watch, stop, and return
 
 `q` closes the dashboard only. Exit agents, then Ctrl+C the broker to stop.
