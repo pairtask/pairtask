@@ -278,27 +278,42 @@ func usageCounts(raw map[string]json.RawMessage) map[string]int64 {
 	if len(raw) == 0 {
 		return nil
 	}
-	names := append([]string(nil), canonicalUsage...)
-	rest := make([]string, 0, len(raw))
+	out := map[string]int64{}
+	for _, key := range usageOrder(raw) {
+		if len(out) >= UsageMax {
+			break
+		}
+		if n, ok := usageCount(raw[key]); ok {
+			out[key] = n
+		}
+	}
+	return out
+}
+
+// usageOrder: the canonical names that are present, then the others sorted.
+func usageOrder(raw map[string]json.RawMessage) []string {
+	var order, rest []string
+	for _, key := range canonicalUsage {
+		if _, present := raw[key]; present {
+			order = append(order, key)
+		}
+	}
 	for key := range raw {
 		if !slices.Contains(canonicalUsage, key) {
 			rest = append(rest, key)
 		}
 	}
 	sort.Strings(rest)
-	out := map[string]int64{}
-	for _, key := range append(names, rest...) {
-		value, present := raw[key]
-		var n int64
-		if !present || json.Unmarshal(value, &n) != nil || n < 0 {
-			continue
-		}
-		if len(out) >= UsageMax {
-			break
-		}
-		out[key] = n
+	return append(order, rest...)
+}
+
+// usageCount is a non-negative integer, or nothing.
+func usageCount(value json.RawMessage) (int64, bool) {
+	var n int64
+	if json.Unmarshal(value, &n) != nil || n < 0 {
+		return 0, false
 	}
-	return out
+	return n, true
 }
 
 // decode reads the provider's envelope; false when the answer isn't there.
