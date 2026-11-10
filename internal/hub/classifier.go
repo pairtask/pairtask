@@ -164,6 +164,7 @@ func failureOutcome(err error) (outcome, reason string) {
 // decided applies the threshold and the roster to the model's answer.
 func decided(p store.Prediction, roster classifier.Roster, answer classifier.Answer, threshold float64) store.Prediction {
 	p.ModelVersion = answer.Model
+	p.Usage = answer.Usage
 	p.Confidence = answer.Confidence
 	p.Probabilities, p.AbstainProbability = rekey(roster, answer.Probabilities)
 	agent := roster.Agent(answer.Choice)

@@ -29,6 +29,7 @@ type ClassifierReport struct {
 	LatencyMS   ClassifierLatency      `json:"latency_ms"`
 	Agreement   ClassifierAgreement    `json:"agreement"`
 	Threshold   float64                `json:"threshold"`             // the last configured threshold seen; uncalibrated
+	Usage       map[string]int64       `json:"usage"`                 // the providers\' usage counters summed, by their names
 	Predictions []ClassifierPrediction `json:"predictions,omitempty"` // the newest, at most ClassifierReportListed
 }
 

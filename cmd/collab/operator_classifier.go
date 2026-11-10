@@ -73,6 +73,9 @@ func writeClassifierReport(w io.Writer, r protocol.ClassifierReport) {
 		fmt.Fprintln(w, "Models: "+counts(r.Models))
 	}
 	fmt.Fprintf(w, "Latency (ms, %d asked): p50 %d, p95 %d, max %d\n", r.LatencyMS.Asked, r.LatencyMS.P50, r.LatencyMS.P95, r.LatencyMS.Max)
+	if len(r.Usage) > 0 {
+		fmt.Fprintln(w, "Usage (provider counters, summed): "+counts64(r.Usage))
+	}
 	a := r.Agreement
 	fmt.Fprintf(w, "Agreement with the reply claim (a weak label): %d agreed, %d disagreed of %d compared; %d predicted and unclaimed\n",
 		a.Agreed, a.Disagreed, a.Compared, a.Unclaimed)
@@ -103,6 +106,15 @@ func printable(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// counts64 renders int64 counters like counts.
+func counts64(m map[string]int64) string {
+	as := make(map[string]int, len(m))
+	for k, v := range m {
+		as[k] = int(v)
+	}
+	return counts(as)
 }
 
 func truncatedNote(truncated bool) string {

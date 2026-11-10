@@ -60,13 +60,19 @@ type Request struct {
 	Criteria     map[string]string // choice key -> description; includes AbstainChoice
 }
 
-// Answer is the model's choice with its confidence and per-option probabilities.
+// Answer is the model's choice with its confidence and per-option
+// probabilities, and what the provider said it used (token counts and the
+// like, by the provider's own names), for cost evaluation later.
 type Answer struct {
 	Choice        string
 	Confidence    float64
 	Probabilities map[string]float64
-	Model         string // the served model, when the provider names it
+	Model         string           // the served model, when the provider names it
+	Usage         map[string]int64 // the provider's usage counters, integer-valued fields only
 }
+
+// UsageMax bounds the usage counters kept from a reply.
+const UsageMax = 16
 
 // Outcome classes for a failed call; the client reports which, never the body.
 const (
@@ -247,41 +253,60 @@ type choiceAnswer struct {
 type workersEnvelope struct {
 	Success bool `json:"success"`
 	Result  struct {
-		Model   string                  `json:"model"`
-		Answers map[string]choiceAnswer `json:"answers"`
+		Model   string                     `json:"model"`
+		Answers map[string]choiceAnswer    `json:"answers"`
+		Usage   map[string]json.RawMessage `json:"usage"`
 	} `json:"result"`
 }
 
 // typesafeEnvelope is TypeSafe's: answers keyed by question, the served
-// model beside them.
+// model and usage beside them.
 type typesafeEnvelope struct {
-	Model   string                  `json:"model"`
-	Answers map[string]choiceAnswer `json:"answers"`
+	Model   string                     `json:"model"`
+	Answers map[string]choiceAnswer    `json:"answers"`
+	Usage   map[string]json.RawMessage `json:"usage"`
+}
+
+// usageCounts keeps the integer-valued fields of a usage object, at most
+// UsageMax of them, by the provider's own names.
+func usageCounts(raw map[string]json.RawMessage) map[string]int64 {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := map[string]int64{}
+	for key, value := range raw {
+		var n int64
+		if json.Unmarshal(value, &n) == nil && len(out) < UsageMax {
+			out[key] = n
+		}
+	}
+	return out
 }
 
 // decode reads the provider's envelope; false when the answer isn't there.
 func decode(provider string, data []byte) (Answer, bool) {
 	var model string
 	var answers map[string]choiceAnswer
+	var usage map[string]json.RawMessage
 	switch provider {
 	case ProviderWorkersAI:
 		var env workersEnvelope
 		if json.Unmarshal(data, &env) != nil || !env.Success {
 			return Answer{}, false
 		}
-		model, answers = env.Result.Model, env.Result.Answers
+		model, answers, usage = env.Result.Model, env.Result.Answers, env.Result.Usage
 	case ProviderTypeSafe:
 		var env typesafeEnvelope
 		if json.Unmarshal(data, &env) != nil {
 			return Answer{}, false
 		}
-		model, answers = env.Model, env.Answers
+		model, answers, usage = env.Model, env.Answers, env.Usage
 	}
 	a, ok := answers[Question]
 	if !ok || !a.valid() {
 		return Answer{}, false
 	}
-	return Answer{Choice: a.Choice, Confidence: *a.Confidence, Probabilities: a.Probabilities, Model: model}, true
+	return Answer{Choice: a.Choice, Confidence: *a.Confidence, Probabilities: a.Probabilities, Model: model, Usage: usageCounts(usage)}, true
 }
 
 // valid: a choice answer with a choice, a confidence in [0, 1] and

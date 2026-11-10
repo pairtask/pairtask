@@ -31,7 +31,7 @@ func (h *Hub) readClassifierReport(ctx context.Context, req operatorRequest, _ p
 // percentiles over the asked predictions, and compares each predicted
 // agent with the reply claim's holder, a weak label.
 func (h *Hub) classifierReport(ctx context.Context, since time.Time, rows []store.Prediction, more bool) protocol.ClassifierReport {
-	report := protocol.ClassifierReport{Since: since, Outcomes: map[string]int{}, Reasons: map[string]int{}, Models: map[string]int{}, Truncated: more}
+	report := protocol.ClassifierReport{Since: since, Outcomes: map[string]int{}, Reasons: map[string]int{}, Models: map[string]int{}, Usage: map[string]int64{}, Truncated: more}
 	report.Count = len(rows)
 	var latencies []int64
 	for _, p := range rows {
@@ -42,6 +42,9 @@ func (h *Hub) classifierReport(ctx context.Context, since time.Time, rows []stor
 		if p.Outcome != store.PredictionSkipped {
 			report.Models[p.Provider+"/"+p.Model+"/"+p.ModelVersion]++
 			latencies = append(latencies, p.LatencyMS)
+		}
+		for key, n := range p.Usage {
+			report.Usage[key] += n
 		}
 		report.Threshold = p.Threshold
 	}

@@ -145,11 +145,9 @@ func (h *Hub) Done() <-chan struct{} { return h.done }
 func (h *Hub) Run(ctx context.Context) {
 	clients := make(map[string]*Client)
 	defer close(h.done)
-	defer h.settlePairing()
-	defer h.settleClassifier()
+	defer h.settleBackground()
 	defer h.disconnectAll(clients)
-	h.beginPairing(ctx)
-	h.startClassifier(ctx)
+	h.beginBackground(ctx)
 	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {
