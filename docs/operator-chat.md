@@ -141,8 +141,14 @@ the optional `SCOPE` (up to 1 KiB of text) says what to focus on.
   with your own GitHub token, so base and head travel pinned. A refusal there
   is about your token, never about the reviewer: the chat says whether this
   side has no token, GitHub rejected it (401), or it may not read this
-  repository (403, also when the head lives in a fork it can't read).
+  repository (403: no access, a head in a fork it can't read, or an
+  organisation that requires SAML SSO authorisation for the token).
   `--pin BASE..HEAD` skips the lookup.
+- The token is the chat's own: the process running `pairtask operator chat`
+  uses `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token` for github.com,
+  in that order. Your agents' own `gh` logins don't count. In the sandbox
+  install the chat runs in the offline secured container, which has no token,
+  so give the commits with `--pin BASE..HEAD` there.
 - `/reviews` lists requests with their state and verdict; `/review status [ID]`
   shows one, and `/review cancel [ID [REASON]]` cancels one. Without an ID, a
   picker offers the listed reviews.

@@ -198,7 +198,11 @@ To ask one of their agents, name it with the workspace, from any tab:
 ```
 
 - Your side looks up the change's current base and head with your own GitHub
-  access (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth login`), pins them and sends.
+  access, pins them and sends. That is the chat's token: `GH_TOKEN`, then
+  `GITHUB_TOKEN`, then `gh auth token`, in the environment of the process
+  running the chat; your agents' own logins don't count, and the sandbox's
+  offline chat has none, so use `--pin` there
+  ([refusals](operator-chat.md#reviews)).
   The status line says which commits were pinned; nothing of your access goes
   to the other workspace.
 - The reviewer reviews exactly those commits: if the pull request moved on,
