@@ -138,7 +138,8 @@ def parser():
 
 
 def main(argv=None):
-    sandbox_host_user.refuse_root("pairtask classifier")
+    if sandbox_host_user.refuse_root("pairtask classifier"):
+        return 1
     args = parser().parse_args(argv)
     secured = Secured(args.project, args.remote)
     try:
