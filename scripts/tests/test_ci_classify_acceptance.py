@@ -46,7 +46,18 @@ class ClassifierAcceptanceTests(unittest.TestCase):
     def decision(self, base, head):
         result = self.run_cli("--event", "pull_request", "--base=" + base, "--head=" + head)
         self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout
+        lines = result.stdout.splitlines(keepends=True)
+        self.assertEqual(len(lines), 3, result.stdout)
+        self.assertIn(lines[2], ("docs_only=true\n", "docs_only=false\n"))
+        return "".join(lines[:2])
+
+    def docs_only(self, base, head, *args):
+        result = self.run_cli("--event", "pull_request", "--base=" + base,
+                              "--head=" + head, *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines(keepends=True)
+        self.assertEqual(len(lines), 3, result.stdout)
+        return lines[2]
 
     def assert_builds(self, base, head):
         self.assertEqual(self.decision(base, head),
@@ -55,8 +66,59 @@ class ClassifierAcceptanceTests(unittest.TestCase):
     def test_only_readme_and_top_level_markdown_can_skip(self):
         for name in ("README.md", "docs/operator-chat.md", "docs/new guide.md"):
             self.write(name)
-        self.assertEqual(self.decision(self.base, self.commit()),
+        head = self.commit()
+        self.assertEqual(self.decision(self.base, head),
                          "images=false\nreason=safe-docs-only\n")
+        self.assertEqual(self.docs_only(self.base, head), "docs_only=true\n")
+
+    def test_optional_onboarding_and_other_safe_docs_skip_full_pr_checks(self):
+        for name in ("docs/quickstart.md", "CLA.md", "CONTRIBUTING.md",
+                     ".github/PULL_REQUEST_TEMPLATE.md"):
+            with self.subTest(path=name):
+                self.write(name)
+                head = self.commit()
+                self.assertEqual(self.decision(self.base, head),
+                                 "images=false\nreason=safe-docs-only\n")
+                self.assertEqual(self.docs_only(self.base, head), "docs_only=true\n")
+
+    def test_docs_only_does_not_hide_a_shipped_or_ci_change(self):
+        self.write("docs/quickstart.md")
+        docs = self.commit()
+        for name in ("docs/skills/pairtask/SKILL.md", "docs/nested/guide.md",
+                     "docs/diagram.svg", "cmd/broker/main.go",
+                     "scripts/ci-classify.py", ".github/workflows/ci.yml",
+                     "go.mod"):
+            with self.subTest(path=name):
+                self.git("reset", "--hard", docs)
+                self.write(name)
+                head = self.commit()
+                self.assertEqual(self.docs_only(self.base, head), "docs_only=false\n")
+
+    def test_chat_only_exception_does_not_skip_full_pr_checks(self):
+        self.write("docs/quickstart.md")
+        self.write("internal/chat/view.go")
+        head = self.commit()
+        self.assertEqual(self.decision(self.base, head),
+                         "images=false\nreason=safe-chat-only\n")
+        self.assertEqual(self.docs_only(self.base, head), "docs_only=false\n")
+
+    def test_docs_only_respects_force_and_diff_errors(self):
+        self.write("docs/quickstart.md")
+        head = self.commit()
+        self.assertEqual(self.docs_only(self.base, head, "--force-full"),
+                         "docs_only=false\n")
+        self.assertEqual(self.docs_only("missing-base", head), "docs_only=false\n")
+
+    def test_docs_only_never_skips_push_or_dispatch(self):
+        self.write("docs/quickstart.md")
+        head = self.commit()
+        for event in ("push", "workflow_dispatch"):
+            with self.subTest(event=event):
+                result = self.run_cli("--event", event, "--base", self.base,
+                                      "--head", head)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout,
+                                 "images=true\nreason=event-always-builds\ndocs_only=false\n")
 
     def test_unknown_or_shipped_paths_build_even_with_safe_docs(self):
         # Keep the safe companion distinct from readme.md on macOS too.
@@ -146,7 +208,8 @@ class ClassifierAcceptanceTests(unittest.TestCase):
             with self.subTest(event=event):
                 result = self.run_cli("--event", event, "--base", "missing", "--head", "missing")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, "images=true\nreason=event-always-builds\n")
+                self.assertEqual(result.stdout,
+                                 "images=true\nreason=event-always-builds\ndocs_only=false\n")
 
     def test_usage_error_cannot_report_a_safe_skip(self):
         result = self.run_cli("--unexpected-option")
@@ -223,11 +286,13 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                 result = self.run_cli("--event", "pull_request", "--base", self.base,
                                       "--head", head, "--force-full")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, "images=true\nreason=forced-full\n")
+                self.assertEqual(result.stdout,
+                                 "images=true\nreason=forced-full\ndocs_only=false\n")
 
     def test_force_full_preserves_non_pr_event_policy(self):
         for event in ("push", "workflow_dispatch", "schedule", "unknown"):
             with self.subTest(event=event):
                 result = self.run_cli("--event", event, "--force-full")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, "images=true\nreason=event-always-builds\n")
+                self.assertEqual(result.stdout,
+                                 "images=true\nreason=event-always-builds\ndocs_only=false\n")
