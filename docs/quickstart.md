@@ -93,20 +93,19 @@ file ownership before concurrent edits.
 Off by default. The broker can ask a decision model, TypeSafe **Jev** or
 Cloudflare **Clef** on Workers AI, which agent a message you send to everyone
 without an `@` tag was for, and record the answer without acting on it: no
-suggestion, no assignment, claims work as before. Turn it on only when you
-want to collect those records:
+suggestion, no assignment, claims work as before. The standalone broker of
+this guide takes the settings from its environment; put the key in a file
+only you can read and start the broker with, for Jev:
 
 ```sh
-pairtask classifier on                       # Jev; asks for the TypeSafe key
-pairtask classifier on --provider clef --account ID   # Clef on Workers AI
-pairtask classifier status                   # settings and the last 24 hours
-pairtask classifier off
+PAIRTASK_CLASSIFIER=shadow PAIRTASK_CLASSIFIER_PROVIDER=typesafe \
+PAIRTASK_CLASSIFIER_KEY_FILE=$HOME/.pairtask-jev-key ./pairtask-broker
 ```
 
-The key is read from a hidden prompt (or `--key-file PATH`), never from the
-command line, and stored where only the broker can read it. What leaves the
-host and the settings a standalone broker takes from its environment:
-[classifier](host-commands.md#classifier-shadow-mode).
+Then `./pairtask operator classifier report --since 24h` shows what it
+recorded. The sandbox install does the same with `pairtask classifier on`
+([README](../README.md)). Every setting, what leaves the host, and Clef's
+account: [classifier](host-commands.md#classifier-shadow-mode).
 
 ## Watch, stop, and return
 

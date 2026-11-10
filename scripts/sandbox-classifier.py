@@ -22,6 +22,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import sandbox_host_user  # noqa: E402
+import sandbox_remote  # noqa: E402
 
 SECURED_OPERATOR = "/run/collab-ai-operator/operator.sock"
 SETUP = "/usr/local/lib/pairtask/pairtask-broker-setup"
@@ -112,6 +113,13 @@ def last_line(text):
     return lines[-1] if lines else ""
 
 
+def identifier(value):
+    """An Incus project or remote name: letters, digits, - and _, bounded."""
+    if not (0 < len(value) <= 64 and value.isascii() and all(ch.isalnum() or ch in "-_" for ch in value)):
+        raise argparse.ArgumentTypeError("must be letters, digits, - or _")
+    return value
+
+
 def parser():
     top = argparse.ArgumentParser(prog="pairtask classifier", description=__doc__.splitlines()[0])
     actions = top.add_subparsers(dest="action", required=True)
@@ -124,8 +132,8 @@ def parser():
     show.add_argument("--since", default="24h", help="how far back the report looks (default 24h)")
     show.add_argument("--json", action="store_true")
     for each in (on, show, actions.choices["off"]):
-        each.add_argument("--project", default="pairtask")
-        each.add_argument("--remote", default=os.environ.get("PAIRTASK_REMOTE", "pairtask"))
+        each.add_argument("--project", default="pairtask", type=identifier)
+        each.add_argument("--remote", default=sandbox_remote.default_remote(), type=identifier)
     return top
 
 
