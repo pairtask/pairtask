@@ -42,6 +42,11 @@ type Decision struct {
 	AnsweredAt, PostedAt                                     *time.Time
 }
 
+// Owed: the notice has not been sent and the request is still open.
+func (d Decision) Owed() bool {
+	return d.Delivery == protocol.DeliveryPending && d.State == protocol.DecisionOpen
+}
+
 // View is the decision as the protocol carries it.
 func (d Decision) View(replayed bool) protocol.Decision {
 	return protocol.Decision{ID: d.ID, Agent: d.Agent, Key: d.Key, Anchor: d.Anchor, Summary: d.Summary, State: d.State,
@@ -62,19 +67,12 @@ func (s *Store) AnchorOwnedBy(ctx context.Context, messageID, agent string) (boo
 // the one that stands. The unique indexes decide, so two writers racing on
 // one key both get the winner.
 func (s *Store) CreateDecision(ctx context.Context, d Decision) (Decision, bool, error) {
-	if d.ID == "" || d.Agent == "" || d.Anchor == "" || d.Summary == "" {
-		return Decision{}, false, errors.New("a decision needs an id, an agent, an anchor and a summary")
+	for _, required := range []string{d.ID, d.Agent, d.Anchor, d.Summary} {
+		if required == "" {
+			return Decision{}, false, errors.New("a decision needs an id, an agent, an anchor and a summary")
+		}
 	}
-	at := d.CreatedAt
-	if at.IsZero() {
-		at = time.Now()
-	}
-	result, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO decision_requests (`+decisionColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL)`,
-		d.ID, d.Agent, d.Key, d.Anchor, d.Summary, protocol.DecisionOpen, d.Delivery, d.Reason, stamp(at))
-	if err != nil {
-		return Decision{}, false, err
-	}
-	inserted, err := result.RowsAffected()
+	inserted, err := s.insertDecision(ctx, d)
 	if err != nil {
 		return Decision{}, false, err
 	}
@@ -85,7 +83,22 @@ func (s *Store) CreateDecision(ctx context.Context, d Decision) (Decision, bool,
 	if standing == nil {
 		return Decision{}, false, errors.New("decision not recorded")
 	}
-	return *standing, inserted == 0, nil
+	return *standing, !inserted, nil
+}
+
+// insertDecision writes the row unless an index refuses it; inserted says which.
+func (s *Store) insertDecision(ctx context.Context, d Decision) (bool, error) {
+	at := d.CreatedAt
+	if at.IsZero() {
+		at = time.Now()
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO decision_requests (`+decisionColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL)`,
+		d.ID, d.Agent, d.Key, d.Anchor, d.Summary, protocol.DecisionOpen, d.Delivery, d.Reason, stamp(at))
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 // DecisionByKey is the agent's request under the key, or nil: what a
@@ -126,14 +139,21 @@ func (s *Store) Decision(ctx context.Context, id string) (*Decision, error) {
 	return &found[0], nil
 }
 
+// DeliveryMark is one attempt's outcome: the delivery it left the request
+// in, the failure's class when it did not go, and when.
+type DeliveryMark struct {
+	ID, Delivery, Reason string
+	At                   time.Time
+}
+
 // MarkDecisionDelivery records one attempt's outcome and its class.
-func (s *Store) MarkDecisionDelivery(ctx context.Context, id, delivery, reason string, at time.Time) error {
+func (s *Store) MarkDecisionDelivery(ctx context.Context, mark DeliveryMark) error {
 	var posted any
-	if delivery == protocol.DeliverySent {
-		posted = stamp(at)
+	if mark.Delivery == protocol.DeliverySent {
+		posted = stamp(mark.At)
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE decision_requests SET delivery = ?, reason = ?, attempts = attempts + 1,
-		posted_at = COALESCE(?, posted_at) WHERE id = ?`, delivery, reason, posted, id)
+		posted_at = COALESCE(?, posted_at) WHERE id = ?`, mark.Delivery, mark.Reason, posted, mark.ID)
 	return err
 }
 

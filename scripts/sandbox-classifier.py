@@ -86,13 +86,17 @@ def status(secured, args):
     report = report_of(secured, args) if enabled else None
     if args.json:
         print(json.dumps({"classifier": settings, "report": report}, sort_keys=True))
-        return
-    if not enabled:
+    elif not enabled:
         print("Classifier: off")
-        return
+    else:
+        print(describe(settings))
+        print(report if isinstance(report, str) else "Report unavailable: " + report.get("error", ""))
+
+
+def describe(settings):
+    """One line of the settings: mode, provider, account, whether a key is stored."""
     account = " (account %s)" % settings["account"] if settings.get("account") else ""
-    print("Classifier: %s, %s%s, key %s" % (settings.get("classifier"), settings.get("provider"), account, settings.get("key", "missing")))
-    print(report if isinstance(report, str) else "Report unavailable: " + report.get("error", ""))
+    return "Classifier: %s, %s%s, key %s" % (settings.get("classifier"), settings.get("provider"), account, settings.get("key", "missing"))
 
 
 def report_of(secured, args):

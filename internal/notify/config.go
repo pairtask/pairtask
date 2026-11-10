@@ -92,12 +92,14 @@ func loadOptions(lookup config.LookupFunc, cfg *Config) error {
 		return err
 	}
 	value, err := time.ParseDuration(raw)
-	if err != nil || value <= 0 || value > time.Minute {
+	if err != nil || !validTimeout(value) {
 		return errors.New(config.Name(SettingTimeout) + " must be a duration up to 1m")
 	}
 	cfg.Timeout = value
 	return nil
 }
+
+func validTimeout(value time.Duration) bool { return value > 0 && value <= time.Minute }
 
 // loadSecret reads the webhook URL from its file: a regular file readable
 // by its owner only, owned by the broker user. Unset, unreadable or empty

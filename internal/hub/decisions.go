@@ -80,39 +80,55 @@ func (h *Hub) handleDecision(ctx context.Context, clients map[string]*Client, in
 // standing record before anything is posted again.
 func (h *Hub) decide(ctx context.Context, clients map[string]*Client, in Inbound) protocol.Message {
 	msg := in.Msg
-	if in.From.ProtocolVersion < protocol.DecisionVersion {
-		return statusError(msg.RequestID, protocol.ErrForbidden, "decision requests need protocol version 27")
+	if rerr := admitDecision(in); rerr != nil {
+		return statusError(msg.RequestID, rerr.code, rerr.detail)
 	}
-	if err := protocol.ValidateDecisionRequest(msg.DecisionSummary, msg.DecisionKey); err != nil {
-		return statusError(msg.RequestID, protocol.ErrMalformedFrame, err.Error())
-	}
-	if standing, err := h.store.DecisionByKey(ctx, in.From.ID, msg.DecisionKey); err != nil {
+	standing, err := h.store.DecisionByKey(ctx, in.From.ID, msg.DecisionKey)
+	if err != nil {
 		return statusError(msg.RequestID, protocol.ErrInternal, "decision lookup failed")
-	} else if standing != nil {
-		return protocol.Message{Type: protocol.TypeDecisionResult, RequestID: msg.RequestID, Decision: decisionView(*standing, true)}
+	}
+	if standing != nil {
+		return decisionResult(msg.RequestID, *standing, true)
 	}
 	anchor, rerr := h.decisionAnchor(ctx, clients, in)
 	if rerr != nil {
 		return statusError(msg.RequestID, rerr.code, rerr.detail)
 	}
-	delivery, reason := protocol.DeliveryOff, "no_notifier"
-	if h.NotifierEnabled() {
-		delivery, reason = protocol.DeliveryPending, ""
-	}
-	created, existing, err := h.store.CreateDecision(ctx, store.Decision{ID: "d-" + uuid.NewString(), Agent: in.From.ID,
-		Key: msg.DecisionKey, Anchor: anchor, Summary: msg.DecisionSummary, Delivery: delivery, Reason: reason})
-	if err != nil {
-		return statusError(msg.RequestID, protocol.ErrInternal, "decision not recorded")
-	}
-	if !existing && delivery == protocol.DeliveryPending {
-		h.queueDecision(created.ID)
-	}
-	return protocol.Message{Type: protocol.TypeDecisionResult, RequestID: msg.RequestID, Decision: decisionView(created, existing)}
+	return h.recordDecision(ctx, in, anchor)
 }
 
-func decisionView(d store.Decision, replayed bool) *protocol.Decision {
+// admitDecision is the version gate and the request's validation.
+func admitDecision(in Inbound) *routingError {
+	if in.From.ProtocolVersion < protocol.DecisionVersion {
+		return &routingError{protocol.ErrForbidden, "decision requests need protocol version 27"}
+	}
+	if err := protocol.ValidateDecisionRequest(in.Msg.DecisionSummary, in.Msg.DecisionKey); err != nil {
+		return &routingError{protocol.ErrMalformedFrame, err.Error()}
+	}
+	return nil
+}
+
+// recordDecision stores the request behind its anchor and queues its
+// notice when there is a notifier; an anchor already recorded is replayed.
+func (h *Hub) recordDecision(ctx context.Context, in Inbound, anchor string) protocol.Message {
+	row := store.Decision{ID: "d-" + uuid.NewString(), Agent: in.From.ID, Key: in.Msg.DecisionKey, Anchor: anchor,
+		Summary: in.Msg.DecisionSummary, Delivery: protocol.DeliveryOff, Reason: "no_notifier"}
+	if h.NotifierEnabled() {
+		row.Delivery, row.Reason = protocol.DeliveryPending, ""
+	}
+	created, existing, err := h.store.CreateDecision(ctx, row)
+	if err != nil {
+		return statusError(in.Msg.RequestID, protocol.ErrInternal, "decision not recorded")
+	}
+	if !existing && created.Delivery == protocol.DeliveryPending {
+		h.queueDecision(created.ID)
+	}
+	return decisionResult(in.Msg.RequestID, created, existing)
+}
+
+func decisionResult(requestID string, d store.Decision, replayed bool) protocol.Message {
 	view := d.View(replayed)
-	return &view
+	return protocol.Message{Type: protocol.TypeDecisionResult, RequestID: requestID, Decision: &view}
 }
 
 // decisionAnchor is the request's anchor: the message it names, which must
@@ -130,7 +146,7 @@ func (h *Hub) decisionAnchor(ctx context.Context, clients map[string]*Client, in
 		}
 		return in.Msg.AnchorMessageID, nil
 	}
-	id := anchorID(in.From.ID, in.Msg.DecisionKey)
+	id := anchorID(in)
 	payload, _ := json.Marshal(map[string]string{"text": "needs a decision: " + in.Msg.DecisionSummary}) // a map of strings always encodes
 	ask := Inbound{From: in.From, Msg: protocol.Message{Type: protocol.TypeMsg, To: protocol.OperatorID, Payload: payload,
 		MessageID: id, Durable: true, AckRequested: true}}
@@ -141,11 +157,11 @@ func (h *Hub) decisionAnchor(ctx context.Context, clients map[string]*Client, in
 }
 
 // anchorID: fixed by (agent, key) when there is a key, random otherwise.
-func anchorID(agent, key string) string {
-	if key == "" {
+func anchorID(in Inbound) string {
+	if in.Msg.DecisionKey == "" {
 		return "d-" + uuid.NewString()
 	}
-	sum := sha256.Sum256([]byte(agent + "\x00" + key))
+	sum := sha256.Sum256([]byte(in.From.ID + "\x00" + in.Msg.DecisionKey))
 	return "d-" + hex.EncodeToString(sum[:16])
 }
 
@@ -202,15 +218,19 @@ func (h *Hub) drainPending(ctx context.Context) {
 			h.log.Error("decision requests unavailable", "error", err)
 			return
 		}
-		for _, d := range pending {
-			if ctx.Err() != nil {
-				return
-			}
-			h.notifyDecision(ctx, d.ID)
-		}
+		h.notifyEach(ctx, pending)
 		if len(pending) < DecisionQueue {
 			return
 		}
+	}
+}
+
+func (h *Hub) notifyEach(ctx context.Context, pending []store.Decision) {
+	for _, d := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		h.notifyDecision(ctx, d.ID)
 	}
 }
 
@@ -219,40 +239,56 @@ func (h *Hub) drainPending(ctx context.Context) {
 // Each attempt starts from the row as it stands: an answer given during a
 // backoff ends the retries.
 func (h *Hub) notifyDecision(ctx context.Context, id string) {
-	c := h.notifier.cfg
 	for attempt := 0; ; attempt++ {
 		d := h.openPending(ctx, id)
 		if d == nil {
 			return // gone, sent meanwhile, or answered first
 		}
-		notice := notify.Notice{Workspace: c.Workspace, Agent: d.Agent, Summary: d.Summary, Anchor: d.Anchor, Hidden: c.Hidden}
-		_, err := c.Post(ctx, notice)
-		if err == nil {
-			h.recordDelivery(ctx, id, protocol.DeliverySent, "")
+		outcome := h.post(ctx, *d, attempt)
+		h.recordDelivery(ctx, outcome)
+		if outcome.Delivery != protocol.DeliveryPending {
 			return
 		}
-		class := failureClass(err)
-		var failure *notify.Failure
-		if attempt >= len(decisionBackoff) || !(errors.As(err, &failure) && failure.Retryable()) {
-			h.recordDelivery(ctx, id, protocol.DeliveryFailed, class)
-			return
-		}
-		h.recordDelivery(ctx, id, protocol.DeliveryPending, class) // one attempt counted, still pending
 		select {
 		case <-ctx.Done():
 			return
-		case <-c.After(decisionBackoff[attempt]):
+		case <-h.notifier.cfg.After(decisionBackoff[attempt]):
 		}
 	}
+}
+
+// post makes one attempt and says what it left: sent, failed, or pending
+// with the failure's class when a later attempt may do better.
+func (h *Hub) post(ctx context.Context, d store.Decision, attempt int) store.DeliveryMark {
+	c := h.notifier.cfg
+	mark := store.DeliveryMark{ID: d.ID, Delivery: protocol.DeliverySent, At: c.Clock()}
+	_, err := c.Post(ctx, notify.Notice{Workspace: c.Workspace, Agent: d.Agent, Summary: d.Summary, Anchor: d.Anchor, Hidden: c.Hidden})
+	if err == nil {
+		return mark
+	}
+	mark.Delivery, mark.Reason = protocol.DeliveryFailed, failureClass(err)
+	if attempt < len(decisionBackoff) && retryable(err) {
+		mark.Delivery = protocol.DeliveryPending
+	}
+	return mark
 }
 
 // openPending is the request when its notice is still owed, else nil.
 func (h *Hub) openPending(ctx context.Context, id string) *store.Decision {
 	d, err := h.store.Decision(ctx, id)
-	if err != nil || d == nil || d.Delivery != protocol.DeliveryPending || d.State != protocol.DecisionOpen {
+	if err != nil || d == nil {
+		return nil
+	}
+	if !d.Owed() {
 		return nil
 	}
 	return d
+}
+
+// retryable: a later attempt may succeed.
+func retryable(err error) bool {
+	var failure *notify.Failure
+	return errors.As(err, &failure) && failure.Retryable()
 }
 
 // failureClass names a failed post without the transport's words, which
@@ -265,12 +301,17 @@ func failureClass(err error) string {
 	return "request"
 }
 
-func (h *Hub) recordDelivery(ctx context.Context, id, delivery, reason string) {
-	if err := h.store.MarkDecisionDelivery(ctx, id, delivery, reason, h.notifier.cfg.Clock()); err != nil {
-		h.log.Error("decision delivery not recorded", "id", id, "error", err)
+func (h *Hub) recordDelivery(ctx context.Context, mark store.DeliveryMark) {
+	if err := h.store.MarkDecisionDelivery(ctx, mark); err != nil {
+		h.log.Error("decision delivery not recorded", "id", mark.ID, "error", err)
 	}
-	if observed := h.notifier.cfg.Observed; observed != nil {
-		observed(id)
+	h.observe(mark.ID)
+}
+
+// observe tells the test hook, when there is one, that a request changed.
+func (h *Hub) observe(id string) {
+	if c := h.notifier.cfg; c != nil && c.Observed != nil {
+		c.Observed(id)
 	}
 }
 
@@ -285,7 +326,7 @@ func (h *Hub) answerDecision(ctx context.Context, reply protocol.Message) {
 		h.log.Error("decision answer not recorded", "anchor", reply.InReplyTo, "error", err)
 		return
 	}
-	if answered && h.notifier.cfg != nil && h.notifier.cfg.Observed != nil {
-		h.notifier.cfg.Observed(reply.InReplyTo)
+	if answered {
+		h.observe(reply.InReplyTo)
 	}
 }

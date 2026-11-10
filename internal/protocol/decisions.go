@@ -60,6 +60,13 @@ type Decision struct {
 
 // ValidateDecisionRequest checks a request's summary and key.
 func ValidateDecisionRequest(summary, key string) error {
+	if err := validateSummary(summary); err != nil {
+		return err
+	}
+	return validateKey(key)
+}
+
+func validateSummary(summary string) error {
 	runes := []rune(summary)
 	if len(runes) == 0 || len(runes) > DecisionSummaryMax {
 		return errors.New("summary is required, at most 200 characters")
@@ -69,6 +76,10 @@ func ValidateDecisionRequest(summary, key string) error {
 			return errors.New("summary must be printable text on one line")
 		}
 	}
+	return nil
+}
+
+func validateKey(key string) error {
 	if len(key) > DecisionKeyMax {
 		return errors.New("key is at most 128 bytes")
 	}
