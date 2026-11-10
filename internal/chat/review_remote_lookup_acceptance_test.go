@@ -284,7 +284,7 @@ func TestReviewRemoteAcceptanceURLResolvesAndSendsFrozenPins(t *testing.T) {
 
 func TestReviewRemoteAcceptanceLookupFailureClassesNeverLeakRawErrors(t *testing.T) {
 	for _, tc := range []struct{ class, label string }{
-		{forge.ClassForbidden, "no access"}, {forge.ClassNotFound, "not found"}, {forge.ClassRateLimited, "rate limit"}, {forge.ClassUnavailable, "network error"}, {forge.ClassInvalid, "unexpected answer"},
+		{forge.ClassForbidden, "your GitHub token"}, {forge.ClassNotFound, "not found"}, {forge.ClassRateLimited, "rate limit"}, {forge.ClassUnavailable, "network error"}, {forge.ClassInvalid, "unexpected answer"},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			h, lookup := remoteHarness(t)
