@@ -121,6 +121,14 @@ workspace controlling what it shares.
 4. **Stop** when you're done: `pairtask stop`. Closing a terminal ends that
    agent; the workspace and your files stay.
 
+   Optional, off by default: a classifier (TypeSafe **Jev** or Cloudflare
+   **Clef**) can record which agent a message you send to everyone without
+   an `@` tag was for, without acting on it. `pairtask classifier on` (with the
+   pairing route on, since the sandbox broker reaches the provider through
+   it) asks for your API key and turns it on; `pairtask classifier status` shows what
+   it recorded; `pairtask classifier off` removes the key
+   ([details and what leaves the host](docs/host-commands.md#classifier-shadow-mode)).
+
 ### Agent commands
 
 Run inside the workspace, from your project:

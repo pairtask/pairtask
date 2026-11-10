@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 
 	"github.com/pairtask/pairtask/internal/classifier"
 	settings "github.com/pairtask/pairtask/internal/config"
 	"github.com/pairtask/pairtask/internal/hub"
+	"github.com/pairtask/pairtask/internal/peer/egress"
 )
 
 // The shadow classifier (#339): off unless PAIRTASK_CLASSIFIER=shadow with
@@ -22,17 +26,38 @@ func loadClassifier(lookup settings.LookupFunc) (classifier.Config, string, erro
 }
 
 // attachClassifier gives the hub a client when shadow mode is on, and says
-// in the log what the classifier does.
-func attachClassifier(h *hub.Hub, cfg classifier.Config, status string, log *slog.Logger) error {
-	if !cfg.Enabled() {
-		log.Info(status)
+// in the log what the classifier does and how it reaches the provider.
+func attachClassifier(h *hub.Hub, cfg config, log *slog.Logger) error {
+	settings := cfg.Classifier
+	if !settings.Enabled() {
+		log.Info(cfg.ClassifierStatus)
 		return nil
 	}
-	client, err := classifier.NewClient(classifier.Credential{Provider: cfg.Provider, Account: cfg.Account, Key: cfg.Key}, cfg.Timeout, nil)
+	transport, route := classifierTransport(cfg)
+	credential := classifier.Credential{Provider: settings.Provider, Account: settings.Account, Key: settings.Key}
+	client, err := classifier.NewClient(credential, settings.Timeout, transport)
 	if err != nil {
 		return err
 	}
-	h.SetClassifier(&hub.Classifier{Provider: cfg.Provider, Model: cfg.Model, Threshold: cfg.Threshold, Roles: cfg.Roles, Ask: client.Ask})
-	log.Info(status, "threshold", cfg.Threshold, "note", "shadow: predictions are recorded, none applied; the threshold is uncalibrated")
+	h.SetClassifier(&hub.Classifier{Provider: settings.Provider, Model: settings.Model, Threshold: settings.Threshold, Roles: settings.Roles, Ask: client.Ask})
+	log.Info(cfg.ClassifierStatus, "threshold", settings.Threshold, "route", route,
+		"note", "shadow: predictions are recorded, none applied; the threshold is uncalibrated")
 	return nil
+}
+
+// classifierTransport is how the provider is reached: through connector's
+// egress forwarder when the broker has one (a secured broker has no network
+// of its own), else directly. TLS ends in the broker either way, so the
+// credential never passes through the forwarder in the clear.
+func classifierTransport(cfg config) (http.RoundTripper, string) {
+	if cfg.PairingEgressSocket == "" {
+		return nil, "direct"
+	}
+	socket := cfg.PairingEgressSocket
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return egress.Dial(ctx, socket, address)
+	}
+	return transport, "egress " + socket
 }

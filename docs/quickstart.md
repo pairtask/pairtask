@@ -88,6 +88,30 @@ implicitly acknowledge a message. Connection status alone does not prove deliver
 Point both agents at the [collaboration skill](skills/pairtask/SKILL.md) and agree
 file ownership before concurrent edits.
 
+## Optional: a classifier for untagged messages (shadow mode)
+
+Off by default. The broker can ask a decision model, TypeSafe **Jev** or
+Cloudflare **Clef** on Workers AI, which agent a message you send to everyone
+without an `@` tag was for, and record the answer without acting on it: no
+suggestion, no assignment, claims work as before. The standalone broker of
+this guide takes the settings from its environment. Put the key in a file
+only you can read, stop Terminal 1's broker (Ctrl+C; the agents reconnect
+when it is back) and start it again with the same socket and database as
+step 1 plus the settings, for Jev:
+
+```sh
+printf 'TypeSafe key (not echoed): '; read -r -s KEY; printf '\n'
+(umask 077; printf '%s\n' "$KEY" > "$HOME/.pairtask-jev-key"); unset KEY
+PAIRTASK_SOCKET_PATH=/tmp/collab-ai.sock PAIRTASK_DB_PATH="$PWD/collab-ai.db" \
+PAIRTASK_CLASSIFIER=shadow PAIRTASK_CLASSIFIER_PROVIDER=typesafe \
+PAIRTASK_CLASSIFIER_KEY_FILE="$HOME/.pairtask-jev-key" ./pairtask-broker
+```
+
+Then `./pairtask operator classifier report --socket /tmp/collab-ai.sock
+--since 24h` shows what it recorded. The sandbox install does the same with `pairtask classifier on`
+([README](../README.md)). Every setting, what leaves the host, and Clef's
+account: [classifier](host-commands.md#classifier-shadow-mode).
+
 ## Watch, stop, and return
 
 `q` closes the dashboard only. Exit agents, then Ctrl+C the broker to stop.

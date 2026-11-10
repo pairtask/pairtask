@@ -103,7 +103,7 @@ func openHub(ctx context.Context, cfg config, st *store.Store, log *slog.Logger)
 	log.Info("state loaded", "db", cfg.DBPath, "last_seq", lastSeq)
 	h := hub.New(st, lastSeq, log)
 	h.SetPairing(pairingConfig(cfg))
-	if err := attachClassifier(h, cfg.Classifier, cfg.ClassifierStatus, log); err != nil {
+	if err := attachClassifier(h, cfg, log); err != nil {
 		return nil, err
 	}
 	n, err := h.RecoverJoins(ctx)

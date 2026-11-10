@@ -99,9 +99,112 @@ def clients():
         alias(Path("/run/collab-ai/broker.sock"), target)
 
 
+# The shadow classifier's settings (#339): its credential and provider, set
+# from the host by `pairtask classifier on`, read by the broker unit through
+# its drop-in's EnvironmentFile. The key arrives on stdin, never in argv.
+CLASSIFIER = STATE / "classifier"
+CLASSIFIER_KEY = CLASSIFIER / "key"
+CLASSIFIER_ENV = CLASSIFIER / "classifier.env"
+PROVIDERS = {"jev": "typesafe", "clef": "workers-ai"}
+BROKER_UNIT = "pairtask-secured-broker.service"
+KEY_MAX = 512
+ACCOUNT_MAX = 64
+
+
+def valid_account(account):
+    """A Cloudflare account ID: letters, digits, - and _, at most ACCOUNT_MAX;
+    nothing that could start another line or quote in an environment file."""
+    return 0 < len(account) <= ACCOUNT_MAX and all(ch.isalnum() or ch in "-_" for ch in account) and account.isascii()
+
+
+def classifier_key(stream):
+    """One line of printable ASCII, at most KEY_MAX bytes, from stdin."""
+    raw = stream.buffer.readline(KEY_MAX + 2) if hasattr(stream, "buffer") else stream.readline(KEY_MAX + 2)
+    key = raw.decode("ascii", "strict").strip() if isinstance(raw, bytes) else raw.strip()
+    if not key or len(key) > KEY_MAX or not all(32 < ord(ch) < 127 for ch in key):
+        raise ValueError("the key must be one line of printable ASCII, at most %d bytes" % KEY_MAX)
+    return key
+
+
+def classifier_on(provider, account, key):
+    """Store the key for the broker alone and the settings for its unit."""
+    if provider not in PROVIDERS:
+        raise ValueError("provider must be jev or clef")
+    if PROVIDERS[provider] == "workers-ai" and not account:
+        raise ValueError("clef needs the Cloudflare account ID")
+    if PROVIDERS[provider] != "workers-ai" and account:
+        raise ValueError("an account applies to clef only")
+    if account and not valid_account(account):
+        raise ValueError("the account ID must be letters, digits, - or _, at most %d characters" % ACCOUNT_MAX)
+    broker = pwd.getpwnam("broker")
+    if CLASSIFIER.is_symlink() or (CLASSIFIER.exists() and not CLASSIFIER.is_dir()):
+        raise ValueError(f"refusing a settings path that is not a directory: {CLASSIFIER}")
+    CLASSIFIER.mkdir(mode=0o700, exist_ok=True)
+    os.chown(CLASSIFIER, broker.pw_uid, broker.pw_gid)
+    CLASSIFIER.chmod(0o700)
+    for path in (CLASSIFIER_KEY, CLASSIFIER_ENV):
+        if path.is_symlink() or (path.exists() and not stat.S_ISREG(path.lstat().st_mode)):
+            raise ValueError(f"refusing to replace a non-regular file: {path}")
+    write_private(CLASSIFIER_KEY, key + "\n", broker.pw_uid, broker.pw_gid)
+    lines = ["PAIRTASK_CLASSIFIER=shadow", "PAIRTASK_CLASSIFIER_PROVIDER=" + PROVIDERS[provider],
+             "PAIRTASK_CLASSIFIER_KEY_FILE=" + str(CLASSIFIER_KEY)]
+    if account:
+        lines.append("PAIRTASK_CLASSIFIER_ACCOUNT=" + account)
+    write_private(CLASSIFIER_ENV, "".join(line + "\n" for line in lines), 0, 0)
+
+
+def write_private(path, text, uid, gid):
+    """Write by rename, owned by uid:gid, readable by the owner only."""
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.unlink(missing_ok=True)
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chown(temporary, uid, gid)
+    temporary.replace(path)
+
+
+def classifier_off():
+    for path in (CLASSIFIER_KEY, CLASSIFIER_ENV):
+        if path.is_symlink() or path.exists():
+            path.unlink()
+
+
+def classifier_status():
+    """The settings without the key: off, or the provider and account."""
+    if not CLASSIFIER_ENV.is_file():
+        print("classifier=off")
+        return
+    settings = dict(line.split("=", 1) for line in CLASSIFIER_ENV.read_text().splitlines() if "=" in line)
+    name = next((n for n, p in PROVIDERS.items() if p == settings.get("PAIRTASK_CLASSIFIER_PROVIDER")), "unknown")
+    print("classifier=" + settings.get("PAIRTASK_CLASSIFIER", "off"))
+    print("provider=" + name)
+    print("account=" + settings.get("PAIRTASK_CLASSIFIER_ACCOUNT", ""))
+    print("key=" + ("stored" if CLASSIFIER_KEY.is_file() else "missing"))
+
+
+def classifier(argv):
+    """classifier on PROVIDER [ACCOUNT] (key on stdin) | off | status; on and off restart the broker."""
+    import subprocess
+    action = argv[0] if argv else ""
+    if action == "on":
+        classifier_on(argv[1] if len(argv) > 1 else "", argv[2] if len(argv) > 2 else "", classifier_key(sys.stdin))
+    elif action == "off":
+        classifier_off()
+    elif action == "status":
+        classifier_status()
+        return
+    else:
+        raise ValueError("classifier takes on PROVIDER [ACCOUNT], off or status")
+    subprocess.run(["systemctl", "restart", BROKER_UNIT], check=True)
+
+
 if __name__ == "__main__":
     actions = {"control": control, "clients": clients,
-               "clean": lambda: remove_stale_socket(IPC / "broker.sock")}
+               "clean": lambda: remove_stale_socket(IPC / "broker.sock"),
+               "classifier": lambda: classifier(sys.argv[2:])}
     try:
         actions[sys.argv[1]]()
     except (KeyError, IndexError, ValueError, OSError, sqlite3.Error) as error:

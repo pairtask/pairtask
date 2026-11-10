@@ -31,6 +31,9 @@ concurrency:
 
 jobs:
   mac-sharing:
+    # The script suite and provisioning on macOS: only for script or image changes.
+    needs: [classify]
+    if: needs.classify.outputs.scripts != 'false'
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -58,20 +61,25 @@ jobs:
         run: python3 -m unittest -v test_discovery_native_diagnostics test_discovery_multicast_acceptance test_discovery_named_host_acceptance
 
   checks:
+    needs: [classify]
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - if: needs.classify.outputs.go != 'false'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.10'
-      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+      - if: needs.classify.outputs.infra != 'false'
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
           tofu_version: '1.12.6'
           tofu_wrapper: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - if: needs.classify.outputs.pi != 'false'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
       # Each package gets 1800s under -race: internal/store took 820s and
@@ -79,18 +87,23 @@ jobs:
       # store past the earlier 1200s (#276); 1800s restores about a 2x
       # margin. Tests keep their own deadlines, so a hang still fails within
       # the budget.
-      - run: go test -race ./... -timeout=1800s
-      - run: python3 -m unittest discover -s scripts/tests -v
+      - if: needs.classify.outputs.go != 'false'
+        run: go test -race ./... -timeout=1800s
+      - if: needs.classify.outputs.scripts != 'false'
+        run: python3 -m unittest discover -s scripts/tests -v
       - name: Test the Pi extension
+        if: needs.classify.outputs.pi != 'false'
         working-directory: integrations/pi
         run: npm ci --ignore-scripts --no-audit --no-fund && npm test
       - name: Check that every pinned base image is mirrored or still upstream
         # Pushes skip this: base-mirror itself publishes, resumes drafts and verifies.
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && needs.classify.outputs.infra != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/base-image-mirror.py check --repo "$GITHUB_REPOSITORY"
-      - run: |
+      - name: Check the infrastructure definitions
+        if: needs.classify.outputs.infra != 'false'
+        run: |
           tofu -chdir=infra/incus init -input=false -lockfile=readonly
           tofu -chdir=infra/incus fmt -check
           tofu -chdir=infra/incus validate
@@ -99,6 +112,8 @@ jobs:
   pake-vectors:
     # The experimental CPace dependency (#178): its pinned upstream draft-21
     # vector tests, cross-checked with a second implementation, under -race.
+    needs: [classify]
+    if: needs.classify.outputs.go != 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -135,6 +150,16 @@ jobs:
     outputs:
       images: ${{ steps.decide.outputs.images }}
       reason: ${{ steps.decide.outputs.reason }}
+      # docs_only: a pull request touching nothing but safe documentation;
+      # the Go, macOS and vector jobs skip (reported as skipped, never as a
+      # pass they did not earn). The four flags say which suites a pull
+      # request needs by the kinds of paths it changes; every other run, a
+      # workflow or classifier change, and any unknown path set them all.
+      docs_only: ${{ steps.decide.outputs.docs_only }}
+      go: ${{ steps.decide.outputs.go }}
+      scripts: ${{ steps.decide.outputs.scripts }}
+      pi: ${{ steps.decide.outputs.pi }}
+      infra: ${{ steps.decide.outputs.infra }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -288,8 +313,11 @@ jobs:
         run: sudo python3 scripts/sandbox_operator_prepared.py cleanup --remote local --token "$PAIRTASK_OPERATOR_PREPARED"
 
   go-arm64:
-    # The full Go suite natively on arm64, on every run: a pull request that
-    # skips the image proofs still tests arm64. checks covers amd64 with -race.
+    # The full Go suite natively on arm64, on every run with Go changes: a
+    # pull request that skips the image proofs still tests arm64. checks
+    # covers amd64 with -race.
+    needs: [classify]
+    if: needs.classify.outputs.go != 'false'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
