@@ -33,6 +33,8 @@ RECIPE_PATHS = ["infra/image/" + name for name in (
     # The opt-in pairing route (#178).
     "pairtask-pairing-setup", "pairtask-pairing-setup.service", "pairtask-connector-setup.service",
     "pairtask-peer-egress.service", "pairtask-peer-relay.service", "pairtask-secured-broker.service.d/pairing.conf",
+    # The shadow classifier's settings drop-in (#339).
+    "pairtask-secured-broker.service.d/classifier.conf",
 )] + ["docs/skills/pairtask/" + name for name in (
     "SKILL.md", "references/managed.md", "references/manual.md", "references/operator.md", "references/sandbox.md",
 )]
