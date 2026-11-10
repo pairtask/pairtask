@@ -1,16 +1,13 @@
 package main
 
 import (
-	"context"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 
 	"github.com/pairtask/pairtask/internal/classifier"
 	settings "github.com/pairtask/pairtask/internal/config"
 	"github.com/pairtask/pairtask/internal/hub"
-	"github.com/pairtask/pairtask/internal/peer/egress"
 )
 
 // The shadow classifier (#339): off unless PAIRTASK_CLASSIFIER=shadow with
@@ -45,19 +42,5 @@ func attachClassifier(h *hub.Hub, cfg config, log *slog.Logger) error {
 	return nil
 }
 
-// classifierTransport is how the provider is reached: through connector's
-// egress forwarder when the broker has one (a secured broker has no network
-// of its own), else directly. TLS ends in the broker either way, so the
-// credential never passes through the forwarder in the clear.
-func classifierTransport(cfg config) (http.RoundTripper, string) {
-	if cfg.PairingEgressSocket == "" {
-		return nil, "direct"
-	}
-	socket := cfg.PairingEgressSocket
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return egress.Dial(ctx, socket, address)
-	}
-	return transport, "egress " + socket
-}
+// classifierTransport is the provider's route, shared with the notifier.
+func classifierTransport(cfg config) (http.RoundTripper, string) { return outboundTransport(cfg) }

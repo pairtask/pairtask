@@ -109,6 +109,14 @@ appropriate to the task. A timeout is not a failed send. Do not resend the reque
 just because a wait timed out. At the deadline, report the missing answer and
 continue independent authorized work; do not assume review or approval.
 
+When a decision is the operator's alone (a merge, a scope change, something
+irreversible), call `request_decision` with a one-line summary and a stable
+`key`: the broker posts the question to the operator as you and, when the
+operator turned notifications on, tells them outside the chat. The answer is
+the operator's reply to that message in the chat; wait for it as above. The
+result's `delivery` says whether they were told, never what they decided; the
+same `key` again returns the request as it stands instead of asking twice.
+
 Handle a returned message even if its result also reports disconnection. Preserve
 its ID and correlation, report the delivery fault, and use the mode-specific
 recovery steps. Stop retrying on identity collision, permission denial, or a

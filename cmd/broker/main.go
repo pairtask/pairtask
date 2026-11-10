@@ -15,6 +15,7 @@ import (
 	"github.com/pairtask/pairtask/internal/classifier"
 	settings "github.com/pairtask/pairtask/internal/config"
 	"github.com/pairtask/pairtask/internal/hub"
+	"github.com/pairtask/pairtask/internal/notify"
 	"github.com/pairtask/pairtask/internal/server"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -51,6 +52,9 @@ type config struct {
 	// Classifier (#339): off unless configured; ClassifierStatus says what it does.
 	Classifier       classifier.Config
 	ClassifierStatus string
+	// Notifications (#352): off unless configured; NotifyStatus says what is on.
+	Notify       notify.Config
+	NotifyStatus string
 }
 
 func loadConfig(lookup settings.LookupFunc) (config, error) {
@@ -66,6 +70,9 @@ func loadConfig(lookup settings.LookupFunc) (config, error) {
 		return cfg, err
 	}
 	if cfg.Classifier, cfg.ClassifierStatus, err = loadClassifier(lookup); err != nil {
+		return cfg, err
+	}
+	if cfg.Notify, cfg.NotifyStatus, err = loadNotifier(lookup); err != nil {
 		return cfg, err
 	}
 	return cfg, loadPairing(lookup, &cfg)
@@ -104,6 +111,9 @@ func openHub(ctx context.Context, cfg config, st *store.Store, log *slog.Logger)
 	h := hub.New(st, lastSeq, log)
 	h.SetPairing(pairingConfig(cfg))
 	if err := attachClassifier(h, cfg, log); err != nil {
+		return nil, err
+	}
+	if err := attachNotifier(h, cfg, log); err != nil {
 		return nil, err
 	}
 	n, err := h.RecoverJoins(ctx)

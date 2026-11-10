@@ -34,6 +34,7 @@ on a machine you keep.)
 | `pairtask discovery run` | host | The discovery helper that `pairing on` runs as a user service (launchd on macOS, `systemd --user` on Linux): asks the secured broker for its lease, then announces this machine's pairing port on the local network or looks for paired workspaces that moved, and hands the endpoints to the broker, which moves a contact only when its pinned identity answers. While the operator keeps an invitation open with `/pair open --discoverable`, the announcement also carries this workspace's name; while they run `/pair find`, the helper reports the named invitations it hears and the online tailnet devices with each lease ([pair two machines](pairing.md#2-on-a-open-an-invitation)). `--once` runs one round and exits; `--interval 15s` (the idle poll; a changed report or an open find comes back within seconds), `--host-port N` (0: never announce), `--project`, `--remote`. `pairing on --no-discovery` turns the service off and keeps it off; `pairing off` removes it ([moving between networks](pairing.md#moving-between-networks)). | no |
 | `pairtask classifier on` | host | Turns the shadow [classifier](#classifier-shadow-mode) on; needs the pairing route (`pairtask pairing on`), since the secured broker has no network of its own and reaches the provider through the connector's egress, with TLS ending in the broker: `--provider jev` (default, TypeSafe) or `--provider clef --account ID` (Cloudflare Workers AI); the API key comes from a hidden prompt or `--key-file PATH` (a file readable by you only), never from the command line, and is stored in the secured container for the broker alone (mode 0600); the broker restarts in shadow mode. `pairtask classifier off` removes the key and the settings and restarts the broker. `pairtask classifier status [--since 24h] [--json]` shows the settings (never the key) and the report below. | no |
 | `pairtask operator classifier report` | host | What the shadow [classifier](#classifier-shadow-mode) recorded, read-only: outcome counts, reasons, models, provider latency, the providers' usage counters summed (token counts as a cost proxy; no prices), agreement with the reply claim's holder (a weak label) and the newest predictions; `--since 24h` (up to 720h), `--json`. Nothing in it is applied anywhere. | no |
+| `pairtask notify on --slack` | host | Turns [notifications](#notifications-slack) on: when an agent asks you for a decision, Slack gets one line naming the workspace, the agent and its one-line summary (`--hidden`: only the workspace and that a decision is waiting); needs the pairing route (`pairtask pairing on`), since the secured broker has no network of its own and reaches Slack through the connector's egress, with TLS ending in the broker; the Slack incoming webhook URL comes from a hidden prompt or `--secret-file PATH` (a file readable by you only), never from the command line, and is stored in the secured container for the broker alone (mode 0600); the broker restarts with notifications on. `pairtask notify off` removes the URL and the settings and restarts the broker. `pairtask notify status [--json]` shows the settings, never the URL. | no |
 | `pairtask discovery status` | host | What the discovery helper last did, read-only: the broker's lease, what it announced and under which name, how it looks for others (the system Bonjour service on macOS, its own multicast socket on Linux), the invitations and tailnet devices it last reported, and the outcome for each endpoint it handed over (`--json` for the file). Nothing in it is secret. | no |
 | `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). | no |
 | `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. | no |
@@ -187,42 +188,6 @@ between the brokers. Neither starts by default:
   connector's own interface addresses, then dials that address. Private LAN
   and tailnet addresses are allowed: they are where other workspaces live.
 
-### Classifier (shadow mode)
-
-Off by default. `pairtask classifier on` sets everything below for the
-secured broker, which reaches the provider through the connector's egress
-forwarder (the pairing route must be on; TLS ends in the broker, so the
-forwarder sees only the destination); the environment settings are for a
-standalone broker, which dials directly. With
-`PAIRTASK_CLASSIFIER=shadow`, the broker asks a hosted
-decision model which agent each untagged operator message to everyone was
-for, and records the answer without acting on it: routing, assignments and
-claims are unchanged, delivery never waits for the model, and a provider
-that fails or times out is recorded as such. This is the first rollout step
-of an optional classifier; nothing here suggests or assigns yet, and the
-confidence threshold is uncalibrated until the recorded predictions have
-been evaluated. The work queue is in memory: a broker exit can lose
-predictions not yet made, so the report counts recorded samples, not every
-accepted message.
-
-- `PAIRTASK_CLASSIFIER_KEY_FILE=/PATH` holds the provider credential: a
-  regular file owned by the broker user, readable by it only. Unset, missing
-  or empty, the classifier stays off and the broker log says why; a file
-  others can read is refused.
-- `PAIRTASK_CLASSIFIER_PROVIDER=workers-ai` (default; Cloudflare Workers AI,
-  needs `PAIRTASK_CLASSIFIER_ACCOUNT=ID`) or `typesafe`. Each provider has a
-  fixed endpoint; redirects are never followed.
-- `PAIRTASK_CLASSIFIER_MODEL` (default `clef` on Workers AI, `jev-latest` on
-  TypeSafe), `PAIRTASK_CLASSIFIER_THRESHOLD` (0 to 1, default 0.7),
-  `PAIRTASK_CLASSIFIER_TIMEOUT` (default `5s`), and
-  `PAIRTASK_CLASSIFIER_ROLES=/PATH`, a JSON object of agent ID to a one-line
-  role the model is shown.
-
-With it on, the text of each such message, its room name and the eligible
-agents' IDs and roles leave the host for the chosen provider. The
-credential never appears in logs, command lines or the database.
-
-
 Both take `--max-conns`, `--max-bytes` and `--idle` (16 connections, 1 MiB
 per direction and 30 s by default).
 
@@ -310,3 +275,74 @@ conversations with a ready command for each. An explicit `-- resume ID`,
 ID is refused, since it isn't a Codex conversation ID. **Resume Claude** with
 `pairtask start claude --id claude-1 -- --resume`, which passes Claude's own
 `--resume` through.
+
+### Classifier (shadow mode)
+
+Off by default. `pairtask classifier on` sets everything below for the
+secured broker, which reaches the provider through the connector's egress
+forwarder (the pairing route must be on; TLS ends in the broker, so the
+forwarder sees only the destination); the environment settings are for a
+standalone broker, which dials directly. With
+`PAIRTASK_CLASSIFIER=shadow`, the broker asks a hosted
+decision model which agent each untagged operator message to everyone was
+for, and records the answer without acting on it: routing, assignments and
+claims are unchanged, delivery never waits for the model, and a provider
+that fails or times out is recorded as such. This is the first rollout step
+of an optional classifier; nothing here suggests or assigns yet, and the
+confidence threshold is uncalibrated until the recorded predictions have
+been evaluated. The work queue is in memory: a broker exit can lose
+predictions not yet made, so the report counts recorded samples, not every
+accepted message.
+
+- `PAIRTASK_CLASSIFIER_KEY_FILE=/PATH` holds the provider credential: a
+  regular file owned by the broker user, readable by it only. Unset, missing
+  or empty, the classifier stays off and the broker log says why; a file
+  others can read is refused.
+- `PAIRTASK_CLASSIFIER_PROVIDER=workers-ai` (default; Cloudflare Workers AI,
+  needs `PAIRTASK_CLASSIFIER_ACCOUNT=ID`) or `typesafe`. Each provider has a
+  fixed endpoint; redirects are never followed.
+- `PAIRTASK_CLASSIFIER_MODEL` (default `clef` on Workers AI, `jev-latest` on
+  TypeSafe), `PAIRTASK_CLASSIFIER_THRESHOLD` (0 to 1, default 0.7),
+  `PAIRTASK_CLASSIFIER_TIMEOUT` (default `5s`), and
+  `PAIRTASK_CLASSIFIER_ROLES=/PATH`, a JSON object of agent ID to a one-line
+  role the model is shown.
+
+With it on, the text of each such message, its room name and the eligible
+agents' IDs and roles leave the host for the chosen provider. The
+credential never appears in logs, command lines or the database.
+
+### Notifications (Slack)
+
+Off by default. An agent that needs your decision can ask the broker to
+tell you outside the chat (its `request_decision` tool, see
+[MCP](mcp.md#messaging-tools)): the broker posts a chat message to you as
+that agent, records the request and, with notifications on, sends Slack one
+line. You answer in the pairtask chat by replying to that message; nothing
+in Slack is read, and being notified is never an approval. `pairtask notify
+on --slack` sets everything below for the secured broker, which reaches
+Slack through the connector's egress forwarder (the pairing route must be
+on; TLS ends in the broker, so the forwarder sees only the destination);
+the environment settings are for a standalone broker, which dials directly.
+
+- `PAIRTASK_NOTIFY=slack` turns it on; `off` or unset is off. Anything else
+  stops the broker.
+- `PAIRTASK_NOTIFY_SECRET_FILE=/PATH` holds the Slack incoming webhook URL
+  (`https://hooks.slack.com/services/…`, the one shape accepted): a regular
+  file owned by the broker user, readable by it only. Unset, missing or
+  empty, notifications stay off and the broker log says why; a file others
+  can read, or a URL of another shape, is an error.
+- `PAIRTASK_NOTIFY_HIDDEN=1` sends only that a decision is waiting in the
+  named workspace: neither the agent, nor the summary, nor the message ID.
+- `PAIRTASK_NOTIFY_WORKSPACE=NAME` labels the notice (default: the pairing
+  name); `PAIRTASK_NOTIFY_TIMEOUT` (default `10s`, up to `1m`).
+
+With it on, one POST per request goes to `hooks.slack.com`: the workspace
+label, the agent's ID, the summary the agent wrote and the ID of the chat
+message to answer (hidden: the workspace label only). A post that fails is
+retried twice (after 2 s and 8 s) and then recorded as failed; the request
+stays open in the chat either way, and an answer given meanwhile ends the
+retries. The webhook URL never appears in logs, command lines or the
+database. Requests made while notifications are off are recorded with
+delivery `off`. There is no report of requests in this version: the chat
+message is the record, and an agent that asks again with the same key gets
+its request back as it stands.

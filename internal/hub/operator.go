@@ -221,6 +221,7 @@ func (h *Hub) commitOperator(ctx context.Context, clients map[string]*Client, se
 		}
 	}
 	h.classifyLater(ctx, out, recipients, send) // shadow only; never waits (#339)
+	h.answerDecision(ctx, out)                  // a reply to a decision's anchor answers it (#352)
 	return protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq,
 		Durable: true, Recipients: recipients, Excluded: excluded}, nil
 }

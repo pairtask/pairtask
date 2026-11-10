@@ -14,7 +14,6 @@ import argparse
 import getpass
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 
@@ -23,20 +22,14 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import sandbox_host_user  # noqa: E402
-import sandbox_pairing  # noqa: E402
+import sandbox_pairing  # noqa: E402,F401  (the route check's module, patched by tests)
 import sandbox_remote  # noqa: E402
+from sandbox_secured import (SETUP, Secured, failure, identifier, pairing_route_on, plain_name,  # noqa: E402
+                             route_needed, secret_from_file, secret_from_prompt, settings_of, valid_secret)
 
 SECURED_OPERATOR = "/run/collab-ai-operator/operator.sock"
-SETUP = "/usr/local/lib/pairtask/pairtask-broker-setup"
 PROVIDERS = ("jev", "clef")
-KEY_MAX = 512
 ACCOUNT_MAX = 64
-TIMEOUT = 120
-
-
-def plain_name(value, limit):
-    """ASCII letters, digits, - and _, between 1 and limit characters."""
-    return 0 < len(value) <= limit and value.isascii() and all(ch.isalnum() or ch in "-_" for ch in value)
 
 
 def valid_account(account):
@@ -44,66 +37,18 @@ def valid_account(account):
     return plain_name(account, ACCOUNT_MAX)
 
 
-def valid_key(key):
-    """One line of printable ASCII, at most KEY_MAX bytes."""
-    return 0 < len(key) <= KEY_MAX and all(32 < ord(ch) < 127 for ch in key)
-
-
-class Secured:
-    """Commands in the secured container, through incus exec."""
-
-    def __init__(self, project, remote, run=subprocess.run):
-        self.base = ["incus", "--project", project, "exec", remote.rstrip(":") + ":secured", "-T", "--"]
-        self.run = run
-
-    def execute(self, *command, stdin=None, timeout=TIMEOUT):
-        return self.run(self.base + list(command), input=stdin, capture_output=True, text=True, timeout=timeout, check=False)
-
-
 def read_key(args, stdin=sys.stdin, prompt=getpass.getpass):
     """The key from --key-file, else from a hidden prompt on a terminal."""
-    key = key_from_file(args.key_file) if args.key_file else key_from_prompt(args.provider, stdin, prompt)
-    if not valid_key(key):
-        raise ValueError("the key must be one line of printable ASCII, at most %d bytes" % KEY_MAX)
+    if args.key_file:
+        key = secret_from_file(args.key_file, "--key-file")
+    else:
+        key = secret_from_prompt("API key for %s (not echoed): " % args.provider, stdin, prompt, "--key-file")
+    if not valid_secret(key):
+        raise ValueError("the key must be one line of printable ASCII, at most 512 bytes")
     return key
 
 
-def key_from_file(name):
-    """A regular file readable by its owner only; the copy the broker gets is just as private."""
-    path = Path(name)
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("--key-file must be a regular file")
-    if path.stat().st_mode & 0o077:
-        raise ValueError("--key-file must be readable by you only (chmod 600)")
-    return path.read_text().strip()
-
-
-def key_from_prompt(provider, stdin, prompt):
-    if not stdin.isatty():
-        raise ValueError("no terminal for the key prompt; use --key-file PATH")
-    return prompt("API key for %s (not echoed): " % provider).strip()
-
-
-def pairing_route_on(args, registry=None):
-    """Whether the deployment runs the pairing route, which gives the secured
-    broker its way out to the provider: the connector in the deployed state
-    where there is one, else the saved pairing settings (whichever variables
-    file holds them). The deployment is found as `pairtask pairing on` finds
-    it (--state-dir, the registry, else a worktree's state); nothing is
-    created."""
-    try:
-        directory = sandbox_pairing.find_deployment(Path(args.state_dir) if args.state_dir else None, args.project,
-                                                    location=registry or sandbox_pairing.LOCATION)
-        if directory is None:
-            return False
-        deployed = sandbox_pairing.applied(directory, args.project)
-        return bool(deployed) if deployed is not None else bool(sandbox_pairing.configured(directory))
-    except (OSError, ValueError):
-        return False
-
-
-ROUTE_NEEDED = ("the pairing route is off: the sandbox broker has no network of its own and reaches the provider "
-                "through the connector that `pairtask pairing on` provides; run that first, then this again")
+ROUTE_NEEDED = route_needed("the provider")
 
 
 def check_on(args):
@@ -136,18 +81,22 @@ def status(secured, args):
     result = secured.execute(SETUP, "classifier", "status")
     if result.returncode != 0:
         raise ValueError(failure("reading the classifier settings", result))
-    settings = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    settings = settings_of(result)
     enabled = settings.get("classifier", "off") != "off"
     report = report_of(secured, args) if enabled else None
     if args.json:
         print(json.dumps({"classifier": settings, "report": report}, sort_keys=True))
-        return
-    if not enabled:
+    elif not enabled:
         print("Classifier: off")
-        return
+    else:
+        print(describe(settings))
+        print(report if isinstance(report, str) else "Report unavailable: " + report.get("error", ""))
+
+
+def describe(settings):
+    """One line of the settings: mode, provider, account, whether a key is stored."""
     account = " (account %s)" % settings["account"] if settings.get("account") else ""
-    print("Classifier: %s, %s%s, key %s" % (settings.get("classifier"), settings.get("provider"), account, settings.get("key", "missing")))
-    print(report if isinstance(report, str) else "Report unavailable: " + report.get("error", ""))
+    return "Classifier: %s, %s%s, key %s" % (settings.get("classifier"), settings.get("provider"), account, settings.get("key", "missing"))
 
 
 def report_of(secured, args):
@@ -157,29 +106,13 @@ def report_of(secured, args):
     result = secured.execute("pairtask", "operator", "classifier", "report", "--socket", SECURED_OPERATOR,
                              "--since", args.since, *extra)
     if result.returncode != 0:
-        return {"error": last_line(result.stderr) or "exit %d" % result.returncode}
+        return {"error": failure("the report", result)}
     if not args.json:
         return result.stdout.rstrip("\n")
     try:
         return json.loads(result.stdout)
     except ValueError:
         return {"error": "report was not JSON"}
-
-
-def failure(what, result):
-    return "%s failed: %s" % (what, last_line(result.stderr) or "exit %d" % result.returncode)
-
-
-def last_line(text):
-    lines = [line for line in text.strip().splitlines() if line.strip()]
-    return lines[-1] if lines else ""
-
-
-def identifier(value):
-    """An Incus project or remote name: letters, digits, - and _, bounded."""
-    if not plain_name(value, 64):
-        raise argparse.ArgumentTypeError("must be letters, digits, - or _")
-    return value
 
 
 def parser():

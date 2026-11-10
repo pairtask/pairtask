@@ -47,6 +47,8 @@ ACTIONS = {
                   "find paired workspaces again after an address change: run [--once] | status"),
     "classifier": ("sandbox-classifier.py", {"on": "on", "off": "off", "status": "status"},
                    "the shadow classifier for untagged messages: on [--provider jev|clef] | off | status"),
+    "notify": ("sandbox-notify.py", {"on": "on", "off": "off", "status": "status"},
+               "tell you in Slack when an agent needs a decision: on --slack [--hidden] | off | status"),
 }
 # Short names for commands, resolved before anything else.
 ALIASES = {"sh": "shell"}

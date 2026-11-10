@@ -49,6 +49,7 @@ type Hub struct {
 	importDue  atomic.Bool   // an import pass is due; signalled on pair.changed (#222)
 	consent    hubConsent    // held requests and session authority (#293)
 	classify   hubClassifier // shadow predictions for untagged operator sends (#339)
+	notifier   hubNotifier   // decision requests told to the operator outside the chat (#352)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -214,28 +215,9 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	if h.routeControl(ctx, clients, in) {
 		return
 	}
-	if err := h.prepareAgentSend(ctx, &in); err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
-		return
+	if rerr := h.sendAsAgent(ctx, clients, in); rerr != nil {
+		h.enqueue(clients, in.From, rerr.frame(in.Msg.MessageID))
 	}
-	if !h.newSend(ctx, clients, in) {
-		return
-	}
-	recipients, err := h.resolveRecipients(ctx, clients, in)
-	if err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
-		return
-	}
-	out, err := h.persistRoute(ctx, in, recipients)
-	if err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
-		return
-	}
-	h.noteRouted(ctx, out, recipients)
-	if out.AckRequested {
-		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: publicRecipients(recipients), Durable: out.Durable})
-	}
-	h.deliver(clients, in.From, out, recipients)
 }
 
 // newSend reports whether the message is a new send to route here: a reply
@@ -664,12 +646,6 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 	switch {
 	case isStatusFrame(in.Msg.Type):
 		h.handleStatus(ctx, clients, in)
-	case claimFrames[in.Msg.Type]:
-		h.handleClaim(ctx, clients, in)
-	case roomFrames[in.Msg.Type]:
-		h.handleRoom(ctx, clients, in)
-	case reviewFrames[in.Msg.Type]:
-		h.handleReview(ctx, clients, in)
 	case operatorOnly[in.Msg.Type] != "":
 		h.enqueue(clients, in.From, operatorOnlyRefusal(in.Msg))
 	case in.Msg.Type == protocol.TypeAck:
@@ -677,9 +653,32 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 	case workspaceFrames[in.Msg.Type] != nil:
 		h.enqueue(clients, in.From, workspaceFrames[in.Msg.Type](h, ctx, in))
 	default:
-		return false
+		handle := controlFamily(in.Msg.Type)
+		if handle == nil {
+			return false
+		}
+		handle(h, ctx, clients, in)
 	}
 	return true
+}
+
+// controlFamilies are the frame families with a handler of their own.
+var controlFamilies = []struct {
+	frames map[string]bool
+	handle func(*Hub, context.Context, map[string]*Client, Inbound)
+}{
+	{claimFrames, (*Hub).handleClaim}, {decisionFrames, (*Hub).handleDecision},
+	{roomFrames, (*Hub).handleRoom}, {reviewFrames, (*Hub).handleReview},
+}
+
+// controlFamily is the handler for a frame type, nil for none.
+func controlFamily(kind string) func(*Hub, context.Context, map[string]*Client, Inbound) {
+	for _, family := range controlFamilies {
+		if family.frames[kind] {
+			return family.handle
+		}
+	}
+	return nil
 }
 
 // operatorOnly are the operator frames an agent may send by mistake: each

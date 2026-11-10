@@ -829,6 +829,35 @@ replacement link is kept only on the side that asked.
   `malformed_frame`. The operator's chat sends `supersedes` only to a broker
   that advertises capability `review_supersede`.
 
+## Decision requests (v27)
+
+An agent that needs the operator's decision asks the broker to record that
+and to tell the operator outside the chat. The request hangs on an anchor,
+a durable message from that agent to the operator; the broker posts it
+itself, as the agent, when the request names none. The operator's reply to
+the anchor answers the request; nothing else does, and delivery of a notice
+never counts as a decision.
+
+```json
+{"type":"decision_request","request_id":"r1","decision_summary":"merge now, or wait for the release?","decision_key":"pr-12-merge"}
+{"type":"decision_result","request_id":"r1","decision":{"id":"d-…","agent":"a1","key":"pr-12-merge","anchor":"d-…","summary":"merge now, or wait for the release?","state":"open","delivery":"pending","created_at":"…"}}
+```
+
+- `decision_summary`: one line of printable text, at most 200 characters.
+  `decision_key` (optional, at most 128 bytes, no spaces) is the agent's
+  stable name for the request: the same key again returns the request as it
+  stands, `replayed: true`, and posts nothing. `anchor_message_id` (optional)
+  names a durable message this agent sent the operator to hang the request
+  on; any other message is `decision_invalid_anchor`.
+- `delivery` is `pending` until the notice is posted, then `sent`, or
+  `failed` with a `reason` class after two retries; `off` when the broker
+  has no notifier, the request still recorded. `state` is `open` until the
+  operator's reply to the anchor makes it `answered`. A broker older than
+  v27 answers `forbidden`.
+- The store table `decision_requests` keeps one row per request, unique by
+  anchor and by (agent, key); a restarted broker takes up pending notices
+  again.
+
 ## Finding a paired workspace that moved (#284)
 
 Two `operator_contact` operations take no `contact_key` and serve a host
