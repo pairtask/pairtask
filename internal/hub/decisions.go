@@ -76,7 +76,8 @@ func (h *Hub) handleDecision(ctx context.Context, clients map[string]*Client, in
 }
 
 // decide validates the request, posts the anchor when none is named,
-// records the request and queues its notice.
+// records the request and queues its notice. A keyed replay returns the
+// standing record before anything is posted again.
 func (h *Hub) decide(ctx context.Context, clients map[string]*Client, in Inbound) protocol.Message {
 	msg := in.Msg
 	if in.From.ProtocolVersion < protocol.DecisionVersion {
@@ -84,6 +85,11 @@ func (h *Hub) decide(ctx context.Context, clients map[string]*Client, in Inbound
 	}
 	if err := protocol.ValidateDecisionRequest(msg.DecisionSummary, msg.DecisionKey); err != nil {
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, err.Error())
+	}
+	if standing, err := h.store.DecisionByKey(ctx, in.From.ID, msg.DecisionKey); err != nil {
+		return statusError(msg.RequestID, protocol.ErrInternal, "decision lookup failed")
+	} else if standing != nil {
+		return protocol.Message{Type: protocol.TypeDecisionResult, RequestID: msg.RequestID, Decision: decisionView(*standing, true)}
 	}
 	anchor, rerr := h.decisionAnchor(ctx, clients, in)
 	if rerr != nil {

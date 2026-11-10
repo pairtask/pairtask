@@ -88,6 +88,15 @@ func (s *Store) CreateDecision(ctx context.Context, d Decision) (Decision, bool,
 	return *standing, inserted == 0, nil
 }
 
+// DecisionByKey is the agent's request under the key, or nil: what a
+// replay returns before anything is posted again.
+func (s *Store) DecisionByKey(ctx context.Context, agent, key string) (*Decision, error) {
+	if key == "" {
+		return nil, nil
+	}
+	return s.decisionBy(ctx, agent, key, "")
+}
+
 // decisionBy finds the row for the anchor, or for the agent's key.
 func (s *Store) decisionBy(ctx context.Context, agent, key, anchor string) (*Decision, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+decisionColumns+` FROM decision_requests
