@@ -32,7 +32,7 @@ type Notice struct {
 	Agent     string
 	Summary   string
 	Anchor    string // the chat message to answer
-	Hidden    bool   // say only that a decision is waiting
+	Hidden    bool   // say only that a decision is waiting in the workspace: no agent, summary or anchor
 }
 
 // Text is the message posted, one line.
