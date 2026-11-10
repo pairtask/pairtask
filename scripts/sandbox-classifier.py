@@ -23,7 +23,6 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import sandbox_host_user  # noqa: E402
-import sandbox_operator_config  # noqa: E402
 import sandbox_pairing  # noqa: E402
 import sandbox_remote  # noqa: E402
 
@@ -89,14 +88,14 @@ def pairing_route_on(args, registry=None):
     """Whether the deployment runs the pairing route, which gives the secured
     broker its way out to the provider: the connector in the deployed state
     where there is one, else the saved pairing settings (whichever variables
-    file holds them). --state-dir, else the registry; nothing is created."""
-    directory = Path(args.state_dir) if args.state_dir else None
-    if directory is None:
-        saved = sandbox_operator_config.read_registry(registry or sandbox_operator_config.LOCATION)
-        if args.project not in saved:
-            return False
-        directory = Path(saved[args.project])
+    file holds them). The deployment is found as `pairtask pairing on` finds
+    it (--state-dir, the registry, else a worktree's state); nothing is
+    created."""
     try:
+        directory = sandbox_pairing.find_deployment(Path(args.state_dir) if args.state_dir else None, args.project,
+                                                    location=registry or sandbox_pairing.LOCATION)
+        if directory is None:
+            return False
         deployed = sandbox_pairing.applied(directory, args.project)
         return bool(deployed) if deployed is not None else bool(sandbox_pairing.configured(directory))
     except (OSError, ValueError):
