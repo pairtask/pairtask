@@ -28,7 +28,7 @@ func syntheticResponse(r *http.Request, status int, body string) *http.Response 
 }
 
 func acceptedAnswer() string {
-	return `{"model":"jev-1.14.0","answers":{"assignee":{"type":"choice","choice":"a1","confidence":0.91,"probabilities":{"a1":0.95,"a2":0.03,"none":0.02}}}}`
+	return `{"model":"jev-1.14.0","answers":{"assignee":{"type":"choice","choice":"a1","confidence":0.91,"probabilities":{"a1":0.95,"a2":0.03,"none":0.02}}},"usage":{"input_tokens":120,"output_tokens":12}}`
 }
 
 type canonicalCase struct {
@@ -63,6 +63,7 @@ func checkCanonicalProvider(t *testing.T, tc canonicalCase) {
 	providerEqual(t, answer.Choice, "a1")
 	providerEqual(t, answer.Confidence, .91)
 	providerEqual(t, answer.Model, "jev-1.14.0")
+	providerEqual(t, answer.Usage, map[string]int64{"input_tokens": 120, "output_tokens": 12})
 }
 
 func checkProviderRequest(t *testing.T, r *http.Request, request classifier.Request) {

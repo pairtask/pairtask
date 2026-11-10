@@ -16,7 +16,7 @@ import (
 func TestClassifierPredictionAcceptanceFirstWriterSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "predictions.db")
 	s := openPredictionStore(t, path)
-	base := store.Prediction{MessageID: "original", Outcome: store.PredictionPredicted, AgentID: "none", Confidence: .9, Probabilities: map[string]float64{"none": .9, "tester": .05}, AbstainProbability: .05, Eligible: []string{"none", "tester"}, Provider: "typesafe", Model: "jev-latest", ModelVersion: "jev-1.14.0", Threshold: .7, LatencyMS: 215, CreatedAt: time.Date(2026, 11, 9, 23, 0, 0, 0, time.UTC)}
+	base := store.Prediction{MessageID: "original", Outcome: store.PredictionPredicted, AgentID: "none", Confidence: .9, Probabilities: map[string]float64{"none": .9, "tester": .05}, AbstainProbability: .05, Usage: map[string]int64{"input_tokens": 120, "output_tokens": 12}, Eligible: []string{"none", "tester"}, Provider: "typesafe", Model: "jev-latest", ModelVersion: "jev-1.14.0", Threshold: .7, LatencyMS: 215, CreatedAt: time.Date(2026, 11, 9, 23, 0, 0, 0, time.UTC)}
 	inserted, err := s.RecordPrediction(context.Background(), base)
 	predictionOK(t, err)
 	predictionEqual(t, inserted, true)

@@ -89,7 +89,7 @@ func (f *classifierFixture) prediction(t *testing.T, id string) *store.Predictio
 func chosenTester(req classifier.Request) classifier.Answer {
 	for alias, description := range req.Criteria {
 		if strings.Contains(description, "tester") {
-			return classifier.Answer{Choice: alias, Confidence: .95, Probabilities: map[string]float64{alias: .95, classifier.AbstainChoice: .05}, Model: "jev-1.14.0"}
+			return classifier.Answer{Choice: alias, Confidence: .95, Probabilities: map[string]float64{alias: .95, classifier.AbstainChoice: .05}, Model: "jev-1.14.0", Usage: map[string]int64{"input_tokens": 120, "output_tokens": 12}}
 		}
 	}
 	return classifier.Answer{Choice: classifier.AbstainChoice, Confidence: 1}
@@ -113,6 +113,7 @@ func TestClassifierHubAcceptanceBlockedProviderCannotDelayDeliveryOrClaim(t *tes
 	classifierEqual(t, p.Provider, "typesafe")
 	classifierEqual(t, p.ModelVersion, "jev-1.14.0")
 	classifierEqual(t, p.Threshold, .7)
+	classifierEqual(t, p.Usage, map[string]int64{"input_tokens": 120, "output_tokens": 12})
 	f.owner(t, "blocked", "builder")
 	classifierEqual(t, f.send(t, protocol.Message{MessageID: "blocked"}).Repeated, true)
 	again, err := f.h.store.Prediction(f.ctx, "blocked")
