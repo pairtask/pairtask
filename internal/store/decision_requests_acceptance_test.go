@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,6 +77,53 @@ func TestDecisionRequestsAcceptanceKeyAndAnchorReplayPreserveFirstRecord(t *test
 	listed, err := db.DecisionsSince(ctx, first.CreatedAt.Add(-time.Second), 10)
 	if err != nil || len(listed) != 1 {
 		t.Fatalf("replay left %d records, error %v", len(listed), err)
+	}
+}
+
+func TestDecisionRequestsAcceptanceConcurrentSameKeyHasOneWinner(t *testing.T) {
+	db := openDecisionStore(t, filepath.Join(t.TempDir(), "decisions.db"))
+	type outcome struct {
+		decision store.Decision
+		replayed bool
+		err      error
+	}
+	const writers = 8
+	results := make(chan outcome, writers)
+	start := make(chan struct{})
+	var pending sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		pending.Add(1)
+		go func(i int) {
+			defer pending.Done()
+			<-start
+			d, repeated, err := db.CreateDecision(context.Background(), store.Decision{
+				ID: fmt.Sprintf("d-%d", i), Agent: "codex-1", Key: "one-release",
+				Anchor: fmt.Sprintf("ask-%d", i), Summary: "Approve release", Delivery: protocol.DeliveryPending,
+			})
+			results <- outcome{d, repeated, err}
+		}(i)
+	}
+	close(start)
+	pending.Wait()
+	close(results)
+	winner := ""
+	inserted := 0
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent replay failed: %v", result.err)
+		}
+		if winner == "" {
+			winner = result.decision.ID
+		}
+		if result.decision.ID != winner {
+			t.Fatalf("same key produced %q and %q", winner, result.decision.ID)
+		}
+		if !result.replayed {
+			inserted++
+		}
+	}
+	if inserted != 1 {
+		t.Fatalf("same key inserted %d decisions, want one", inserted)
 	}
 }
 
