@@ -104,11 +104,16 @@ func assertClassifierEgress(t *testing.T, observed <-chan classifierEgressObserv
 		if len(got.first) == 0 || got.first[0] != 0x16 {
 			t.Fatalf("first tunneled bytes are not a TLS handshake: %x", got.first)
 		}
-		if bytes.Contains(got.first, []byte(key)) || bytes.Contains(got.first, []byte("Authorization")) {
-			t.Fatal("credential crossed the forwarder in clear text")
-		}
+		assertNoClassifierCredential(t, got.first, key)
 	case <-time.After(3 * time.Second):
 		t.Fatal("provider request never reached the forwarder")
+	}
+}
+
+func assertNoClassifierCredential(t *testing.T, first []byte, key string) {
+	t.Helper()
+	if bytes.Contains(first, []byte(key)) || bytes.Contains(first, []byte("Authorization")) {
+		t.Fatal("credential crossed the forwarder in clear text")
 	}
 }
 
