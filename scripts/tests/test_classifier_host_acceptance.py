@@ -86,6 +86,19 @@ class HostCommandAcceptance(unittest.TestCase):
         (self.root / "terraform.tfstate").write_text(json.dumps(state))
         self.assertFalse(host.pairing_route_on(args, registry=registry))
 
+    def test_pairing_route_finds_a_deployed_worktree_without_a_registry_entry(self):
+        state = {"resources": [
+            {"mode": "managed", "type": "incus_project", "name": "sandbox",
+             "instances": [{"attributes": {"name": "pairtask"}}]},
+            {"mode": "managed", "type": "incus_instance", "name": "pairing_connector",
+             "instances": [{"attributes": {"project": "pairtask", "name": "connector",
+                "config": {"user.pairtask.role": "pairing-connector"}}}]},
+        ]}
+        (self.root / "terraform.tfstate").write_text(json.dumps(state))
+        args = SimpleNamespace(state_dir=None, project="pairtask")
+        with patch.object(host.sandbox_pairing, "worktree_directories", return_value=[self.root]):
+            self.assertTrue(host.pairing_route_on(args, registry=self.root / "missing-registry.json"))
+
     def test_pairing_route_off_refuses_before_the_key_is_read_or_sent(self):
         with patch.object(host.sandbox_host_user, "refuse_root", return_value=0), \
              patch.object(host, "read_key", side_effect=AssertionError("read key")), \
