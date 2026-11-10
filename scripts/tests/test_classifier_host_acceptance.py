@@ -40,6 +40,7 @@ class HostCommandAcceptance(unittest.TestCase):
         self.root = Path(temporary.name)
         self.key = self.root / "api-key"
         self.key.write_text("secret-123\n")
+        self.key.chmod(0o600)
 
     def test_cli_dispatches_classifier_actions(self):
         import pairtask
@@ -106,6 +107,12 @@ class HostCommandAcceptance(unittest.TestCase):
         args.key_file = None
         with self.assertRaisesRegex(ValueError, "--key-file"):
             host.read_key(args, stdin=SimpleNamespace(isatty=lambda: False))
+
+    def test_key_file_must_not_be_readable_by_other_users(self):
+        self.key.chmod(0o644)
+        args = SimpleNamespace(provider="jev", key_file=str(self.key))
+        with self.assertRaisesRegex(ValueError, "chmod 600"):
+            host.read_key(args)
 
     def test_status_never_displays_the_secret(self):
         commands = []
