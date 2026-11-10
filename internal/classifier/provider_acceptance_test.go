@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -165,6 +166,32 @@ func TestClassifierProviderAcceptanceInvalidResponses(t *testing.T) {
 			requireFailure(t, err, tc.class)
 		})
 	}
+}
+
+func TestClassifierProviderAcceptanceUsageKeepsCostCountersWhenBounded(t *testing.T) {
+	usage := map[string]any{"input_tokens": 120, "output_tokens": 12, "negative": -1, "fractional": .5}
+	for i := 0; i < classifier.UsageMax+2; i++ {
+		usage[fmt.Sprintf("noise_%02d", i)] = 1
+	}
+	var body map[string]any
+	providerOK(t, json.Unmarshal([]byte(acceptedAnswer()), &body))
+	body["usage"] = usage
+	encoded, err := json.Marshal(body)
+	providerOK(t, err)
+	transport := classifierTransport(func(r *http.Request) (*http.Response, error) {
+		return syntheticResponse(r, 200, string(encoded)), nil
+	})
+	client, err := classifier.NewClient(classifier.Credential{Provider: classifier.ProviderTypeSafe, Key: "synthetic-private-marker"}, time.Second, transport)
+	providerOK(t, err)
+	answer, err := client.Ask(context.Background(), syntheticRequest())
+	providerOK(t, err)
+	providerEqual(t, answer.Usage["input_tokens"], int64(120))
+	providerEqual(t, answer.Usage["output_tokens"], int64(12))
+	providerEqual(t, len(answer.Usage) <= classifier.UsageMax, true)
+	_, keptNegative := answer.Usage["negative"]
+	_, keptFractional := answer.Usage["fractional"]
+	providerEqual(t, keptNegative, false)
+	providerEqual(t, keptFractional, false)
 }
 
 func TestClassifierProviderAcceptanceDeadline(t *testing.T) {
