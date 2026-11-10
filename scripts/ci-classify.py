@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Decide whether a CI run needs the workspace image jobs.
+"""Decide whether a CI run needs the workspace image jobs, and whether it
+needs any code job at all.
 
-Prints exactly two lines for $GITHUB_OUTPUT:
+Prints exactly three lines for $GITHUB_OUTPUT:
 
     images=true|false
     reason=<token>
+    docs_only=true|false
+
+docs_only is true only for a pull request whose full diff touches nothing
+but safe documentation (the images decision is then "safe-docs-only"): the
+Go, macOS and vector jobs may skip. The chat TUI exception never makes a
+run docs-only. Every other event runs everything.
 
 The reason is one of a closed set of tokens, never a file name, so nothing
 from the diff reaches the workflow's shell. A pull request may skip images
@@ -42,14 +49,23 @@ def shipped(path):
     return any(path == root or path.startswith(root + "/") for root in SHIPPED)
 
 
+# Top-level documents and the contribution policy, which no image ships.
+POLICY_DOCS = ("README.md", "CLA.md", "CONTRIBUTING.md", ".github/PULL_REQUEST_TEMPLATE.md")
+
+
 def safe_doc(path):
-    """README.md, or a Markdown page directly under docs/, that no image ships."""
+    """A policy document, or a Markdown page directly under docs/, that no image ships."""
     if shipped(path):
         return False
-    if path == "README.md":
+    if path in POLICY_DOCS:
         return True
     parts = path.split("/")
     return len(parts) == 2 and parts[0] == "docs" and parts[1].endswith(".md")
+
+
+def docs_only(decision):
+    """Whether the run may skip every code job: only the plain docs skip."""
+    return "true" if decision == SKIP else "false"
 
 
 def chat(path):
@@ -112,8 +128,9 @@ def main(argv=None):
     parser.add_argument("--head", default="")
     parser.add_argument("--force-full", action="store_true", help="build images whatever the diff (the ci:full-images label)")
     args = parser.parse_args(argv)
-    images, reason = decide(args)
-    sys.stdout.write("images=%s\nreason=%s\n" % (images, reason))
+    decision = decide(args)
+    images, reason = decision
+    sys.stdout.write("images=%s\nreason=%s\ndocs_only=%s\n" % (images, reason, docs_only(decision)))
     return 0
 
 

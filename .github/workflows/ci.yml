@@ -31,6 +31,8 @@ concurrency:
 
 jobs:
   mac-sharing:
+    needs: [classify]
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -58,6 +60,8 @@ jobs:
         run: python3 -m unittest -v test_discovery_native_diagnostics test_discovery_multicast_acceptance test_discovery_named_host_acceptance
 
   checks:
+    needs: [classify]
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -99,6 +103,8 @@ jobs:
   pake-vectors:
     # The experimental CPace dependency (#178): its pinned upstream draft-21
     # vector tests, cross-checked with a second implementation, under -race.
+    needs: [classify]
+    if: needs.classify.outputs.docs_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -135,6 +141,10 @@ jobs:
     outputs:
       images: ${{ steps.decide.outputs.images }}
       reason: ${{ steps.decide.outputs.reason }}
+      # docs_only: a pull request touching nothing but safe documentation;
+      # the Go, macOS and vector jobs skip (reported as skipped, never as a
+      # pass they did not earn). Every other run keeps them.
+      docs_only: ${{ steps.decide.outputs.docs_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -288,8 +298,11 @@ jobs:
         run: sudo python3 scripts/sandbox_operator_prepared.py cleanup --remote local --token "$PAIRTASK_OPERATOR_PREPARED"
 
   go-arm64:
-    # The full Go suite natively on arm64, on every run: a pull request that
-    # skips the image proofs still tests arm64. checks covers amd64 with -race.
+    # The full Go suite natively on arm64, on every run with code: a pull
+    # request that skips the image proofs still tests arm64, a docs-only one
+    # skips it. checks covers amd64 with -race.
+    needs: [classify]
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
