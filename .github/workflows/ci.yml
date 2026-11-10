@@ -78,7 +78,8 @@ jobs:
         with:
           tofu_version: '1.12.6'
           tofu_wrapper: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - if: needs.classify.outputs.pi == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
       # Each package gets 1800s under -race: internal/store took 820s and
@@ -204,11 +205,11 @@ jobs:
       # Reuse one prepared operator image within this job; see scripts/sandbox_operator_prepared.py.
       PAIRTASK_OPERATOR_PREPARED: run-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
-      - name: Skip the image proofs for documentation or the chat TUI
+      - name: Skip the image proofs for documentation, the chat TUI or the Pi extension
         if: needs.classify.outputs.images == 'false'
         env:
           REASON: ${{ needs.classify.outputs.reason }}
-        run: echo "Skipped by policy ($REASON) - this pull request changes only docs or the chat TUI; main and release tags still build the images."
+        run: echo "Skipped by policy ($REASON) - this pull request changes only docs, the chat TUI or the Pi extension; main and release tags still build the images."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.classify.outputs.images != 'false'
         with:
