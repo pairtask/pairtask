@@ -2,16 +2,26 @@
 """Decide whether a CI run needs the workspace image jobs, and whether it
 needs any code job at all.
 
-Prints exactly three lines for $GITHUB_OUTPUT:
+Prints exactly seven lines for $GITHUB_OUTPUT:
 
     images=true|false
     reason=<token>
     docs_only=true|false
+    go=true|false
+    scripts=true|false
+    pi=true|false
+    infra=true|false
 
 docs_only is true only for a pull request whose full diff touches nothing
-but safe documentation (the images decision is then "safe-docs-only"): the
-Go, macOS and vector jobs may skip. The chat TUI exception never makes a
-run docs-only. Every other event runs everything.
+but safe documentation (the images decision is then "safe-docs-only"). The
+four flags say which test jobs a pull request needs, from the kinds of
+paths it changes (see kind): Go changes run the Go suites and, since the
+script suite reads Go test data, the script suite; script or image changes
+run the script suite; Pi changes its tests; image recipe and infrastructure
+changes the mirror check and the OpenTofu checks. Anything outside the known kinds, a change to the
+workflow or to this classifier, every other event, --force-full and a diff
+failure set every flag: the run does everything. The chat TUI exception
+never makes a run docs-only.
 
 The reason is one of a closed set of tokens, never a file name, so nothing
 from the diff reaches the workflow's shell. A pull request may skip images
@@ -68,6 +78,54 @@ def docs_only(decision):
     return "true" if decision == SKIP else "false"
 
 
+# Kinds of changed paths, each a fixed token. CI is the workflow and this
+# classifier with its test: a change there runs everything.
+CI_PATHS = (".github/", "scripts/ci-classify.py", "scripts/tests/test_ci_classify_acceptance.py")
+GO_PATHS = ("go.mod", "go.sum", "cmd/", "internal/", "testdata/")
+INFRA_PATHS = ("infra/", "docs/skills/")
+PI_PATHS = ("integrations/",)
+FLAGS = ("go", "scripts", "pi", "infra")
+
+
+def under(path, roots):
+    return any(path == root.rstrip("/") or path.startswith(root) for root in roots)
+
+
+def kind(path):
+    """The kind of one path: docs, ci, go, infra, pi, scripts, or other."""
+    if under(path, CI_PATHS):
+        return "ci"
+    if safe_doc(path):
+        return "docs"
+    if under(path, GO_PATHS):
+        return "go"
+    if under(path, INFRA_PATHS):
+        return "infra"
+    if under(path, PI_PATHS):
+        return "pi"
+    if path.startswith("scripts/"):
+        return "scripts"
+    return "other"
+
+
+def kinds(paths):
+    return sorted({kind(path) for path in paths})
+
+
+def flags(decision, found):
+    """Which test jobs run, by the kinds found; everything unless the run is
+    a pull request the diff of which was read and holds only known kinds."""
+    everything = {flag: "true" for flag in FLAGS}
+    if decision in (ALWAYS, FORCED, FAILED) or "ci" in found or "other" in found:
+        return everything
+    return {"go": token("go" in found), "scripts": token(bool({"go", "scripts", "infra"} & set(found))),
+            "pi": token("pi" in found), "infra": token("infra" in found)}
+
+
+def token(value):
+    return "true" if value else "false"
+
+
 def chat(path):
     return path.startswith(CHAT) and path != CHAT
 
@@ -99,16 +157,18 @@ def changed_paths(repo, base, head):
 
 
 def decide(run):
-    """The decision for one run: its event, refs, repository and force flag."""
+    """The decision for one run and the kinds it changed: its event, refs,
+    repository and force flag. The kinds are empty when the diff was not
+    read."""
     if run.event != "pull_request":
-        return ALWAYS
+        return ALWAYS, []
     if run.force_full:
-        return FORCED
+        return FORCED, []
     try:
         paths = changed_paths(run.repo, run.base, run.head)
     except (subprocess.CalledProcessError, OSError, ValueError):
-        return FAILED
-    return skip_for(paths)
+        return FAILED, []
+    return skip_for(paths), kinds(paths)
 
 
 def skip_for(paths):
@@ -128,9 +188,11 @@ def main(argv=None):
     parser.add_argument("--head", default="")
     parser.add_argument("--force-full", action="store_true", help="build images whatever the diff (the ci:full-images label)")
     args = parser.parse_args(argv)
-    decision = decide(args)
+    decision, found = decide(args)
     images, reason = decision
-    sys.stdout.write("images=%s\nreason=%s\ndocs_only=%s\n" % (images, reason, docs_only(decision)))
+    lines = ["images=" + images, "reason=" + reason, "docs_only=" + docs_only(decision)]
+    lines += [flag + "=" + value for flag, value in flags(decision, found).items()]
+    sys.stdout.write("".join(line + "\n" for line in lines))
     return 0
 
 
