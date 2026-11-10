@@ -49,6 +49,7 @@ type Hub struct {
 	importDue  atomic.Bool   // an import pass is due; signalled on pair.changed (#222)
 	consent    hubConsent    // held requests and session authority (#293)
 	classify   hubClassifier // shadow predictions for untagged operator sends (#339)
+	notifier   hubNotifier   // decision requests told to the operator outside the chat (#352)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -214,28 +215,36 @@ func (h *Hub) route(ctx context.Context, clients map[string]*Client, in Inbound)
 	if h.routeControl(ctx, clients, in) {
 		return
 	}
+	if rerr := h.sendAsAgent(ctx, clients, in); rerr != nil {
+		h.enqueue(clients, in.From, rerr.frame(in.Msg.MessageID))
+	}
+}
+
+// sendAsAgent routes a message an agent sends: prepared, admitted, persisted
+// with its recipients and delivered, the sender told of acceptance. A
+// retry of an id already routed gets its retained outcome and is not sent
+// again. The broker posts an agent's decision anchor through this too.
+func (h *Hub) sendAsAgent(ctx context.Context, clients map[string]*Client, in Inbound) *routingError {
 	if err := h.prepareAgentSend(ctx, &in); err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
-		return
+		return err
 	}
 	if !h.newSend(ctx, clients, in) {
-		return
+		return nil
 	}
 	recipients, err := h.resolveRecipients(ctx, clients, in)
 	if err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
-		return
+		return err
 	}
 	out, err := h.persistRoute(ctx, in, recipients)
 	if err != nil {
-		h.enqueue(clients, in.From, err.frame(in.Msg.MessageID))
-		return
+		return err
 	}
 	h.noteRouted(ctx, out, recipients)
 	if out.AckRequested {
 		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: publicRecipients(recipients), Durable: out.Durable})
 	}
 	h.deliver(clients, in.From, out, recipients)
+	return nil
 }
 
 // newSend reports whether the message is a new send to route here: a reply
@@ -666,6 +675,8 @@ func (h *Hub) routeControl(ctx context.Context, clients map[string]*Client, in I
 		h.handleStatus(ctx, clients, in)
 	case claimFrames[in.Msg.Type]:
 		h.handleClaim(ctx, clients, in)
+	case decisionFrames[in.Msg.Type]:
+		h.handleDecision(ctx, clients, in)
 	case roomFrames[in.Msg.Type]:
 		h.handleRoom(ctx, clients, in)
 	case reviewFrames[in.Msg.Type]:

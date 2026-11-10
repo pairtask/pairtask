@@ -10,6 +10,7 @@ import "context"
 func (h *Hub) beginBackground(ctx context.Context) {
 	h.beginPairing(ctx)
 	h.startClassifier(ctx)
+	h.startNotifier(ctx)
 }
 
 // settleBackground waits for every worker: pairing first, so its grace
@@ -18,4 +19,5 @@ func (h *Hub) beginBackground(ctx context.Context) {
 func (h *Hub) settleBackground() {
 	h.settlePairing()
 	h.settleClassifier()
+	h.settleNotifier()
 }

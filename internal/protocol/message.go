@@ -227,6 +227,10 @@ type Message struct {
 	Topic               string                   `json:"topic,omitempty"`                // claim_set: display label
 	Role                string                   `json:"role,omitempty"`                 // claim_set, claim_release: owner or reviewer
 	*ClaimPage                                   // claim_result, claim_conflict: claims, claims_total, claims_truncated
+	DecisionSummary     string                   `json:"decision_summary,omitempty"`      // decision_request: one line for the operator
+	DecisionKey         string                   `json:"decision_key,omitempty"`          // decision_request: the agent's stable key, for replay
+	AnchorMessageID     string                   `json:"anchor_message_id,omitempty"`     // decision_request: the chat message the operator answers; empty asks the broker to post one
+	Decision            *Decision                `json:"decision,omitempty"`              // decision_result
 	ReviewID            string                   `json:"review_id,omitempty"`             // review frames (#201): the review concerned
 	ReviewOp            string                   `json:"review_op,omitempty"`             // operator_review: what to do
 	ReviewSpec          *ReviewSpec              `json:"review_spec,omitempty"`           // operator_review request
