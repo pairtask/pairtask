@@ -310,18 +310,30 @@ func (m *Model) lookupDone(msg remoteLookupMsg) tea.Cmd {
 	return m.sendRemoteReview(ask, msg.pins)
 }
 
-// lookupFailures name what went wrong, never in the code host's words.
+// lookupFailures name what went wrong, never in the code host's words. The
+// lookup is this side's, with this side's token: a refusal is about that
+// token, never about the reviewer.
 var lookupFailures = map[string]string{
-	forge.ClassForbidden:   "no access to this repository",
+	forge.ClassForbidden:   "your GitHub token was refused for this repository",
 	forge.ClassNotFound:    "change not found",
 	forge.ClassRateLimited: "the code host's rate limit",
 	forge.ClassInvalid:     "unexpected answer",
 	forge.ClassUnsupported: "this code host can't be looked up here",
 }
 
+// lookupRefusals say which refusal, when the forge said.
+var lookupRefusals = map[string]string{
+	forge.ReasonNoToken:       "no GitHub token on this side: set GH_TOKEN or run gh auth login",
+	forge.ReasonTokenRejected: "GitHub rejected your token (401): expired or revoked; run gh auth login",
+	forge.ReasonRepository:    "your GitHub token was refused for this repository (403): it can't read it, or the head is in a fork it can't read",
+}
+
 func lookupFailure(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timed out"
+	}
+	if words, ok := lookupRefusals[forge.ReasonOf(err)]; ok {
+		return words
 	}
 	if words, ok := lookupFailures[forge.ClassOf(err)]; ok {
 		return words

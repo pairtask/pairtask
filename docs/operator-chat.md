@@ -137,6 +137,12 @@ the optional `SCOPE` (up to 1 KiB of text) says what to focus on.
   the verdict in pairtask.
 - The agent receives the request as a message, also when idle, and accepts or
   declines it.
+- For a paired workspace's agent, your side first looks the pull request up
+  with your own GitHub token, so base and head travel pinned. A refusal there
+  is about your token, never about the reviewer: the chat says whether this
+  side has no token, GitHub rejected it (401), or it may not read this
+  repository (403, also when the head lives in a fork it can't read).
+  `--pin BASE..HEAD` skips the lookup.
 - `/reviews` lists requests with their state and verdict; `/review status [ID]`
   shows one, and `/review cancel [ID [REASON]]` cancels one. Without an ID, a
   picker offers the listed reviews.

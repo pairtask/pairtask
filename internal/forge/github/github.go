@@ -53,7 +53,7 @@ func tokenFromEnvOrGH(host string) func(context.Context) (string, error) {
 		out, err := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", host).Output()
 		token := strings.TrimSpace(string(out))
 		if err != nil || token == "" {
-			return "", forge.Errorf(forge.ClassForbidden, "no GitHub token: set GH_TOKEN or run gh auth login")
+			return "", forge.Refusedf(forge.ReasonNoToken, "no GitHub token: set GH_TOKEN or run gh auth login")
 		}
 		return token, nil
 	}
@@ -80,7 +80,7 @@ func New(cfg Config) *Adapter {
 	}
 	if cfg.Token == nil {
 		cfg.Token = func(context.Context) (string, error) {
-			return "", forge.Errorf(forge.ClassForbidden, "no GitHub token configured")
+			return "", forge.Refusedf(forge.ReasonNoToken, "no GitHub token configured")
 		}
 	}
 	origin, _ := url.Parse(strings.TrimRight(cfg.BaseURL, "/"))
@@ -292,20 +292,21 @@ type answer struct {
 }
 
 // statusRules class an answer by its status alone, first match wins;
-// GitHub's own text is never repeated.
+// GitHub's own text is never repeated. A forbidden rule says which refusal.
 var statusRules = []struct {
-	match func(answer) bool
-	class string
-	text  string
+	match  func(answer) bool
+	class  string
+	reason string
+	text   string
 }{
-	{func(a answer) bool { return a.status == http.StatusUnauthorized }, forge.ClassForbidden, "GitHub refused the token (401)"},
-	{func(a answer) bool { return a.status == http.StatusForbidden && rateLimited(a.header) }, forge.ClassRateLimited, "GitHub rate limit (403)"},
-	{func(a answer) bool { return a.status == http.StatusForbidden }, forge.ClassForbidden, "GitHub forbids this (403)"},
-	{func(a answer) bool { return a.status == http.StatusNotFound }, forge.ClassNotFound, "not found on GitHub (404)"},
-	{func(a answer) bool { return a.status == http.StatusTooManyRequests }, forge.ClassRateLimited, "GitHub rate limit (429)"},
-	{func(a answer) bool { return a.status == http.StatusUnprocessableEntity && ownPullRequest(a.body) }, forge.ClassSelfReview,
+	{func(a answer) bool { return a.status == http.StatusUnauthorized }, forge.ClassForbidden, forge.ReasonTokenRejected, "GitHub refused the token (401)"},
+	{func(a answer) bool { return a.status == http.StatusForbidden && rateLimited(a.header) }, forge.ClassRateLimited, "", "GitHub rate limit (403)"},
+	{func(a answer) bool { return a.status == http.StatusForbidden }, forge.ClassForbidden, forge.ReasonRepository, "GitHub forbids this (403)"},
+	{func(a answer) bool { return a.status == http.StatusNotFound }, forge.ClassNotFound, "", "not found on GitHub (404)"},
+	{func(a answer) bool { return a.status == http.StatusTooManyRequests }, forge.ClassRateLimited, "", "GitHub rate limit (429)"},
+	{func(a answer) bool { return a.status == http.StatusUnprocessableEntity && ownPullRequest(a.body) }, forge.ClassSelfReview, "",
 		"GitHub doesn't let an author review their own pull request (422)"},
-	{func(a answer) bool { return a.status == http.StatusUnprocessableEntity }, forge.ClassInvalid, "GitHub refused the review (422)"},
+	{func(a answer) bool { return a.status == http.StatusUnprocessableEntity }, forge.ClassInvalid, "", "GitHub refused the review (422)"},
 }
 
 func statusError(c call, a answer) error {
@@ -314,7 +315,7 @@ func statusError(c call, a answer) error {
 	}
 	for _, rule := range statusRules {
 		if rule.match(a) {
-			return forge.Errorf(rule.class, "%s", rule.text)
+			return &forge.Error{Class: rule.class, Reason: rule.reason, Err: errors.New(rule.text)}
 		}
 	}
 	return forge.Errorf(c.failed(), "GitHub answered %d", a.status)
