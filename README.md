@@ -123,8 +123,9 @@ workspace controlling what it shares.
 
    Optional, off by default: a classifier (TypeSafe **Jev** or Cloudflare
    **Clef**) can record which agent a message you send to everyone without
-   an `@` tag was for, without acting on it. `pairtask classifier on` asks
-   for your API key and turns it on; `pairtask classifier status` shows what
+   an `@` tag was for, without acting on it. `pairtask classifier on` (with the
+   pairing route on, since the sandbox broker reaches the provider through
+   it) asks for your API key and turns it on; `pairtask classifier status` shows what
    it recorded; `pairtask classifier off` removes the key
    ([details and what leaves the host](docs/host-commands.md#classifier-shadow-mode)).
 
