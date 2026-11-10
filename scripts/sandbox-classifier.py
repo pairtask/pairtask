@@ -27,7 +27,13 @@ SECURED_OPERATOR = "/run/collab-ai-operator/operator.sock"
 SETUP = "/usr/local/lib/pairtask/pairtask-broker-setup"
 PROVIDERS = ("jev", "clef")
 KEY_MAX = 512
+ACCOUNT_MAX = 64
 TIMEOUT = 120
+
+
+def valid_account(account):
+    """A Cloudflare account ID: ASCII letters, digits, - and _, bounded."""
+    return 0 < len(account) <= ACCOUNT_MAX and account.isascii() and all(ch.isalnum() or ch in "-_" for ch in account)
 
 
 class Secured:
@@ -60,6 +66,10 @@ def read_key(args, stdin=sys.stdin, prompt=getpass.getpass):
 def turn_on(secured, args, key):
     if args.provider == "clef" and not args.account:
         raise ValueError("clef needs --account ID (the Cloudflare account)")
+    if args.provider != "clef" and args.account:
+        raise ValueError("--account applies to clef only")
+    if args.account and not valid_account(args.account):
+        raise ValueError("--account must be letters, digits, - or _, at most %d characters" % ACCOUNT_MAX)
     command = [SETUP, "classifier", "on", args.provider] + ([args.account] if args.account else [])
     result = secured.execute(*command, stdin=key + "\n")
     if result.returncode != 0:

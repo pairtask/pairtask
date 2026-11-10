@@ -108,6 +108,13 @@ CLASSIFIER_ENV = CLASSIFIER / "classifier.env"
 PROVIDERS = {"jev": "typesafe", "clef": "workers-ai"}
 BROKER_UNIT = "pairtask-secured-broker.service"
 KEY_MAX = 512
+ACCOUNT_MAX = 64
+
+
+def valid_account(account):
+    """A Cloudflare account ID: letters, digits, - and _, at most ACCOUNT_MAX;
+    nothing that could start another line or quote in an environment file."""
+    return 0 < len(account) <= ACCOUNT_MAX and all(ch.isalnum() or ch in "-_" for ch in account) and account.isascii()
 
 
 def classifier_key(stream):
@@ -125,7 +132,13 @@ def classifier_on(provider, account, key):
         raise ValueError("provider must be jev or clef")
     if PROVIDERS[provider] == "workers-ai" and not account:
         raise ValueError("clef needs the Cloudflare account ID")
+    if PROVIDERS[provider] != "workers-ai" and account:
+        raise ValueError("an account applies to clef only")
+    if account and not valid_account(account):
+        raise ValueError("the account ID must be letters, digits, - or _, at most %d characters" % ACCOUNT_MAX)
     broker = pwd.getpwnam("broker")
+    if CLASSIFIER.is_symlink() or (CLASSIFIER.exists() and not CLASSIFIER.is_dir()):
+        raise ValueError(f"refusing a settings path that is not a directory: {CLASSIFIER}")
     CLASSIFIER.mkdir(mode=0o700, exist_ok=True)
     os.chown(CLASSIFIER, broker.pw_uid, broker.pw_gid)
     CLASSIFIER.chmod(0o700)
