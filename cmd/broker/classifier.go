@@ -28,7 +28,7 @@ func attachClassifier(h *hub.Hub, cfg classifier.Config, status string, log *slo
 		log.Info(status)
 		return nil
 	}
-	client, err := classifier.NewClient(cfg.Provider, cfg.Account, cfg.Key, cfg.Timeout, nil)
+	client, err := classifier.NewClient(classifier.Credential{Provider: cfg.Provider, Account: cfg.Account, Key: cfg.Key}, cfg.Timeout, nil)
 	if err != nil {
 		return err
 	}

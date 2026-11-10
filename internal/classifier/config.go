@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -88,8 +87,10 @@ func Load(lookup config.LookupFunc, files Files) (cfg Config, status string, err
 	if err != nil || status != "" {
 		return cfg, status, err
 	}
-	if err := loadChoices(lookup, &cfg); err != nil {
-		return cfg, "", err
+	for _, load := range []func(config.LookupFunc, *Config) error{loadProvider, loadModel, loadThreshold, loadTimeout} {
+		if err := load(lookup, &cfg); err != nil {
+			return cfg, "", err
+		}
 	}
 	if err := loadRoles(lookup, files, &cfg); err != nil {
 		return cfg, "", err
@@ -98,8 +99,8 @@ func Load(lookup config.LookupFunc, files Files) (cfg Config, status string, err
 	return cfg, "classifier in shadow mode: " + cfg.Provider + " " + cfg.Model, nil
 }
 
-// loadChoices reads provider, account, model, threshold and timeout.
-func loadChoices(lookup config.LookupFunc, cfg *Config) error {
+// loadProvider reads the provider and, for Workers AI, the account.
+func loadProvider(lookup config.LookupFunc, cfg *Config) error {
 	provider, given, err := config.Explicit(lookup, SettingProvider)
 	if err != nil {
 		return err
@@ -114,32 +115,46 @@ func loadChoices(lookup config.LookupFunc, cfg *Config) error {
 	if cfg.Provider == ProviderWorkersAI && cfg.Account == "" {
 		return errors.New(config.Name(SettingAccount) + " is required for " + ProviderWorkersAI)
 	}
+	return nil
+}
+
+// loadModel reads the model, defaulting by provider.
+func loadModel(lookup config.LookupFunc, cfg *Config) error {
 	if cfg.Provider == ProviderTypeSafe {
 		cfg.Model = DefaultTypeSafeModel
 	}
-	if model, given, err := config.Explicit(lookup, SettingModel); err != nil {
-		return err
-	} else if given {
+	model, given, err := config.Explicit(lookup, SettingModel)
+	if given {
 		cfg.Model = model
 	}
-	if raw, given, err := config.Explicit(lookup, SettingThreshold); err != nil {
+	return err
+}
+
+// loadThreshold reads the confidence threshold, a finite number in [0, 1].
+func loadThreshold(lookup config.LookupFunc, cfg *Config) error {
+	raw, given, err := config.Explicit(lookup, SettingThreshold)
+	if err != nil || !given {
 		return err
-	} else if given {
-		value, err := strconv.ParseFloat(raw, 64)
-		if err != nil || math.IsNaN(value) || value < 0 || value > 1 {
-			return errors.New(config.Name(SettingThreshold) + " must be a number between 0 and 1")
-		}
-		cfg.Threshold = value
 	}
-	if raw, given, err := config.Explicit(lookup, SettingTimeout); err != nil {
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || !unit(value) {
+		return errors.New(config.Name(SettingThreshold) + " must be a number between 0 and 1")
+	}
+	cfg.Threshold = value
+	return nil
+}
+
+// loadTimeout reads the provider timeout, up to a minute.
+func loadTimeout(lookup config.LookupFunc, cfg *Config) error {
+	raw, given, err := config.Explicit(lookup, SettingTimeout)
+	if err != nil || !given {
 		return err
-	} else if given {
-		value, err := time.ParseDuration(raw)
-		if err != nil || value <= 0 || value > time.Minute {
-			return errors.New(config.Name(SettingTimeout) + " must be a duration up to 1m")
-		}
-		cfg.Timeout = value
 	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 || value > time.Minute {
+		return errors.New(config.Name(SettingTimeout) + " must be a duration up to 1m")
+	}
+	cfg.Timeout = value
 	return nil
 }
 
@@ -164,6 +179,21 @@ func loadRoles(lookup config.LookupFunc, files Files, cfg *Config) error {
 	return nil
 }
 
+// keyFileUsable: a regular file, readable by its owner only, owned by the
+// broker user. Anything else is a misconfiguration, not an absence.
+func keyFileUsable(info fs.FileInfo, files Files) error {
+	if !info.Mode().IsRegular() {
+		return errors.New(config.Name(SettingKeyFile) + " must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%s must be readable by its owner only (mode %04o)", config.Name(SettingKeyFile), info.Mode().Perm())
+	}
+	if uid, known := files.Owner(info); known && uid != files.UID {
+		return fmt.Errorf("%s must be owned by the broker user (uid %d), not uid %d", config.Name(SettingKeyFile), files.UID, uid)
+	}
+	return nil
+}
+
 // loadKey reads the credential file. Unset: disabled, with the reason as
 // status. A file others can read is refused: that is a misconfiguration,
 // not an absence.
@@ -179,14 +209,8 @@ func loadKey(lookup config.LookupFunc, files Files, cfg *Config) (status string,
 	if err != nil {
 		return "classifier disabled: credential file unreadable", nil
 	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New(config.Name(SettingKeyFile) + " must be a regular file")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("%s must be readable by its owner only (mode %04o)", config.Name(SettingKeyFile), info.Mode().Perm())
-	}
-	if uid, known := files.Owner(info); known && uid != files.UID {
-		return "", fmt.Errorf("%s must be owned by the broker user (uid %d), not uid %d", config.Name(SettingKeyFile), files.UID, uid)
+	if err := keyFileUsable(info, files); err != nil {
+		return "", err
 	}
 	data, err := files.ReadFile(path)
 	if err != nil {

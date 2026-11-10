@@ -84,6 +84,28 @@ type Failure struct {
 
 func (f *Failure) Error() string { return "classifier: " + f.Class }
 
+// Credential is who to call and as whom: the provider, its account where
+// one applies (Workers AI), and the key, kept in memory only.
+type Credential struct {
+	Provider string
+	Account  string
+	Key      string
+}
+
+// check: a known provider, its account where needed, and a key.
+func (c Credential) check() error {
+	if _, ok := origins[c.Provider]; !ok {
+		return fmt.Errorf("classifier: unknown provider %q (%s or %s)", c.Provider, ProviderWorkersAI, ProviderTypeSafe)
+	}
+	if c.Provider == ProviderWorkersAI && c.Account == "" {
+		return errors.New("classifier: " + ProviderWorkersAI + " needs the account ID")
+	}
+	if c.Key == "" {
+		return errors.New("classifier: empty credential")
+	}
+	return nil
+}
+
 // Client calls one provider with one credential.
 type Client struct {
 	Provider string
@@ -93,23 +115,16 @@ type Client struct {
 	http     *http.Client
 }
 
-// NewClient builds a client for the provider; the key is kept in memory
-// only. transport nil is the default; tests pass a fake round-tripper and
-// the canonical URL stays.
-func NewClient(provider, account, key string, timeout time.Duration, transport http.RoundTripper) (*Client, error) {
-	if _, ok := origins[provider]; !ok {
-		return nil, fmt.Errorf("classifier: unknown provider %q (%s or %s)", provider, ProviderWorkersAI, ProviderTypeSafe)
-	}
-	if provider == ProviderWorkersAI && account == "" {
-		return nil, errors.New("classifier: " + ProviderWorkersAI + " needs the account ID")
-	}
-	if key == "" {
-		return nil, errors.New("classifier: empty credential")
+// NewClient builds a client for the credential. transport nil is the
+// default; tests pass a fake round-tripper and the canonical URL stays.
+func NewClient(credential Credential, timeout time.Duration, transport http.RoundTripper) (*Client, error) {
+	if err := credential.check(); err != nil {
+		return nil, err
 	}
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	return &Client{Provider: provider, Account: account, Timeout: timeout, key: key,
+	return &Client{Provider: credential.Provider, Account: credential.Account, Timeout: timeout, key: credential.Key,
 		http: &http.Client{Timeout: timeout, CheckRedirect: refuseRedirect, Transport: transport}}, nil
 }
 
@@ -183,11 +198,8 @@ func classify(ctx context.Context, err error) error {
 
 // answer reads a response into an Answer, by status and provider envelope.
 func (c *Client) answer(resp *http.Response) (Answer, error) {
-	switch {
-	case resp.StatusCode >= 300 && resp.StatusCode < 400:
-		return Answer{}, &Failure{FailRedirect}
-	case resp.StatusCode < 200 || resp.StatusCode >= 300:
-		return Answer{}, &Failure{statusClass(resp.StatusCode)}
+	if failure := statusFailure(resp.StatusCode); failure != nil {
+		return Answer{}, failure
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, responseMax+1))
 	if err != nil || len(data) > responseMax {
@@ -198,6 +210,17 @@ func (c *Client) answer(resp *http.Response) (Answer, error) {
 		return Answer{}, &Failure{FailDecode}
 	}
 	return answer, nil
+}
+
+// statusFailure is nil for a 2xx, redirect for a 3xx, else the status class.
+func statusFailure(code int) error {
+	switch {
+	case code >= 200 && code < 300:
+		return nil
+	case code < 400 && code >= 300:
+		return &Failure{FailRedirect}
+	}
+	return &Failure{statusClass(code)}
 }
 
 // statusClass is http_429 for the limits a caller may act on, else http_4xx/5xx.
@@ -264,9 +287,14 @@ func decode(provider string, data []byte) (Answer, bool) {
 // valid: a choice answer with a choice, a confidence in [0, 1] and
 // probabilities in [0, 1].
 func (a choiceAnswer) valid() bool {
-	if (a.Type != "" && a.Type != "choice") || a.Choice == "" || a.Confidence == nil || !unit(*a.Confidence) {
-		return false
-	}
+	return a.isChoice() && a.Choice != "" && a.hasConfidence() && a.probabilitiesUnit()
+}
+
+func (a choiceAnswer) isChoice() bool { return a.Type == "" || a.Type == "choice" }
+
+func (a choiceAnswer) hasConfidence() bool { return a.Confidence != nil && unit(*a.Confidence) }
+
+func (a choiceAnswer) probabilitiesUnit() bool {
 	for _, p := range a.Probabilities {
 		if !unit(p) {
 			return false

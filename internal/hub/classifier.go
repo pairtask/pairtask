@@ -165,14 +165,7 @@ func failureOutcome(err error) (outcome, reason string) {
 func decided(p store.Prediction, roster classifier.Roster, answer classifier.Answer, threshold float64) store.Prediction {
 	p.ModelVersion = answer.Model
 	p.Confidence = answer.Confidence
-	p.Probabilities = map[string]float64{}
-	for alias, probability := range answer.Probabilities {
-		if agent := roster.Agent(alias); agent != "" {
-			p.Probabilities[agent] = probability
-		} else if alias == classifier.AbstainChoice {
-			p.AbstainProbability = probability
-		}
-	}
+	p.Probabilities, p.AbstainProbability = rekey(roster, answer.Probabilities)
 	agent := roster.Agent(answer.Choice)
 	switch {
 	case agent == "" && answer.Choice != classifier.AbstainChoice:
@@ -185,6 +178,20 @@ func decided(p store.Prediction, roster classifier.Roster, answer classifier.Ans
 		p.Outcome, p.AgentID = store.PredictionPredicted, agent
 	}
 	return p
+}
+
+// rekey maps the answer's alias probabilities back to agent IDs, with the
+// abstain choice's apart; aliases outside the roster are dropped.
+func rekey(roster classifier.Roster, probabilities map[string]float64) (map[string]float64, float64) {
+	byAgent, abstain := map[string]float64{}, 0.0
+	for alias, probability := range probabilities {
+		if agent := roster.Agent(alias); agent != "" {
+			byAgent[agent] = probability
+		} else if alias == classifier.AbstainChoice {
+			abstain = probability
+		}
+	}
+	return byAgent, abstain
 }
 
 func (h *Hub) recordSkip(ctx context.Context, messageID, reason string, eligible []string) {
