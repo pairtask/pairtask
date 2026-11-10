@@ -94,12 +94,19 @@ Off by default. The broker can ask a decision model, TypeSafe **Jev** or
 Cloudflare **Clef** on Workers AI, which agent a message you send to everyone
 without an `@` tag was for, and record the answer without acting on it: no
 suggestion, no assignment, claims work as before. Turn it on only when you
-want to collect those records: a credential file plus
-`PAIRTASK_CLASSIFIER=shadow` on the broker (for Jev, also
-`PAIRTASK_CLASSIFIER_PROVIDER=typesafe`; Clef on Workers AI is the default and
-needs `PAIRTASK_CLASSIFIER_ACCOUNT`), then read them with
-`pairtask operator classifier report`. Settings, the key file and what leaves
-the host: [classifier](host-commands.md#classifier-shadow-mode).
+want to collect those records:
+
+```sh
+pairtask classifier on                       # Jev; asks for the TypeSafe key
+pairtask classifier on --provider clef --account ID   # Clef on Workers AI
+pairtask classifier status                   # settings and the last 24 hours
+pairtask classifier off
+```
+
+The key is read from a hidden prompt (or `--key-file PATH`), never from the
+command line, and stored where only the broker can read it. What leaves the
+host and the settings a standalone broker takes from its environment:
+[classifier](host-commands.md#classifier-shadow-mode).
 
 ## Watch, stop, and return
 
