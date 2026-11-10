@@ -24,6 +24,7 @@ if HERE not in sys.path:
 
 import sandbox_host_user  # noqa: E402
 import sandbox_operator_config  # noqa: E402
+import sandbox_pairing  # noqa: E402
 import sandbox_remote  # noqa: E402
 
 SECURED_OPERATOR = "/run/collab-ai-operator/operator.sock"
@@ -86,18 +87,19 @@ def key_from_prompt(provider, stdin, prompt):
 
 def pairing_route_on(args, registry=None):
     """Whether the deployment runs the pairing route, which gives the secured
-    broker its way out to the provider. Read from the deployment's saved
-    settings (--state-dir, else the registry); nothing is created."""
+    broker its way out to the provider: the connector in the deployed state
+    where there is one, else the saved pairing settings (whichever variables
+    file holds them). --state-dir, else the registry; nothing is created."""
     directory = Path(args.state_dir) if args.state_dir else None
     if directory is None:
         saved = sandbox_operator_config.read_registry(registry or sandbox_operator_config.LOCATION)
         if args.project not in saved:
             return False
         directory = Path(saved[args.project])
-    path = directory / "sandbox.auto.tfvars.json"
     try:
-        return json.loads(path.read_text()).get("pairing_route") is True
-    except (OSError, ValueError, AttributeError):
+        deployed = sandbox_pairing.applied(directory, args.project)
+        return bool(deployed) if deployed is not None else bool(sandbox_pairing.configured(directory))
+    except (OSError, ValueError):
         return False
 
 
