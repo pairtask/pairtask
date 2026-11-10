@@ -63,6 +63,37 @@ class HostCommandAcceptance(unittest.TestCase):
              patch.object(host, "Secured", side_effect=AssertionError("opened Incus")):
             self.assertEqual(host.main(["status"]), 1)
 
+    def test_pairing_route_accepts_the_pairing_commands_settings_files(self):
+        args = SimpleNamespace(state_dir=str(self.root), project="pairtask")
+        for name in ("operator.auto.tfvars.json", "custom.auto.tfvars.json"):
+            with self.subTest(name=name):
+                settings = self.root / name
+                settings.write_text(json.dumps({"pairing_route": True, "secured_runtime": True}))
+                self.assertTrue(host.pairing_route_on(args))
+                settings.unlink()
+        self.assertFalse(host.pairing_route_on(args))
+
+    def test_pairing_route_uses_registry_and_rejects_deployed_route_that_is_off(self):
+        settings = self.root / "operator.auto.tfvars.json"
+        settings.write_text(json.dumps({"pairing_route": True}))
+        registry = self.root / "locations.json"
+        registry.write_text(json.dumps({"pairtask": str(self.root)}))
+        args = SimpleNamespace(state_dir=None, project="pairtask")
+        self.assertTrue(host.pairing_route_on(args, registry=registry))
+
+        state = {"resources": [{"mode": "managed", "type": "incus_project", "name": "sandbox",
+                "instances": [{"attributes": {"name": "pairtask"}}]}]}
+        (self.root / "terraform.tfstate").write_text(json.dumps(state))
+        self.assertFalse(host.pairing_route_on(args, registry=registry))
+
+    def test_pairing_route_off_refuses_before_the_key_is_read_or_sent(self):
+        with patch.object(host.sandbox_host_user, "refuse_root", return_value=0), \
+             patch.object(host, "read_key", side_effect=AssertionError("read key")), \
+             patch.object(host, "turn_on", side_effect=AssertionError("sent key")):
+            with self.assertRaises(SystemExit) as result:
+                host.main(["on", "--state-dir", str(self.root), "--key-file", str(self.key)])
+        self.assertIn("pairtask pairing on", str(result.exception))
+
     def test_key_file_and_hidden_prompt_keep_secret_out_of_argv_and_output(self):
         args = SimpleNamespace(provider="jev", account="", key_file=str(self.key))
         key = host.read_key(args)
