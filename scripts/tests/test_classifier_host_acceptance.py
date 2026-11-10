@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 import io
+import json
 import os
 from pathlib import Path
 import stat
@@ -124,6 +125,22 @@ class HostCommandAcceptance(unittest.TestCase):
         self.assertIn("samples=2", output.getvalue())
         self.assertNotIn("secret", output.getvalue())
         self.assertEqual(len(commands), 2)
+
+    def test_json_status_is_one_parseable_object_without_the_key(self):
+        def fake_run(argv, **kwargs):
+            if argv[-3:] == [host.SETUP, "classifier", "status"]:
+                return subprocess.CompletedProcess(argv, 0,
+                    stdout="classifier=shadow\nprovider=jev\naccount=\nkey=stored\n", stderr="")
+            return subprocess.CompletedProcess(argv, 0,
+                stdout='{"samples":2,"errors":0}', stderr="")
+
+        secured = host.Secured("pairtask", "local", run=fake_run)
+        with redirect_stdout(io.StringIO()) as output:
+            host.status(secured, SimpleNamespace(since="24h", json=True))
+        parsed = json.loads(output.getvalue())
+        self.assertEqual(parsed["classifier"]["provider"], "jev")
+        self.assertEqual(parsed["report"]["samples"], 2)
+        self.assertNotIn("secret", output.getvalue())
 
 
 class SecuredSetupAcceptance(unittest.TestCase):
