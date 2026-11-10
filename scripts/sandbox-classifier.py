@@ -32,9 +32,19 @@ ACCOUNT_MAX = 64
 TIMEOUT = 120
 
 
+def plain_name(value, limit):
+    """ASCII letters, digits, - and _, between 1 and limit characters."""
+    return 0 < len(value) <= limit and value.isascii() and all(ch.isalnum() or ch in "-_" for ch in value)
+
+
 def valid_account(account):
-    """A Cloudflare account ID: ASCII letters, digits, - and _, bounded."""
-    return 0 < len(account) <= ACCOUNT_MAX and account.isascii() and all(ch.isalnum() or ch in "-_" for ch in account)
+    """A Cloudflare account ID."""
+    return plain_name(account, ACCOUNT_MAX)
+
+
+def valid_key(key):
+    """One line of printable ASCII, at most KEY_MAX bytes."""
+    return 0 < len(key) <= KEY_MAX and all(32 < ord(ch) < 127 for ch in key)
 
 
 class Secured:
@@ -50,27 +60,37 @@ class Secured:
 
 def read_key(args, stdin=sys.stdin, prompt=getpass.getpass):
     """The key from --key-file, else from a hidden prompt on a terminal."""
-    if args.key_file:
-        path = Path(args.key_file)
-        if path.is_symlink() or not path.is_file():
-            raise ValueError("--key-file must be a regular file")
-        key = path.read_text().strip()
-    elif stdin.isatty():
-        key = prompt("API key for %s (not echoed): " % args.provider).strip()
-    else:
-        raise ValueError("no terminal for the key prompt; use --key-file PATH")
-    if not key or "\n" in key or len(key.encode()) > KEY_MAX or not all(32 < ord(ch) < 127 for ch in key):
+    key = key_from_file(args.key_file) if args.key_file else key_from_prompt(args.provider, stdin, prompt)
+    if not valid_key(key):
         raise ValueError("the key must be one line of printable ASCII, at most %d bytes" % KEY_MAX)
     return key
 
 
-def turn_on(secured, args, key):
+def key_from_file(name):
+    path = Path(name)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("--key-file must be a regular file")
+    return path.read_text().strip()
+
+
+def key_from_prompt(provider, stdin, prompt):
+    if not stdin.isatty():
+        raise ValueError("no terminal for the key prompt; use --key-file PATH")
+    return prompt("API key for %s (not echoed): " % provider).strip()
+
+
+def check_on(args):
+    """The provider and account go together: clef needs one, jev takes none."""
     if args.provider == "clef" and not args.account:
         raise ValueError("clef needs --account ID (the Cloudflare account)")
     if args.provider != "clef" and args.account:
         raise ValueError("--account applies to clef only")
     if args.account and not valid_account(args.account):
         raise ValueError("--account must be letters, digits, - or _, at most %d characters" % ACCOUNT_MAX)
+
+
+def turn_on(secured, args, key):
+    check_on(args)
     command = [SETUP, "classifier", "on", args.provider] + ([args.account] if args.account else [])
     result = secured.execute(*command, stdin=key + "\n")
     if result.returncode != 0:
@@ -115,7 +135,7 @@ def last_line(text):
 
 def identifier(value):
     """An Incus project or remote name: letters, digits, - and _, bounded."""
-    if not (0 < len(value) <= 64 and value.isascii() and all(ch.isalnum() or ch in "-_" for ch in value)):
+    if not plain_name(value, 64):
         raise argparse.ArgumentTypeError("must be letters, digits, - or _")
     return value
 
