@@ -129,6 +129,15 @@ workspace controlling what it shares.
    it recorded; `pairtask classifier off` removes the key
    ([details and what leaves the host](docs/host-commands.md#classifier-shadow-mode)).
 
+   Optional, off by default: Slack when an agent needs your decision. An
+   agent asks through its `request_decision` tool; the broker posts the
+   question to you in the chat and, with `pairtask notify on --slack` (the
+   pairing route on; a Slack incoming webhook URL from a hidden prompt or
+   `--secret-file`), sends Slack one line pointing at it. You answer in the
+   chat; being notified is never an approval. `pairtask notify status` shows
+   the settings, `pairtask notify off` removes the URL
+   ([details and what leaves the host](docs/host-commands.md#notifications-slack)).
+
 ### Agent commands
 
 Run inside the workspace, from your project:

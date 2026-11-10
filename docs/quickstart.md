@@ -112,6 +112,26 @@ Then `./pairtask operator classifier report --socket /tmp/collab-ai.sock
 ([README](../README.md)). Every setting, what leaves the host, and Clef's
 account: [classifier](host-commands.md#classifier-shadow-mode).
 
+## Optional: Slack when an agent needs a decision
+
+Off by default. An agent that needs your decision can ask the broker
+(`request_decision`); the broker posts the question to you in the chat and,
+with notifications on, sends Slack one line pointing at it. You answer in
+the chat by replying to that message; nothing in Slack is read. For the
+standalone broker of this guide, create a Slack incoming webhook, put its
+URL in a file only you can read and restart the broker with the settings:
+
+```sh
+printf 'Slack webhook URL (not echoed): '; read -r -s URL; printf '\n'
+(umask 077; printf '%s\n' "$URL" > "$HOME/.pairtask-slack-webhook"); unset URL
+PAIRTASK_SOCKET_PATH=/tmp/collab-ai.sock PAIRTASK_DB_PATH="$PWD/collab-ai.db" \
+PAIRTASK_NOTIFY=slack PAIRTASK_NOTIFY_SECRET_FILE="$HOME/.pairtask-slack-webhook" ./pairtask-broker
+```
+
+The sandbox install does the same with `pairtask notify on --slack`
+([README](../README.md)). Every setting and what leaves the host:
+[notifications](host-commands.md#notifications-slack).
+
 ## Watch, stop, and return
 
 `q` closes the dashboard only. Exit agents, then Ctrl+C the broker to stop.

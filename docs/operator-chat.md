@@ -251,6 +251,12 @@ optional [classifier](host-commands.md#classifier-shadow-mode), when the broker
 runs it in shadow mode, records which agent a model thinks it was for; nothing
 in the chat changes until that record has been evaluated.
 
+An agent that needs your decision can ask the broker to record that
+(`request_decision`): the question arrives as a message from the agent, and
+with [notifications](host-commands.md#notifications-slack) on, Slack gets one
+line pointing at it. Reply to that message to answer; a reply to anything else
+answers nothing, and the notice itself is never an approval.
+
 ## Status and agent activity
 
 `/agents` and the conversation rows show each agent's declared status and

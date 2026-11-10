@@ -95,6 +95,7 @@ install -m 0644 infra/image/pairtask-pairing-setup.service infra/image/pairtask-
 install -d /etc/systemd/system/pairtask-secured-broker.service.d
 install -m 0644 infra/image/pairtask-secured-broker.service.d/pairing.conf /etc/systemd/system/pairtask-secured-broker.service.d/
 install -m 0644 infra/image/pairtask-secured-broker.service.d/classifier.conf /etc/systemd/system/pairtask-secured-broker.service.d/
+install -m 0644 infra/image/pairtask-secured-broker.service.d/notify.conf /etc/systemd/system/pairtask-secured-broker.service.d/
 install -m 0755 infra/image/pairtask-workspace-setup /usr/local/lib/pairtask/pairtask-workspace-setup
 install -m 0755 infra/image/pairtask-rtk-setup /usr/local/lib/pairtask/pairtask-rtk-setup
 install -m 0644 infra/image/pairtask-rtk-setup.service /etc/systemd/system/

@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -106,10 +106,14 @@ func NewSlackWebhook(raw string, transport http.RoundTripper, timeout time.Durat
 	return &SlackWebhook{url: raw, Transport: transport, Timeout: timeout}, nil
 }
 
+// webhookShape is the one URL shape accepted, the same the host and
+// container commands check before storing a secret: https, the webhook
+// host, a services path of plain segments, nothing else.
+var webhookShape = regexp.MustCompile(`^https://hooks\.slack\.com/services/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$`)
+
 // CheckWebhookURL accepts only a Slack incoming webhook URL.
 func CheckWebhookURL(raw string) error {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "https" || u.Host != WebhookHost || !strings.HasPrefix(u.Path, "/services/") || u.User != nil {
+	if !webhookShape.MatchString(strings.TrimSpace(raw)) {
 		return errors.New("notify: the secret must be a Slack incoming webhook URL (https://hooks.slack.com/services/…)")
 	}
 	return nil

@@ -6,6 +6,7 @@ import grp
 import os
 from pathlib import Path
 import pwd
+import re
 import socket
 import sqlite3
 import stat
@@ -122,7 +123,7 @@ def classifier_key(stream):
     raw = stream.buffer.readline(KEY_MAX + 2) if hasattr(stream, "buffer") else stream.readline(KEY_MAX + 2)
     key = raw.decode("ascii", "strict").strip() if isinstance(raw, bytes) else raw.strip()
     if not key or len(key) > KEY_MAX or not all(32 < ord(ch) < 127 for ch in key):
-        raise ValueError("the key must be one line of printable ASCII, at most %d bytes" % KEY_MAX)
+        raise ValueError("the secret must be one line of printable ASCII, at most %d bytes" % KEY_MAX)
     return key
 
 
@@ -136,21 +137,27 @@ def classifier_on(provider, account, key):
         raise ValueError("an account applies to clef only")
     if account and not valid_account(account):
         raise ValueError("the account ID must be letters, digits, - or _, at most %d characters" % ACCOUNT_MAX)
-    broker = pwd.getpwnam("broker")
-    if CLASSIFIER.is_symlink() or (CLASSIFIER.exists() and not CLASSIFIER.is_dir()):
-        raise ValueError(f"refusing a settings path that is not a directory: {CLASSIFIER}")
-    CLASSIFIER.mkdir(mode=0o700, exist_ok=True)
-    os.chown(CLASSIFIER, broker.pw_uid, broker.pw_gid)
-    CLASSIFIER.chmod(0o700)
-    for path in (CLASSIFIER_KEY, CLASSIFIER_ENV):
-        if path.is_symlink() or (path.exists() and not stat.S_ISREG(path.lstat().st_mode)):
-            raise ValueError(f"refusing to replace a non-regular file: {path}")
-    write_private(CLASSIFIER_KEY, key + "\n", broker.pw_uid, broker.pw_gid)
     lines = ["PAIRTASK_CLASSIFIER=shadow", "PAIRTASK_CLASSIFIER_PROVIDER=" + PROVIDERS[provider],
              "PAIRTASK_CLASSIFIER_KEY_FILE=" + str(CLASSIFIER_KEY)]
     if account:
         lines.append("PAIRTASK_CLASSIFIER_ACCOUNT=" + account)
-    write_private(CLASSIFIER_ENV, "".join(line + "\n" for line in lines), 0, 0)
+    store_secret(CLASSIFIER, CLASSIFIER_KEY, key, CLASSIFIER_ENV, lines)
+
+
+def store_secret(directory, secret_path, secret, env_path, lines):
+    """The secret in a file for the broker alone, the settings in an
+    environment file for its unit, both under a directory of the broker's."""
+    broker = pwd.getpwnam("broker")
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ValueError(f"refusing a settings path that is not a directory: {directory}")
+    directory.mkdir(mode=0o700, exist_ok=True)
+    os.chown(directory, broker.pw_uid, broker.pw_gid)
+    directory.chmod(0o700)
+    for path in (secret_path, env_path):
+        if path.is_symlink() or (path.exists() and not stat.S_ISREG(path.lstat().st_mode)):
+            raise ValueError(f"refusing to replace a non-regular file: {path}")
+    write_private(secret_path, secret + "\n", broker.pw_uid, broker.pw_gid)
+    write_private(env_path, "".join(line + "\n" for line in lines), 0, 0)
 
 
 def write_private(path, text, uid, gid):
@@ -167,7 +174,11 @@ def write_private(path, text, uid, gid):
 
 
 def classifier_off():
-    for path in (CLASSIFIER_KEY, CLASSIFIER_ENV):
+    remove_secret(CLASSIFIER_KEY, CLASSIFIER_ENV)
+
+
+def remove_secret(*paths):
+    for path in paths:
         if path.is_symlink() or path.exists():
             path.unlink()
 
@@ -187,7 +198,6 @@ def classifier_status():
 
 def classifier(argv):
     """classifier on PROVIDER [ACCOUNT] (key on stdin) | off | status; on and off restart the broker."""
-    import subprocess
     action = argv[0] if argv else ""
     if action == "on":
         classifier_on(argv[1] if len(argv) > 1 else "", argv[2] if len(argv) > 2 else "", classifier_key(sys.stdin))
@@ -198,13 +208,72 @@ def classifier(argv):
         return
     else:
         raise ValueError("classifier takes on PROVIDER [ACCOUNT], off or status")
+    restart_broker()
+
+
+def restart_broker():
+    import subprocess
     subprocess.run(["systemctl", "restart", BROKER_UNIT], check=True)
+
+
+# Decision notifications (#352): the Slack incoming webhook URL and the
+# settings, set from the host by `pairtask notify on`, read by the broker
+# unit through its drop-in's EnvironmentFile. The URL is a secret and
+# arrives on stdin, never in argv.
+NOTIFY = STATE / "notify"
+NOTIFY_SECRET = NOTIFY / "slack-webhook"
+NOTIFY_ENV = NOTIFY / "notify.env"
+# The one URL shape accepted, the same the broker checks: a bad one is
+# refused here, before anything is written and the broker restarted.
+SLACK_WEBHOOK = re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*")
+
+
+def notify_on(kind, hidden, secret):
+    """Store the webhook URL for the broker alone and the settings for its unit."""
+    if kind != "slack":
+        raise ValueError("notify on takes slack")
+    if not SLACK_WEBHOOK.fullmatch(secret):
+        raise ValueError("the secret must be a Slack incoming webhook URL (https://hooks.slack.com/services/...)")
+    lines = ["PAIRTASK_NOTIFY=slack", "PAIRTASK_NOTIFY_SECRET_FILE=" + str(NOTIFY_SECRET)]
+    if hidden:
+        lines.append("PAIRTASK_NOTIFY_HIDDEN=1")
+    store_secret(NOTIFY, NOTIFY_SECRET, secret, NOTIFY_ENV, lines)
+
+
+def notify_status():
+    """The settings without the secret: off, or the kind and whether the notice names the request."""
+    if not NOTIFY_ENV.is_file():
+        print("notify=off")
+        return
+    settings = dict(line.split("=", 1) for line in NOTIFY_ENV.read_text().splitlines() if "=" in line)
+    print("notify=" + settings.get("PAIRTASK_NOTIFY", "off"))
+    print("hidden=" + ("1" if settings.get("PAIRTASK_NOTIFY_HIDDEN") in ("1", "true") else "0"))
+    print("secret=" + ("stored" if NOTIFY_SECRET.is_file() else "missing"))
+
+
+def notify(argv):
+    """notify on slack [--hidden] (webhook URL on stdin) | off | status; on and off restart the broker."""
+    action = argv[0] if argv else ""
+    if action == "on":
+        options = argv[2:]
+        if any(option != "--hidden" for option in options):
+            raise ValueError("notify on takes slack and --hidden only")
+        notify_on(argv[1] if len(argv) > 1 else "", "--hidden" in options, classifier_key(sys.stdin))
+    elif action == "off":
+        remove_secret(NOTIFY_SECRET, NOTIFY_ENV)
+    elif action == "status":
+        notify_status()
+        return
+    else:
+        raise ValueError("notify takes on slack [--hidden], off or status")
+    restart_broker()
 
 
 if __name__ == "__main__":
     actions = {"control": control, "clients": clients,
                "clean": lambda: remove_stale_socket(IPC / "broker.sock"),
-               "classifier": lambda: classifier(sys.argv[2:])}
+               "classifier": lambda: classifier(sys.argv[2:]),
+               "notify": lambda: notify(sys.argv[2:])}
     try:
         actions[sys.argv[1]]()
     except (KeyError, IndexError, ValueError, OSError, sqlite3.Error) as error:
