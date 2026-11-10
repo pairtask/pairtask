@@ -38,7 +38,10 @@ func TestDecisionMCPAcceptanceOlderBrokerRefusesBeforeWriting(t *testing.T) {
 		t.Fatal("old broker reported a decision request as sent")
 	}
 	encoded, _ := json.Marshal(result.Content)
-	if !strings.Contains(string(encoded), "unsupported") || !strings.Contains(string(encoded), "27") {
+	if !strings.Contains(string(encoded), "unsupported") {
+		t.Fatalf("old-broker error was unclear: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), "27") {
 		t.Fatalf("old-broker error was unclear: %s", encoded)
 	}
 	read := make(chan protocol.Message, 1)
@@ -81,19 +84,47 @@ func TestDecisionMCPAcceptanceForwardsArgsAndCorrelatesResult(t *testing.T) {
 	})
 	requireNoError(t, <-done)
 	req := <-request
-	if req.Type != protocol.TypeDecisionRequest || req.DecisionSummary != "Approve release" || req.DecisionKey != "release" || req.AnchorMessageID != "ask-1" || req.RequestID == "" {
-		t.Fatalf("decision tool sent wrong frame: %+v", req)
-	}
+	assertDecisionRequestFrame(t, req)
 	data, err := json.Marshal(result.StructuredContent)
 	requireNoError(t, err)
 	var out protocol.Decision
 	requireNoError(t, json.Unmarshal(data, &out))
-	if out.ID != "d-1" || out.Anchor != "ask-1" || out.Delivery != protocol.DeliveryPending {
-		t.Fatalf("decision tool returned wrong standing record: %+v", out)
-	}
+	assertDecisionToolResult(t, out)
 	inbox, err := c.Receive(context.Background(), 10, 0)
 	requireNoError(t, err)
 	if len(inbox.Messages) != 0 {
 		t.Fatalf("decision RPC leaked into the message inbox: %+v", inbox.Messages)
+	}
+}
+
+func assertDecisionRequestFrame(t *testing.T, req protocol.Message) {
+	t.Helper()
+	if req.Type != protocol.TypeDecisionRequest {
+		t.Fatalf("decision tool sent wrong frame: %+v", req)
+	}
+	if req.DecisionSummary != "Approve release" {
+		t.Fatalf("decision summary was lost: %+v", req)
+	}
+	if req.DecisionKey != "release" {
+		t.Fatalf("decision key was lost: %+v", req)
+	}
+	if req.AnchorMessageID != "ask-1" {
+		t.Fatalf("decision anchor was lost: %+v", req)
+	}
+	if req.RequestID == "" {
+		t.Fatal("decision request has no RPC correlation")
+	}
+}
+
+func assertDecisionToolResult(t *testing.T, out protocol.Decision) {
+	t.Helper()
+	if out.ID != "d-1" {
+		t.Fatalf("decision tool returned wrong standing record: %+v", out)
+	}
+	if out.Anchor != "ask-1" {
+		t.Fatalf("decision tool returned wrong standing record: %+v", out)
+	}
+	if out.Delivery != protocol.DeliveryPending {
+		t.Fatalf("decision tool returned wrong standing record: %+v", out)
 	}
 }

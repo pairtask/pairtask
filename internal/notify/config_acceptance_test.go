@@ -32,7 +32,13 @@ func TestNotifyConfigAcceptanceOffByDefaultAndMissingSecretKeepsBrokerAvailable(
 		{"PAIRTASK_NOTIFY": "slack", "PAIRTASK_NOTIFY_SECRET_FILE": filepath.Join(t.TempDir(), "missing")},
 	} {
 		cfg, status, err := loadNotify(values, notify.Files{ReadFile: os.ReadFile, Stat: os.Stat})
-		if err != nil || cfg.Enabled() || status == "" {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Enabled() {
+			t.Fatalf("missing/off config enabled notifications: %q", status)
+		}
+		if status == "" {
 			t.Fatalf("missing/off config = enabled %t, status %q, error %v", cfg.Enabled(), status, err)
 		}
 	}
@@ -44,10 +50,35 @@ func TestNotifyConfigAcceptancePrivateWebhookAndOptions(t *testing.T) {
 		"PAIRTASK_NOTIFY": "slack", "PAIRTASK_NOTIFY_SECRET_FILE": path,
 		"PAIRTASK_NOTIFY_HIDDEN": "1", "PAIRTASK_NOTIFY_WORKSPACE": "desk",
 	}, notify.Files{ReadFile: os.ReadFile, Stat: os.Stat})
-	if err != nil || !cfg.Enabled() || cfg.Secret != webhook || !cfg.Hidden || cfg.Workspace != "desk" {
-		t.Fatalf("private config = %+v, error %v", cfg, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(status, "secret-marker") || strings.Contains(status, webhook) {
+	assertPrivateNotifyConfig(t, cfg)
+	assertNotifyStatusRedacted(t, status)
+}
+
+func assertPrivateNotifyConfig(t *testing.T, cfg notify.Config) {
+	t.Helper()
+	if !cfg.Enabled() {
+		t.Fatal("private Slack config stayed off")
+	}
+	if cfg.Secret != webhook {
+		t.Fatal("broker loaded the wrong webhook URL")
+	}
+	if !cfg.Hidden {
+		t.Fatal("hidden setting was lost")
+	}
+	if cfg.Workspace != "desk" {
+		t.Fatalf("workspace label = %q", cfg.Workspace)
+	}
+}
+
+func assertNotifyStatusRedacted(t *testing.T, status string) {
+	t.Helper()
+	if strings.Contains(status, "secret-marker") {
+		t.Fatal("config status disclosed the webhook secret")
+	}
+	if strings.Contains(status, webhook) {
 		t.Fatal("config status disclosed the webhook secret")
 	}
 }
@@ -59,7 +90,10 @@ func TestNotifyConfigAcceptanceRejectsReadableOrWrongOwnerBeforeReadingSecret(t 
 		t.Fatal(err)
 	}
 	_, _, err := loadNotify(values, notify.Files{ReadFile: os.ReadFile, Stat: os.Stat})
-	if err == nil || !strings.Contains(err.Error(), "readable by its owner only") {
+	if err == nil {
+		t.Fatal("world-readable secret accepted")
+	}
+	if !strings.Contains(err.Error(), "readable by its owner only") {
 		t.Fatalf("world-readable secret accepted: %v", err)
 	}
 	if err := os.Chmod(path, 0600); err != nil {
@@ -71,7 +105,13 @@ func TestNotifyConfigAcceptanceRejectsReadableOrWrongOwnerBeforeReadingSecret(t 
 		Owner:    func(fs.FileInfo) (int, bool) { return 5678, true },
 		ReadFile: func(string) ([]byte, error) { read = true; return []byte(webhook), nil },
 	})
-	if err == nil || !strings.Contains(err.Error(), "owned by the broker") || read {
+	if err == nil {
+		t.Fatal("wrong-owner secret accepted")
+	}
+	if !strings.Contains(err.Error(), "owned by the broker") {
+		t.Fatalf("wrong-owner error: %v", err)
+	}
+	if read {
 		t.Fatalf("wrong-owner secret accepted or read: error %v, read %t", err, read)
 	}
 }
@@ -88,7 +128,10 @@ func TestNotifyConfigAcceptanceRejectsInvalidModeAndURL(t *testing.T) {
 	_, status, err := loadNotify(map[string]string{
 		"PAIRTASK_NOTIFY": "slack", "PAIRTASK_NOTIFY_SECRET_FILE": path,
 	}, notify.Files{ReadFile: os.ReadFile, Stat: os.Stat})
-	if err == nil || strings.Contains(status, "evil.example") {
+	if err == nil {
+		t.Fatal("non-Slack webhook accepted")
+	}
+	if strings.Contains(status, "evil.example") {
 		t.Fatalf("non-Slack webhook accepted or disclosed: status %q, error %v", status, err)
 	}
 }
