@@ -32,9 +32,7 @@ internal/protocol, which still builds, and the host Go suites test it on
 both architectures. This is a TUI-only exception, not "presentation".
 Every other event, any unknown or shipped path, --force-full (the pull
 request's ci:full-images label), and any failure to read the diff build
-images. The Pi extension's own sources (integrations/) are not shipped
-either: a pull request touching only them and safe docs skips as "pi".
-A usage error exits non-zero and prints no decision.
+images. A usage error exits non-zero and prints no decision.
 """
 
 import argparse
@@ -46,7 +44,6 @@ import sandbox_source
 BUILD = ("true", "shipped-or-unknown-path")
 SKIP = ("false", "safe-docs-only")
 SKIP_CHAT = ("false", "safe-chat-only")
-SKIP_PI = ("false", "safe-pi-only")
 ALWAYS = ("true", "event-always-builds")
 FORCED = ("true", "forced-full")
 FAILED = ("true", "diff-failed")
@@ -135,12 +132,6 @@ def chat(path):
     return path.startswith(CHAT) and path != CHAT
 
 
-def pi(path):
-    """The Pi extension's own sources, which no image ships (the image's
-    shim is infra/image/pi-extension.ts, a recipe path)."""
-    return under(path, PI_PATHS) and not shipped(path)
-
-
 def git(repo, *args):
     return subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True).stdout
 
@@ -183,14 +174,13 @@ def decide(run):
 
 
 def skip_for(paths):
-    """Docs alone skip as docs; docs and chat, with some chat, skip as chat;
-    docs and the Pi extension, with some Pi, skip as Pi."""
+    """Docs alone skip as docs; docs and chat, with some chat, skip as chat.
+    The Pi extension's source is shipped through the optional tool bundle
+    and smoke-tested by the image proofs, so it builds."""
     if all(safe_doc(path) for path in paths):
         return SKIP
     if all(safe_doc(path) or chat(path) for path in paths):
         return SKIP_CHAT
-    if all(safe_doc(path) or pi(path) for path in paths):
-        return SKIP_PI
     return BUILD
 
 
