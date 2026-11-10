@@ -68,9 +68,12 @@ def read_key(args, stdin=sys.stdin, prompt=getpass.getpass):
 
 
 def key_from_file(name):
+    """A regular file readable by its owner only; the copy the broker gets is just as private."""
     path = Path(name)
     if path.is_symlink() or not path.is_file():
         raise ValueError("--key-file must be a regular file")
+    if path.stat().st_mode & 0o077:
+        raise ValueError("--key-file must be readable by you only (chmod 600)")
     return path.read_text().strip()
 
 
@@ -180,6 +183,7 @@ def main(argv=None):
     secured = Secured(args.project, args.remote)
     try:
         if args.action == "on":
+            check_on(args)  # before the prompt: nothing is asked for that could not be used
             turn_on(secured, args, read_key(args))
         elif args.action == "off":
             turn_off(secured)

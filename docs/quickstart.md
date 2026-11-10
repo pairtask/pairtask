@@ -100,7 +100,7 @@ when it is back) and start it again with the same socket and database as
 step 1 plus the settings, for Jev:
 
 ```sh
-read -r -s -p 'TypeSafe key (not echoed): ' KEY; echo
+printf 'TypeSafe key (not echoed): '; read -r -s KEY; printf '\n'
 (umask 077; printf '%s\n' "$KEY" > "$HOME/.pairtask-jev-key"); unset KEY
 PAIRTASK_SOCKET_PATH=/tmp/collab-ai.sock PAIRTASK_DB_PATH="$PWD/collab-ai.db" \
 PAIRTASK_CLASSIFIER=shadow PAIRTASK_CLASSIFIER_PROVIDER=typesafe \
