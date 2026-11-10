@@ -95,7 +95,9 @@ Cloudflare **Clef** on Workers AI, which agent a message you send to everyone
 without an `@` tag was for, and record the answer without acting on it: no
 suggestion, no assignment, claims work as before. Turn it on only when you
 want to collect those records: a credential file plus
-`PAIRTASK_CLASSIFIER=shadow` on the broker, then read them with
+`PAIRTASK_CLASSIFIER=shadow` on the broker (for Jev, also
+`PAIRTASK_CLASSIFIER_PROVIDER=typesafe`; Clef on Workers AI is the default and
+needs `PAIRTASK_CLASSIFIER_ACCOUNT`), then read them with
 `pairtask operator classifier report`. Settings, the key file and what leaves
 the host: [classifier](host-commands.md#classifier-shadow-mode).
 
