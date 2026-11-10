@@ -78,17 +78,19 @@ def docs_only(decision):
     return "true" if decision == SKIP else "false"
 
 
-# Kinds of changed paths, each a fixed token. CI is the workflow and this
-# classifier with its test: a change there runs everything.
-CI_PATHS = (".github/", "scripts/ci-classify.py", "scripts/tests/test_ci_classify_acceptance.py")
+# Kinds of changed paths, each a fixed token. A root ending in "/" is a
+# directory, matched by prefix; any other root is one exact file. CI is the
+# workflow, this classifier with its test, and the module that lists what
+# an image is built from: a change there runs everything.
+CI_PATHS = (".github/", "scripts/ci-classify.py", "scripts/tests/test_ci_classify_acceptance.py", "scripts/sandbox_source.py")
 GO_PATHS = ("go.mod", "go.sum", "cmd/", "internal/", "testdata/")
-INFRA_PATHS = ("infra/", "docs/skills/")
+INFRA_PATHS = ("infra/", "docs/skills/", "scripts/base-image-mirror.py")  # the mirror check is its own test
 PI_PATHS = ("integrations/",)
 FLAGS = ("go", "scripts", "pi", "infra")
 
 
 def under(path, roots):
-    return any(path == root.rstrip("/") or path.startswith(root) for root in roots)
+    return any(path.startswith(root) if root.endswith("/") else path == root for root in roots)
 
 
 def kind(path):
