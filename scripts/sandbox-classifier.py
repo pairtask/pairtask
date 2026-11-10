@@ -12,6 +12,7 @@ key and the settings and restarts the broker. `status` shows the settings
 
 import argparse
 import getpass
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -106,22 +107,38 @@ def turn_off(secured):
 
 
 def status(secured, args):
+    """The settings (never the key), then the broker's report; --json gives both as one object."""
     result = secured.execute(SETUP, "classifier", "status")
     if result.returncode != 0:
         raise ValueError(failure("reading the classifier settings", result))
     settings = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    if settings.get("classifier", "off") == "off":
+    enabled = settings.get("classifier", "off") != "off"
+    report = report_of(secured, args) if enabled else None
+    if args.json:
+        print(json.dumps({"classifier": settings, "report": report}, sort_keys=True))
+        return
+    if not enabled:
         print("Classifier: off")
         return
-    print("Classifier: %s, %s%s, key %s" % (settings.get("classifier"), settings.get("provider"),
-                                           " (account %s)" % settings["account"] if settings.get("account") else "",
-                                           settings.get("key", "missing")))
-    report = secured.execute("pairtask", "operator", "classifier", "report", "--socket", SECURED_OPERATOR,
-                             "--since", args.since, *(["--json"] if args.json else []))
-    if report.returncode != 0:
-        print("Report unavailable: " + last_line(report.stderr))
-        return
-    sys.stdout.write(report.stdout)
+    account = " (account %s)" % settings["account"] if settings.get("account") else ""
+    print("Classifier: %s, %s%s, key %s" % (settings.get("classifier"), settings.get("provider"), account, settings.get("key", "missing")))
+    print(report if isinstance(report, str) else "Report unavailable: " + report.get("error", ""))
+
+
+def report_of(secured, args):
+    """The broker's report: its text, or for --json the decoded object; an
+    error is a {"error": …} object either way."""
+    extra = ["--json"] if args.json else []
+    result = secured.execute("pairtask", "operator", "classifier", "report", "--socket", SECURED_OPERATOR,
+                             "--since", args.since, *extra)
+    if result.returncode != 0:
+        return {"error": last_line(result.stderr) or "exit %d" % result.returncode}
+    if not args.json:
+        return result.stdout.rstrip("\n")
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return {"error": "report was not JSON"}
 
 
 def failure(what, result):
