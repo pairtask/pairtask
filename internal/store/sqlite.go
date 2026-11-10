@@ -83,6 +83,13 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
+	// Tables added since the epoch transition's released shape are created
+	// once it has succeeded, so a failed or refused transition leaves no new
+	// schema object behind.
+	if _, err := db.Exec(predictionsSchema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply classifier schema: %w", err)
+	}
 	if err := clearConsentOwner(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("clear session consent: %w", err)

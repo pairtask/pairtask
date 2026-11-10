@@ -32,6 +32,7 @@ on a machine you keep.)
 | `pairtask pairing on` / `pairtask pairing off` | host | Turn the experimental pairing route on or off in the deployment's settings, then run the same rollout as upgrade (same flags). `on` also turns on `secured_runtime`; it is refused while `peer_connector_probe` is on. `on` publishes the relay on every host address (LAN and tailnet) on `--host-port N` (1024–65535, or 0 for none), else the saved port, else 7445; `off` keeps the port for the next `on`. `on --name NAME` sets the name this workspace pairs under (at most 64 bytes; `""` clears it; without it the saved name stays), shown to workspaces paired from then on; the rollout keeps the secured broker down until the name it set is in place (a direct `tofu apply` doesn't). Settings are checked before anything is written or stopped. Later upgrades keep the setting. | yes |
 | `pairtask pairing status` | host | Show the pairing route and its host port as configured and as deployed, read-only: `on`, `off`, or which command finishes a change an interrupted rollout left behind. It reports applied forwarding, not whether another machine can reach it. | no |
 | `pairtask discovery run` | host | The discovery helper that `pairing on` runs as a user service (launchd on macOS, `systemd --user` on Linux): asks the secured broker for its lease, then announces this machine's pairing port on the local network or looks for paired workspaces that moved, and hands the endpoints to the broker, which moves a contact only when its pinned identity answers. While the operator keeps an invitation open with `/pair open --discoverable`, the announcement also carries this workspace's name; while they run `/pair find`, the helper reports the named invitations it hears and the online tailnet devices with each lease ([pair two machines](pairing.md#2-on-a-open-an-invitation)). `--once` runs one round and exits; `--interval 15s` (the idle poll; a changed report or an open find comes back within seconds), `--host-port N` (0: never announce), `--project`, `--remote`. `pairing on --no-discovery` turns the service off and keeps it off; `pairing off` removes it ([moving between networks](pairing.md#moving-between-networks)). | no |
+| `pairtask operator classifier report` | host | What the shadow [classifier](#classifier-shadow-mode) recorded, read-only: outcome counts, reasons, models, provider latency, the providers' usage counters summed (token counts as a cost proxy; no prices), agreement with the reply claim's holder (a weak label) and the newest predictions; `--since 24h` (up to 720h), `--json`. Nothing in it is applied anywhere. | no |
 | `pairtask discovery status` | host | What the discovery helper last did, read-only: the broker's lease, what it announced and under which name, how it looks for others (the system Bonjour service on macOS, its own multicast socket on Linux), the invitations and tailnet devices it last reported, and the outcome for each endpoint it handed over (`--json` for the file). Nothing in it is secret. | no |
 | `pairtask download` | host | Fetch and verify a release image without provisioning (`--release`, `--from-zip`, `--from-dir`). | no |
 | `pairtask vm plan` / `pairtask vm apply` | host (macOS) | Preview or create and start the dedicated `pairtask` Colima VM that runs Incus. | no |
@@ -184,6 +185,37 @@ between the brokers. Neither starts by default:
   is loopback, link-local, multicast, unspecified, zoned or one of
   connector's own interface addresses, then dials that address. Private LAN
   and tailnet addresses are allowed: they are where other workspaces live.
+
+### Classifier (shadow mode)
+
+Off by default. With `PAIRTASK_CLASSIFIER=shadow`, the broker asks a hosted
+decision model which agent each untagged operator message to everyone was
+for, and records the answer without acting on it: routing, assignments and
+claims are unchanged, delivery never waits for the model, and a provider
+that fails or times out is recorded as such. This is the first rollout step
+of an optional classifier; nothing here suggests or assigns yet, and the
+confidence threshold is uncalibrated until the recorded predictions have
+been evaluated. The work queue is in memory: a broker exit can lose
+predictions not yet made, so the report counts recorded samples, not every
+accepted message.
+
+- `PAIRTASK_CLASSIFIER_KEY_FILE=/PATH` holds the provider credential: a
+  regular file owned by the broker user, readable by it only. Unset, missing
+  or empty, the classifier stays off and the broker log says why; a file
+  others can read is refused.
+- `PAIRTASK_CLASSIFIER_PROVIDER=workers-ai` (default; Cloudflare Workers AI,
+  needs `PAIRTASK_CLASSIFIER_ACCOUNT=ID`) or `typesafe`. Each provider has a
+  fixed endpoint; redirects are never followed.
+- `PAIRTASK_CLASSIFIER_MODEL` (default `clef` on Workers AI, `jev-latest` on
+  TypeSafe), `PAIRTASK_CLASSIFIER_THRESHOLD` (0 to 1, default 0.7),
+  `PAIRTASK_CLASSIFIER_TIMEOUT` (default `5s`), and
+  `PAIRTASK_CLASSIFIER_ROLES=/PATH`, a JSON object of agent ID to a one-line
+  role the model is shown.
+
+With it on, the text of each such message, its room name and the eligible
+agents' IDs and roles leave the host for the chosen provider. The
+credential never appears in logs, command lines or the database.
+
 
 Both take `--max-conns`, `--max-bytes` and `--idle` (16 connections, 1 MiB
 per direction and 30 s by default).

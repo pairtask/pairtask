@@ -118,6 +118,9 @@ var operatorHandlers = map[string]operatorHandler{
 	protocol.TypeOperatorReceive: func(h *Hub, ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
 		return h.operatorRead(ctx, req, "receive", h.readInbox)
 	},
+	protocol.TypeOperatorClassifierReport: func(h *Hub, ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
+		return h.operatorRead(ctx, req, "classifier_report", h.readClassifierReport)
+	},
 	protocol.TypeOperatorHistory: func(h *Hub, ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
 		return h.operatorRead(ctx, req, "history", h.readHistory)
 	},
@@ -217,6 +220,7 @@ func (h *Hub) commitOperator(ctx context.Context, clients map[string]*Client, se
 			h.enqueue(clients, c, recipientFrame(out, r.AgentID, assigned)) // An undelivered durable frame stays pending for replay.
 		}
 	}
+	h.classifyLater(ctx, out, recipients, send) // shadow only; never waits (#339)
 	return protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq,
 		Durable: true, Recipients: recipients, Excluded: excluded}, nil
 }

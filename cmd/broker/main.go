@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/pairtask/pairtask/internal/classifier"
 	settings "github.com/pairtask/pairtask/internal/config"
 	"github.com/pairtask/pairtask/internal/hub"
 	"github.com/pairtask/pairtask/internal/server"
@@ -47,6 +48,9 @@ type config struct {
 	PairingSocketGroup  string
 	PairingSocketGID    int
 	PairingEgressSocket string
+	// Classifier (#339): off unless configured; ClassifierStatus says what it does.
+	Classifier       classifier.Config
+	ClassifierStatus string
 }
 
 func loadConfig(lookup settings.LookupFunc) (config, error) {
@@ -59,6 +63,9 @@ func loadConfig(lookup settings.LookupFunc) (config, error) {
 		return cfg, err
 	}
 	if err := loadOperator(lookup, &cfg); err != nil {
+		return cfg, err
+	}
+	if cfg.Classifier, cfg.ClassifierStatus, err = loadClassifier(lookup); err != nil {
 		return cfg, err
 	}
 	return cfg, loadPairing(lookup, &cfg)
@@ -96,6 +103,9 @@ func openHub(ctx context.Context, cfg config, st *store.Store, log *slog.Logger)
 	log.Info("state loaded", "db", cfg.DBPath, "last_seq", lastSeq)
 	h := hub.New(st, lastSeq, log)
 	h.SetPairing(pairingConfig(cfg))
+	if err := attachClassifier(h, cfg.Classifier, cfg.ClassifierStatus, log); err != nil {
+		return nil, err
+	}
 	n, err := h.RecoverJoins(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("recover pairing redemptions: %w", err)

@@ -44,10 +44,11 @@ type Inbound struct {
 type Hub struct {
 	membership chan membership
 	inbound    chan Inbound
-	importAt   int64       // where the next import pass goes on; owned by Run
-	rescan     atomic.Bool // an import pass was asked for since the scan began
-	importDue  atomic.Bool // an import pass is due; signalled on pair.changed (#222)
-	consent    hubConsent  // held requests and session authority (#293)
+	importAt   int64         // where the next import pass goes on; owned by Run
+	rescan     atomic.Bool   // an import pass was asked for since the scan began
+	importDue  atomic.Bool   // an import pass is due; signalled on pair.changed (#222)
+	consent    hubConsent    // held requests and session authority (#293)
+	classify   hubClassifier // shadow predictions for untagged operator sends (#339)
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -144,9 +145,9 @@ func (h *Hub) Done() <-chan struct{} { return h.done }
 func (h *Hub) Run(ctx context.Context) {
 	clients := make(map[string]*Client)
 	defer close(h.done)
-	defer h.settlePairing()
+	defer h.settleBackground()
 	defer h.disconnectAll(clients)
-	h.beginPairing(ctx)
+	h.beginBackground(ctx)
 	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {
