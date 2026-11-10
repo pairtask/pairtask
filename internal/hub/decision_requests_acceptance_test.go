@@ -3,12 +3,14 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/notify"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/store"
 )
 
 type decisionFixture struct {
@@ -325,5 +327,54 @@ func assertThreeFailures(t *testing.T, f *decisionFixture, id string, posts int3
 	}
 	if posts != 3 {
 		t.Fatalf("retry count = stored %d, posts %d", stored.Attempts, posts)
+	}
+}
+
+func TestDecisionHubAcceptanceStartupDrainsPendingBeyondOneQueuePage(t *testing.T) {
+	h := newTestHub(t)
+	const total = DecisionQueue + 1
+	seedPendingDecisionPage(t, h, total)
+	observed := make(chan string, total)
+	var posts atomic.Int32
+	h.SetNotifier(&Notifier{Post: func(context.Context, notify.Notice) (string, error) {
+		posts.Add(1)
+		return "sent", nil
+	}, Observed: func(id string) { observed <- id }})
+	ctx, cancel := context.WithCancel(context.Background())
+	go h.Run(ctx)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-h.Done():
+		case <-time.After(5 * time.Second):
+			t.Error("pending decision drain prevented shutdown")
+		}
+	})
+	for i := 0; i < total; i++ {
+		awaitDecisionObservation(t, observed)
+	}
+	pending, err := h.store.PendingDecisions(ctx, total)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("startup left %d requests pending", len(pending))
+	}
+	if got := posts.Load(); got != total {
+		t.Fatalf("startup posted %d notices, want %d", got, total)
+	}
+}
+
+func seedPendingDecisionPage(t *testing.T, h *Hub, total int) {
+	t.Helper()
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("d-%03d", i)
+		_, _, err := h.store.CreateDecision(context.Background(), store.Decision{
+			ID: id, Agent: "codex-1", Anchor: "ask-" + id,
+			Summary: "Choose release", Delivery: protocol.DeliveryPending,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
