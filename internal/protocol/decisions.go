@@ -18,7 +18,7 @@ const (
 	// TypeDecisionResult is broker → agent: the record as it stands.
 	TypeDecisionResult = "decision_result"
 	// DecisionVersion gates the frames.
-	DecisionVersion = 26
+	DecisionVersion = 27
 )
 
 // Decision limits.

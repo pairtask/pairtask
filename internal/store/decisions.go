@@ -59,39 +59,38 @@ func (s *Store) AnchorOwnedBy(ctx context.Context, messageID, agent string) (boo
 
 // CreateDecision records the request unless one exists for its anchor or
 // its (agent, key); existing says which happened, and the row returned is
-// the one that stands.
+// the one that stands. The unique indexes decide, so two writers racing on
+// one key both get the winner.
 func (s *Store) CreateDecision(ctx context.Context, d Decision) (Decision, bool, error) {
 	if d.ID == "" || d.Agent == "" || d.Anchor == "" || d.Summary == "" {
 		return Decision{}, false, errors.New("a decision needs an id, an agent, an anchor and a summary")
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Decision{}, false, err
-	}
-	defer tx.Rollback()
-	if existing, err := decisionBy(ctx, tx, d.Agent, d.Key, d.Anchor); err != nil {
-		return Decision{}, false, err
-	} else if existing != nil {
-		return *existing, true, nil
 	}
 	at := d.CreatedAt
 	if at.IsZero() {
 		at = time.Now()
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO decision_requests (`+decisionColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL)`,
-		d.ID, d.Agent, d.Key, d.Anchor, d.Summary, protocol.DecisionOpen, d.Delivery, d.Reason, stamp(at)); err != nil {
-		return Decision{}, false, err
-	}
-	created, err := decisionBy(ctx, tx, d.Agent, d.Key, d.Anchor)
+	result, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO decision_requests (`+decisionColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL)`,
+		d.ID, d.Agent, d.Key, d.Anchor, d.Summary, protocol.DecisionOpen, d.Delivery, d.Reason, stamp(at))
 	if err != nil {
 		return Decision{}, false, err
 	}
-	return *created, false, tx.Commit()
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return Decision{}, false, err
+	}
+	standing, err := s.decisionBy(ctx, d.Agent, d.Key, d.Anchor)
+	if err != nil {
+		return Decision{}, false, err
+	}
+	if standing == nil {
+		return Decision{}, false, errors.New("decision not recorded")
+	}
+	return *standing, inserted == 0, nil
 }
 
 // decisionBy finds the row for the anchor, or for the agent's key.
-func decisionBy(ctx context.Context, tx *sql.Tx, agent, key, anchor string) (*Decision, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT `+decisionColumns+` FROM decision_requests
+func (s *Store) decisionBy(ctx context.Context, agent, key, anchor string) (*Decision, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+decisionColumns+` FROM decision_requests
 		WHERE anchor_message_id = ? OR (request_key != '' AND agent_id = ? AND request_key = ?) LIMIT 1`, anchor, agent, key)
 	if err != nil {
 		return nil, err

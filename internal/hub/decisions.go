@@ -80,7 +80,7 @@ func (h *Hub) handleDecision(ctx context.Context, clients map[string]*Client, in
 func (h *Hub) decide(ctx context.Context, clients map[string]*Client, in Inbound) protocol.Message {
 	msg := in.Msg
 	if in.From.ProtocolVersion < protocol.DecisionVersion {
-		return statusError(msg.RequestID, protocol.ErrForbidden, "decision requests need protocol version 26")
+		return statusError(msg.RequestID, protocol.ErrForbidden, "decision requests need protocol version 27")
 	}
 	if err := protocol.ValidateDecisionRequest(msg.DecisionSummary, msg.DecisionKey); err != nil {
 		return statusError(msg.RequestID, protocol.ErrMalformedFrame, err.Error())
@@ -186,31 +186,40 @@ func (h *Hub) startNotifier(ctx context.Context) {
 // settleNotifier waits for the worker at shutdown.
 func (h *Hub) settleNotifier() { h.notifier.workers.Wait() }
 
-// drainPending posts every pending request the store holds.
+// drainPending posts every pending request the store holds, a page at a
+// time until a page comes back short; a request that stays pending (a
+// post interrupted by shutdown) ends the pass rather than loop on it.
 func (h *Hub) drainPending(ctx context.Context) {
-	pending, err := h.store.PendingDecisions(ctx, DecisionQueue)
-	if err != nil {
-		h.log.Error("decision requests unavailable", "error", err)
-		return
-	}
-	for _, d := range pending {
-		if ctx.Err() != nil {
+	for ctx.Err() == nil {
+		pending, err := h.store.PendingDecisions(ctx, DecisionQueue)
+		if err != nil {
+			h.log.Error("decision requests unavailable", "error", err)
 			return
 		}
-		h.notifyDecision(ctx, d.ID)
+		for _, d := range pending {
+			if ctx.Err() != nil {
+				return
+			}
+			h.notifyDecision(ctx, d.ID)
+		}
+		if len(pending) < DecisionQueue {
+			return
+		}
 	}
 }
 
 // notifyDecision posts one request's notice, with bounded retries; the
 // outcome is recorded whatever happened, and the agent is never waited for.
+// Each attempt starts from the row as it stands: an answer given during a
+// backoff ends the retries.
 func (h *Hub) notifyDecision(ctx context.Context, id string) {
 	c := h.notifier.cfg
-	d, err := h.store.Decision(ctx, id)
-	if err != nil || d == nil || d.Delivery != protocol.DeliveryPending || d.State != protocol.DecisionOpen {
-		return // gone, sent meanwhile, or answered first
-	}
-	notice := notify.Notice{Workspace: c.Workspace, Agent: d.Agent, Summary: d.Summary, Anchor: d.Anchor, Hidden: c.Hidden}
 	for attempt := 0; ; attempt++ {
+		d := h.openPending(ctx, id)
+		if d == nil {
+			return // gone, sent meanwhile, or answered first
+		}
+		notice := notify.Notice{Workspace: c.Workspace, Agent: d.Agent, Summary: d.Summary, Anchor: d.Anchor, Hidden: c.Hidden}
 		_, err := c.Post(ctx, notice)
 		if err == nil {
 			h.recordDelivery(ctx, id, protocol.DeliverySent, "")
@@ -222,13 +231,22 @@ func (h *Hub) notifyDecision(ctx context.Context, id string) {
 			h.recordDelivery(ctx, id, protocol.DeliveryFailed, class)
 			return
 		}
+		h.recordDelivery(ctx, id, protocol.DeliveryPending, class) // one attempt counted, still pending
 		select {
 		case <-ctx.Done():
-			h.recordDelivery(ctx, id, protocol.DeliveryPending, class)
 			return
 		case <-c.After(decisionBackoff[attempt]):
 		}
 	}
+}
+
+// openPending is the request when its notice is still owed, else nil.
+func (h *Hub) openPending(ctx context.Context, id string) *store.Decision {
+	d, err := h.store.Decision(ctx, id)
+	if err != nil || d == nil || d.Delivery != protocol.DeliveryPending || d.State != protocol.DecisionOpen {
+		return nil
+	}
+	return d
 }
 
 // failureClass names a failed post without the transport's words, which

@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = ReviewSupersedeVersion
+	Version                 = DecisionVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
