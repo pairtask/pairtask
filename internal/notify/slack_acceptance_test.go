@@ -120,6 +120,12 @@ func TestSlackWebhookAcceptanceHiddenNoticeOmitsSummaryAndAnchor(t *testing.T) {
 	if strings.Contains(text, "private-anchor") {
 		t.Fatalf("hidden Slack notice disclosed the request: %q", text)
 	}
+	if !strings.Contains(text, "desk") {
+		t.Fatalf("hidden Slack notice omitted the workspace pointer: %q", text)
+	}
+	if strings.Contains(text, "codex-1") {
+		t.Fatalf("hidden Slack notice disclosed the agent: %q", text)
+	}
 }
 
 type failureCase struct {
