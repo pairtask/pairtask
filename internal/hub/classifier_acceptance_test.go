@@ -96,57 +96,31 @@ func chosenTester(req classifier.Request) classifier.Answer {
 }
 
 func TestClassifierHubAcceptanceBlockedProviderCannotDelayDeliveryOrClaim(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var calls atomic.Int32
-	f := newClassifierFixture(t, func(ctx context.Context, req classifier.Request) (classifier.Answer, error) {
-		calls.Add(1)
-		close(started)
-		select {
-		case <-release:
-			return chosenTester(req), nil
-		case <-ctx.Done():
-			return classifier.Answer{}, ctx.Err()
-		}
-	})
+	f, gate := newBlockedClassifier(t)
 	f.send(t, protocol.Message{MessageID: "blocked"})
 	for _, c := range f.clients {
 		m := recv(t, c)
-		if m.MessageID != "blocked" || m.Assignment != nil || m.Origin != protocol.OriginOperator {
-			t.Fatalf("delivery changed: %+v", m)
-		}
+		classifierEqual(t, m.MessageID, "blocked")
+		classifierEqual(t, m.Assignment, (*protocol.AssignmentView)(nil))
+		classifierEqual(t, m.Origin, protocol.OriginOperator)
 	}
-	select {
-	case <-started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("provider not called")
-	}
-	_, err := f.h.store.SetClaim(f.ctx, store.ClaimRequest{MessageID: "blocked", Agent: "builder", Task: "reply", Role: "owner", At: time.Now()})
-	if err != nil {
-		t.Fatalf("blocked provider prevented claim: %v", err)
-	}
-	close(release)
+	classifierAwait(t, gate.started)
+	f.claim(t, "blocked", "builder")
+	close(gate.release)
 	p := f.prediction(t, "blocked")
-	if p.Outcome != store.PredictionPredicted || p.AgentID != "tester" || p.Provider != "typesafe" || p.ModelVersion != "jev-1.14.0" || p.Threshold != .7 {
-		t.Fatalf("prediction/provenance: %+v", p)
-	}
-	claims, err := f.h.store.Claims(f.ctx, "blocked", "builder")
-	if err != nil || len(claims.Claims) != 1 || claims.Claims[0].AgentID != "builder" || len(claims.Assignments) != 0 {
-		t.Fatalf("shadow changed ownership: %+v %v", claims, err)
-	}
-	if !f.send(t, protocol.Message{MessageID: "blocked"}).Repeated {
-		t.Fatal("retry not identified")
-	}
+	classifierEqual(t, p.Outcome, store.PredictionPredicted)
+	classifierEqual(t, p.AgentID, "tester")
+	classifierEqual(t, p.Provider, "typesafe")
+	classifierEqual(t, p.ModelVersion, "jev-1.14.0")
+	classifierEqual(t, p.Threshold, .7)
+	f.owner(t, "blocked", "builder")
+	classifierEqual(t, f.send(t, protocol.Message{MessageID: "blocked"}).Repeated, true)
 	again, err := f.h.store.Prediction(f.ctx, "blocked")
-	if err != nil || !reflect.DeepEqual(p, again) || calls.Load() != 1 {
-		t.Fatal("retry changed prediction or called provider twice")
-	}
+	classifierOK(t, err)
+	classifierEqual(t, again, p)
+	classifierEqual(t, gate.calls.Load(), int32(1))
 	for _, c := range f.clients {
-		select {
-		case m := <-c.Send:
-			t.Fatalf("classifier/retry sent another frame: %+v", m)
-		default:
-		}
+		classifierEmpty(t, c)
 	}
 }
 
@@ -159,9 +133,9 @@ func TestClassifierHubAcceptanceOffPreservesBroadcast(t *testing.T) {
 		}
 	}
 	p, err := f.h.store.Prediction(f.ctx, "off")
-	if err != nil || p != nil || f.h.ClassifierEnabled() {
-		t.Fatalf("off produced prediction: %+v %v", p, err)
-	}
+	classifierOK(t, err)
+	classifierEqual(t, p, (*store.Prediction)(nil))
+	classifierEqual(t, f.h.ClassifierEnabled(), false)
 }
 
 func TestClassifierHubAcceptanceExplicitRoutingSkipsProvider(t *testing.T) {
@@ -212,9 +186,9 @@ func TestClassifierHubAcceptanceProviderFailuresLeaveMessageClaimable(t *testing
 			if class == classifier.FailTimeout {
 				want = store.PredictionTimeout
 			}
-			if p.Outcome != want || p.Reason != class || p.AgentID != "" {
-				t.Fatalf("bad failure row: %+v", p)
-			}
+			classifierEqual(t, p.Outcome, want)
+			classifierEqual(t, p.Reason, class)
+			classifierEqual(t, p.AgentID, "")
 			if _, err := f.h.store.SetClaim(f.ctx, store.ClaimRequest{MessageID: "failure", Agent: "builder", Task: "reply", Role: "owner", At: time.Now()}); err != nil {
 				t.Fatal(err)
 			}
@@ -258,48 +232,27 @@ func TestClassifierHubAcceptanceOversizedRosterIsExplicitlySkipped(t *testing.T)
 	msg := protocol.Message{MessageID: "large", Payload: json.RawMessage(`{"text":"help"}`)}
 	h.classifyLater(context.Background(), msg, recipients, operatorSend{scope: store.OperatorScope{Kind: store.ScopeAll}})
 	p, err := h.store.Prediction(context.Background(), "large")
-	if err != nil || p == nil || p.Outcome != store.PredictionSkipped || p.Reason != "roster_too_large" || len(p.Eligible) != len(recipients) {
-		t.Fatalf("oversized roster silently truncated/queued: %+v %v", p, err)
-	}
+	classifierOK(t, err)
+	classifierEqual(t, p != nil, true)
+	classifierEqual(t, p.Outcome, store.PredictionSkipped)
+	classifierEqual(t, p.Reason, "roster_too_large")
+	classifierEqual(t, len(p.Eligible), len(recipients))
 }
 
 func TestClassifierHubAcceptanceQueueFullStillDelivers(t *testing.T) {
-	started := make(chan struct{})
-	var calls atomic.Int32
-	f := newClassifierFixture(t, func(ctx context.Context, req classifier.Request) (classifier.Answer, error) {
-		if calls.Add(1) == 1 {
-			close(started)
-		}
-		<-ctx.Done()
-		return classifier.Answer{}, ctx.Err()
-	})
+	f, gate := newBlockedClassifier(t)
 	f.send(t, protocol.Message{MessageID: "in-flight"})
-	for _, c := range f.clients {
-		recv(t, c)
-	}
-	select {
-	case <-started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("provider did not start")
-	}
+	f.drain(t, "in-flight")
+	classifierAwait(t, gate.started)
 	for i := 0; i <= ClassifierQueue; i++ {
 		id := fmt.Sprintf("queued-%d", i)
 		f.send(t, protocol.Message{MessageID: id})
-		for _, c := range f.clients {
-			if m := recv(t, c); m.MessageID != id {
-				t.Fatalf("overflow delivery lost: %+v", m)
-			}
-			for _, stage := range []string{protocol.StageAdapterReceived, protocol.StageAgentAcknowledged} {
-				if _, err := f.h.store.Acknowledge(f.ctx, store.Acknowledgment{MessageID: id, Recipient: c.identity(), Stage: stage, ProtocolVersion: protocol.Version}); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
+		f.drain(t, id)
+		f.acknowledge(t, id)
 	}
 	p := f.prediction(t, fmt.Sprintf("queued-%d", ClassifierQueue))
-	if p.Outcome != store.PredictionSkipped || p.Reason != "queue_full" {
-		t.Fatalf("overflow: %+v", p)
-	}
+	classifierEqual(t, p.Outcome, store.PredictionSkipped)
+	classifierEqual(t, p.Reason, "queue_full")
 }
 
 func TestClassifierHubAcceptanceRoomExcludesOutsidersAndKeepsFrozenRoster(t *testing.T) {
@@ -316,40 +269,102 @@ func TestClassifierHubAcceptanceRoomExcludesOutsidersAndKeepsFrozenRoster(t *tes
 	})
 	outsider := newClient("outsider")
 	outsider.ProtocolVersion = protocol.Version
-	f.h.Register(f.ctx, outsider)
+	classifierEqual(t, f.h.Register(f.ctx, outsider), true)
 	recv(t, outsider)
-	if err := f.h.store.JoinRooms(f.ctx, store.RoomMember{Room: "team", Agent: "builder"}, store.RoomMember{Room: "team", Agent: "tester"}); err != nil {
-		t.Fatal(err)
-	}
+	classifierOK(t, f.h.store.JoinRooms(f.ctx, store.RoomMember{Room: "team", Agent: "builder"}, store.RoomMember{Room: "team", Agent: "tester"}))
 	f.send(t, protocol.Message{MessageID: "room", Room: "team"})
-	for _, c := range f.clients {
-		recv(t, c)
-	}
-	var req classifier.Request
-	select {
-	case req = <-request:
-	case <-time.After(3 * time.Second):
-		t.Fatal("provider did not start")
-	}
+	f.drain(t, "room")
+	req := classifierAwait(t, request)
 	for _, description := range req.Criteria {
-		if strings.Contains(description, "outsider") {
-			t.Fatal("room sent outsider to provider")
-		}
+		classifierEqual(t, strings.Contains(description, "outsider"), false)
 	}
-	if len(req.Criteria) != 3 {
-		t.Fatalf("room criteria=%v", req.Criteria)
-	}
-	if err := f.h.store.LeaveRoom(f.ctx, store.RoomMember{Room: "team", Agent: "tester"}); err != nil {
-		t.Fatal(err)
-	}
+	classifierEqual(t, len(req.Criteria), 3)
+	classifierOK(t, f.h.store.LeaveRoom(f.ctx, store.RoomMember{Room: "team", Agent: "tester"}))
 	close(release)
 	p := f.prediction(t, "room")
-	if !reflect.DeepEqual(p.Eligible, []string{"builder", "tester"}) || p.AgentID != "tester" {
-		t.Fatalf("late roster changed shadow decision: %+v", p)
+	classifierEqual(t, p.Eligible, []string{"builder", "tester"})
+	classifierEqual(t, p.AgentID, "tester")
+	classifierEmpty(t, outsider)
+}
+
+func classifierEqual(t *testing.T, got, want any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+func classifierOK(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+func classifierAwait[T any](t *testing.T, ch <-chan T) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		t.Fatal("classifier event did not arrive")
+	}
+	var zero T
+	return zero
+}
+func classifierEmpty(t *testing.T, c *Client) {
+	t.Helper()
+	select {
+	case m := <-c.Send:
+		t.Fatalf("unexpected classifier/delivery frame: %+v", m)
+	default:
+	}
+}
+func (f *classifierFixture) drain(t *testing.T, id string) {
+	t.Helper()
+	for _, c := range f.clients {
+		classifierEqual(t, recv(t, c).MessageID, id)
+	}
+}
+func (f *classifierFixture) acknowledge(t *testing.T, id string) {
+	t.Helper()
+	for _, c := range f.clients {
+		for _, stage := range []string{protocol.StageAdapterReceived, protocol.StageAgentAcknowledged} {
+			_, err := f.h.store.Acknowledge(f.ctx, store.Acknowledgment{MessageID: id, Recipient: c.identity(), Stage: stage, ProtocolVersion: protocol.Version})
+			classifierOK(t, err)
+		}
+	}
+}
+func (f *classifierFixture) claim(t *testing.T, id, agent string) {
+	t.Helper()
+	_, err := f.h.store.SetClaim(f.ctx, store.ClaimRequest{MessageID: id, Agent: agent, Task: "reply", Role: "owner", At: time.Now()})
+	classifierOK(t, err)
+}
+func (f *classifierFixture) owner(t *testing.T, id, agent string) {
+	t.Helper()
+	claims, err := f.h.store.Claims(f.ctx, id, agent)
+	classifierOK(t, err)
+	classifierEqual(t, len(claims.Claims), 1)
+	classifierEqual(t, claims.Claims[0].AgentID, agent)
+	classifierEqual(t, len(claims.Assignments), 0)
+}
+
+type classifierGate struct {
+	started, release chan struct{}
+	calls            atomic.Int32
+}
+
+func newBlockedClassifier(t *testing.T) (*classifierFixture, *classifierGate) {
+	t.Helper()
+	gate := &classifierGate{started: make(chan struct{}), release: make(chan struct{})}
+	return newClassifierFixture(t, gate.ask), gate
+}
+func (g *classifierGate) ask(ctx context.Context, req classifier.Request) (classifier.Answer, error) {
+	if g.calls.Add(1) == 1 {
+		close(g.started)
 	}
 	select {
-	case m := <-outsider.Send:
-		t.Fatalf("outsider got room message: %+v", m)
-	default:
+	case <-g.release:
+		return chosenTester(req), nil
+	case <-ctx.Done():
+		return classifier.Answer{}, ctx.Err()
 	}
 }

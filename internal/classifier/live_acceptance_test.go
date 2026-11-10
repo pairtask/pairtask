@@ -18,7 +18,7 @@ func TestClassifierLiveAcceptanceTypeSafeSynthetic(t *testing.T) {
 	if key == "" {
 		t.Fatal("live smoke requested without a TypeSafe credential")
 	}
-	client, err := classifier.NewClient(classifier.ProviderTypeSafe, "", key, 15*time.Second, nil)
+	client, err := classifier.NewClient(classifier.Credential{Provider: classifier.ProviderTypeSafe, Key: key}, 15*time.Second, nil)
 	if err != nil {
 		t.Fatal("cannot construct canonical TypeSafe client")
 	}

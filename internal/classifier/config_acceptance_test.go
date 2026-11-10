@@ -32,9 +32,9 @@ func TestClassifierConfigAcceptanceMissingKeyKeepsChatAvailable(t *testing.T) {
 		{"PAIRTASK_CLASSIFIER": "shadow", "PAIRTASK_CLASSIFIER_KEY_FILE": filepath.Join(t.TempDir(), "missing")},
 	} {
 		cfg, status, err := loadClassifier(values)
-		if err != nil || cfg.Enabled() || status == "" {
-			t.Errorf("missing credential prevented fallback: enabled=%v status=%q err=%v", cfg.Enabled(), status, err)
-		}
+		providerOK(t, err)
+		providerEqual(t, cfg.Enabled(), false)
+		providerEqual(t, status != "", true)
 	}
 }
 

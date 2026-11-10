@@ -31,61 +31,74 @@ func acceptedAnswer() string {
 	return `{"model":"jev-1.14.0","answers":{"assignee":{"type":"choice","choice":"a1","confidence":0.91,"probabilities":{"a1":0.95,"a2":0.03,"none":0.02}}}}`
 }
 
+type canonicalCase struct {
+	provider, model, endpoint, response string
+}
+
 func TestClassifierProviderAcceptanceCanonicalRequest(t *testing.T) {
-	for _, provider := range []string{classifier.ProviderTypeSafe, classifier.ProviderWorkersAI} {
-		t.Run(provider, func(t *testing.T) {
-			request := syntheticRequest()
-			wantURL := "https://api.typesafe.ai/v1/systemone"
-			response := acceptedAnswer()
-			if provider == classifier.ProviderWorkersAI {
-				request.Model = "clef"
-				wantURL = "https://api.cloudflare.com/client/v4/accounts/account123/ai/run/@cf/cloudflare/clef"
-				response = `{"success":true,"result":` + response + `}`
-			}
-			calls := 0
-			transport := classifierTransport(func(r *http.Request) (*http.Response, error) {
-				calls++
-				if r.URL.String() != wantURL || r.Method != http.MethodPost {
-					t.Errorf("request = %s %s", r.Method, r.URL)
-				}
-				if r.Header.Get("Authorization") != "Bearer synthetic-private-marker" {
-					t.Error("missing credential header")
-				}
-				data, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if strings.Contains(string(data), "synthetic-private-marker") {
-					t.Error("credential entered request content")
-				}
-				var body struct {
-					Model, State string
-					Questions    map[string]struct {
-						Type, Instructions string
-						Criteria           map[string]string
-					}
-				}
-				if err := json.Unmarshal(data, &body); err != nil {
-					t.Fatal(err)
-				}
-				q := body.Questions["assignee"]
-				if body.Model != request.Model || body.State != request.State || len(body.Questions) != 1 || q.Type != "choice" || !reflect.DeepEqual(q.Criteria, request.Criteria) {
-					t.Errorf("unexpected provider body: %s", data)
-				}
-				return syntheticResponse(r, 200, response), nil
-			})
-			client, err := classifier.NewClient(provider, "account123", "synthetic-private-marker", time.Second, transport)
-			if err != nil {
-				t.Fatal(err)
-			}
-			answer, err := client.Ask(context.Background(), request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if calls != 1 || answer.Choice != "a1" || answer.Confidence != .91 || answer.Model != "jev-1.14.0" {
-				t.Fatalf("calls=%d answer=%+v", calls, answer)
-			}
-		})
+	for _, tc := range []canonicalCase{
+		{classifier.ProviderTypeSafe, "jev-1.14.0", "https://api.typesafe.ai/v1/systemone", acceptedAnswer()},
+		{classifier.ProviderWorkersAI, "clef", "https://api.cloudflare.com/client/v4/accounts/account123/ai/run/@cf/cloudflare/clef", `{"success":true,"result":` + acceptedAnswer() + `}`},
+	} {
+		t.Run(tc.provider, func(t *testing.T) { checkCanonicalProvider(t, tc) })
+	}
+}
+
+func checkCanonicalProvider(t *testing.T, tc canonicalCase) {
+	t.Helper()
+	request := syntheticRequest()
+	request.Model = tc.model
+	calls := 0
+	transport := classifierTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		providerEqual(t, r.URL.String(), tc.endpoint)
+		checkProviderRequest(t, r, request)
+		return syntheticResponse(r, 200, tc.response), nil
+	})
+	client, err := classifier.NewClient(classifier.Credential{Provider: tc.provider, Account: "account123", Key: "synthetic-private-marker"}, time.Second, transport)
+	providerOK(t, err)
+	answer, err := client.Ask(context.Background(), request)
+	providerOK(t, err)
+	providerEqual(t, calls, 1)
+	providerEqual(t, answer.Choice, "a1")
+	providerEqual(t, answer.Confidence, .91)
+	providerEqual(t, answer.Model, "jev-1.14.0")
+}
+
+func checkProviderRequest(t *testing.T, r *http.Request, request classifier.Request) {
+	t.Helper()
+	providerEqual(t, r.Method, http.MethodPost)
+	providerEqual(t, r.Header.Get("Authorization"), "Bearer synthetic-private-marker")
+	data, err := io.ReadAll(r.Body)
+	providerOK(t, err)
+	providerEqual(t, strings.Contains(string(data), "synthetic-private-marker"), false)
+	var body struct {
+		Model, State string
+		Questions    map[string]struct {
+			Type, Instructions string
+			Criteria           map[string]string
+		}
+	}
+	providerOK(t, json.Unmarshal(data, &body))
+	q := body.Questions["assignee"]
+	providerEqual(t, body.Model, request.Model)
+	providerEqual(t, body.State, request.State)
+	providerEqual(t, len(body.Questions), 1)
+	providerEqual(t, q.Type, "choice")
+	providerEqual(t, q.Criteria, request.Criteria)
+}
+
+func providerEqual(t *testing.T, got, want any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func providerOK(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -102,7 +115,7 @@ func TestClassifierProviderAcceptanceRedirectNeverForwardsCredential(t *testing.
 				resp.Header.Set("Location", "https://api.typesafe.ai/untrusted-target")
 				return resp, nil
 			})
-			client, err := classifier.NewClient(classifier.ProviderTypeSafe, "", "synthetic-private-marker", time.Second, transport)
+			client, err := classifier.NewClient(classifier.Credential{Provider: classifier.ProviderTypeSafe, Key: "synthetic-private-marker"}, time.Second, transport)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +156,7 @@ func TestClassifierProviderAcceptanceInvalidResponses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			transport := classifierTransport(func(r *http.Request) (*http.Response, error) { return syntheticResponse(r, tc.status, tc.body), nil })
-			client, err := classifier.NewClient(classifier.ProviderTypeSafe, "", "synthetic-private-marker", time.Second, transport)
+			client, err := classifier.NewClient(classifier.Credential{Provider: classifier.ProviderTypeSafe, Key: "synthetic-private-marker"}, time.Second, transport)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -158,7 +171,7 @@ func TestClassifierProviderAcceptanceDeadline(t *testing.T) {
 		<-r.Context().Done()
 		return nil, r.Context().Err()
 	})
-	client, err := classifier.NewClient(classifier.ProviderTypeSafe, "", "synthetic-private-marker", 20*time.Millisecond, transport)
+	client, err := classifier.NewClient(classifier.Credential{Provider: classifier.ProviderTypeSafe, Key: "synthetic-private-marker"}, 20*time.Millisecond, transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,10 +206,10 @@ func TestClassifierRosterAcceptanceIncludesAgentNamedNone(t *testing.T) {
 
 func TestClassifierStateAcceptanceUTF8(t *testing.T) {
 	state := classifier.State(strings.Repeat("é", classifier.StateMax), "")
-	if !utf8.ValidString(state) || len(state) > classifier.StateMax || !strings.HasPrefix(state, "é") {
-		t.Fatal("invalid or overlong truncated state")
-	}
-	if got := classifier.State("hello", "team"); !strings.Contains(got, "team") || !strings.Contains(got, "hello") {
-		t.Fatalf("room/text absent: %q", got)
-	}
+	providerEqual(t, utf8.ValidString(state), true)
+	providerEqual(t, len(state) <= classifier.StateMax, true)
+	providerEqual(t, strings.HasPrefix(state, "é"), true)
+	got := classifier.State("hello", "team")
+	providerEqual(t, strings.Contains(got, "team"), true)
+	providerEqual(t, strings.Contains(got, "hello"), true)
 }
