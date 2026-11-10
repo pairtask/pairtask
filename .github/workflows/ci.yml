@@ -33,7 +33,7 @@ jobs:
   mac-sharing:
     # The script suite and provisioning on macOS: only for script or image changes.
     needs: [classify]
-    if: needs.classify.outputs.scripts == 'true'
+    if: needs.classify.outputs.scripts != 'false'
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -69,16 +69,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - if: needs.classify.outputs.go == 'true'
+      - if: needs.classify.outputs.go != 'false'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.10'
-      - if: needs.classify.outputs.infra == 'true'
+      - if: needs.classify.outputs.infra != 'false'
         uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
           tofu_version: '1.12.6'
           tofu_wrapper: false
-      - if: needs.classify.outputs.pi == 'true'
+      - if: needs.classify.outputs.pi != 'false'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
@@ -87,22 +87,22 @@ jobs:
       # store past the earlier 1200s (#276); 1800s restores about a 2x
       # margin. Tests keep their own deadlines, so a hang still fails within
       # the budget.
-      - if: needs.classify.outputs.go == 'true'
+      - if: needs.classify.outputs.go != 'false'
         run: go test -race ./... -timeout=1800s
-      - if: needs.classify.outputs.scripts == 'true'
+      - if: needs.classify.outputs.scripts != 'false'
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Test the Pi extension
-        if: needs.classify.outputs.pi == 'true'
+        if: needs.classify.outputs.pi != 'false'
         working-directory: integrations/pi
         run: npm ci --ignore-scripts --no-audit --no-fund && npm test
       - name: Check that every pinned base image is mirrored or still upstream
         # Pushes skip this: base-mirror itself publishes, resumes drafts and verifies.
-        if: github.event_name != 'push' && needs.classify.outputs.infra == 'true'
+        if: github.event_name != 'push' && needs.classify.outputs.infra != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/base-image-mirror.py check --repo "$GITHUB_REPOSITORY"
       - name: Check the infrastructure definitions
-        if: needs.classify.outputs.infra == 'true'
+        if: needs.classify.outputs.infra != 'false'
         run: |
           tofu -chdir=infra/incus init -input=false -lockfile=readonly
           tofu -chdir=infra/incus fmt -check
@@ -113,7 +113,7 @@ jobs:
     # The experimental CPace dependency (#178): its pinned upstream draft-21
     # vector tests, cross-checked with a second implementation, under -race.
     needs: [classify]
-    if: needs.classify.outputs.go == 'true'
+    if: needs.classify.outputs.go != 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -317,7 +317,7 @@ jobs:
     # pull request that skips the image proofs still tests arm64. checks
     # covers amd64 with -race.
     needs: [classify]
-    if: needs.classify.outputs.go == 'true'
+    if: needs.classify.outputs.go != 'false'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:

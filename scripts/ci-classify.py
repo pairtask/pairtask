@@ -85,7 +85,7 @@ def docs_only(decision):
 CI_PATHS = (".github/", "scripts/ci-classify.py", "scripts/tests/test_ci_classify_acceptance.py", "scripts/sandbox_source.py")
 GO_PATHS = ("go.mod", "go.sum", "cmd/", "internal/", "testdata/")
 INFRA_PATHS = ("infra/", "docs/skills/", "scripts/base-image-mirror.py")  # the mirror check is its own test
-PI_PATHS = ("integrations/",)
+PI_PATHS = ("integrations/pi/",)
 FLAGS = ("go", "scripts", "pi", "infra")
 
 
@@ -95,10 +95,10 @@ def under(path, roots):
 
 def kind(path):
     """The kind of one path: docs, ci, go, infra, pi, scripts, or other."""
-    if under(path, CI_PATHS):
-        return "ci"
     if safe_doc(path):
         return "docs"
+    if under(path, CI_PATHS):
+        return "ci"
     if under(path, GO_PATHS):
         return "go"
     if under(path, INFRA_PATHS):
