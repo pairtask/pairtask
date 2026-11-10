@@ -117,11 +117,18 @@ def kinds(paths):
 def flags(decision, found):
     """Which test jobs run, by the kinds found; everything unless the run is
     a pull request the diff of which was read and holds only known kinds."""
-    everything = {flag: "true" for flag in FLAGS}
-    if decision in (ALWAYS, FORCED, FAILED) or "ci" in found or "other" in found:
-        return everything
+    if runs_everything(decision, found):
+        return {flag: "true" for flag in FLAGS}
     return {"go": token("go" in found), "scripts": token(bool({"go", "scripts", "infra"} & set(found))),
             "pi": token("pi" in found), "infra": token("infra" in found)}
+
+
+def runs_everything(decision, found):
+    """Not a pull request whose diff was read, or a diff with a CI or an
+    unknown path: nothing may be left out."""
+    unread = decision in (ALWAYS, FORCED, FAILED)
+    unbounded = bool({"ci", "other"} & set(found))
+    return unread or unbounded
 
 
 def token(value):
