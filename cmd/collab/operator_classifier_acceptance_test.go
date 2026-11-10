@@ -22,7 +22,7 @@ func TestClassifierCLIAcceptanceReportWireAndEvidence(t *testing.T) {
 }
 func checkClassifierCLIReport(t *testing.T, asJSON bool) {
 	t.Helper()
-	r := protocol.ClassifierReport{Since: time.Now().Add(-time.Hour), Count: 3, Threshold: .7, Outcomes: map[string]int{"predicted": 2, "timeout": 1}, Models: map[string]int{"typesafe/jev-latest/jev-1.14.0": 3}, Agreement: protocol.ClassifierAgreement{Compared: 2, Agreed: 1, Disagreed: 1}, LatencyMS: protocol.ClassifierLatency{Asked: 3, P50: 215, P95: 5000, Max: 5000}}
+	r := protocol.ClassifierReport{Since: time.Now().Add(-time.Hour), Count: 3, Threshold: .7, Outcomes: map[string]int{"predicted": 2, "timeout": 1}, Models: map[string]int{"typesafe/jev-latest/jev-1.14.0": 3}, Usage: map[string]int64{"input_tokens": 360, "output_tokens": 36}, Agreement: protocol.ClassifierAgreement{Compared: 2, Agreed: 1, Disagreed: 1}, LatencyMS: protocol.ClassifierLatency{Asked: 3, P50: 215, P95: 5000, Max: 5000}}
 	socket, requests := classifierReportSocket(t, r)
 	args := []string{"operator", "classifier", "report", "--socket", socket, "--since", "2h"}
 	if asJSON {
@@ -70,9 +70,10 @@ func checkClassifierOutput(t *testing.T, data []byte, asJSON bool) {
 		}
 		classifierCLIEqual(t, reply.ClassifierReport != nil, true)
 		classifierCLIEqual(t, reply.ClassifierReport.Agreement.Compared, 2)
+		classifierCLIEqual(t, reply.ClassifierReport.Usage, map[string]int64{"input_tokens": 360, "output_tokens": 36})
 		return
 	}
-	for _, text := range []string{"shadow", "none applied", "uncalibrated", "weak label", "jev-1.14.0", "215", "5000"} {
+	for _, text := range []string{"shadow", "none applied", "uncalibrated", "weak label", "jev-1.14.0", "215", "5000", "input_tokens 360", "output_tokens 36"} {
 		if !strings.Contains(string(data), text) {
 			t.Errorf("text missing %q: %s", text, data)
 		}

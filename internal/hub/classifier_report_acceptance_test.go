@@ -25,6 +25,7 @@ func TestClassifierReportAcceptanceClaimsAreWeakLabelsAndReadsDoNotMutate(t *tes
 	classifierEqual(t, r.Outcomes[store.PredictionSkipped], 1)
 	classifierEqual(t, r.LatencyMS.Asked, 4)
 	classifierEqual(t, r.LatencyMS.Max, int64(40))
+	classifierEqual(t, r.Usage, map[string]int64{"input_tokens": 480, "output_tokens": 48})
 	classifierEqual(t, r.Agreement, protocol.ClassifierAgreement{Compared: 2, Agreed: 1, Disagreed: 1, Unclaimed: 2})
 	classifierEqual(t, f.predictionRows(t, at), before)
 }
@@ -39,7 +40,7 @@ func seedClaimedPrediction(t *testing.T, f *classifierFixture, seed reportSeed) 
 	t.Helper()
 	f.send(t, protocol.Message{MessageID: seed.id})
 	f.drain(t, seed.id)
-	f.seedPrediction(t, store.Prediction{MessageID: seed.id, Outcome: store.PredictionPredicted, AgentID: "tester", Provider: "typesafe", Model: "jev-latest", ModelVersion: "jev-1.14.0", Threshold: .7, LatencyMS: seed.latency, CreatedAt: seed.at})
+	f.seedPrediction(t, store.Prediction{MessageID: seed.id, Outcome: store.PredictionPredicted, AgentID: "tester", Provider: "typesafe", Model: "jev-latest", ModelVersion: "jev-1.14.0", Threshold: .7, Usage: map[string]int64{"input_tokens": 120, "output_tokens": 12}, LatencyMS: seed.latency, CreatedAt: seed.at})
 	if seed.id == "unclaimed" {
 		return
 	}
