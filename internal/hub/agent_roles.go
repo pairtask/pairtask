@@ -113,21 +113,42 @@ func (h *Hub) feedbackItem(ctx context.Context, agent string, p store.Prediction
 // feedbackVerdict is the agent's verdict, or "" when the prediction isn't
 // about it or the model gave no answer (skipped, failed, timed out).
 func feedbackVerdict(agent string, p store.Prediction, claimant string) string {
-	if p.Outcome != store.PredictionPredicted && p.Outcome != store.PredictionAbstain {
+	if !modelAnswered(p) {
 		return ""
 	}
-	picked := p.Outcome == store.PredictionPredicted && p.AgentID == agent
-	switch {
-	case picked && claimant == agent:
-		return protocol.VerdictAgreed
-	case claimant == agent:
-		return protocol.VerdictMissed
-	case picked && claimant != "":
-		return protocol.VerdictWrongPick
-	case picked:
-		return protocol.VerdictUnclaimedPick
+	if claimant == agent {
+		return claimedVerdict(agent, p)
 	}
-	return ""
+	return pickedVerdict(agent, p, claimant)
+}
+
+// modelAnswered: the model picked an agent or abstained.
+func modelAnswered(p store.Prediction) bool {
+	return p.Outcome == store.PredictionPredicted || p.Outcome == store.PredictionAbstain
+}
+
+func pickedYou(agent string, p store.Prediction) bool {
+	return p.Outcome == store.PredictionPredicted && p.AgentID == agent
+}
+
+// claimedVerdict is for a reply the agent claimed.
+func claimedVerdict(agent string, p store.Prediction) string {
+	if pickedYou(agent, p) {
+		return protocol.VerdictAgreed
+	}
+	return protocol.VerdictMissed
+}
+
+// pickedVerdict is for a reply the agent didn't claim: only a pick of it
+// concerns it.
+func pickedVerdict(agent string, p store.Prediction, claimant string) string {
+	switch {
+	case !pickedYou(agent, p):
+		return ""
+	case claimant != "":
+		return protocol.VerdictWrongPick
+	}
+	return protocol.VerdictUnclaimedPick
 }
 
 // rosterRoles are the roles the model sees: the standalone file's, overlaid
