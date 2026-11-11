@@ -64,6 +64,7 @@ type picker struct {
 
 func newComposer() composer {
 	editor := textarea.New()
+	editor.SetStyles(editorStyles())
 	editor.ShowLineNumbers = false
 	editor.Prompt = "› "
 	editor.Placeholder = "Message everyone · @agent for one · / for commands"
@@ -323,6 +324,7 @@ func (m *Model) pickLiteral(id string) {
 // openCommandLine starts a command; the draft is kept as it is.
 func (m *Model) openCommandLine() {
 	input := textinput.New()
+	input.SetStyles(commandStyles())
 	input.Prompt = "/"
 	input.SetWidth(m.compose.width - 2)
 	input.Focus()

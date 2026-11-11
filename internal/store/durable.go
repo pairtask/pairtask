@@ -229,10 +229,15 @@ const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session,
 
 // groupColumn is a group send's canonical members (JSON), or NULL: an
 // operator group's, or a paired workspace's message to several agents, as
-// the import it became, in the pairing it came under, named them (#276).
+// the import it became, in the pairing it came under, named them (#276), or
+// an operator's ⇄ send to agents here (#278), addressed group:<its id>, whose
+// members are its recipients. Without that last one, history and replay
+// lost the members and each such send opened a conversation of its own.
 const groupColumn = `COALESCE((SELECT o.members FROM operator_requests o WHERE o.message_id = mm.message_id AND o.scope_kind = 'group'),
     (SELECT ri.recipients FROM remote_imports ri WHERE ri.local_id = mm.message_id AND ri.pairing_epoch = COALESCE(mm.remote_epoch, 1)
-        AND mm.origin = 'remote' AND json_array_length(ri.recipients) > 1))`
+        AND mm.origin = 'remote' AND json_array_length(ri.recipients) > 1),
+    CASE WHEN mm.origin = 'operator' AND m.recipient = 'group:' || mm.message_id THEN
+        (SELECT json_group_array(agent_id) FROM (SELECT r.agent_id FROM message_receipts r WHERE r.message_id = mm.message_id ORDER BY r.agent_id)) END)`
 
 // remoteColumns are where a message from a paired workspace came from.
 const remoteColumns = `mm.remote_contact, (SELECT pc.name FROM peer_contacts pc WHERE pc.identity_key = mm.remote_contact),
