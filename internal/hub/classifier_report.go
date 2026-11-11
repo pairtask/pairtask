@@ -50,6 +50,9 @@ func (h *Hub) classifierReport(ctx context.Context, since time.Time, rows []stor
 	}
 	report.LatencyMS = latency(latencies)
 	report.Predictions, report.Agreement = h.classifierListed(ctx, rows)
+	if roles, err := h.rosterRoles(ctx); err == nil && len(roles) > 0 {
+		report.Roles = roles
+	}
 	return report
 }
 

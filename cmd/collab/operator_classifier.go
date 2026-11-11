@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -76,6 +78,7 @@ func writeClassifierReport(w io.Writer, r protocol.ClassifierReport) {
 	if len(r.Usage) > 0 {
 		fmt.Fprintln(w, "Usage (provider counters, summed): "+counts64(r.Usage))
 	}
+	writeRoles(w, r.Roles)
 	a := r.Agreement
 	fmt.Fprintf(w, "Agreement with the reply claim (a weak label): %d agreed, %d disagreed of %d compared; %d predicted and unclaimed\n",
 		a.Agreed, a.Disagreed, a.Compared, a.Unclaimed)
@@ -91,6 +94,18 @@ func writeClassifierReport(w io.Writer, r protocol.ClassifierReport) {
 			line += " claim: " + printable(p.Claimant)
 		}
 		fmt.Fprintln(w, line)
+	}
+}
+
+// writeRoles prints the roles the model sees, one agent per line.
+func writeRoles(w io.Writer, roles map[string]string) {
+	if len(roles) == 0 {
+		fmt.Fprintln(w, "Roles: none declared yet (agents set their own with set_role)")
+		return
+	}
+	fmt.Fprintln(w, "Roles (as the model sees them):")
+	for _, agent := range slices.Sorted(maps.Keys(roles)) {
+		fmt.Fprintf(w, "  %s: %s\n", printable(agent), printable(roles[agent]))
 	}
 }
 

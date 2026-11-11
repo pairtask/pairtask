@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = DecisionVersion
+	Version                 = RoleVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -231,6 +231,10 @@ type Message struct {
 	DecisionKey         string                   `json:"decision_key,omitempty"`          // decision_request: the agent's stable key, for replay
 	AnchorMessageID     string                   `json:"anchor_message_id,omitempty"`     // decision_request: the chat message the operator answers; empty asks the broker to post one
 	Decision            *Decision                `json:"decision,omitempty"`              // decision_result
+	AgentRoleText       string                   `json:"agent_role_text,omitempty"`       // role_set: the sender's one-line role; empty clears
+	AgentRole           *AgentRole               `json:"agent_role,omitempty"`            // role_result
+	FeedbackLimit       int                      `json:"feedback_limit,omitempty"`        // classifier_feedback_get: items to list
+	ClassifierFeedback  *ClassifierFeedback      `json:"classifier_feedback,omitempty"`   // classifier_feedback_result
 	ReviewID            string                   `json:"review_id,omitempty"`             // review frames (#201): the review concerned
 	ReviewOp            string                   `json:"review_op,omitempty"`             // operator_review: what to do
 	ReviewSpec          *ReviewSpec              `json:"review_spec,omitempty"`           // operator_review request

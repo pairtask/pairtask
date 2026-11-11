@@ -134,7 +134,11 @@ func ineligible(out protocol.Message, send operatorSend) string {
 // predict asks the model and records one row, whatever happened.
 func (h *Hub) predict(ctx context.Context, job classifierJob) {
 	c := h.classify.cfg
-	roster := classifier.NewRoster(job.eligible, c.Roles)
+	roles, err := h.rosterRoles(ctx)
+	if err != nil {
+		h.log.Error("agent roles unavailable; the model sees the configured ones", "error", err)
+	}
+	roster := classifier.NewRoster(job.eligible, roles)
 	req := classifier.Request{Model: c.Model, State: classifier.State(job.text, job.room), Criteria: roster.Criteria,
 		Instructions: "Which agent is this operator message for? Choose the one agent it addresses or asks to act; choose none when no single agent is clearly meant."}
 	started := c.Clock()

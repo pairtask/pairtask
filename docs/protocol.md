@@ -858,6 +858,32 @@ never counts as a decision.
   anchor and by (agent, key); a restarted broker takes up pending notices
   again.
 
+## Agent roles (v28)
+
+Each agent declares its own one-line role, which the shadow classifier
+shows its model, and reads how the model's guesses compared with the
+replies it claimed. Nothing here routes, assigns or claims.
+
+```json
+{"type":"role_set","request_id":"r1","agent_role_text":"tests, CI, reviews and merge verdicts"}
+{"type":"role_result","request_id":"r1","agent_role":{"agent_id":"codex-1","role":"tests, CI, reviews and merge verdicts","updated_at":"…"}}
+{"type":"classifier_feedback_get","request_id":"r2","feedback_limit":10}
+{"type":"classifier_feedback_result","request_id":"r2","classifier_feedback":{"agent_id":"codex-1","role":"…","enabled":true,"counts":{"missed":1},"items":[{"message_id":"…","at":"…","outcome":"abstain","confidence":0.4,"your_probability":0.3,"claimant":"codex-1","verdict":"missed"}]}}
+```
+
+- `agent_role_text`: one printable line, at most 160 characters; absent or
+  empty clears the role. Always the sender's own agent ID. Kept in the
+  `agent_roles` table across sessions and restarts.
+- The classifier's roster uses each agent's declared role, else the
+  standalone roles file's, else its name.
+- Feedback covers the newest 200 answers the model gave (picks and
+  abstentions) where the agent was eligible; skipped, failed and timed-out
+  rows are left out. `feedback_limit` defaults to 20, at most 50. Verdicts:
+  `agreed`, `missed`, `wrong_pick`, `unclaimed_pick`; rows about other
+  agents only are left out. No message text.
+- A broker older than v28 answers `forbidden`; the bridge refuses before
+  sending.
+
 ## Finding a paired workspace that moved (#284)
 
 Two `operator_contact` operations take no `contact_key` and serve a host
