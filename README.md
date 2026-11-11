@@ -37,9 +37,9 @@ workspace controlling what it shares.
 
 - 🤝 **Work with your agents**: Codex, Claude and Pi in one workspace; they message each other and claim tasks while you direct them from one chat. Group them in [rooms](docs/operator-chat.md#conversations); see their [status and activity](docs/operator-chat.md#status-and-agent-activity) in the chat and the [dashboard](docs/dashboard.md).
 
-- 🔔 **Get pinged in Slack when an agent needs you**: An agent that needs your decision asks for it; the question lands in your chat, and with [Slack notifications](docs/host-commands.md#notifications-slack) on (`pairtask notify on --slack`) you get one line in Slack pointing at it. You answer in the chat; a notice is never an approval.
+- 🔔 **Get pinged in Slack when an agent needs you**: An agent that needs your decision asks for it; the question lands in your chat, and with [Slack notifications](docs/slack-notifications.md) on (`pairtask notify on --slack`) you get one line in Slack pointing at it. You answer in the chat; a notice is never an approval.
 
-- 🧭 **Let Jev sort untagged messages**: TypeSafe **Jev** (or Cloudflare **Clef**) records which agent a message to everyone without an `@` tag was for, in shadow mode: nothing is applied yet. `pairtask classifier on` turns it on with your API key; `pairtask classifier status` shows what it recorded ([details](docs/host-commands.md#classifier-shadow-mode)).
+- 🧭 **Let Jev sort untagged messages**: TypeSafe **Jev** (or Cloudflare **Clef**) records which agent a message to everyone without an `@` tag was for, in shadow mode: nothing is applied yet. `pairtask classifier on` turns it on with your API key; `pairtask classifier status` shows what it recorded ([details](docs/classifier.md)).
 
 - 🌐 **Work with your colleagues' agents**: [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link.
 
@@ -136,7 +136,7 @@ workspace controlling what it shares.
    pairing route on, since the sandbox broker reaches the provider through
    it) asks for your API key and turns it on; `pairtask classifier status` shows what
    it recorded; `pairtask classifier off` removes the key
-   ([details and what leaves the host](docs/host-commands.md#classifier-shadow-mode)).
+   ([details and what leaves the host](docs/classifier.md)).
 
    Optional, off by default: Slack when an agent needs your decision. An
    agent asks through its `request_decision` tool; the broker posts the
@@ -145,7 +145,7 @@ workspace controlling what it shares.
    `--secret-file`), sends Slack one line pointing at it. You answer in the
    chat; being notified is never an approval. `pairtask notify status` shows
    the settings, `pairtask notify off` removes the URL
-   ([details and what leaves the host](docs/host-commands.md#notifications-slack)).
+   ([details and what leaves the host](docs/slack-notifications.md)).
 
 ### Agent commands
 
@@ -270,6 +270,10 @@ locally, without container isolation.
   pairing in `pairtask chat`. [Formatting](docs/chat-formatting.md): Markdown,
   diagrams and `/diagram` export.
 - [Dashboard](docs/dashboard.md): the read-only terminal view and its controls.
+- [Slack notifications](docs/slack-notifications.md): get a Slack message when
+  an agent needs your decision; setup in four steps.
+- [Jev classifier](docs/classifier.md): record which agent an untagged message
+  was for, in shadow mode.
 - [Pi](docs/pi.md): run Pi alongside Codex and Claude.
 - [Troubleshooting](docs/troubleshooting.md): symptoms and what to check.
 - [Renamed from collab-ai](docs/renamed.md): old command and setting names.

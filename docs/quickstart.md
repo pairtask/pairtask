@@ -110,7 +110,7 @@ PAIRTASK_CLASSIFIER_KEY_FILE="$HOME/.pairtask-jev-key" ./pairtask-broker
 Then `./pairtask operator classifier report --socket /tmp/collab-ai.sock
 --since 24h` shows what it recorded. The sandbox install does the same with `pairtask classifier on`
 ([README](../README.md)). Every setting, what leaves the host, and Clef's
-account: [classifier](host-commands.md#classifier-shadow-mode).
+account: [classifier](classifier.md).
 
 ## Optional: Slack when an agent needs a decision
 
@@ -130,7 +130,7 @@ PAIRTASK_NOTIFY=slack PAIRTASK_NOTIFY_SECRET_FILE="$HOME/.pairtask-slack-webhook
 
 The sandbox install does the same with `pairtask notify on --slack`
 ([README](../README.md)). Every setting and what leaves the host:
-[notifications](host-commands.md#notifications-slack).
+[notifications](slack-notifications.md).
 
 ## Watch, stop, and return
 

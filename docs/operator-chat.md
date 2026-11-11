@@ -259,13 +259,13 @@ italics, underline, code): see [chat formatting](chat-formatting.md). Delivery
 and acknowledgment are not the same as approval: agents decide and you approve.
 
 A message to everyone with no `@` tag is settled by the agents' claims. The
-optional [classifier](host-commands.md#classifier-shadow-mode), when the broker
+optional [classifier](classifier.md), when the broker
 runs it in shadow mode, records which agent a model thinks it was for; nothing
 in the chat changes until that record has been evaluated.
 
 An agent that needs your decision can ask the broker to record that
 (`request_decision`): the question arrives as a message from the agent, and
-with [notifications](host-commands.md#notifications-slack) on, Slack gets one
+with [notifications](slack-notifications.md) on, Slack gets one
 line pointing at it. Reply to that message to answer; a reply to anything else
 answers nothing, and the notice itself is never an approval.
 
