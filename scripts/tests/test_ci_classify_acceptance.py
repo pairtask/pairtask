@@ -1,6 +1,8 @@
 """Exercise CI image decisions through the public CLI and real Git diffs."""
 
 from pathlib import Path
+import ast
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -119,17 +121,78 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                          "docs_only=false\n")
         self.assertEqual(self.docs_only("missing-base", head), "docs_only=false\n")
 
-    def test_docs_only_never_skips_push_or_dispatch(self):
+    def test_docs_only_main_push_skips_builds_and_release_inputs(self):
+        self.write("docs/quickstart.md")
+        self.write("docs/slack-notifications.md")
+        self.write("README.md")
+        head = self.commit()
+        result = self.run_cli("--event", "push", "--ref", "refs/heads/main",
+                              "--base", self.base, "--head", head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         "images=false\nreason=safe-docs-only\ndocs_only=true\n"
+                         "go=false\nscripts=false\npi=false\ninfra=false\n")
+
+    def test_main_push_with_code_then_docs_still_builds(self):
+        self.write("cmd/broker/main.go")
+        self.commit()
         self.write("docs/quickstart.md")
         head = self.commit()
-        for event in ("push", "workflow_dispatch"):
-            with self.subTest(event=event):
-                result = self.run_cli("--event", event, "--base", self.base,
-                                      "--head", head)
+        result = self.run_cli("--event", "push", "--ref", "refs/heads/main",
+                              "--base", self.base, "--head", head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         "images=true\nreason=event-always-builds\ndocs_only=false\n"
+                         "go=true\nscripts=true\npi=true\ninfra=true\n")
+
+    def test_main_push_with_unreadable_diff_builds(self):
+        self.write("docs/quickstart.md")
+        head = self.commit()
+        for base, finish in (("missing-before", head), (self.base, "missing-head")):
+            with self.subTest(base=base, head=finish):
+                result = self.run_cli("--event", "push", "--ref", "refs/heads/main",
+                                      "--base", base, "--head", finish)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout,
+                                 "images=true\nreason=diff-failed\ndocs_only=false\n"
+                                 "go=true\nscripts=true\npi=true\ninfra=true\n")
+
+    def test_only_main_push_may_skip_docs_builds(self):
+        self.write("docs/quickstart.md")
+        head = self.commit()
+        for event, ref in (("push", "refs/tags/workspace-v1.2.3"),
+                           ("push", "refs/heads/feature"),
+                           ("workflow_dispatch", "refs/heads/main")):
+            with self.subTest(event=event, ref=ref):
+                result = self.run_cli("--event", event, "--ref", ref,
+                                      "--base", self.base, "--head", head)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout,
                                  "images=true\nreason=event-always-builds\ndocs_only=false\n"
                                  "go=true\nscripts=true\npi=true\ninfra=true\n")
+
+    def test_main_docs_push_can_be_forced_to_build(self):
+        self.write("docs/quickstart.md")
+        head = self.commit()
+        result = self.run_cli("--event", "push", "--ref", "refs/heads/main",
+                              "--base", self.base, "--head", head, "--force-full")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout,
+                         "images=true\nreason=forced-full\ndocs_only=false\n"
+                         "go=true\nscripts=true\npi=true\ninfra=true\n")
+
+    def test_workflow_wires_main_push_diff_and_filters_safe_docs(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("BASE: ${{ github.event.pull_request.base.sha || github.event.before }}", workflow)
+        self.assertIn("REF: ${{ github.ref }}", workflow)
+        self.assertIn('ci-classify.py --event "$EVENT" --ref "$REF" --base "$BASE"', workflow)
+        push = workflow.split("  push:\n", 1)[1].split("  workflow_dispatch:\n", 1)[0]
+        ignore = push.split("paths-ignore:", 1)[1].splitlines()[0].strip()
+        policy_docs = runpy.run_path(str(ROOT / "scripts/ci-classify.py"))["POLICY_DOCS"]
+        self.assertEqual(ast.literal_eval(ignore), [*policy_docs, "docs/*.md"])
+        concurrency = workflow.split("concurrency:", 1)[1].split("jobs:", 1)[0]
+        self.assertIn("group: ci-${{ github.ref }}", concurrency)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", concurrency)
 
     def test_only_jobs_for_changed_known_paths_are_selected(self):
         cases = {

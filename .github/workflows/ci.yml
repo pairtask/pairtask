@@ -7,6 +7,9 @@ on:
   push:
     branches: [main]
     tags: ['workspace-v*']
+    # A documentation-only main push must not replace a pending code release.
+    # Tags still run regardless of path filters.
+    paths-ignore: ['README.md', 'CLA.md', 'CONTRIBUTING.md', '.github/PULL_REQUEST_TEMPLATE.md', 'docs/*.md']
   workflow_dispatch:
     inputs:
       collab_ref:
@@ -27,7 +30,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  # Preserve main releases; stale PR revisions can still be cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   mac-sharing:
@@ -150,11 +154,11 @@ jobs:
     outputs:
       images: ${{ steps.decide.outputs.images }}
       reason: ${{ steps.decide.outputs.reason }}
-      # docs_only: a pull request touching nothing but safe documentation;
+      # docs_only: a pull request or main push touching only safe documentation;
       # the Go, macOS and vector jobs skip (reported as skipped, never as a
-      # pass they did not earn). The four flags say which suites a pull
-      # request needs by the kinds of paths it changes; every other run, a
-      # workflow or classifier change, and any unknown path set them all.
+      # pass they did not earn). The four flags select PR suites by path;
+      # docs-only main pushes skip all suites. Other pushes and events,
+      # workflow or classifier changes, and unknown paths run every suite.
       docs_only: ${{ steps.decide.outputs.docs_only }}
       go: ${{ steps.decide.outputs.go }}
       scripts: ${{ steps.decide.outputs.scripts }}
@@ -170,14 +174,15 @@ jobs:
         shell: bash
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.sha }}
+          REF: ${{ github.ref }}
           # A fixed true/false from the expression; no label text reaches the shell.
           FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full-images') }}
         run: |
           force=()
           if [[ "$FORCE_FULL" == true ]]; then force=(--force-full); fi
-          python3 scripts/ci-classify.py --event "$EVENT" --base "$BASE" --head "$HEAD" "${force[@]}" | tee -a "$GITHUB_OUTPUT"
+          python3 scripts/ci-classify.py --event "$EVENT" --ref "$REF" --base "$BASE" --head "$HEAD" "${force[@]}" | tee -a "$GITHUB_OUTPUT"
 
   images:
     # On pushes, wait for base-mirror so images build from the just-published mirror; elsewhere it is skipped.
