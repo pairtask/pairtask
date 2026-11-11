@@ -7,8 +7,9 @@ for, and records the answer.
 
 It is in **shadow mode**: it only records. Nothing is routed, assigned or
 claimed because of it, and your messages are never held up waiting for it.
-The records show how often the model would have picked the agent that
-actually took the task, so you can decide later whether to let it suggest.
+The report compares its pick with the agent that claimed the message: a
+rough signal, not a measure of accuracy. It helps you decide later whether
+to let it suggest.
 
 ## Before you start
 

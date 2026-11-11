@@ -89,19 +89,20 @@ waiting".
 ## What leaves your machine
 
 One notice per request goes to `hooks.slack.com`, retried twice on a
-temporary delivery failure: the workspace name, the agent's name, the one-line summary the agent wrote, and the ID of the chat
-message to answer. With `--hidden`, only the workspace name. The webhook URL
-never appears in logs, command lines or the database.
+temporary delivery failure: the workspace name, the agent's name, the
+one-line summary the agent wrote, and the ID of the chat message to answer.
+With `--hidden`, only the workspace name. The webhook URL never appears in
+logs, command lines or the database.
 
 ## How agents use it
 
 Agents get a `request_decision` tool ([MCP tools](mcp.md#messaging-tools)).
-They call it with a one-line summary and, ideally, a stable key: asking again
-with the same key returns the same request instead of asking twice. The
-first answer says `pending`, because the notice goes out right after; asking
-again with the same key later shows `sent` or `failed` once delivery
-finishes. It says `off` when
-notifications are off. It never says what you decided.
+They call it with a one-line summary and, ideally, a stable key: asking
+again with the same key returns the same request instead of asking twice.
+The first answer says `pending`, because the notice goes out right after;
+asking again with the same key later shows `sent` or `failed` once delivery
+finishes. It says `off` when notifications are off. It never says what you
+decided.
 
 ## If something goes wrong
 
