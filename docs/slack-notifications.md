@@ -46,7 +46,8 @@ pairtask notify on --slack
 Paste the URL at the prompt; it is not shown while you type. pairtask stores
 it in the sandbox for the broker alone and restarts the broker.
 
-Prefer a file? Put the URL in a file only you can read and pass it:
+Prefer a file? Put the URL in a file only you can read (`chmod 600` if the
+file already exists) and pass it:
 
 ```sh
 (umask 077; pbpaste > ~/.pairtask-slack-webhook)   # macOS; or write the file another way
@@ -87,8 +88,8 @@ waiting".
 
 ## What leaves your machine
 
-One message per request goes to `hooks.slack.com`: the workspace name, the
-agent's name, the one-line summary the agent wrote, and the ID of the chat
+One notice per request goes to `hooks.slack.com`, retried twice if Slack
+can't be reached: the workspace name, the agent's name, the one-line summary the agent wrote, and the ID of the chat
 message to answer. With `--hidden`, only the workspace name. The webhook URL
 never appears in logs, command lines or the database.
 
@@ -97,8 +98,9 @@ never appears in logs, command lines or the database.
 Agents get a `request_decision` tool ([MCP tools](mcp.md#messaging-tools)).
 They call it with a one-line summary and, ideally, a stable key: asking again
 with the same key returns the same request instead of asking twice. The
-result tells the agent whether the notice went out (`sent`, `failed` or
-`off`), never what you decided.
+first answer says `pending`, because the notice goes out right after; asking
+again with the same key then shows `sent` or `failed`. It says `off` when
+notifications are off. It never says what you decided.
 
 ## If something goes wrong
 
