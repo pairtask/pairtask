@@ -12,14 +12,14 @@ Prints exactly seven lines for $GITHUB_OUTPUT:
     pi=true|false
     infra=true|false
 
-docs_only is true only for a pull request whose full diff touches nothing
+docs_only is true only for a pull request or main push whose full diff touches nothing
 but safe documentation (the images decision is then "safe-docs-only"). The
 four flags say which test jobs a pull request needs, from the kinds of
 paths it changes (see kind): Go changes run the Go suites and, since the
 script suite reads Go test data, the script suite; script or image changes
 run the script suite; Pi changes its tests; image recipe and infrastructure
 changes the mirror check and the OpenTofu checks. Anything outside the known kinds, a change to the
-workflow or to this classifier, every other event, --force-full and a diff
+workflow or to this classifier, non-main pushes, tags, dispatches, --force-full and a diff
 failure set every flag: the run does everything. The chat TUI exception
 never makes a run docs-only.
 
@@ -30,9 +30,11 @@ documentation, or that and the operator chat TUI (internal/chat/): the
 installed-image proofs never run the TUI, it reaches the broker only through
 internal/protocol, which still builds, and the host Go suites test it on
 both architectures. This is a TUI-only exception, not "presentation".
-Every other event, any unknown or shipped path, --force-full (the pull
-request's ci:full-images label), and any failure to read the diff build
-images. A usage error exits non-zero and prints no decision.
+On main pushes, only a docs-only diff skips all builds; any other diff runs
+every job so code is fully tested and released. Tags and dispatches always
+build. Any unknown or shipped path, --force-full (the pull request's
+ci:full-images label), and any failure to read the diff build images. A usage
+error exits non-zero and prints no decision.
 """
 
 import argparse
@@ -115,8 +117,7 @@ def kinds(paths):
 
 
 def flags(decision, found):
-    """Which test jobs run, by the kinds found; everything unless the run is
-    a pull request the diff of which was read and holds only known kinds."""
+    """Which test jobs run, by the kinds found; a docs-only main push skips all."""
     if runs_everything(decision, found):
         return {flag: "true" for flag in FLAGS}
     return {"go": token("go" in found), "scripts": token(bool({"go", "scripts", "infra"} & set(found))),
@@ -124,8 +125,7 @@ def flags(decision, found):
 
 
 def runs_everything(decision, found):
-    """Not a pull request whose diff was read, or a diff with a CI or an
-    unknown path: nothing may be left out."""
+    """An always-full decision, or a diff with a CI or unknown path."""
     unread = decision in (ALWAYS, FORCED, FAILED)
     unbounded = bool({"ci", "other"} & set(found))
     return unread or unbounded
@@ -169,7 +169,8 @@ def decide(run):
     """The decision for one run and the kinds it changed: its event, refs,
     repository and force flag. The kinds are empty when the diff was not
     read."""
-    if run.event != "pull_request":
+    main_push = run.event == "push" and run.ref == "refs/heads/main"
+    if run.event != "pull_request" and not main_push:
         return ALWAYS, []
     if run.force_full:
         return FORCED, []
@@ -177,6 +178,8 @@ def decide(run):
         paths = changed_paths(run.repo, run.base, run.head)
     except (subprocess.CalledProcessError, OSError, ValueError):
         return FAILED, []
+    if main_push:
+        return (SKIP, kinds(paths)) if all(safe_doc(path) for path in paths) else (ALWAYS, [])
     return skip_for(paths), kinds(paths)
 
 
@@ -195,6 +198,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", default=".")
     parser.add_argument("--event", default="")
+    parser.add_argument("--ref", default="")
     parser.add_argument("--base", default="")
     parser.add_argument("--head", default="")
     parser.add_argument("--force-full", action="store_true", help="build images whatever the diff (the ci:full-images label)")
