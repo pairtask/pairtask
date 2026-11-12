@@ -155,9 +155,9 @@ func TestMCPToolDiscovery(t *testing.T) {
 	for _, tool := range listed.Tools {
 		names[tool.Name] = true
 	}
-	assertEqual(t, "tool count", len(names), 28)
+	assertEqual(t, "tool count", len(names), 30)
 	for _, name := range []string{"send", "workspaces", "request_review", "reviews_asked", "receive", "wait", "wait_reply", "acknowledge", "delegate_listener", "wait_delegated", "revoke_listener", "status", "read_status",
-		"claim", "release_claim", "finish_claim", "read_claims", "request_decision", "join_room", "leave_room", "list_rooms",
+		"claim", "release_claim", "finish_claim", "read_claims", "request_decision", "set_role", "classifier_feedback", "join_room", "leave_room", "list_rooms",
 		"review_requests", "accept_review", "decline_review", "restart_review", "submit_review", "publish_review", "check_review"} {
 		assertEqual(t, name, names[name], true)
 	}

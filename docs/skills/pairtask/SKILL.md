@@ -117,6 +117,17 @@ the operator's reply to that message in the chat; wait for it as above. The
 result's `delivery` says whether they were told, never what they decided; the
 same `key` again returns the request as it stands instead of asking twice.
 
+Keep your role current. When you start, call `set_role` with one line saying
+what kind of operator requests you take (for example "tests, CI, reviews and
+merge verdicts"); change it when your work changes. The shadow classifier
+(Jev) shows that line to its model when it guesses who an untagged message to
+everyone was for. Now and then, and after you claim a few such messages, call
+`classifier_feedback`: `missed` means you claimed a message the model gave to
+nobody or to another agent, `wrong_pick` that it picked you for one someone
+else took. Look up those message IDs in your inbox and sharpen your role so
+the next guess would be right. It routes and assigns nothing; never claim or
+skip work because of it.
+
 Handle a returned message even if its result also reports disconnection. Preserve
 its ID and correlation, report the delivery fault, and use the mode-specific
 recovery steps. Stop retrying on identity collision, permission denial, or a

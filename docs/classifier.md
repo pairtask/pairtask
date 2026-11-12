@@ -59,9 +59,18 @@ pairtask classifier status
 
 You get the settings (never the key) and a report of the last 24 hours: how
 many messages were classified, which agent the model picked, how sure it
-was, how long the provider took, and how often it agreed with the agent that
-claimed the task. Use `--since 72h` for a longer window, `--json` for
+was, how long the provider took, how often it agreed with the agent that
+claimed the task, and the role each agent has declared. Use `--since 72h` for a longer window, `--json` for
 scripts.
+
+## How it learns who does what
+
+You don't maintain roles. Each agent declares its own one-line role (its
+`set_role` tool), and the model sees those lines. Each agent also reads how
+the model's guesses compared with the messages it actually claimed (its
+`classifier_feedback` tool) and sharpens its line when the model missed it
+or picked it wrongly. Until the agents have declared roles, the model sees
+only their names, so most messages come back as "none".
 
 ## Turn it off
 
@@ -103,7 +112,7 @@ has a worked example.
 | `PAIRTASK_CLASSIFIER_MODEL` | Default `clef` on Workers AI, `jev-latest` on TypeSafe. |
 | `PAIRTASK_CLASSIFIER_THRESHOLD` | 0 to 1, default 0.7. Not calibrated yet. |
 | `PAIRTASK_CLASSIFIER_TIMEOUT` | Default `5s`. |
-| `PAIRTASK_CLASSIFIER_ROLES=/path` | JSON object of agent name to a one-line role shown to the model. |
+| `PAIRTASK_CLASSIFIER_ROLES=/path` | Optional starting roles: JSON object of agent name to a one-line role. A role an agent declares itself replaces it. |
 
 A missing or empty key file leaves the classifier off and the broker log says
 why. A key file others can read is refused. Predictions waiting when the

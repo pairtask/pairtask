@@ -667,7 +667,7 @@ var controlFamilies = []struct {
 	frames map[string]bool
 	handle func(*Hub, context.Context, map[string]*Client, Inbound)
 }{
-	{claimFrames, (*Hub).handleClaim}, {decisionFrames, (*Hub).handleDecision},
+	{claimFrames, (*Hub).handleClaim}, {decisionFrames, (*Hub).handleDecision}, {roleFrames, (*Hub).handleRole},
 	{roomFrames, (*Hub).handleRoom}, {reviewFrames, (*Hub).handleReview},
 }
 

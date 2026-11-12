@@ -31,6 +31,7 @@ type ClassifierReport struct {
 	Threshold   float64                `json:"threshold"`             // the last configured threshold seen; uncalibrated
 	Usage       map[string]int64       `json:"usage"`                 // the providers\' usage counters summed, by their names
 	Predictions []ClassifierPrediction `json:"predictions,omitempty"` // the newest, at most ClassifierReportListed
+	Roles       map[string]string      `json:"roles,omitempty"`       // the roles the model now sees, by agent: declared by the agents, else configured
 }
 
 // ClassifierReportListed bounds the predictions listed in a report.
