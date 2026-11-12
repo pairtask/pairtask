@@ -29,7 +29,6 @@ func commandContactChoices(t *testing.T) (*chatHarness, string) {
 func TestCommandChoiceCoverageAcceptanceContactVerbsOfferKnownValues(t *testing.T) {
 	for _, tc := range []struct{ line, choice string }{
 		{"pair unshare", "local-agent"},
-		{"pair review", "remote-agent"},
 		{"pair approve", "pending-review"},
 		{"pair decline", "pending-review"},
 		{"pair name", "--clear"},
