@@ -80,25 +80,25 @@ func TestAgentRolesMCPAcceptanceSetAndFeedbackUseCorrelatedFrames(t *testing.T) 
 		Role protocol.AgentRole `json:"agent_role"`
 	}
 	decodeRoleTool(t, set.StructuredContent, &setResult)
-	if setResult.Role.AgentID != "worker" || setResult.Role.Role != "CI tests and reviews" {
-		t.Fatalf("set_role lost the broker-confirmed role: %+v", setResult)
-	}
+	assertEqual(t, "stored role agent", setResult.Role.AgentID, "worker")
+	assertEqual(t, "stored role text", setResult.Role.Role, "CI tests and reviews")
 	feedback := call(t, session, "classifier_feedback", map[string]any{"limit": 7})
 	var feedbackResult struct {
 		Feedback protocol.ClassifierFeedback `json:"classifier_feedback"`
 	}
 	decodeRoleTool(t, feedback.StructuredContent, &feedbackResult)
-	if feedbackResult.Feedback.AgentID != "worker" || len(feedbackResult.Feedback.Items) != 1 || feedbackResult.Feedback.Items[0].Verdict != protocol.VerdictMissed {
-		t.Fatalf("feedback lost the missed-claim evidence: %+v", feedbackResult)
-	}
+	assertEqual(t, "feedback agent", feedbackResult.Feedback.AgentID, "worker")
+	assertEqual(t, "feedback item count", len(feedbackResult.Feedback.Items), 1)
+	assertEqual(t, "feedback missed verdict", feedbackResult.Feedback.Items[0].Verdict, protocol.VerdictMissed)
 	requireNoError(t, <-done)
 	setRequest, feedbackRequest := <-requests, <-requests
-	if setRequest.Type != protocol.TypeRoleSet || setRequest.AgentRoleText != "CI tests and reviews" || setRequest.RequestID == "" {
-		t.Fatalf("set_role sent the wrong frame: %+v", setRequest)
-	}
-	if feedbackRequest.Type != protocol.TypeClassifierFeedbackGet || feedbackRequest.FeedbackLimit != 7 || feedbackRequest.RequestID == "" || feedbackRequest.RequestID == setRequest.RequestID {
-		t.Fatalf("classifier_feedback sent the wrong frame: %+v", feedbackRequest)
-	}
+	assertEqual(t, "set frame type", setRequest.Type, protocol.TypeRoleSet)
+	assertEqual(t, "set frame role", setRequest.AgentRoleText, "CI tests and reviews")
+	assertEqual(t, "set frame request ID", setRequest.RequestID != "", true)
+	assertEqual(t, "feedback frame type", feedbackRequest.Type, protocol.TypeClassifierFeedbackGet)
+	assertEqual(t, "feedback frame limit", feedbackRequest.FeedbackLimit, 7)
+	assertEqual(t, "feedback frame request ID", feedbackRequest.RequestID != "", true)
+	assertEqual(t, "request IDs differ", feedbackRequest.RequestID != setRequest.RequestID, true)
 }
 
 func decodeRoleTool(t *testing.T, content any, out any) {
