@@ -15,20 +15,24 @@ import json
 from pathlib import Path
 import re
 import struct
+from typing import NamedTuple
 import zipfile
 
 MANIFEST = Path(__file__).resolve().parent.parent / "desktop" / "extension" / "manifest.json"
 ENTRY = "server/pairtask-desktop"
 
-# Go's GOOS and GOARCH, and how each is told apart in a binary's header.
+# Each executable format by its magic: where its machine field sits, how it
+# is read, and the GOOS it serves; then each machine value's GOARCH.
 ELF, MACHO = b"\x7fELF", b"\xcf\xfa\xed\xfe"
-FORMATS = {"linux": ELF, "darwin": MACHO}
+HEADERS = {ELF: ("<H", 18, "linux"), MACHO: ("<I", 4, "darwin")}
 MACHINES = {
-    (ELF, "amd64"): 0x3E,
-    (ELF, "arm64"): 0xB7,
-    (MACHO, "amd64"): 0x01000007,
-    (MACHO, "arm64"): 0x0100000C,
+    (ELF, 0x3E): "amd64",
+    (ELF, 0xB7): "arm64",
+    (MACHO, 0x01000007): "amd64",
+    (MACHO, 0x0100000C): "arm64",
 }
+FORMATS = {goos: magic for magic, (_, _, goos) in HEADERS.items()}
+PLATFORMS = {(HEADERS[magic][2], goarch) for (magic, _), goarch in MACHINES.items()}
 
 SEMVER = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -39,18 +43,26 @@ SEMVER = re.compile(
 EPOCH = (1980, 1, 1, 0, 0, 0)
 
 
-def bundle_name(goos, goarch):
-    return f"pairtask-desktop-{goos}-{goarch}.mcpb"
+class Target(NamedTuple):
+    """What a bundle is built for: Go's GOOS and GOARCH, and its version."""
+
+    goos: str
+    goarch: str
+    version: str
 
 
-def build(binary, goos, goarch, version, out_dir, template=MANIFEST):
-    """Write the bundle for binary into out_dir and return its path."""
+def bundle_name(target):
+    return f"pairtask-desktop-{target.goos}-{target.goarch}.mcpb"
+
+
+def build(binary, target, out_dir, template=MANIFEST):
+    """Write target's bundle for binary into out_dir and return its path."""
     data = Path(binary).read_bytes()
-    check(data, goos, goarch, version)
-    manifest = manifest_for(json.loads(Path(template).read_text(encoding="utf-8")), version, goos)
+    check(data, target)
+    manifest = manifest_for(json.loads(Path(template).read_text(encoding="utf-8")), target)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / bundle_name(goos, goarch)
+    path = out_dir / bundle_name(target)
     partial = path.with_name(path.name + ".partial")
     with zipfile.ZipFile(partial, "w") as bundle:
         add(bundle, "manifest.json", (json.dumps(manifest, indent=2) + "\n").encode("utf-8"), 0o644)
@@ -59,40 +71,38 @@ def build(binary, goos, goarch, version, out_dir, template=MANIFEST):
     return path
 
 
-def check(data, goos, goarch, version):
+def check(data, target):
     """Refuse an unknown platform, a version that isn't semver, or a binary
-    that isn't for goos/goarch."""
-    if goos not in FORMATS:
-        raise ValueError(f"unsupported GOOS {goos!r}: want one of {sorted(FORMATS)}")
-    if (FORMATS[goos], goarch) not in MACHINES:
-        raise ValueError(f"unsupported GOARCH {goarch!r}: want amd64 or arm64")
-    if not SEMVER.match(version):
-        raise ValueError(f"version {version!r} is not semver")
-    if binary_platform(data) != (goos, goarch):
-        raise ValueError(f"the binary is not a {goos}/{goarch} executable")
+    that isn't for the target's platform."""
+    if target.goos not in FORMATS:
+        raise ValueError(f"unsupported GOOS {target.goos!r}: want one of {sorted(FORMATS)}")
+    if (target.goos, target.goarch) not in PLATFORMS:
+        raise ValueError(f"unsupported GOARCH {target.goarch!r}: want amd64 or arm64")
+    if not SEMVER.match(target.version):
+        raise ValueError(f"version {target.version!r} is not semver")
+    if binary_platform(data) != (target.goos, target.goarch):
+        raise ValueError(f"the binary is not a {target.goos}/{target.goarch} executable")
 
 
 def binary_platform(data):
     """The (GOOS, GOARCH) a binary's header names, or None."""
     magic = data[:4]
-    if magic == ELF and len(data) >= 20:
-        machine = struct.unpack_from("<H", data, 18)[0]
-    elif magic == MACHO and len(data) >= 8:
-        machine = struct.unpack_from("<I", data, 4)[0]
-    else:
+    header = HEADERS.get(magic)
+    if header is None:
         return None
-    for (fmt, goarch), value in MACHINES.items():
-        if fmt == magic and value == machine:
-            return next(goos for goos, f in FORMATS.items() if f == magic), goarch
-    return None
+    layout, offset, goos = header
+    if len(data) < offset + struct.calcsize(layout):
+        return None
+    goarch = MACHINES.get((magic, struct.unpack_from(layout, data, offset)[0]))
+    return (goos, goarch) if goarch else None
 
 
-def manifest_for(template, version, goos):
-    """The template with this build's version and its one platform."""
+def manifest_for(template, target):
+    """The template with the target's version and its one platform."""
     manifest = dict(template)
-    manifest["version"] = version
+    manifest["version"] = target.version
     compatibility = dict(manifest.get("compatibility", {}))
-    compatibility["platforms"] = [goos]
+    compatibility["platforms"] = [target.goos]
     manifest["compatibility"] = compatibility
     return manifest
 

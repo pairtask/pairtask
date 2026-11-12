@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from desktop_extension import FORMATS, build
+from desktop_extension import FORMATS, Target, build
 
 
 def main():
@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--version", required=True, help="The extension's semver version")
     parser.add_argument("--out", type=Path, required=True, help="The directory to write the bundle into")
     args = parser.parse_args()
-    print(build(args.binary, args.goos, args.goarch, args.version, args.out), flush=True)
+    print(build(args.binary, Target(args.goos, args.goarch, args.version), args.out), flush=True)
 
 
 if __name__ == "__main__":

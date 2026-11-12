@@ -34,10 +34,10 @@ func (n *Node) freshInbox(ctx context.Context, contacts []protocol.PairingContac
 	for i, c := range contacts {
 		syncs[i] = n.requestSync(ctx, c.IdentityKey)
 	}
-	deadline := time.Now().Add(syncBudget)
+	r := inboxRead{n: n, limit: limit, deadline: time.Now().Add(syncBudget)}
 	out := make([]Conversation, 0, len(contacts))
 	for i, c := range contacts {
-		conv, err := n.awaitConversation(ctx, c, limit, syncs[i], deadline)
+		conv, err := r.await(ctx, c, syncs[i])
 		if err != nil {
 			return nil, err
 		}
@@ -61,16 +61,24 @@ func (n *Node) requestSync(ctx context.Context, contact string) pendingSync {
 	return p
 }
 
-// awaitConversation reads the conversation with c until its session ended
-// or the deadline passed, and says which.
-func (n *Node) awaitConversation(ctx context.Context, c protocol.PairingContactView, limit int, p pendingSync, deadline time.Time) (Conversation, error) {
+// inboxRead reads conversations of at most limit messages, waiting for
+// their sessions until one shared deadline.
+type inboxRead struct {
+	n        *Node
+	limit    int
+	deadline time.Time
+}
+
+// await reads the conversation with c until its session ended or the
+// deadline passed, and says which.
+func (r inboxRead) await(ctx context.Context, c protocol.PairingContactView, p pendingSync) (Conversation, error) {
 	for {
-		conv, sync, err := n.conversation(ctx, c, limit)
+		conv, sync, err := r.n.conversation(ctx, c, r.limit)
 		if err != nil {
 			return conv, err
 		}
 		done, fresh := p.outcome(sync)
-		if done || p.refused != "" || !time.Now().Before(deadline) {
+		if r.settled(done, p) {
 			conv.Fresh, conv.SyncFailure = fresh, p.failure(sync, fresh)
 			return conv, nil
 		}
@@ -78,6 +86,11 @@ func (n *Node) awaitConversation(ctx context.Context, c protocol.PairingContactV
 			return conv, err
 		}
 	}
+}
+
+// settled: the session ended, none was asked for, or the time is up.
+func (r inboxRead) settled(done bool, p pendingSync) bool {
+	return done || p.refused != "" || !time.Now().Before(r.deadline)
 }
 
 // outcome reports whether the session asked for has ended, and whether it

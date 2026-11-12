@@ -55,11 +55,16 @@ func run(args []string, log *slog.Logger) error {
 // stopping the process is a normal end, whatever error the session ended
 // with meanwhile; anything else is the error.
 func sessionEnd(ctx context.Context, in *clientInput, err error, log *slog.Logger) error {
-	if err != nil && (in.closed.Load() || ctx.Err() != nil) {
+	if err != nil && stoppedByClient(ctx, in) {
 		log.Info("session ended", "detail", err)
 		return nil
 	}
 	return err
+}
+
+// stoppedByClient: Desktop closed stdin, or a signal stopped the process.
+func stoppedByClient(ctx context.Context, in *clientInput) bool {
+	return in.closed.Load() || ctx.Err() != nil
 }
 
 // clientInput is stdin, noting when the client closed it.
