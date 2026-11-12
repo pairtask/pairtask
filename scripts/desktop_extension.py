@@ -74,14 +74,32 @@ def build(binary, target, out_dir, template=MANIFEST):
 def check(data, target):
     """Refuse an unknown platform, a version that isn't semver, or a binary
     that isn't for the target's platform."""
+    problem = platform_problem(target) or version_problem(target) or binary_problem(data, target)
+    if problem:
+        raise ValueError(problem)
+
+
+def platform_problem(target):
+    """Why the target's platform isn't one a bundle is built for, or None."""
     if target.goos not in FORMATS:
-        raise ValueError(f"unsupported GOOS {target.goos!r}: want one of {sorted(FORMATS)}")
+        return f"unsupported GOOS {target.goos!r}: want one of {sorted(FORMATS)}"
     if (target.goos, target.goarch) not in PLATFORMS:
-        raise ValueError(f"unsupported GOARCH {target.goarch!r}: want amd64 or arm64")
-    if not SEMVER.match(target.version):
-        raise ValueError(f"version {target.version!r} is not semver")
-    if binary_platform(data) != (target.goos, target.goarch):
-        raise ValueError(f"the binary is not a {target.goos}/{target.goarch} executable")
+        return f"unsupported GOARCH {target.goarch!r}: want amd64 or arm64"
+    return None
+
+
+def version_problem(target):
+    """Why the target's version isn't semver, or None."""
+    if SEMVER.match(target.version):
+        return None
+    return f"version {target.version!r} is not semver"
+
+
+def binary_problem(data, target):
+    """Why the binary isn't the target's executable, or None."""
+    if binary_platform(data) == (target.goos, target.goarch):
+        return None
+    return f"the binary is not a {target.goos}/{target.goarch} executable"
 
 
 def binary_platform(data):
