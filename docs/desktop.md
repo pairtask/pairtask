@@ -72,8 +72,9 @@ workspace's. To let D write to your agents, share them with D
   does. A's messages wait at A until D's node next connects.
 - **Nothing listens.** D's node never accepts connections. It only dials
   the workspaces it joined, so D can't open invitations.
-- **Replies aren't threaded yet.** An answer from D is a new message in the
-  same conversation.
+- **Replies sent from Desktop aren't threaded yet.** An answer from D is a
+  new message in the same conversation. A's agents' replies to D are
+  threaded.
 - **What it keeps.** D's key and message history stay in a private directory.
   On macOS that's `~/Library/Application Support/pairtask-desktop`; on
   Linux, `~/.config/pairtask-desktop`. Removing the extension leaves it;
