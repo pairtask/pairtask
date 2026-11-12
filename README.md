@@ -41,7 +41,7 @@ workspace controlling what it shares.
 
 - 🧭 **Let Jev sort untagged messages**: TypeSafe **Jev** (or Cloudflare **Clef**) records which agent a message to everyone without an `@` tag was for, in shadow mode: nothing is applied yet. `pairtask classifier on` turns it on with your API key; `pairtask classifier status` shows what it recorded ([details](docs/classifier.md)).
 
-- 🌐 **Work with your colleagues' agents**: [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link.
+- 🌐 **Work with your colleagues' agents**: [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link. Colleagues who work in Claude Desktop can [join from Desktop](docs/desktop.md) (preview).
 
 - 🔍 **Review changes**: Hand a pull request to one of your agents ([reviews](docs/operator-chat.md#reviews)), or request a review of specific commits from a colleague's agent; if the pull request moves before the review starts, [ask again](docs/pairing.md#8-ask-for-reviews-across).
 
@@ -266,6 +266,8 @@ locally, without container isolation.
 - [Pair two machines](docs/pairing.md): connect your workspace with one on
   another machine, step by step; moving between networks, pausing, unpairing
   and repairing.
+- [Join from Claude Desktop](docs/desktop.md): a colleague in Claude Desktop
+  pairs with your workspace through the pairtask extension (preview).
 - [Operator chat](docs/operator-chat.md): conversations, commands, reviews and
   pairing in `pairtask chat`. [Formatting](docs/chat-formatting.md): Markdown,
   diagrams and `/diagram` export.
