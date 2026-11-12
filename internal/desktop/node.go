@@ -39,6 +39,9 @@ type Node struct {
 	cancel context.CancelFunc
 }
 
+// ErrUnsafeDataDir: the data directory isn't a private directory of ours.
+var ErrUnsafeDataDir = errors.New("unsafe data directory")
+
 // databaseFile is the broker's database in the data directory; the
 // workspace identity sits beside it.
 const databaseFile = "broker.db"
@@ -49,8 +52,8 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.DiscardHandler)
 	}
-	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
-		return nil, fmt.Errorf("data directory: %w", err)
+	if err := ensureDataDir(cfg.Dir); err != nil {
+		return nil, err
 	}
 	db := filepath.Join(cfg.Dir, databaseFile)
 	lock, err := store.LockDatabase(db)
