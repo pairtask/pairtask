@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/pairtask/pairtask/internal/protocol"
-	"github.com/pairtask/pairtask/internal/review"
 )
 
 // Review requests with a paired workspace (#235), in its ⇄ tab:
@@ -32,7 +31,7 @@ const (
 // reviewPairWords are the review words of /pair and the least words each
 // takes, itself included; approve and decline take exactly two. Policy
 // flags count here; reviewRequestFor checks the operands without them.
-var reviewPairWords = map[string]int{pairReviews: 3, pairReview: 5, pairApprove: 2, pairDecline: 2}
+var reviewPairWords = map[string]int{pairReviews: 3, pairApprove: 2, pairDecline: 2}
 
 // reviewsAvailable: the broker serves review requests with workspaces.
 func (m *Model) reviewsAvailable() bool {
@@ -107,8 +106,6 @@ func reviewRequestFor(fields pairWords, contact string) (protocol.Message, strin
 	switch fields[0] {
 	case pairReviews:
 		return reviewGrantFor(msg, words, publish, formal)
-	case pairReview:
-		return reviewAskFor(msg, words, publish, formal && publish)
 	}
 	policy := publish || formal
 	if len(words) != 1 || policy {
@@ -125,20 +122,6 @@ func reviewGrantFor(msg protocol.Message, words []string, publish, formal bool) 
 	}
 	msg.ContactOp, msg.ContactAgents = protocol.ContactOpReviewGrant, words[:len(words)-1]
 	msg.ContactReviewGrant = &protocol.ContactReviewGrant{Mode: words[len(words)-1], Publish: publish, Formal: formal}
-	return msg, validReviewWords(msg)
-}
-
-func reviewAskFor(msg protocol.Message, words []string, publish, formal bool) (protocol.Message, string) {
-	if len(words) < 4 {
-		return msg, "usage: /pair review AGENT TARGET BASE HEAD [SCOPE] [--publish] [--formal]"
-	}
-	target, err := review.ParseTarget(words[1])
-	if err != nil {
-		return msg, err.Error()
-	}
-	msg.ContactOp, msg.ContactTo = protocol.ContactOpReviewAsk, []string{strings.TrimPrefix(words[0], "@")}
-	msg.ReviewAsk = &protocol.ReviewAsk{ReviewTarget: target, Base: words[2], Head: words[3], Scope: strings.Join(words[4:], " "),
-		Publish: publish, Formal: formal}
 	return msg, validReviewWords(msg)
 }
 
@@ -291,3 +274,14 @@ func theirReviewID(id string) string {
 }
 
 func shortSHA(sha string) string { return sha[:min(len(sha), 12)] }
+
+// pairReviewRetired answers /pair review, retired in favour of /review: it
+// names the /review command that asks the same of the open tab's workspace.
+func (m *Model) pairReviewRetired(pairWords) tea.Cmd {
+	workspace := "WORKSPACE"
+	if key := m.conv.selected; key.isContact() {
+		workspace = string(routeToken(m.pairedContacts(), identityKey(key.contact)))
+	}
+	m.status = "/pair review is retired: use /review TARGET @AGENT@" + safe(workspace) + " [--pin BASE..HEAD] [--publish] [--formal]"
+	return nil
+}

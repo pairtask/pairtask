@@ -46,7 +46,7 @@ func unpairedNote(c protocol.PairingContactView) string {
 
 // tabMutations are the /pair words that change the open ⇄ tab's workspace.
 var tabMutations = map[string]bool{pairShare: true, pairUnshare: true, pairName: true, pairAddress: true, pairPause: true,
-	pairResume: true, pairReviews: true, pairReview: true, pairApprove: true, pairDecline: true}
+	pairResume: true, pairReviews: true, pairApprove: true, pairDecline: true}
 
 // tombstoneRefused refuses a change to the open tab's workspace once it
 // is unpaired, saying so.
