@@ -144,6 +144,44 @@ jobs:
       - name: Run the pinned upstream draft-21 vector tests
         run: python3 check_vectors.py
 
+  desktop-extensions:
+    # Claude Desktop extensions (docs/desktop.md): pairtask-desktop for each
+    # platform, bundled as MCPB, versioned as this run's release.
+    needs: [classify]
+    if: needs.classify.outputs.go != 'false' || needs.classify.outputs.scripts != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+      - name: Build and bundle each platform
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/workspace-v* ]]; then
+            VERSION="${GITHUB_REF_NAME#workspace-v}"
+          else
+            VERSION="0.0.0-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          fi
+          for platform in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            goos="${platform%/*}" goarch="${platform#*/}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -o "dist/bin/$goos-$goarch/pairtask-desktop" ./cmd/pairtask-desktop
+            python3 scripts/build-mcpb.py --binary "dist/bin/$goos-$goarch/pairtask-desktop" \
+              --goos "$goos" --goarch "$goarch" --version "$VERSION" --out dist/extensions
+          done
+          ls -l dist/extensions
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-extensions
+          path: dist/extensions/*.mcpb
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   classify:
     # Decides whether this run needs the image proofs. Only a pull request that
     # touches nothing but unshipped top-level docs and the operator chat TUI
@@ -390,7 +428,7 @@ jobs:
     if: >-
       github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
       needs.classify.outputs.images == 'true'
-    needs: [checks, go-arm64, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish]
+    needs: [checks, go-arm64, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish, desktop-extensions]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -400,6 +438,10 @@ jobs:
         with:
           pattern: workspace-linux-*
           merge-multiple: true
+          path: release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: desktop-extensions
           path: release
       - name: Publish a versioned workspace release
         env:
