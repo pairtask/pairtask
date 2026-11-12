@@ -11,10 +11,12 @@ import (
 func TestRemoteReviewChatAcceptanceQueuedAskIsNotRefused(t *testing.T) {
 	h, key := contactMessagesHarness(t)
 	h.await(func() bool { return h.m.State().InFlight == 0 })
-	v2Command(h, "/pair review @reviewer pairtask/pairtask#235 base head")
+	v2Command(h, "/review --pin "+strings.Repeat("1", 40)+".."+strings.Repeat("2", 40)+" pairtask/pairtask#235 @reviewer@remote")
 	req := h.take(protocol.TypeOperatorContact)
 	chatEqual(t, "review ask", req.ContactOp, protocol.ContactOpReviewAsk)
 	chatEqual(t, "selected workspace", req.ContactKey, key)
+	chatEqual(t, "pinned base", req.ReviewAsk.Base, strings.Repeat("1", 40))
+	chatEqual(t, "pinned head", req.ReviewAsk.Head, strings.Repeat("2", 40))
 	resp := contactMessagesQueued(req)
 	resp.ContactMessage.ReviewAsk = req.ReviewAsk
 	resp.ContactMessage.Text = "Review request: pairtask/pairtask#235"

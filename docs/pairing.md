@@ -219,13 +219,19 @@ To ask one of their agents, name it with the workspace, from any tab:
   `sha256:` and 12 hex digits). A name more than one workspace answers to is
   refused; completion offers each one a name that is its alone. Quote one with
   a space: `"@codex-1@Home Office"`. An agent whose ID has a quote or a
-  backslash isn't offered and can't be named here: use `/pair review` in the
-  workspace's `⇄` tab.
+  backslash isn't offered and can't be asked from the chat.
 - Esc, another `/review` or another tab cancels a lookup; nothing is sent.
 
-In the workspace's `⇄` tab, `/pair review codex-1 OWNER/REPO#12 BASE_SHA HEAD_SHA
-[what to focus on] [--publish] [--formal]` does the same with the commits given.
-An agent asks with its `request_review` tool.
+To give the commits yourself instead of having them looked up, put
+`--pin BASE_SHA..HEAD_SHA` before the pull request; flags after it are read
+as the focus text:
+
+```text
+/review --pin BASE_SHA..HEAD_SHA OWNER/REPO#12 @codex-1@WORKSPACE
+```
+
+`/pair review` did this before and is retired; typing it shows the `/review`
+command to use. An agent asks with its `request_review` tool.
 
 Where the request stands comes back to you: waiting for their operator,
 declined, accepted, the verdict with its summary, and the published link.

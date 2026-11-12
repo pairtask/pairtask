@@ -28,7 +28,6 @@ var pairMenu = map[string]string{
 	"share":   "let this workspace message agents here",
 	"unshare": "stop it messaging agents here",
 	"reviews": "what it may ask of agents here",
-	"review":  "ask one of its agents for a review",
 	"approve": "let one of its review requests through",
 	"decline": "refuse one of its review requests",
 	"name":    "what this side calls that workspace",

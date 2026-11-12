@@ -60,8 +60,8 @@ func pairArity(fields pairWords) bool {
 	if repair, ok := fields.repairShape(); repair {
 		return ok
 	}
-	if fields[0] == pairUnpair {
-		return true // the open tab's, NAME|KEY, or confirm TOKEN
+	if fields[0] == pairUnpair || fields[0] == pairReview {
+		return true // the open tab's, NAME|KEY, or confirm TOKEN; review only says what replaced it
 	}
 	if review, ok := fields.reviewArity(); review {
 		return ok
@@ -123,7 +123,7 @@ var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
 	pairAddress:              (*Model).addressCommand,
 	pairUnshare:              (*Model).shareCommand,
 	pairReviews:              (*Model).contactReviewCommand,
-	pairReview:               (*Model).contactReviewCommand,
+	pairReview:               (*Model).pairReviewRetired,
 	pairApprove:              (*Model).contactReviewCommand,
 	pairDecline:              (*Model).contactReviewCommand,
 	pairPause:                (*Model).pauseCommand,

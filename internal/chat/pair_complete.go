@@ -17,7 +17,7 @@ const pendingAcceptance = "pending_acceptance"
 var pairVerbs = []string{"open", "find", "status", "cancel", "accept", "reject", "redeem", "settle"}
 
 // contactPairVerbs are offered too in a contact's tab, where they act.
-var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairReview, pairApprove, pairDecline, pairName, pairAddress, pairPause, pairResume, pairUnpair}
+var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairApprove, pairDecline, pairName, pairAddress, pairPause, pairResume, pairUnpair}
 
 // pairVerbsHere are the /pair words that act in the open tab.
 func (m *Model) pairVerbsHere() []string {
@@ -41,7 +41,6 @@ var pairUsages = map[string]string{
 	"share":   "share AGENT...|*: in a ⇄ tab, that workspace may message these agents",
 	"unshare": "unshare AGENT...|*: in a ⇄ tab, it may message them no more",
 	"reviews": "reviews AGENT... ask|auto|off [--publish] [--formal]: in a ⇄ tab, what that workspace may ask of these agents",
-	"review":  "review AGENT TARGET BASE HEAD [SCOPE] [--publish] [--formal]: in a ⇄ tab, ask one of its agents for a review",
 	"approve": "approve ID: in a ⇄ tab, let one of its review requests through",
 	"decline": "decline ID: in a ⇄ tab, refuse one of its review requests",
 	"name":    "name NAME|--clear: in a ⇄ tab, what this side calls that workspace",
@@ -59,6 +58,12 @@ func decidesRequest(word string) bool {
 // for a decision; a typed "sha256:" is ignored, as every key has it.
 func (m *Model) pairCompletions(l argLine) []string {
 	if len(l.words) == 0 {
+		// Keep an exactly typed retired command intact on Enter. Otherwise
+		// the only prefix match, "reviews", consumes it as a completion and
+		// hides the migration guidance.
+		if l.current == pairReview {
+			return nil
+		}
 		return withPrefix(m.pairVerbsHere(), l.current)
 	}
 	if words, ok := pairWordChoices[l.words[0]]; ok {
@@ -95,7 +100,6 @@ var pairWordChoices = map[string]func(*Model, argLine) []string{
 	pairUnshare:              (*Model).unshareCompletions,
 	pairApprove:              (*Model).awaitingRequests,
 	pairDecline:              (*Model).awaitingRequests,
-	pairReview:               (*Model).reviewerChoices,
 	pairName:                 (*Model).nameChoices,
 	protocol.PairingOpStatus: (*Model).operationChoices,
 	protocol.PairingOpSettle: (*Model).operationChoices,
