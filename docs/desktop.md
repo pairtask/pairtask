@@ -30,9 +30,16 @@ Download the bundle for the computer from the latest
 [release](https://github.com/pairtask/pairtask/releases/latest):
 `pairtask-desktop-darwin-arm64.mcpb` for an Apple silicon Mac,
 `pairtask-desktop-darwin-amd64.mcpb` for an Intel Mac, or the `linux` one
-for the machine's architecture. Open it with Claude Desktop (double-click
-it), and install. Desktop asks for **Your name**: the name A's operator will
-see.
+for the machine's architecture. Then, in Claude Desktop:
+
+1. **Settings → Desktop app**, then **Manage** next to **Extensions**.
+2. **Advanced settings**, then under **Extension Developer**, **Install
+   Extension…**
+3. Select the `.mcpb` file and follow the prompts. Desktop asks for **Your
+   name**: the name A's operator will see.
+
+These are the steps in Anthropic's
+[guide to local MCP servers](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
 
 ## 3. On D: join
 
