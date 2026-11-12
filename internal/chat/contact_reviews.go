@@ -282,6 +282,6 @@ func (m *Model) pairReviewRetired(pairWords) tea.Cmd {
 	if key := m.conv.selected; key.isContact() {
 		workspace = string(routeToken(m.pairedContacts(), identityKey(key.contact)))
 	}
-	m.status = "/pair review is retired: use /review TARGET @AGENT@" + safe(workspace) + " [--pin BASE..HEAD] [--publish] [--formal]"
+	m.status = "/pair review is retired: use /review [--pin BASE..HEAD] [--publish] [--formal] TARGET @AGENT@" + safe(workspace)
 	return nil
 }

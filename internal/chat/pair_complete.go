@@ -58,6 +58,12 @@ func decidesRequest(word string) bool {
 // for a decision; a typed "sha256:" is ignored, as every key has it.
 func (m *Model) pairCompletions(l argLine) []string {
 	if len(l.words) == 0 {
+		// Keep an exactly typed retired command intact on Enter. Otherwise
+		// the only prefix match, "reviews", consumes it as a completion and
+		// hides the migration guidance.
+		if l.current == pairReview {
+			return nil
+		}
 		return withPrefix(m.pairVerbsHere(), l.current)
 	}
 	if words, ok := pairWordChoices[l.words[0]]; ok {
