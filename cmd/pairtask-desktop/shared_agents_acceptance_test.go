@@ -25,8 +25,17 @@ func TestDesktopMCPAcceptanceSharedAgents(t *testing.T) {
 	t.Run("send_and_reply", func(t *testing.T) {
 		question := f.sendToAgent(t, "b-worker", "question for B's worker")
 		got := awaitAgentMessage(t, worker, "question for B's worker")
-		if got.Origin != protocol.OriginRemote || got.From != protocol.OperatorID || got.Remote == nil || got.Remote.Contact != f.identity {
-			t.Fatalf("B's worker received wrong provenance: %+v", got)
+		if got.Origin != protocol.OriginRemote {
+			t.Fatalf("B's worker received origin %q", got.Origin)
+		}
+		if got.From != protocol.OperatorID {
+			t.Fatalf("B's worker received sender %q", got.From)
+		}
+		if got.Remote == nil {
+			t.Fatal("B's worker received no remote provenance")
+		}
+		if got.Remote.Contact != f.identity {
+			t.Fatalf("B's worker received contact %q", got.Remote.Contact)
 		}
 		f.replyFromAgent(t, worker, got.MessageID, question.ID)
 	})
@@ -43,8 +52,11 @@ func TestDesktopMCPAcceptanceInboxReportsOfflinePeer(t *testing.T) {
 		t.Fatalf("expected one paired workspace after B stopped: %+v", inbox.Conversations)
 	}
 	conv := inbox.Conversations[0]
-	if conv.Fresh || conv.SyncFailure == "" {
-		t.Fatalf("offline inbox did not disclose that its contents may be stale: %+v", conv)
+	if conv.Fresh {
+		t.Fatalf("offline inbox claimed to be fresh: %+v", conv)
+	}
+	if conv.SyncFailure == "" {
+		t.Fatalf("offline inbox omitted the sync failure: %+v", conv)
 	}
 }
 
@@ -62,8 +74,14 @@ func (f *fullPeerFixture) shareAgents(t *testing.T, contact string, agents ...st
 	t.Helper()
 	resp := f.call(t, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpShare,
 		ContactKey: contact, ContactAgents: agents})
-	if resp.Type != protocol.TypeOperatorContactResult || resp.ContactPage == nil || !slices.Equal(resp.ContactPage.Shared, agents) {
-		t.Fatalf("B did not share agents: %+v", resp)
+	if resp.Type != protocol.TypeOperatorContactResult {
+		t.Fatalf("share returned %s", resp.Type)
+	}
+	if resp.ContactPage == nil {
+		t.Fatal("share returned no contact page")
+	}
+	if !slices.Equal(resp.ContactPage.Shared, agents) {
+		t.Fatalf("B shared %+v, want %+v", resp.ContactPage.Shared, agents)
 	}
 }
 
@@ -72,9 +90,18 @@ func (f *desktopMCPFixture) expectFreshInbox(t *testing.T) {
 	f.b.call(t, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend,
 		ContactKey: f.identity, ContactText: "B's update while Desktop is idle"})
 	inbox := f.inbox(t) // one user-visible check must pull from the dial-only Desktop
-	if len(inbox.Conversations) != 1 || !slices.Contains(inbox.Conversations[0].Directory, "b-worker") ||
-		!containsContactText(inbox.Conversations[0].Messages, "B's update while Desktop is idle") {
-		t.Fatalf("check_inbox did not fetch B's directory and message: %+v", inbox.Conversations)
+	if len(inbox.Conversations) != 1 {
+		t.Fatalf("check_inbox returned %+v", inbox.Conversations)
+	}
+	conv := inbox.Conversations[0]
+	if !conv.Fresh {
+		t.Fatalf("check_inbox returned stale data: %+v", conv)
+	}
+	if !slices.Contains(conv.Directory, "b-worker") {
+		t.Fatalf("check_inbox missed B's directory: %+v", conv)
+	}
+	if !containsContactText(conv.Messages, "B's update while Desktop is idle") {
+		t.Fatalf("check_inbox missed B's message: %+v", conv)
 	}
 }
 
@@ -93,7 +120,10 @@ func (f *desktopMCPFixture) sendToAgent(t *testing.T, agent, message string) pro
 	decodeDesktopMCP(t, desktopTool(t, f.client, "send", map[string]any{
 		"to": f.bIdentity, "agents": []string{agent}, "text": message,
 	}), &sent)
-	if sent.Message.ID == "" || !slices.Equal(sent.Message.To, []string{agent}) {
+	if sent.Message.ID == "" {
+		t.Fatal("Desktop send returned no message ID")
+	}
+	if !slices.Equal(sent.Message.To, []string{agent}) {
 		t.Fatalf("Desktop send did not target %s: %+v", agent, sent.Message)
 	}
 	return sent.Message
@@ -111,10 +141,17 @@ func awaitAgentMessage(t *testing.T, agent *bridge.Client, text string) protocol
 			var payload struct {
 				Text string `json:"text"`
 			}
-			if message.Type == protocol.TypeMsg && json.Unmarshal(message.Payload, &payload) == nil && payload.Text == text {
-				found = message
-				return true
+			if message.Type != protocol.TypeMsg {
+				continue
 			}
+			if json.Unmarshal(message.Payload, &payload) != nil {
+				continue
+			}
+			if payload.Text != text {
+				continue
+			}
+			found = message
+			return true
 		}
 		return false
 	})
@@ -146,9 +183,20 @@ func (f *desktopMCPFixture) replyFromAgent(t *testing.T, agent *bridge.Client, i
 		t.Fatal(err)
 	}
 	view := f.awaitMessage(t, reply.MessageID)
-	if view.Direction != "in" || view.From != "b-worker" || view.Text != "answer from B's worker" ||
-		view.ReplyID != originalID || view.ReplySide != protocol.ReplyByReceiver {
-		t.Fatalf("agent reply lost sender or thread: %+v", view)
+	if view.Direction != "in" {
+		t.Fatalf("agent reply direction: %+v", view)
+	}
+	if view.From != "b-worker" {
+		t.Fatalf("agent reply sender: %+v", view)
+	}
+	if view.Text != "answer from B's worker" {
+		t.Fatalf("agent reply text: %+v", view)
+	}
+	if view.ReplyID != originalID {
+		t.Fatalf("agent reply ID: %+v", view)
+	}
+	if view.ReplySide != protocol.ReplyByReceiver {
+		t.Fatalf("agent reply side: %+v", view)
 	}
 }
 
@@ -162,8 +210,14 @@ func (f *desktopMCPFixture) agentStartsConversation(t *testing.T, agent *bridge.
 		t.Fatal(err)
 	}
 	view := f.awaitMessage(t, out.MessageID)
-	if view.Direction != "in" || view.From != "b-worker" || view.Text != "B's worker starts a conversation" {
-		t.Fatalf("agent-initiated message lost sender: %+v", view)
+	if view.Direction != "in" {
+		t.Fatalf("agent-initiated message direction: %+v", view)
+	}
+	if view.From != "b-worker" {
+		t.Fatalf("agent-initiated message sender: %+v", view)
+	}
+	if view.Text != "B's worker starts a conversation" {
+		t.Fatalf("agent-initiated message text: %+v", view)
 	}
 }
 
