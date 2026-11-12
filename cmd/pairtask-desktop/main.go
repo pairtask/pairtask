@@ -73,8 +73,13 @@ func parseFlags(args []string) (desktop.Config, error) {
 
 // version is the module version this binary was built from, or "dev".
 func version() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
 	}
-	return "dev"
+	switch info.Main.Version {
+	case "", "(devel)":
+		return "dev"
+	}
+	return info.Main.Version
 }

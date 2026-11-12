@@ -190,12 +190,7 @@ func (n *Node) redeem(ctx context.Context, args RedeemArgs) (protocol.PairingJoi
 
 // send writes to the contact named in args.To.
 func (n *Node) send(ctx context.Context, args SendArgs) (protocol.ContactMessageView, error) {
-	contact, err := n.contact(ctx, args.To)
-	if err != nil {
-		return protocol.ContactMessageView{}, err
-	}
-	out, err := n.ask(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend, ContactKey: contact.IdentityKey,
-		ContactText: args.Text, ContactTo: args.Agents}, protocol.TypeOperatorContactResult)
+	out, err := n.askContact(ctx, args.To, protocol.Message{ContactOp: protocol.ContactOpSend, ContactText: args.Text, ContactTo: args.Agents})
 	if err != nil || out.ContactMessage == nil {
 		return protocol.ContactMessageView{}, errors.Join(err, missing(out.ContactMessage == nil))
 	}
@@ -263,16 +258,22 @@ func unread(messages []protocol.ContactMessageView) int {
 
 // markRead marks the received messages read.
 func (n *Node) markRead(ctx context.Context, args ReadArgs) (int, error) {
-	contact, err := n.contact(ctx, args.From)
-	if err != nil {
-		return 0, err
-	}
-	out, err := n.ask(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpRead, ContactKey: contact.IdentityKey,
-		ContactRead: args.IDs}, protocol.TypeOperatorContactResult)
+	out, err := n.askContact(ctx, args.From, protocol.Message{ContactOp: protocol.ContactOpRead, ContactRead: args.IDs})
 	if err != nil || out.ContactMarked == nil {
 		return 0, errors.Join(err, missing(out.ContactMarked == nil))
 	}
 	return *out.ContactMarked, nil
+}
+
+// askContact makes the contact request msg about the paired workspace
+// name picks out.
+func (n *Node) askContact(ctx context.Context, name string, msg protocol.Message) (protocol.Message, error) {
+	contact, err := n.contact(ctx, name)
+	if err != nil {
+		return protocol.Message{}, err
+	}
+	msg.Type, msg.ContactKey = protocol.TypeOperatorContact, contact.IdentityKey
+	return n.ask(ctx, msg, protocol.TypeOperatorContactResult)
 }
 
 // contact is the one paired workspace name picks out: by the name this
