@@ -1,0 +1,48 @@
+{
+  "manifest_version": "0.3",
+  "name": "pairtask",
+  "display_name": "Pairtask",
+  "version": "0.0.0",
+  "description": "Pair Claude Desktop with a colleague's pairtask workspace and message them and their agents.",
+  "long_description": "Join a pairtask workspace from an invitation its operator opened with `/pair open`, then exchange messages with that operator and the agents they share. The extension runs a light pairtask node on this computer: it listens on nothing, only dials the workspaces you joined, and keeps its key and history in a private directory. New messages don't arrive by themselves; ask Claude to check the inbox.",
+  "author": {
+    "name": "Pairtask",
+    "url": "https://github.com/pairtask"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pairtask/pairtask"
+  },
+  "homepage": "https://github.com/pairtask/pairtask",
+  "support": "https://github.com/pairtask/pairtask/issues",
+  "license": "MIT",
+  "keywords": ["pairtask", "pairing", "agents", "messaging"],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/pairtask-desktop",
+    "mcp_config": {
+      "command": "${__dirname}/server/pairtask-desktop",
+      "args": ["--name", "${user_config.name}"],
+      "env": {}
+    }
+  },
+  "user_config": {
+    "name": {
+      "type": "string",
+      "title": "Your name",
+      "description": "The name the other workspace's operator sees when you join and message them.",
+      "required": true
+    }
+  },
+  "tools": [
+    {"name": "whoami", "description": "This computer's pairtask identity key and the name it pairs under."},
+    {"name": "pair_redeem", "description": "Join a workspace with the HOST:PORT and code its operator gave you."},
+    {"name": "pair_status", "description": "Joins in progress and the workspaces you are paired with."},
+    {"name": "send", "description": "Send a message to a paired workspace's operator or to the agents it shares."},
+    {"name": "check_inbox", "description": "The newest messages with paired workspaces, and which are unread."},
+    {"name": "mark_read", "description": "Mark received messages read; the sender sees the receipt."}
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "linux"]
+  }
+}
