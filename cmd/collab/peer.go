@@ -180,9 +180,16 @@ func removeOwnSocket(path string, ln *net.UnixListener, bound os.FileInfo) {
 	if err != nil {
 		return
 	}
-	if os.SameFile(bound, info) {
+	if ownSocket(bound, info) {
 		os.Remove(path)
 	}
+}
+
+// ownSocket: info is still the socket bound as bound. A file that replaced
+// it can reuse its freed inode, so the same device and inode alone don't
+// make it ours.
+func ownSocket(bound, info os.FileInfo) bool {
+	return info.Mode()&os.ModeSocket != 0 && os.SameFile(bound, info)
 }
 
 // daemon names a peer command in its messages.

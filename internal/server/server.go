@@ -143,13 +143,20 @@ func (s *Server) Close() error {
 	}
 	err := s.ln.Close()
 	info, statErr := os.Lstat(s.socketPath)
-	if statErr == nil && os.SameFile(s.socketInfo, info) {
+	if statErr == nil && ownsSocket(s.socketInfo, info) {
 		return errors.Join(err, os.Remove(s.socketPath))
 	}
 	if errors.Is(statErr, os.ErrNotExist) {
 		statErr = nil
 	}
 	return errors.Join(err, statErr)
+}
+
+// ownsSocket: got is still the socket bound as want. The path holds a socket
+// and the same file: a file that replaced the socket can reuse its freed
+// inode, so the same device and inode alone don't make it ours.
+func ownsSocket(want, got os.FileInfo) bool {
+	return got.Mode()&os.ModeSocket != 0 && os.SameFile(want, got)
 }
 
 // handleConn runs the lifecycle of one agent connection:
