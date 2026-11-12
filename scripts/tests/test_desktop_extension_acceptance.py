@@ -33,7 +33,8 @@ class DesktopExtensionAcceptance(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 
-    def build(self, binary, goos="linux", goarch="amd64", version="1.2.3", out=None):
+    def build(self, binary, target=("linux", "amd64", "1.2.3"), out=None):
+        goos, goarch, version = target
         out = out or self.root / "out"
         return subprocess.run(
             [sys.executable, str(BUILDER), "--binary", str(binary), "--goos", goos,
@@ -48,7 +49,7 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 payload = executable_header(goos, goarch)
                 binary.write_bytes(payload)
                 out = self.root / f"out-{goos}-{goarch}"
-                result = self.build(binary, goos, goarch, out=out)
+                result = self.build(binary, (goos, goarch, "1.2.3"), out)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 bundle = out / f"pairtask-desktop-{goos}-{goarch}.mcpb"
                 self.assertEqual(result.stdout.strip(), str(bundle))
@@ -75,7 +76,7 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 self.assertTrue(manifest["user_config"]["name"]["required"])
                 self.assertEqual({tool["name"] for tool in manifest["tools"]}, TOOLS)
                 first = bundle.read_bytes()
-                self.assertEqual(self.build(binary, goos, goarch, out=out).returncode, 0)
+                self.assertEqual(self.build(binary, (goos, goarch, "1.2.3"), out).returncode, 0)
                 self.assertEqual(bundle.read_bytes(), first, "same inputs changed the bundle")
 
     def test_refusals_leave_no_bundle_or_partial_file(self):
@@ -92,7 +93,7 @@ class DesktopExtensionAcceptance(unittest.TestCase):
         for label, binary, goos, goarch, version in cases:
             with self.subTest(label=label):
                 out = self.root / label.replace(" ", "-")
-                result = self.build(binary, goos, goarch, version, out)
+                result = self.build(binary, (goos, goarch, version), out)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(list(out.glob("*")), "rejected build left an artifact")
 

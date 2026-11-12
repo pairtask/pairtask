@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +29,9 @@ import (
 // pairing or message transport by writing directly to the database.
 type fullPeerFixture struct {
 	operatorSocket string
+	agentSocket    string
 	destination    string
+	stop           func()
 }
 
 func startFullPeerFixture(t *testing.T) *fullPeerFixture {
@@ -63,17 +66,22 @@ func startFullPeerFixture(t *testing.T) *fullPeerFixture {
 	go h.Run(ctx)
 	operatorSocket := filepath.Join(dir, "operator.sock")
 	pairSocket := filepath.Join(dir, "pair.sock")
+	agentSocket := filepath.Join(dir, "agent.sock")
 	op := server.NewOperator(operatorSocket, h, os.Getuid(), log)
 	pairing := server.NewPairing(pairSocket, h, log)
+	agents := server.New(agentSocket, h, log)
 	go op.Listen(ctx)
 	go pairing.Listen(ctx)
+	go agents.Listen(ctx)
 	awaitSocket(t, operatorSocket)
 	awaitSocket(t, pairSocket)
+	awaitSocket(t, agentSocket)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		cancel()
 		op.Close()
 		pairing.Close()
+		agents.Close()
 		<-h.Done()
 		st.Close()
 		t.Fatal(err)
@@ -82,19 +90,24 @@ func startFullPeerFixture(t *testing.T) *fullPeerFixture {
 		return (&net.Dialer{}).DialContext(ctx, "unix", pairSocket)
 	}})
 	go relay.Serve(ctx, listener)
-	t.Cleanup(func() {
-		cancel()
-		listener.Close()
-		op.Close()
-		pairing.Close()
-		select {
-		case <-h.Done():
-		case <-time.After(3 * time.Second):
-			t.Error("full peer broker did not stop")
-		}
-		st.Close()
-	})
-	f := &fullPeerFixture{operatorSocket: operatorSocket, destination: listener.Addr().String()}
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			cancel()
+			listener.Close()
+			op.Close()
+			pairing.Close()
+			agents.Close()
+			select {
+			case <-h.Done():
+			case <-time.After(3 * time.Second):
+				t.Error("full peer broker did not stop")
+			}
+			st.Close()
+		})
+	}
+	t.Cleanup(stop)
+	f := &fullPeerFixture{operatorSocket: operatorSocket, agentSocket: agentSocket, destination: listener.Addr().String(), stop: stop}
 	f.call(t, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: protocol.PairingOpStatus})
 	return f
 }
