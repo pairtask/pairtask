@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,30 +15,55 @@ import (
 )
 
 func TestDesktopMCPAcceptancePairAndReadThroughTools(t *testing.T) {
-	b := startFullPeerFixture(t)
-	a, err := desktop.Start(context.Background(), desktop.Config{Dir: filepath.Join(t.TempDir(), "desktop"), Name: "Desktop A"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := a.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	client := connectDesktopMCP(t, a)
+	f := newDesktopMCPFixture(t)
+	f.redeem(t)
+	f.exchange(t)
+	f.readReply(t)
+	f.refuseUnknownRecipient(t)
+}
+
+type desktopMCPFixture struct {
+	*desktopPair
+	client *mcp.ClientSession
+}
+
+func newDesktopMCPFixture(t *testing.T) *desktopMCPFixture {
+	t.Helper()
+	p := newDesktopPair(t)
+	f := &desktopMCPFixture{desktopPair: p, client: connectDesktopMCP(t, p.a)}
 	var who desktop.WhoamiResult
-	decodeDesktopMCP(t, desktopTool(t, client, "whoami", map[string]any{}), &who)
-	if who.Identity == "" || who.Name != "Desktop A" {
+	decodeDesktopMCP(t, desktopTool(t, f.client, "whoami", map[string]any{}), &who)
+	if who.Identity != p.identity || who.Name != "Desktop A" {
 		t.Fatalf("whoami returned %#v", who)
 	}
+	return f
+}
 
-	code := b.openInvitation(t)
-	redeem := desktopTool(t, client, "pair_redeem", map[string]any{"destination": b.destination, "code": code})
+func (f *desktopMCPFixture) redeem(t *testing.T) {
+	t.Helper()
+	code := f.b.openInvitation(t)
+	redeem := desktopTool(t, f.client, "pair_redeem", map[string]any{"destination": f.b.destination, "code": code})
 	var joined desktop.RedeemResult
 	decodeDesktopMCP(t, redeem, &joined)
 	if joined.Join.OperationID == "" {
 		t.Fatal("pair_redeem did not return the join operation")
 	}
+	assertCodeNotEchoed(t, redeem, code)
+	awaitDesktop(t, "B receives MCP redemption", func() bool {
+		status := f.b.call(t, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: protocol.PairingOpStatus})
+		return hasPairingRequest(status, f.identity)
+	})
+	f.b.accept(t, f.identity)
+	awaitDesktop(t, "MCP status reports confirmed contact", func() bool {
+		var status desktop.StatusResult
+		decodeDesktopMCP(t, desktopTool(t, f.client, "pair_status", map[string]any{}), &status)
+		f.bIdentity = confirmedContact(protocol.PairingSnapshot{Contacts: status.Contacts})
+		return f.bIdentity != ""
+	})
+}
+
+func assertCodeNotEchoed(t *testing.T, redeem *mcp.CallToolResult, code string) {
+	t.Helper()
 	encoded, err := json.Marshal(redeem.StructuredContent)
 	if err != nil {
 		t.Fatal(err)
@@ -47,65 +71,64 @@ func TestDesktopMCPAcceptancePairAndReadThroughTools(t *testing.T) {
 	if strings.Contains(string(encoded), code) {
 		t.Fatal("pair_redeem echoed the one-time code")
 	}
-	awaitDesktop(t, "B receives MCP redemption", func() bool {
-		status := b.call(t, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: protocol.PairingOpStatus})
-		for _, request := range status.PairingResult.Requests {
-			if request.IdentityKey == who.Identity {
-				return true
-			}
-		}
-		return false
-	})
-	b.accept(t, who.Identity)
-	var bIdentity string
-	awaitDesktop(t, "MCP status reports confirmed contact", func() bool {
-		var status desktop.StatusResult
-		decodeDesktopMCP(t, desktopTool(t, client, "pair_status", map[string]any{}), &status)
-		for _, contact := range status.Contacts {
-			if contact.Confirmed {
-				bIdentity = contact.IdentityKey
-				return true
-			}
-		}
-		return false
-	})
+}
+
+func (f *desktopMCPFixture) exchange(t *testing.T) {
+	t.Helper()
 	var sent desktop.SendResult
-	decodeDesktopMCP(t, desktopTool(t, client, "send", map[string]any{"to": bIdentity, "text": "via Desktop MCP"}), &sent)
+	decodeDesktopMCP(t, desktopTool(t, f.client, "send", map[string]any{"to": f.bIdentity, "text": "via Desktop MCP"}), &sent)
 	if sent.Message.ID == "" {
 		t.Fatal("send returned no message ID")
 	}
 	awaitDesktop(t, "B receives MCP message", func() bool {
-		return hasContactMessage(b.call(t, protocol.Message{Type: protocol.TypeOperatorContact,
-			ContactOp: protocol.ContactOpList, ContactKey: who.Identity}), "in", "via Desktop MCP")
+		return hasContactMessage(f.b.call(t, protocol.Message{Type: protocol.TypeOperatorContact,
+			ContactOp: protocol.ContactOpList, ContactKey: f.identity}), "in", "via Desktop MCP")
 	})
-	b.call(t, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend,
-		ContactKey: who.Identity, ContactText: "reply via inbox"})
+	f.b.call(t, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend,
+		ContactKey: f.identity, ContactText: "reply via inbox"})
+}
+
+func (f *desktopMCPFixture) readReply(t *testing.T) {
+	t.Helper()
 	var received protocol.ContactMessageView
 	awaitDesktop(t, "check_inbox exposes B's message", func() bool {
-		var inbox desktop.InboxResult
-		decodeDesktopMCP(t, desktopTool(t, client, "check_inbox", map[string]any{"from": bIdentity}), &inbox)
-		if len(inbox.Conversations) != 1 || inbox.Conversations[0].Unread < 1 {
-			return false
-		}
-		for _, message := range inbox.Conversations[0].Messages {
-			if message.Direction == "in" && message.Text == "reply via inbox" {
-				received = message
-				return true
-			}
-		}
-		return false
+		inbox := f.inbox(t)
+		received = unreadReply(inbox)
+		return received.ID != ""
 	})
 	var read desktop.ReadResult
-	decodeDesktopMCP(t, desktopTool(t, client, "mark_read", map[string]any{"from": bIdentity, "ids": []string{received.ID}}), &read)
+	decodeDesktopMCP(t, desktopTool(t, f.client, "mark_read", map[string]any{"from": f.bIdentity, "ids": []string{received.ID}}), &read)
 	if read.Marked != 1 {
 		t.Fatalf("mark_read marked %d messages, want 1", read.Marked)
 	}
-	var inbox desktop.InboxResult
-	decodeDesktopMCP(t, desktopTool(t, client, "check_inbox", map[string]any{"from": bIdentity}), &inbox)
+	inbox := f.inbox(t)
 	if len(inbox.Conversations) != 1 || inbox.Conversations[0].Unread != 0 {
 		t.Fatalf("inbox remains unread after mark_read: %#v", inbox.Conversations)
 	}
-	bad, err := client.CallTool(context.Background(), &mcp.CallToolParams{Name: "send", Arguments: map[string]any{"to": "unknown workspace", "text": "must not send"}})
+}
+
+func (f *desktopMCPFixture) inbox(t *testing.T) desktop.InboxResult {
+	t.Helper()
+	var inbox desktop.InboxResult
+	decodeDesktopMCP(t, desktopTool(t, f.client, "check_inbox", map[string]any{"from": f.bIdentity}), &inbox)
+	return inbox
+}
+
+func unreadReply(inbox desktop.InboxResult) protocol.ContactMessageView {
+	if len(inbox.Conversations) != 1 || inbox.Conversations[0].Unread < 1 {
+		return protocol.ContactMessageView{}
+	}
+	for _, message := range inbox.Conversations[0].Messages {
+		if message.Direction == "in" && message.Text == "reply via inbox" {
+			return message
+		}
+	}
+	return protocol.ContactMessageView{}
+}
+
+func (f *desktopMCPFixture) refuseUnknownRecipient(t *testing.T) {
+	t.Helper()
+	bad, err := f.client.CallTool(context.Background(), &mcp.CallToolParams{Name: "send", Arguments: map[string]any{"to": "unknown workspace", "text": "must not send"}})
 	if err != nil {
 		t.Fatal(err)
 	}

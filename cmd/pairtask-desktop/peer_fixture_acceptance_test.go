@@ -143,8 +143,14 @@ func (f *fullPeerFixture) call(t *testing.T, req protocol.Message) protocol.Mess
 func (f *fullPeerFixture) openInvitation(t *testing.T) string {
 	t.Helper()
 	resp := f.call(t, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: protocol.PairingOpOpen})
-	if resp.Type != protocol.TypeOperatorPairingResult || resp.PairingResult == nil || resp.PairingResult.Invitation == nil {
-		t.Fatalf("open invitation: unexpected result %#v", resp)
+	if resp.Type != protocol.TypeOperatorPairingResult {
+		t.Fatalf("open invitation returned %s", resp.Type)
+	}
+	if resp.PairingResult == nil {
+		t.Fatal("open invitation returned no pairing result")
+	}
+	if resp.PairingResult.Invitation == nil {
+		t.Fatal("open invitation returned no invitation")
 	}
 	code := resp.PairingResult.Invitation.Code
 	if code == "" {
