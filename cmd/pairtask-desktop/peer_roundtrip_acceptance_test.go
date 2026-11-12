@@ -181,23 +181,7 @@ func assertNoDesktopListener(t *testing.T, dir string) {
 func TestDesktopPeerAcceptanceRefusesUnsafeDataDirectory(t *testing.T) {
 	for _, kind := range []string{"world-readable", "symlink"} {
 		t.Run(kind, func(t *testing.T) {
-			base := t.TempDir()
-			actual := filepath.Join(base, "actual")
-			if err := os.Mkdir(actual, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			dir := actual
-			switch kind {
-			case "world-readable":
-				if err := os.Chmod(actual, 0o755); err != nil {
-					t.Fatal(err)
-				}
-			case "symlink":
-				dir = filepath.Join(base, "link")
-				if err := os.Symlink(actual, dir); err != nil {
-					t.Fatal(err)
-				}
-			}
+			dir, actual := unsafeDesktopDataDir(t, kind)
 			node, err := desktop.Start(context.Background(), desktop.Config{Dir: dir, Name: "Desktop A"})
 			if err == nil {
 				node.Close()
@@ -208,4 +192,24 @@ func TestDesktopPeerAcceptanceRefusesUnsafeDataDirectory(t *testing.T) {
 			}
 		})
 	}
+}
+
+func unsafeDesktopDataDir(t *testing.T, kind string) (string, string) {
+	t.Helper()
+	base := t.TempDir()
+	actual := filepath.Join(base, "actual")
+	if err := os.Mkdir(actual, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if kind == "world-readable" {
+		if err := os.Chmod(actual, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return actual, actual
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(actual, link); err != nil {
+		t.Fatal(err)
+	}
+	return link, actual
 }
