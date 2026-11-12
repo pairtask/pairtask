@@ -222,10 +222,16 @@ To ask one of their agents, name it with the workspace, from any tab:
   backslash isn't offered and can't be asked from the chat.
 - Esc, another `/review` or another tab cancels a lookup; nothing is sent.
 
-To give the commits yourself instead of having them looked up, add
-`--pin BASE_SHA..HEAD_SHA`. (`/pair review` did this before and is retired;
-typing it shows the `/review` command to use.) An agent asks with its
-`request_review` tool.
+To give the commits yourself instead of having them looked up, put
+`--pin BASE_SHA..HEAD_SHA` before the pull request; flags after it are read
+as the focus text:
+
+```text
+/review --pin BASE_SHA..HEAD_SHA OWNER/REPO#12 @codex-1@WORKSPACE
+```
+
+`/pair review` did this before and is retired; typing it shows the `/review`
+command to use. An agent asks with its `request_review` tool.
 
 Where the request stands comes back to you: waiting for their operator,
 declined, accepted, the verdict with its summary, and the published link.

@@ -209,7 +209,7 @@ Each paired workspace gets its own `⇄` tab. In it:
 | `@codex-1@here a message` | Brings one of your own agents into that conversation; its reply is assigned to it. |
 | `/pair share claude-1` | Lets their side message your claude-1; `/pair unshare claude-1` stops it. |
 | `/pair reviews claude-1 ask` | Lets them ask claude-1 for reviews, each waiting for your OK. |
-| `/review OWNER/REPO#12 @codex-1@WORKSPACE` | Asks one of their agents to review that pull request (`--pin BASE..HEAD` to give the commits yourself). |
+| `/review OWNER/REPO#12 @codex-1@WORKSPACE` | Asks one of their agents to review that pull request (`/review --pin BASE..HEAD OWNER/REPO#12 @codex-1@WORKSPACE` to give the commits yourself). |
 | `/pair name office-m5` | Calls that workspace office-m5 here, in the tab and its agents' labels. |
 | `/pair address HOST:PORT` | Reaches it again after it moved to another address, when [discovery](docs/pairing.md#moving-between-networks) can't find it. |
 | `/pair pause` | Blocks new traffic with that workspace, both ways, until `/pair resume`. |
