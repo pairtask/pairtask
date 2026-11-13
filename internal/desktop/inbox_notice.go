@@ -23,9 +23,9 @@ type InboxNotice struct {
 // unreadNote ends the descriptions of the tools that carry the notice.
 const unreadNote = " The unread field counts received messages not yet marked read, and unread_from names the workspaces they came from; call check_inbox to read them."
 
-// notice reads each paired workspace's newest page and counts its unread
-// received messages. A workspace whose page can't be read is left out:
-// the note never fails the tool it rides on.
+// notice counts each paired workspace's unread received messages across
+// its history. A workspace whose pages can't be read is left out: the
+// note never fails the tool it rides on.
 func (n *Node) notice(ctx context.Context, contacts []protocol.PairingContactView) InboxNotice {
 	var note InboxNotice
 	var from []string
@@ -40,18 +40,52 @@ func (n *Node) notice(ctx context.Context, contacts []protocol.PairingContactVie
 	return note
 }
 
-// unreadWith is c's unread received messages, 0 when it can't be read or
-// isn't a paired workspace that carries messages.
+// unreadWith is c's unread received messages, 0 when they can't be read or
+// it isn't a paired workspace that carries messages.
 func (n *Node) unreadWith(ctx context.Context, c protocol.PairingContactView) int {
 	if !c.Confirmed || c.UnpairedAt != nil {
 		return 0
 	}
-	out, err := n.ask(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: c.IdentityKey},
-		protocol.TypeOperatorContactResult)
-	if err != nil || out.ContactPage == nil {
-		return 0
+	count, _ := countUnread(ctx, n.Call, c.IdentityKey)
+	return count
+}
+
+// unreadPages bounds the pages countUnread reads for one workspace.
+const unreadPages = 100
+
+// countUnread is a workspace's unread received messages across every page
+// of its history, and whether all of it could be read. It stops at the
+// last page, or at one that adds nothing older; a history longer than
+// unreadPages pages isn't counted, so no notice claims a partial total.
+func countUnread(ctx context.Context, call func(context.Context, protocol.Message) protocol.Message, contact string) (int, bool) {
+	total, before := 0, int64(0)
+	for range unreadPages {
+		out := call(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: contact, ContactBefore: before})
+		page := out.ContactPage
+		if page == nil {
+			return 0, false
+		}
+		total += unread(page.Messages)
+		next, ok := olderThan(page, before)
+		if !ok {
+			return total, true
+		}
+		before = next
 	}
-	return unread(out.ContactPage.Messages)
+	return 0, false
+}
+
+// olderThan is the cursor that pages past page, when there is more and it
+// moves older than before.
+func olderThan(page *protocol.ContactMessagePage, before int64) (int64, bool) {
+	if !page.More || len(page.Messages) == 0 {
+		return 0, false
+	}
+	next := page.Messages[0].Cursor
+	for _, m := range page.Messages {
+		next = min(next, m.Cursor)
+	}
+	return next, before == 0 || next < before
 }
 
 // freshNotice is the notice from a new pairing snapshot, empty when even
