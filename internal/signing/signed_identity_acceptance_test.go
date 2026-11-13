@@ -20,11 +20,10 @@ func signedPublic(key ed25519.PrivateKey) ed25519.PublicKey {
 	return key.Public().(ed25519.PublicKey)
 }
 
-func signedCert(issuer, subject ed25519.PrivateKey, kind signing.Kind, name, workspace string) signing.Cert {
-	return signing.Issue(issuer, signing.Cert{
-		Kind: kind, Subject: name, Key: signedPublic(subject), Workspace: workspace,
-		NotBefore: signedNow.Add(-time.Hour), NotAfter: signedNow.Add(time.Hour),
-	})
+func signedCert(issuer, subject ed25519.PrivateKey, cert signing.Cert) signing.Cert {
+	cert.Key = signedPublic(subject)
+	cert.NotBefore, cert.NotAfter = signedNow.Add(-time.Hour), signedNow.Add(time.Hour)
+	return signing.Issue(issuer, cert)
 }
 
 func signedHeader(workspace string) signing.Header {
@@ -45,20 +44,34 @@ func signedRoots(root ed25519.PrivateKey, workspace string, person, approved boo
 	}
 }
 
+func requireVerifiedBasis(t *testing.T, result signing.Result, basis signing.Basis) *signing.Signer {
+	t.Helper()
+	if result.State != signing.Verified {
+		t.Fatalf("verification state %s: %s", result.State, result.Reason)
+	}
+	if result.Signer == nil {
+		t.Fatal("verified message has no signer")
+	}
+	if result.Signer.Basis != basis {
+		t.Fatalf("signer basis %s, want %s", result.Signer.Basis, basis)
+	}
+	return result.Signer
+}
+
 func TestSignedIdentityAcceptanceOnlyPersonDeviceGrantsOperatorAuthority(t *testing.T) {
 	workspaceRoot, personRoot := signedKey("workspace"), signedKey("person")
 	device, broker := signedKey("device"), signedKey("broker")
 	workspace := signing.KeyID(signedPublic(workspaceRoot))
 	h := signedHeader(workspace)
-	deviceCert := signedCert(personRoot, device, signing.KindDevice, "operator-chat", workspace)
+	deviceCert := signedCert(personRoot, device, signing.Cert{Kind: signing.KindDevice, Subject: "operator-chat", Workspace: workspace})
 	personSeal := signing.Sign(device, []signing.Cert{deviceCert}, signedPublic(personRoot), h)
 	person := signing.Verify(&personSeal, signedRoots(personRoot, workspace, true, true), signedNow)
-	if person.State != signing.Verified || person.Signer == nil || person.Signer.Basis != signing.BasisPerson || person.Signer.Kind != signing.SenderOperator {
-		t.Fatalf("person-certified operator message: %+v", person)
+	if signer := requireVerifiedBasis(t, person, signing.BasisPerson); signer.Kind != signing.SenderOperator {
+		t.Fatalf("person-certified signer kind %q", signer.Kind)
 	}
 
 	// A paired workspace may attest agents; it cannot confer operator authority.
-	brokerCert := signedCert(workspaceRoot, broker, signing.KindBroker, "broker", workspace)
+	brokerCert := signedCert(workspaceRoot, broker, signing.Cert{Kind: signing.KindBroker, Subject: "broker", Workspace: workspace})
 	brokerSeal := signing.Sign(broker, []signing.Cert{brokerCert}, signedPublic(workspaceRoot), h)
 	forged := signing.Verify(&brokerSeal, signedRoots(workspaceRoot, workspace, false, true), signedNow)
 	if forged.State != signing.Invalid {
@@ -80,19 +93,15 @@ func TestSignedIdentityAcceptanceAgentAttestationNamesItsTrustBasis(t *testing.T
 	h.SenderKind, h.SenderID = signing.SenderAgent, "agent-a"
 	trusted := signedRoots(workspaceRoot, workspace, false, true)
 
-	brokerCert := signedCert(workspaceRoot, broker, signing.KindBroker, "broker", workspace)
+	brokerCert := signedCert(workspaceRoot, broker, signing.Cert{Kind: signing.KindBroker, Subject: "broker", Workspace: workspace})
 	brokerSeal := signing.Sign(broker, []signing.Cert{brokerCert}, signedPublic(workspaceRoot), h)
 	brokerResult := signing.Verify(&brokerSeal, trusted, signedNow)
-	if brokerResult.State != signing.Verified || brokerResult.Signer == nil || brokerResult.Signer.Basis != signing.BasisWorkspace {
-		t.Fatalf("broker attestation misrepresented: %+v", brokerResult)
-	}
+	requireVerifiedBasis(t, brokerResult, signing.BasisWorkspace)
 
-	agentCert := signedCert(workspaceRoot, agent, signing.KindAgent, "agent-a", workspace)
+	agentCert := signedCert(workspaceRoot, agent, signing.Cert{Kind: signing.KindAgent, Subject: "agent-a", Workspace: workspace})
 	agentSeal := signing.Sign(agent, []signing.Cert{agentCert}, signedPublic(workspaceRoot), h)
 	agentResult := signing.Verify(&agentSeal, trusted, signedNow)
-	if agentResult.State != signing.Verified || agentResult.Signer == nil || agentResult.Signer.Basis != signing.BasisAgent {
-		t.Fatalf("isolated agent key not identified: %+v", agentResult)
-	}
+	requireVerifiedBasis(t, agentResult, signing.BasisAgent)
 	impersonation := h
 	impersonation.SenderID = "agent-b"
 	badSeal := signing.Sign(agent, []signing.Cert{agentCert}, signedPublic(workspaceRoot), impersonation)
@@ -101,48 +110,72 @@ func TestSignedIdentityAcceptanceAgentAttestationNamesItsTrustBasis(t *testing.T
 	}
 }
 
-func TestSignedIdentityAcceptanceApprovalAndTransportTampering(t *testing.T) {
-	person, device := signedKey("person-approval"), signedKey("device-approval")
-	workspace := signing.KeyID(signedPublic(signedKey("workspace-approval")))
-	h := signedHeader(workspace)
-	cert := signedCert(person, device, signing.KindDevice, "chat", workspace)
-	seal := signing.Sign(device, []signing.Cert{cert}, signedPublic(person), h)
-	if got := signing.Verify(nil, signedRoots(person, workspace, true, true), signedNow); got.State != signing.Unsigned {
+type personSealFixture struct {
+	person, device ed25519.PrivateKey
+	workspace      string
+	header         signing.Header
+	cert           signing.Cert
+	seal           signing.Seal
+}
+
+func newPersonSealFixture() personSealFixture {
+	f := personSealFixture{person: signedKey("person-approval"), device: signedKey("device-approval")}
+	f.workspace = signing.KeyID(signedPublic(signedKey("workspace-approval")))
+	f.header = signedHeader(f.workspace)
+	f.cert = signedCert(f.person, f.device, signing.Cert{Kind: signing.KindDevice, Subject: "chat", Workspace: f.workspace})
+	f.seal = signing.Sign(f.device, []signing.Cert{f.cert}, signedPublic(f.person), f.header)
+	return f
+}
+
+func (f personSealFixture) roots(approved bool) signing.Roots {
+	return signedRoots(f.person, f.workspace, true, approved)
+}
+
+func TestSignedIdentityAcceptanceApprovalStateAndUnpinnedCertificate(t *testing.T) {
+	f := newPersonSealFixture()
+	if got := signing.Verify(nil, f.roots(true), signedNow); got.State != signing.Unsigned {
 		t.Fatalf("unsigned message: %+v", got)
 	}
-	if got := signing.Verify(&seal, signedRoots(person, workspace, true, false), signedNow); got.State != signing.Unverified {
+	if got := signing.Verify(&f.seal, f.roots(false), signedNow); got.State != signing.Unverified {
 		t.Fatalf("pending person key gained authority: %+v", got)
 	}
 	unknown := func(string) (signing.Root, bool) { return signing.Root{}, false }
-	if got := signing.Verify(&seal, unknown, signedNow); got.State != signing.Unverified || got.Signer == nil {
+	if got := signing.Verify(&f.seal, unknown, signedNow); got.State != signing.Unverified {
 		t.Fatalf("valid but unpinned person key was misclassified: %+v", got)
 	}
-	badCert := seal
-	badCert.Chain = append([]signing.Cert(nil), seal.Chain...)
-	badCert.Chain[0].Sig = append([]byte(nil), seal.Chain[0].Sig...)
+	badCert := f.seal
+	badCert.Chain = append([]signing.Cert(nil), f.seal.Chain...)
+	badCert.Chain[0].Sig = append([]byte(nil), f.seal.Chain[0].Sig...)
 	badCert.Chain[0].Sig[0] ^= 1
 	if got := signing.Verify(&badCert, unknown, signedNow); got.State != signing.Invalid {
 		t.Fatalf("forged certificate without a pin was called unverified: %+v", got)
 	}
-	if got := signing.Verify(&seal, signedRoots(person, workspace, true, true), signedNow.Add(2*time.Hour)); got.State != signing.Verified {
+}
+
+func TestSignedIdentityAcceptanceCertificateTimePreservesDurableMessages(t *testing.T) {
+	f := newPersonSealFixture()
+	if got := signing.Verify(&f.seal, f.roots(true), signedNow.Add(2*time.Hour)); got.State != signing.Verified {
 		t.Fatalf("durable message lost provenance after certificate expiry: %+v", got)
 	}
-	expiredHeader := h
+	expiredHeader := f.header
 	expiredHeader.CreatedAt = signedNow.Add(2 * time.Hour)
-	expiredSeal := signing.Sign(device, []signing.Cert{cert}, signedPublic(person), expiredHeader)
-	if got := signing.Verify(&expiredSeal, signedRoots(person, workspace, true, true), expiredHeader.CreatedAt); got.State != signing.Invalid {
+	expiredSeal := signing.Sign(f.device, []signing.Cert{f.cert}, signedPublic(f.person), expiredHeader)
+	if got := signing.Verify(&expiredSeal, f.roots(true), expiredHeader.CreatedAt); got.State != signing.Invalid {
 		t.Fatalf("message signed outside certificate validity gained authority: %+v", got)
 	}
-	futureHeader := h
+	futureHeader := f.header
 	futureHeader.CreatedAt = signedNow.Add(10 * time.Minute)
-	futureSeal := signing.Sign(device, []signing.Cert{cert}, signedPublic(person), futureHeader)
-	if got := signing.Verify(&futureSeal, signedRoots(person, workspace, true, true), signedNow); got.State != signing.Invalid {
+	futureSeal := signing.Sign(f.device, []signing.Cert{f.cert}, signedPublic(f.person), futureHeader)
+	if got := signing.Verify(&futureSeal, f.roots(true), signedNow); got.State != signing.Invalid {
 		t.Fatalf("message signed too far in the future gained authority: %+v", got)
 	}
+}
 
-	frame := signing.Frame{MessageID: h.MessageID, SenderKind: h.SenderKind, SenderID: h.SenderID,
+func TestSignedIdentityAcceptanceTransportTampering(t *testing.T) {
+	f := newPersonSealFixture()
+	frame := signing.Frame{MessageID: f.header.MessageID, SenderKind: f.header.SenderKind, SenderID: f.header.SenderID,
 		Text: "approve", Addresses: []string{"agent-a@receiver"}}
-	if err := seal.Matches(frame); err != nil {
+	if err := f.seal.Matches(frame); err != nil {
 		t.Fatalf("intact delivered frame did not match seal: %v", err)
 	}
 	for name, change := range map[string]func(*signing.Frame){
@@ -154,16 +187,23 @@ func TestSignedIdentityAcceptanceApprovalAndTransportTampering(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			changed := frame
 			change(&changed)
-			if err := seal.Matches(changed); err == nil {
+			if err := f.seal.Matches(changed); err == nil {
 				t.Fatal("broker-modified frame matched original signature")
 			}
 		})
 	}
-	decoded, err := signing.ParseSeal(seal.Marshal())
-	if err != nil || signing.Verify(&decoded, signedRoots(person, workspace, true, true), signedNow).State != signing.Verified {
-		t.Fatalf("transported seal lost verification: %v", err)
+}
+
+func TestSignedIdentityAcceptanceSealRoundTrip(t *testing.T) {
+	f := newPersonSealFixture()
+	decoded, err := signing.ParseSeal(f.seal.Marshal())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := signing.ParseSeal(append(seal.Marshal(), 0)); err == nil {
+	if got := signing.Verify(&decoded, f.roots(true), signedNow); got.State != signing.Verified {
+		t.Fatalf("transported seal lost verification: %+v", got)
+	}
+	if _, err := signing.ParseSeal(append(f.seal.Marshal(), 0)); err == nil {
 		t.Fatal("seal with trailing bytes was accepted")
 	}
 }
@@ -173,7 +213,7 @@ func TestSignedIdentityAcceptanceRoomContextCannotBeChangedByBroker(t *testing.T
 	workspace := signing.KeyID(signedPublic(signedKey("workspace-room")))
 	h := signedHeader(workspace)
 	h.Recipients = []string{"agent-a@receiver", signing.RoomRecipient("operators")}
-	cert := signedCert(person, device, signing.KindDevice, "chat", workspace)
+	cert := signedCert(person, device, signing.Cert{Kind: signing.KindDevice, Subject: "chat", Workspace: workspace})
 	seal := signing.Sign(device, []signing.Cert{cert}, signedPublic(person), h)
 	frame := signing.Frame{MessageID: h.MessageID, SenderKind: h.SenderKind, SenderID: h.SenderID,
 		Text: "approve", Addresses: []string{"agent-a@receiver"}, Room: "operators"}

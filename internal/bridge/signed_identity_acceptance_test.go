@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
+	"net"
 	"testing"
 	"time"
 
@@ -17,7 +18,14 @@ func bridgeIdentityKey(label string) ed25519.PrivateKey {
 	return ed25519.NewKeyFromSeed(seed[:])
 }
 
-func TestSignedIdentityAcceptanceBridgeVerifiesDeliveredOperator(t *testing.T) {
+type bridgeSignedFixture struct {
+	client  *Client
+	remote  net.Conn
+	message protocol.Message
+}
+
+func newBridgeSignedFixture(t *testing.T) bridgeSignedFixture {
+	t.Helper()
 	person, device := bridgeIdentityKey("bridge-person"), bridgeIdentityKey("bridge-device")
 	workspace := signing.KeyID(bridgeIdentityKey("bridge-workspace").Public().(ed25519.PublicKey))
 	personPub := person.Public().(ed25519.PublicKey)
@@ -34,38 +42,61 @@ func TestSignedIdentityAcceptanceBridgeVerifiesDeliveredOperator(t *testing.T) {
 	c.roots = []protocol.SigningRoot{{KeyID: signing.KeyID(personPub), Person: true, Workspace: workspace, Approved: true}}
 	message := protocol.Message{Type: protocol.TypeMsg, MessageID: header.MessageID, From: protocol.OperatorID,
 		Origin: protocol.OriginOperator, To: "alpha", Payload: json.RawMessage(`{"text":"approve"}`), Seal: seal}
-	remote.SetWriteDeadline(time.Now().Add(time.Second))
-	if err := protocol.WriteFrame(remote, message); err != nil {
+	return bridgeSignedFixture{client: c, remote: remote, message: message}
+}
+
+func (f bridgeSignedFixture) deliver(t *testing.T) *protocol.Verification {
+	t.Helper()
+	if err := f.remote.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	out, err := c.Receive(context.Background(), 1, time.Second)
-	if err != nil || len(out.Messages) != 1 {
-		t.Fatalf("signed delivery: %+v, %v", out, err)
+	if err := protocol.WriteFrame(f.remote, f.message); err != nil {
+		t.Fatal(err)
 	}
-	verified := out.Messages[0].Verification
-	if verified == nil || verified.State != signing.Verified || verified.Signer == nil || verified.Signer.Basis != signing.BasisPerson {
-		t.Fatalf("recipient lost signed operator authority: %+v", verified)
+	out, err := f.client.Receive(context.Background(), 1, time.Second)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(out.Messages) != 1 {
+		t.Fatalf("expected one message, got %d", len(out.Messages))
+	}
+	return out.Messages[0].Verification
+}
 
+func requireBridgeState(t *testing.T, verdict *protocol.Verification, want signing.State) {
+	t.Helper()
+	if verdict == nil {
+		t.Fatal("recipient omitted verification")
+	}
+	if verdict.State != want {
+		t.Fatalf("verification state %s, want %s: %s", verdict.State, want, verdict.Reason)
+	}
+}
+
+func TestSignedIdentityAcceptanceBridgeVerifiesDeliveredOperator(t *testing.T) {
+	f := newBridgeSignedFixture(t)
+	verified := f.deliver(t)
+	requireBridgeState(t, verified, signing.Verified)
+	if verified.Signer == nil {
+		t.Fatal("verified message has no signer")
+	}
+	if verified.Signer.Basis != signing.BasisPerson {
+		t.Fatalf("recipient signer basis: %+v", verified.Signer)
+	}
+}
+
+func TestSignedIdentityAcceptanceBridgeRejectsClaimedVerdictAndChangedText(t *testing.T) {
+	f := newBridgeSignedFixture(t)
 	// A broker or peer may lie in a frame. The bridge must compute a fresh
 	// verdict from the seal and the actual delivered text.
-	message.Payload = json.RawMessage(`{"text":"deny"}`)
-	message.Verification = &protocol.Verification{State: signing.Verified}
-	if err := protocol.WriteFrame(remote, message); err != nil {
-		t.Fatal(err)
-	}
-	out, err = c.Receive(context.Background(), 1, time.Second)
-	if err != nil || len(out.Messages) != 1 || out.Messages[0].Verification == nil || out.Messages[0].Verification.State != signing.Invalid {
-		t.Fatalf("forged broker verdict or changed text gained authority: %+v, %v", out, err)
-	}
+	f.message.Payload = json.RawMessage(`{"text":"deny"}`)
+	f.message.Verification = &protocol.Verification{State: signing.Verified}
+	requireBridgeState(t, f.deliver(t), signing.Invalid)
+}
 
-	message.Seal = ""
-	message.Payload = json.RawMessage(`{"text":"approve"}`)
-	if err := protocol.WriteFrame(remote, message); err != nil {
-		t.Fatal(err)
-	}
-	out, err = c.Receive(context.Background(), 1, time.Second)
-	if err != nil || len(out.Messages) != 1 || out.Messages[0].Verification == nil || out.Messages[0].Verification.State != signing.Unsigned {
-		t.Fatalf("unsigned broker frame inherited claimed verification: %+v, %v", out, err)
-	}
+func TestSignedIdentityAcceptanceBridgeDoesNotTrustUnsignedVerdict(t *testing.T) {
+	f := newBridgeSignedFixture(t)
+	f.message.Seal = ""
+	f.message.Verification = &protocol.Verification{State: signing.Verified}
+	requireBridgeState(t, f.deliver(t), signing.Unsigned)
 }

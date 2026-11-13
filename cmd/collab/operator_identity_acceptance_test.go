@@ -60,10 +60,8 @@ func multiOperatorSocket(t *testing.T, handle func(net.Conn)) string {
 	return path
 }
 
-func TestOperatorIdentityAcceptanceCLISignsBeforeBrokerSend(t *testing.T) {
-	keys := cliSigningKeys(t)
-	seed := sha256.Sum256([]byte("cli-workspace"))
-	workspace := signing.KeyID(ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey))
+func cliIdentitySocket(t *testing.T, workspace string, refuse bool) (string, <-chan protocol.Message) {
+	t.Helper()
 	requests := make(chan protocol.Message, 2)
 	socket := multiOperatorSocket(t, func(c net.Conn) {
 		var m protocol.Message
@@ -72,31 +70,71 @@ func TestOperatorIdentityAcceptanceCLISignsBeforeBrokerSend(t *testing.T) {
 		}
 		requests <- m
 		if m.Type == protocol.TypeOperatorIdentity {
-			_ = protocol.WriteFrame(c, protocol.Message{Type: protocol.TypeOperatorIdentityResult, Identity: &protocol.IdentityView{Workspace: workspace}})
+			answerIdentityRequest(c, workspace, refuse)
 			return
 		}
 		_ = protocol.WriteFrame(c, protocol.Message{Type: "ack", Stage: "accepted", MessageID: m.MessageID, Seq: 42,
 			Recipients: []protocol.Recipient{{AgentID: "alpha"}}})
 	})
+	return socket, requests
+}
+
+func answerIdentityRequest(c net.Conn, workspace string, refuse bool) {
+	if refuse {
+		_ = protocol.WriteFrame(c, protocol.Message{Type: "error", Code: "forbidden", Detail: "key refused"})
+		return
+	}
+	_ = protocol.WriteFrame(c, protocol.Message{Type: protocol.TypeOperatorIdentityResult, Identity: &protocol.IdentityView{Workspace: workspace}})
+}
+
+func TestOperatorIdentityAcceptanceCLISignsBeforeBrokerSend(t *testing.T) {
+	keys := cliSigningKeys(t)
+	seed := sha256.Sum256([]byte("cli-workspace"))
+	workspace := signing.KeyID(ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey))
+	socket, requests := cliIdentitySocket(t, workspace, false)
 	var out, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"operator", "send", "--socket", socket, "--to", "alpha", "--message-id", "cli-signed", "hello"}, &out, &stderr); code != 0 {
 		t.Fatalf("signed send exit %d: %s", code, stderr.String())
 	}
-	registration := <-requests
-	if registration.Type != protocol.TypeOperatorIdentity || registration.IdentityOp != protocol.IdentityOpRegister || registration.IdentityKey != base64.StdEncoding.EncodeToString(keys.PersonPublic()) {
-		t.Fatalf("operator key was not enrolled before send: %+v", registration)
+	requireCLIRegistration(t, <-requests, keys)
+	requireCLISignedSend(t, <-requests, keys, workspace)
+}
+
+func requireCLIRegistration(t *testing.T, registration protocol.Message, keys *personkey.Keys) {
+	t.Helper()
+	if registration.Type != protocol.TypeOperatorIdentity {
+		t.Fatalf("send preceded key registration: %+v", registration)
 	}
-	sent := <-requests
-	if sent.Type != protocol.TypeOperatorSend || sent.Seal == "" {
-		t.Fatalf("operator client sent unsigned despite keys: %+v", sent)
+	if registration.IdentityOp != protocol.IdentityOpRegister {
+		t.Fatalf("identity operation: %+v", registration)
+	}
+	if registration.IdentityKey != base64.StdEncoding.EncodeToString(keys.PersonPublic()) {
+		t.Fatalf("registered another person key: %+v", registration)
+	}
+}
+
+func requireCLISignedSend(t *testing.T, sent protocol.Message, keys *personkey.Keys, workspace string) {
+	t.Helper()
+	if sent.Type != protocol.TypeOperatorSend {
+		t.Fatalf("operator client sent the wrong frame: %+v", sent)
+	}
+	if sent.Seal == "" {
+		t.Fatal("operator client sent unsigned despite keys")
 	}
 	seal, err := protocol.DecodeSeal(sent.Seal)
 	if err != nil {
 		t.Fatal(err)
 	}
 	roots := protocol.RootsOf([]protocol.SigningRoot{{KeyID: signing.KeyID(keys.PersonPublic()), Person: true, Workspace: workspace, Approved: true}})
-	if result := signing.Verify(&seal, roots, time.Now()); result.State != signing.Verified || result.Signer == nil || result.Signer.Basis != signing.BasisPerson {
+	result := signing.Verify(&seal, roots, time.Now())
+	if result.State != signing.Verified {
 		t.Fatalf("client signature did not verify: %+v", result)
+	}
+	if result.Signer == nil {
+		t.Fatal("verified client message has no signer")
+	}
+	if result.Signer.Basis != signing.BasisPerson {
+		t.Fatalf("client signer basis: %s", result.Signer.Basis)
 	}
 	if err := seal.Matches(signing.Frame{MessageID: sent.MessageID, SenderKind: signing.SenderOperator,
 		SenderID: signing.OperatorID, Text: "hello", Addresses: []string{"alpha"}}); err != nil {
@@ -106,20 +144,7 @@ func TestOperatorIdentityAcceptanceCLISignsBeforeBrokerSend(t *testing.T) {
 
 func TestOperatorIdentityAcceptanceRegistrationFailureCannotSilentlyDowngrade(t *testing.T) {
 	cliSigningKeys(t)
-	requests := make(chan protocol.Message, 2)
-	socket := multiOperatorSocket(t, func(c net.Conn) {
-		var m protocol.Message
-		if err := protocol.ReadFrame(bufio.NewReader(c), &m); err != nil {
-			return
-		}
-		requests <- m
-		if m.Type == protocol.TypeOperatorIdentity {
-			_ = protocol.WriteFrame(c, protocol.Message{Type: "error", Code: "forbidden", Detail: "key refused"})
-			return
-		}
-		_ = protocol.WriteFrame(c, protocol.Message{Type: "ack", Stage: "accepted", MessageID: m.MessageID, Seq: 42,
-			Recipients: []protocol.Recipient{{AgentID: "alpha"}}})
-	})
+	socket, requests := cliIdentitySocket(t, "", true)
 	var out, stderr bytes.Buffer
 	args := []string{"operator", "send", "--socket", socket, "--to", "alpha", "hello"}
 	if code := run(context.Background(), args, &out, &stderr); code == 0 {
@@ -137,7 +162,11 @@ func TestOperatorIdentityAcceptanceRegistrationFailureCannotSilentlyDowngrade(t 
 	if code := run(context.Background(), unsignedArgs, &out, &stderr); code != 0 {
 		t.Fatalf("explicit unsigned send failed: %s", stderr.String())
 	}
-	if sent := <-requests; sent.Type != protocol.TypeOperatorSend || sent.Seal != "" {
+	sent := <-requests
+	if sent.Type != protocol.TypeOperatorSend {
 		t.Fatalf("explicit unsigned send did not take the chosen path: %+v", sent)
+	}
+	if sent.Seal != "" {
+		t.Fatalf("explicit unsigned send had a seal: %+v", sent)
 	}
 }

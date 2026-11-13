@@ -44,15 +44,24 @@ func TestChatSignedIdentityAcceptanceRetryKeepsOriginalSeal(t *testing.T) {
 	h.draft("z,a", "original")
 	h.input(chatKey(tea.KeyEnter, 0))
 	original := h.take(protocol.TypeOperatorSend)
-	if original.Seal == "" || calls.Load() != 1 {
-		t.Fatalf("chat did not seal once before dispatch: seal=%q calls=%d", original.Seal, calls.Load())
+	if original.Seal == "" {
+		t.Fatal("chat sent without a seal")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("chat sealed %d times before dispatch", calls.Load())
 	}
 	next := newChatScript()
 	h.reconnectTo(next, "epoch")
 	snapshot := h.take(protocol.TypeOperatorSnapshot)
 	h.reply(snapshot, protocol.Message{Type: protocol.TypeOperatorSnapshot, Snapshot: &protocol.OperatorSnapshot{Watermark: protocol.Watermark{Epoch: "epoch", Revision: 2}}})
 	retry := h.take(protocol.TypeOperatorSend)
-	if retry.Seal != original.Seal || retry.MessageID != original.MessageID || calls.Load() != 1 {
-		t.Fatalf("retry changed signed intent: first=%+v retry=%+v calls=%d", original, retry, calls.Load())
+	if retry.Seal != original.Seal {
+		t.Fatalf("retry changed seal: first=%q retry=%q", original.Seal, retry.Seal)
+	}
+	if retry.MessageID != original.MessageID {
+		t.Fatalf("retry changed message ID: first=%q retry=%q", original.MessageID, retry.MessageID)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("retry signed a second time: calls=%d", calls.Load())
 	}
 }

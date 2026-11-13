@@ -47,14 +47,30 @@ func TestPersonKeyAcceptancePrivateFilesRequiredForSigning(t *testing.T) {
 	if _, err := personkey.Create(dir); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
-		t.Fatalf("identity directory is not private: %v, %v", info, err)
-	}
+	requireKeyMode(t, dir, 0o700)
 	for _, name := range []string{"person.key", "device.key"} {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("%s is not private: %v, %v", name, info, err)
-		}
+		requireKeyMode(t, filepath.Join(dir, name), 0o600)
+	}
+	if _, err := personkey.Load(dir); err != nil {
+		t.Fatalf("private identity did not load: %v", err)
+	}
+}
+
+func requireKeyMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != want {
+		t.Fatalf("%s mode is %o, want %o", path, info.Mode().Perm(), want)
+	}
+}
+
+func TestPersonKeyAcceptanceUnsafeFileCannotBeUsed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "identity")
+	if _, err := personkey.Create(dir); err != nil {
+		t.Fatal(err)
 	}
 	device := filepath.Join(dir, "device.key")
 	if err := os.Chmod(device, 0o644); err != nil {
@@ -69,6 +85,11 @@ func TestPersonKeyAcceptancePrivateFilesRequiredForSigning(t *testing.T) {
 	if _, err := personkey.Load(dir); err != nil {
 		t.Fatalf("restored private key did not load: %v", err)
 	}
+	assertSymlinkedKeyRejected(t, dir, device)
+}
+
+func assertSymlinkedKeyRejected(t *testing.T, dir, device string) {
+	t.Helper()
 	linked := filepath.Join(dir, "linked-device")
 	if err := os.Rename(device, linked); err != nil {
 		t.Fatal(err)
