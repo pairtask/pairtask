@@ -131,7 +131,7 @@ def manifest_for(template, target):
 
 
 def icon_files(manifest):
-    """The bundle paths of the icons the manifest names, each once, in order."""
+    """The manifest's icon paths, unique and sorted for reproducible bundles."""
     names = [manifest.get("icon")] + [icon.get("src") for icon in manifest.get("icons", [])]
     return sorted({name for name in names if name})
 
