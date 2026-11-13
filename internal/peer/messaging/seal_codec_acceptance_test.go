@@ -81,10 +81,7 @@ func TestSealCodecAcceptanceUnsignedWrapper(t *testing.T) {
 }
 
 func TestSealCodecAcceptanceRejectsControlNestingAndMalformedFrames(t *testing.T) {
-	message, err := messaging.EncodeMessage(messaging.Message{ID: "m", N: 1, CreatedAt: sessionAt, Text: "body"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := sealCodecMessage(t)
 	stored, err := messaging.EncodeStored(messaging.Stored{ID: "m"})
 	if err != nil {
 		t.Fatal(err)
@@ -117,10 +114,7 @@ func TestSealCodecAcceptanceRejectsControlNestingAndMalformedFrames(t *testing.T
 }
 
 func TestSealCodecAcceptanceRejectsMalformedOuterFrame(t *testing.T) {
-	message, err := messaging.EncodeMessage(messaging.Message{ID: "m", N: 1, CreatedAt: sessionAt, Text: "body"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := sealCodecMessage(t)
 	valid, err := messaging.EncodeSealed(message, []byte("seal"))
 	if err != nil {
 		t.Fatal(err)
@@ -139,10 +133,7 @@ func TestSealCodecAcceptanceRejectsMalformedOuterFrame(t *testing.T) {
 }
 
 func TestSealCodecAcceptanceSealSizeLimit(t *testing.T) {
-	message, err := messaging.EncodeMessage(messaging.Message{ID: "m", N: 1, CreatedAt: sessionAt, Text: "body"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := sealCodecMessage(t)
 	if _, err := messaging.EncodeSealed(message, bytes.Repeat([]byte{1}, messaging.MaxSealBytes+1)); !errors.Is(err, messaging.ErrProtocol) {
 		t.Fatalf("oversized seal accepted: %v", err)
 	}
@@ -153,6 +144,15 @@ func TestSealCodecAcceptanceSealSizeLimit(t *testing.T) {
 	if _, got, err := messaging.DecodeSealed(limit); err != nil || len(got) != messaging.MaxSealBytes {
 		t.Fatalf("maximum seal changed: len=%d err=%v", len(got), err)
 	}
+}
+
+func sealCodecMessage(t *testing.T) []byte {
+	t.Helper()
+	message, err := messaging.EncodeMessage(messaging.Message{ID: "m", N: 1, CreatedAt: sessionAt, Text: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return message
 }
 
 func TestSealCodecAcceptanceSealDoesNotChangeMessageIdentity(t *testing.T) {
