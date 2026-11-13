@@ -37,26 +37,32 @@ JSON. A volume at 90% or more gets a warning. `pairtask start` also refuses to
 start an agent session when the agent home is nearly full, and lists the caches
 that are safe to clear.
 
-To grow the workspace or a volume today, write your own sizes next to the
-deployment's managed `operator.auto.tfvars.json`, in a file of your own such as
-`size.auto.tfvars.json` (the deployment lives in
-`~/.local/state/pairtask/operator/<project>/`), then review and apply:
-
-```json
-{"memory_gib": 8, "agent_home_gib": 10}
-```
+To grow the workspace or a volume, ask for the new sizes, review the plan,
+then apply it:
 
 ```sh
-pairtask plan     # expect only changes, no replacements
-pairtask apply
+pairtask size plan --agent-home 10 --memory 6
+pairtask size apply
 ```
 
-The sizes are `cpu_count` (1–8), `memory_gib` (1–16), `disk_gib` (root disk,
-2–100) and the volume quotas in GiB: `workspace_gib`, `agent_home_gib`,
-`docker_gib`, `tools_gib` (1–100). Only ever raise these by hand: nothing on
-this path stops a smaller value, and shrinking a disk or quota below what it
-holds can fail or lose data. (The volumes themselves refuse to be destroyed.)
-`pairtask size plan|apply`, coming next in #382, refuses to shrink.
+`size plan` takes `--cpu`, `--memory` and `--disk` (the root disk) for the
+workspace and `--workspace`, `--agent-home`, `--docker` and `--tools` for the
+volume quotas, in GiB. Before it writes anything it refuses:
+
+- a smaller value than the sandbox has now; sizes only grow;
+- a value outside the allowed range (`--cpu` 1–8, `--memory` 1–16, `--disk`
+  2–100, each volume 1–100);
+- CPUs or RAM the VM can't give: the other containers that exist keep
+  theirs (`secured` 1 CPU and 2 GiB, `connector` 1 CPU and 1 GiB, when the
+  pairing route is on) and the VM keeps 1 GiB, so on the default 4-CPU, 8 GiB
+  VM with both running, the workspace can have at most 2 CPUs and 4 GiB;
+- a size another tfvars file in the deployment already sets.
+
+Then it records your sizes in the deployment's `size.auto.tfvars.json`
+(`~/.local/state/pairtask/operator/<project>/`, yours, kept across updates)
+and shows the plan; `size apply` carries it out. Read the plan before you
+apply it: it should only change resources, and any replacement means data on
+a root disk would be rebuilt. The volumes refuse to be destroyed.
 
 The workspace can't use more than the VM has. On macOS, check the VM's line in
 `pairtask size show` first: growing the VM itself still means editing its
