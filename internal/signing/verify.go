@@ -45,7 +45,7 @@ type Signer struct {
 
 // Result is a verification's outcome.
 type Result struct {
-	State  State   `json:"verification"`
+	State  State   `json:"state"`
 	Signer *Signer `json:"signer,omitempty"`
 	Reason string  `json:"reason,omitempty"`
 }
@@ -70,10 +70,21 @@ var (
 	errFrame     = errors.New("signing: the message doesn't match what was signed")
 )
 
-// Verify checks a seal against the recipient's roots at now.
+// MaxSkew is how far ahead of the recipient's clock a header may be dated.
+const MaxSkew = 5 * time.Minute
+
+var errFuture = errors.New("signing: signed in the future")
+
+// Verify checks a seal against the recipient's roots. Certificates must be
+// valid when the header was signed, so a stored message still verifies
+// after its certificate lapses; a header dated beyond now and MaxSkew is
+// refused. Revocation, not expiry, is what ends a stolen key's past.
 func Verify(s *Seal, roots Roots, now time.Time) Result {
 	if s == nil {
 		return Result{State: Unsigned}
+	}
+	if s.Header.CreatedAt.After(now.Add(MaxSkew)) {
+		return Result{State: Invalid, Reason: errFuture.Error()}
 	}
 	leaf, err := signedBy(*s)
 	if err != nil {
@@ -83,7 +94,7 @@ func Verify(s *Seal, roots Roots, now time.Time) Result {
 	if !known {
 		return Result{State: Unverified, Reason: "signed under a key not pinned here"}
 	}
-	signer, err := speaksFor(s.Header, leaf, s.RootKey, root, now)
+	signer, err := speaksFor(s.Header, leaf, s.RootKey, root)
 	if err != nil {
 		return Result{State: Invalid, Reason: err.Error()}
 	}
@@ -115,8 +126,8 @@ func signedBy(s Seal) (Cert, error) {
 // speaksFor checks leaf against its root and what h claims, and names the
 // signer: a person's device speaks only for its operator, a workspace's
 // broker only for that workspace's agents, an agent key only for itself.
-func speaksFor(h Header, leaf Cert, rootKey ed25519.PublicKey, root Root, now time.Time) (*Signer, error) {
-	if err := leaf.Check(rootKey, now); err != nil {
+func speaksFor(h Header, leaf Cert, rootKey ed25519.PublicKey, root Root) (*Signer, error) {
+	if err := leaf.Check(rootKey, h.CreatedAt); err != nil {
 		return nil, err
 	}
 	if root.Workspace != h.Workspace {
