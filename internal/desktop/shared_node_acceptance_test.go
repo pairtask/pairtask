@@ -232,3 +232,20 @@ func TestSharedDesktopNodeAcceptanceOversizeCallDropsOnlyThatConnection(t *testi
 	}
 	sharedIdentity(t, n.n)
 }
+
+func TestSharedDesktopNodeAcceptanceOversizeForwardedCallReturnsError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "node")
+	owner := startSharedNode(t, dir)
+	forwarder := startSharedNode(t, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out := forwarder.n.Call(ctx, protocol.Message{Type: protocol.TypeOperatorPairing,
+		PairingOp: protocol.PairingOpList, PairingName: strings.Repeat("x", 1<<20)})
+	if out.Type != protocol.TypeError {
+		t.Fatalf("oversize forwarded call returned %+v, want an error", out)
+	}
+	if out.Code != "node_unavailable" {
+		t.Fatalf("oversize forwarded call used code %q", out.Code)
+	}
+	sharedIdentity(t, owner.n)
+}
