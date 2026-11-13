@@ -141,3 +141,21 @@ func (h *Hub) contactAcceptKey(ctx context.Context, req operatorRequest, auditID
 	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
 		ContactKey: msg.ContactKey, ContactOp: msg.ContactOp}), nil
 }
+
+// contactRequireSeals is the operator's choice to refuse a contact's
+// unsigned messages ("on") or take them marked unsigned ("off").
+func (h *Hub) contactRequireSeals(ctx context.Context, req operatorRequest, auditID int64) (protocol.Message, error) {
+	msg := req.msg
+	if msg.ContactText != "on" && msg.ContactText != "off" {
+		return protocol.Message{}, &routingError{protocol.ErrMalformedFrame, "contact_text must be on or off"}
+	}
+	if err := h.store.SetRequireSeals(ctx, msg.ContactKey, msg.ContactText == "on", time.Now()); err != nil {
+		return protocol.Message{}, err
+	}
+	if err := h.store.FinishOperatorAudit(ctx, auditID, store.AuditOutcome{Result: store.AuditAccepted}); err != nil {
+		return protocol.Message{}, err
+	}
+	h.MessagesChanged(msg.ContactKey)
+	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
+		ContactKey: msg.ContactKey, ContactOp: msg.ContactOp}), nil
+}

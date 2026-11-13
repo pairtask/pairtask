@@ -30,6 +30,9 @@ const (
 	// ContactOpAcceptKey accepts a contact's person key, one it signed
 	// with here, as the operator's approval of it (#115).
 	ContactOpAcceptKey = "accept_key"
+	// ContactOpRequireSeals sets whether this side refuses a contact's
+	// unsigned messages: contact_text "on" or "off" (#115).
+	ContactOpRequireSeals = "require_seals"
 
 	// ErrInvalidSeal refuses a message whose seal doesn't verify or
 	// doesn't match the message.

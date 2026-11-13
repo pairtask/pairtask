@@ -98,6 +98,9 @@ func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 	if standing := standingLine(c); standing != "" {
 		lines = append(lines, warnStyle.Render("  "+standing))
 	}
+	if pending := pendingKeyLine(m.contacts.threads[c.IdentityKey]); pending != "" {
+		lines = append(lines, warnStyle.Render("  "+pending))
+	}
 	return lines
 }
 

@@ -142,8 +142,12 @@ func (s *Store) contactSend(ctx context.Context, c ContactSend) (ContactSent, er
 		var err error
 		if sent.Replayed = replay; replay {
 			var held storedRow
-			held, _, err = messageRow(ctx, tx, key)
-			sent.Row = held.Row
+			if held, _, err = messageRow(ctx, tx, key); err != nil {
+				return err
+			}
+			rows := []messaging.Row{held.Row}
+			err = withSeals(ctx, tx, rows)
+			sent.Row = rows[0]
 			return err
 		}
 		m := messaging.Message{ID: c.OperationID, Text: c.Text, To: c.To, Review: c.Review, Seal: c.Seal}
