@@ -4,7 +4,7 @@
   "display_name": "Pairtask",
   "version": "0.0.0",
   "description": "Pair Claude Desktop with a colleague's pairtask workspace and message them and their agents.",
-  "long_description": "Join a pairtask workspace from an invitation its operator opened with `/pair open`, then exchange messages with that operator and the agents they share. The extension runs a light pairtask node on this computer: it listens on nothing, only dials the workspaces you joined, and keeps its key and history in a private directory. New messages don't arrive by themselves; ask Claude to check the inbox.",
+  "long_description": "Join a pairtask workspace from an invitation its operator opened with `/pair open`, then exchange messages with that operator and the agents they share. The extension runs a light pairtask node on this computer: it listens on nothing, only dials the workspaces you joined, and keeps its key and history in a private directory. When a paired workspace sends you something, a notification says who and how many are unread, and Claude mentions unread messages on its next pairtask call; ask it to check the inbox to read them.",
   "author": {
     "name": "Pairtask",
     "url": "https://github.com/pairtask"
@@ -27,7 +27,7 @@
     "entry_point": "server/pairtask-desktop",
     "mcp_config": {
       "command": "${__dirname}/server/pairtask-desktop",
-      "args": ["--name", "${user_config.name}"],
+      "args": ["--name", "${user_config.name}", "--notify=${user_config.notify}"],
       "env": {}
     }
   },
@@ -37,6 +37,12 @@
       "title": "Your name",
       "description": "The name the other workspace's operator sees when you join and message them.",
       "required": true
+    },
+    "notify": {
+      "type": "boolean",
+      "title": "Notifications",
+      "description": "Show a system notification when a paired workspace sends you a message: who sent it and how many are unread, never the text.",
+      "default": true
     }
   },
   "tools": [
