@@ -82,6 +82,7 @@ func roomCLIString(req map[string]any, key string) string {
 }
 
 func TestRoomsCLIAcceptanceBroadcastPreservesExplicitScope(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	path, requests := roomCLISocket(t, map[string]any{"type": "ack", "stage": "accepted", "seq": 1})
 	var out, stderr bytes.Buffer
 	code := run(context.Background(), []string{"operator", "send", "--socket", path, "--all", "--room", "project", "hello"}, &out, &stderr)

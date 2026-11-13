@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,23 @@ func cliSigningKeys(t *testing.T) *personkey.Keys {
 		t.Fatal(err)
 	}
 	return keys
+}
+
+func TestOperatorIdentityInitWithoutBrokerDoesNotMakeKeys(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "identity")
+	t.Setenv(personkey.DirEnv, dir)
+	missingSocket := filepath.Join(t.TempDir(), "absent.sock")
+	var out, stderr bytes.Buffer
+	code := run(context.Background(), []string{"operator", "identity", "init", "--socket", missingSocket}, &out, &stderr)
+	if code != 1 {
+		t.Fatalf("init without broker exit %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "pairtask identity init") {
+		t.Fatalf("missing host command guidance: %s", stderr.String())
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("init without broker made a key directory: %v", err)
+	}
 }
 
 func multiOperatorSocket(t *testing.T, handle func(net.Conn)) string {

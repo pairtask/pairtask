@@ -21,6 +21,7 @@ type operatorWireScope struct {
 }
 
 func TestOperatorAcceptanceCLIWire(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	scopes := []operatorWireScope{
 		{[]string{"--to", "alpha"}, "alpha", 0},
 		{[]string{"--group", "beta,alpha"}, "", 2},
@@ -120,6 +121,7 @@ func TestOperatorAcceptanceCLIGeneratesIDAndReportsRejection(t *testing.T) {
 }
 
 func TestOperatorAcceptanceCLIQuotesTerminalControls(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, reply := range []protocol.Message{{Type: "ack", Stage: "accepted", Seq: 1, MessageID: "id\x1b[2J", Recipients: []protocol.Recipient{{AgentID: "agent\x1b[2J"}}, Excluded: []string{"old\x1b[2J"}}, {Type: "error", Code: "unknown_recipient", Detail: "missing agent\x1b[2J"}} {
 		socket := statusSocket(t, func(c net.Conn) {
 			var m protocol.Message
