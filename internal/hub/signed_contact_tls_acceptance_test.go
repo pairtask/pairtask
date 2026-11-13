@@ -80,6 +80,13 @@ func TestSignedContactTLSAcceptancePinnedLinkKeepsOperatorSeal(t *testing.T) {
 
 func (r tlsSealReceipt) assertDelivery(t *testing.T) {
 	t.Helper()
+	r.assertStored(t)
+	r.assertImported(t)
+	r.assertPending(t)
+}
+
+func (r tlsSealReceipt) assertStored(t *testing.T) {
+	t.Helper()
 	rows, _, err := r.receiver.store.PeerMessages().Page(r.ctx, r.senderWorkspace, 0, 10)
 	messageWorkerOK(t, err)
 	if len(rows) != 1 {
@@ -88,6 +95,10 @@ func (r tlsSealReceipt) assertDelivery(t *testing.T) {
 	if rows[0].Direction != messaging.DirIn || !bytes.Equal(rows[0].Seal, r.seal) {
 		t.Fatalf("pinned TLS recipient lost seal: %+v", rows)
 	}
+}
+
+func (r tlsSealReceipt) assertImported(t *testing.T) {
+	t.Helper()
 	r.receiver.drainImports(r.ctx, map[string]*Client{r.agent.ID: r.agent})
 	delivered := recv(t, r.agent)
 	if delivered.Origin != protocol.OriginRemote || delivered.From != protocol.OperatorID {
@@ -96,9 +107,16 @@ func (r tlsSealReceipt) assertDelivery(t *testing.T) {
 	if delivered.Seal != base64.StdEncoding.EncodeToString(r.seal) {
 		t.Fatalf("recipient broker/agent delivery lost provenance: %+v", delivered)
 	}
+}
+
+func (r tlsSealReceipt) assertPending(t *testing.T) {
+	t.Helper()
 	keys, err := r.receiver.store.PeerMessages().PendingPersonKeys(r.ctx, r.senderWorkspace)
 	messageWorkerOK(t, err)
-	if len(keys) != 1 || keys[0] != r.personID {
+	if len(keys) != 1 {
+		t.Fatalf("remote operator key count=%d, want one", len(keys))
+	}
+	if keys[0] != r.personID {
 		t.Fatalf("remote operator key was not held for approval: %v", keys)
 	}
 }
@@ -110,7 +128,11 @@ func (r tlsSealReceipt) assertApproval(t *testing.T) {
 	messageWorkerOK(t, err)
 	parsed, err := signing.ParseSeal(r.seal)
 	messageWorkerOK(t, err)
-	if got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now()); got.State != signing.Verified || got.Signer == nil || got.Signer.Basis != signing.BasisPerson {
+	got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now())
+	if got.State != signing.Verified || got.Signer == nil {
+		t.Fatalf("approved TLS contact signature did not verify: %+v", got)
+	}
+	if got.Signer.Basis != signing.BasisPerson {
 		t.Fatalf("approved TLS contact signature did not verify: %+v", got)
 	}
 }

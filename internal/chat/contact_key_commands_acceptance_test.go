@@ -41,6 +41,14 @@ func TestContactKeyCommandsAcceptanceOnlyPendingKeyCanBeChosen(t *testing.T) {
 	}
 	h.reply(req, protocol.Message{Type: protocol.TypeOperatorContactResult,
 		ContactPage: &protocol.ContactMessagePage{Contact: contact}})
+	assertApprovalRefresh(t, h, contact)
+	if strings.Contains(ansi.Strip(h.m.View().Content), person) {
+		t.Fatal("approved person key remained pending in the paired tab")
+	}
+}
+
+func assertApprovalRefresh(t *testing.T, h *chatHarness, contact string) {
+	t.Helper()
 	refresh := h.take(protocol.TypeOperatorContact)
 	if refresh.ContactOp != protocol.ContactOpList || refresh.ContactKey != contact {
 		t.Fatalf("approval did not refresh selected contact: %+v", refresh)
@@ -48,9 +56,6 @@ func TestContactKeyCommandsAcceptanceOnlyPendingKeyCanBeChosen(t *testing.T) {
 	h.reply(refresh, protocol.Message{Type: protocol.TypeOperatorContactResult,
 		ContactPage: &protocol.ContactMessagePage{Contact: contact}})
 	h.await(func() bool { return h.m.State().InFlight == 0 })
-	if strings.Contains(ansi.Strip(h.m.View().Content), person) {
-		t.Fatal("approved person key remained pending in the paired tab")
-	}
 }
 
 func TestContactKeyCommandsAcceptanceAmbiguousApproval(t *testing.T) {
@@ -77,7 +82,10 @@ func TestContactKeyCommandsAcceptanceRequireSealsSwitch(t *testing.T) {
 	h, contact := contactKeyCommandHarness(t, first, second)
 	v2Command(h, "/pair require-seals on")
 	req := h.take(protocol.TypeOperatorContact)
-	if req.ContactOp != protocol.ContactOpRequireSeals || req.ContactKey != contact || req.ContactText != "on" {
+	if req.ContactOp != protocol.ContactOpRequireSeals || req.ContactKey != contact {
+		t.Fatalf("require-seals command targeted wrong contact: %+v", req)
+	}
+	if req.ContactText != "on" {
 		t.Fatalf("require-seals command targeted wrong contact: %+v", req)
 	}
 	h.reply(req, protocol.Message{Type: protocol.TypeOperatorContactResult,

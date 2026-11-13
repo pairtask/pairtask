@@ -51,16 +51,31 @@ func TestSealStoreAcceptanceOutboundSealSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	db = sessionDB(t, path)
-	rows, err := db.PeerMessages().Offer(ctx, sessionContact, sessionAt, messaging.Limit{Count: 5, Bytes: 1024, Version: messaging.SealVersion})
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("offer after restart: rows=%+v err=%v", rows, err)
+	assertReopenedSeal(t, db.PeerMessages(), first, firstSeal)
+}
+
+func assertReopenedSeal(t *testing.T, messages messaging.Store, first messaging.Row, seal []byte) {
+	t.Helper()
+	ctx := context.Background()
+	rows, err := messages.Offer(ctx, sessionContact, sessionAt, messaging.Limit{Count: 5, Bytes: 1024, Version: messaging.SealVersion})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if rows[0].N != first.N || !bytes.Equal(rows[0].Seal, firstSeal) {
+	if len(rows) != 1 {
+		t.Fatalf("offer after restart: rows=%+v", rows)
+	}
+	if rows[0].N != first.N || !bytes.Equal(rows[0].Seal, seal) {
 		t.Fatalf("restarted offer lost seal: %+v", rows[0])
 	}
-	page, _, err := db.PeerMessages().Page(ctx, sessionContact, 0, 10)
-	if err != nil || len(page) != 1 || !bytes.Equal(page[0].Seal, firstSeal) {
-		t.Fatalf("page after restart lost seal: rows=%+v err=%v", page, err)
+	page, _, err := messages.Page(ctx, sessionContact, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("page after restart: rows=%+v", page)
+	}
+	if !bytes.Equal(page[0].Seal, seal) {
+		t.Fatalf("page after restart lost seal: %+v", page[0])
 	}
 }
 
@@ -84,9 +99,17 @@ func TestSealStoreAcceptanceDowngradeIsVisibleAndDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	db = sessionDB(t, path)
-	page, _, err := db.PeerMessages().Page(ctx, sessionContact, 0, 10)
-	if err != nil || len(page) != 1 {
-		t.Fatalf("page after downgrade: rows=%+v err=%v", page, err)
+	assertDowngradePersisted(t, db.PeerMessages(), seal)
+}
+
+func assertDowngradePersisted(t *testing.T, messages messaging.Store, seal []byte) {
+	t.Helper()
+	page, _, err := messages.Page(context.Background(), sessionContact, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("page after downgrade: rows=%+v", page)
 	}
 	if !page[0].SealDowngraded || !bytes.Equal(page[0].Seal, seal) {
 		t.Fatalf("downgrade lost status or original seal: %+v", page[0])

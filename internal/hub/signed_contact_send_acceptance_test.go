@@ -57,30 +57,34 @@ func TestSignedContactSendAcceptanceSealPersistsAcrossRetry(t *testing.T) {
 	msg := (contactSendSigner{h, contact, person, device}).message("contact-send-signed", "hello contact")
 	request := operatorRequest{uid: 0, msg: msg}
 	first := h.operatorContact(context.Background(), nil, request)
-	if first.Type != protocol.TypeOperatorContactResult {
-		t.Fatalf("signed contact send was refused: %+v", first)
+	assertContactSendResult(t, first, msg.Seal)
+	assertQueuedContactSeal(t, h, contact, msg.Seal)
+	retry := h.operatorContact(context.Background(), nil, request)
+	assertContactSendResult(t, retry, msg.Seal)
+	assertQueuedContactSeal(t, h, contact, msg.Seal)
+}
+
+func assertContactSendResult(t *testing.T, out protocol.Message, seal string) {
+	t.Helper()
+	if out.Type != protocol.TypeOperatorContactResult || out.ContactMessage == nil {
+		t.Fatalf("signed contact send failed: %+v", out)
 	}
-	if first.ContactMessage == nil || first.ContactMessage.Seal != msg.Seal {
-		t.Fatalf("send result hid operator seal: %+v", first.ContactMessage)
+	if out.ContactMessage.Seal != seal {
+		t.Fatalf("contact send result lost operator seal: %+v", out.ContactMessage)
 	}
+}
+
+func assertQueuedContactSeal(t *testing.T, h *Hub, contact, seal string) {
+	t.Helper()
 	rows, _, err := h.store.PeerMessages().Page(context.Background(), contact, 0, 10)
 	messageWorkerOK(t, err)
-	parsed, err := protocol.DecodeSeal(msg.Seal)
+	parsed, err := protocol.DecodeSeal(seal)
 	messageWorkerOK(t, err)
-	if len(rows) != 1 || !bytes.Equal(rows[0].Seal, parsed.Marshal()) {
-		t.Fatalf("operator's seal was not queued: %+v", rows)
+	if len(rows) != 1 {
+		t.Fatalf("contact send queued %d rows, want 1", len(rows))
 	}
-	retry := h.operatorContact(context.Background(), nil, request)
-	if retry.Type != protocol.TypeOperatorContactResult {
-		t.Fatalf("same signed send was not replayable: %+v", retry)
-	}
-	if retry.ContactMessage == nil || retry.ContactMessage.Seal != msg.Seal {
-		t.Fatalf("retry result lost original operator seal: %+v", retry.ContactMessage)
-	}
-	rows, _, err = h.store.PeerMessages().Page(context.Background(), contact, 0, 10)
-	messageWorkerOK(t, err)
-	if len(rows) != 1 || !bytes.Equal(rows[0].Seal, parsed.Marshal()) {
-		t.Fatalf("contact-send retry replaced seal: %+v", rows)
+	if !bytes.Equal(rows[0].Seal, parsed.Marshal()) {
+		t.Fatalf("contact send queued a different seal: %+v", rows[0])
 	}
 }
 
