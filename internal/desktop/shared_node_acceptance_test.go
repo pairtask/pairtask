@@ -23,6 +23,17 @@ type sharedNode struct {
 	closeErr error
 }
 
+// macOS limits Unix socket path length; t.TempDir includes the test name.
+func sharedNodeDir(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("", "pt-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return filepath.Join(root, "node")
+}
+
 func startSharedNode(t *testing.T, dir string) *sharedNode {
 	t.Helper()
 	n, err := desktop.Start(context.Background(), desktop.Config{Dir: dir, Name: "Claude Mac"})
@@ -57,7 +68,7 @@ func sharedIdentity(t *testing.T, n *desktop.Node) string {
 }
 
 func TestSharedDesktopNodeAcceptanceForwarderAndTakeover(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedNodeDir(t)
 	first := startSharedNode(t, dir)
 	second := startSharedNode(t, dir)
 	if !first.n.Owner() {
@@ -82,7 +93,7 @@ func TestSharedDesktopNodeAcceptanceForwarderAndTakeover(t *testing.T) {
 }
 
 func TestSharedDesktopNodeAcceptanceOneForwarderWinsTakeover(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedNodeDir(t)
 	owner := startSharedNode(t, dir)
 	a := startSharedNode(t, dir)
 	b := startSharedNode(t, dir)
@@ -129,7 +140,7 @@ func assertOneSharedOwner(t *testing.T, a, b *desktop.Node) {
 }
 
 func TestSharedDesktopNodeAcceptanceStaleSocketAndPrivateMode(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedNodeDir(t)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +164,30 @@ func TestSharedDesktopNodeAcceptanceStaleSocketAndPrivateMode(t *testing.T) {
 	}
 }
 
+func TestSharedDesktopNodeAcceptanceLongPathKeepsOwnerWorking(t *testing.T) {
+	dir := filepath.Join(sharedNodeDir(t), strings.Repeat("d", 120))
+	owner := startSharedNode(t, dir)
+	if !owner.n.Owner() {
+		t.Fatal("long data path prevented the first copy from owning its broker")
+	}
+	sharedIdentity(t, owner.n)
+	if _, err := os.Lstat(filepath.Join(dir, desktop.SocketFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("long socket path exists or failed unexpectedly: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := desktop.Start(ctx, desktop.Config{Dir: dir, Name: "Claude Mac"})
+	if !errors.Is(err, desktop.ErrSocketPathTooLong) {
+		t.Fatalf("second copy with long socket path returned %v, want ErrSocketPathTooLong", err)
+	}
+	if time.Since(start) >= 2*time.Second {
+		t.Fatal("second copy waited for takeover despite a known long socket path")
+	}
+}
+
 func TestSharedDesktopNodeAcceptanceLockWithoutOwnerExplainsRecovery(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedNodeDir(t)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +209,7 @@ func TestSharedDesktopNodeAcceptanceLockWithoutOwnerExplainsRecovery(t *testing.
 }
 
 func TestSharedDesktopNodeAcceptanceUnavailableOwnerCanBeRetried(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedNodeDir(t)
 	owner := startSharedNode(t, dir)
 	forwarder := startSharedNode(t, dir)
 	if err := owner.close(); err != nil {
@@ -204,7 +237,7 @@ func TestSharedDesktopNodeAcceptanceUnavailableOwnerCanBeRetried(t *testing.T) {
 }
 
 func TestSharedDesktopNodeAcceptanceOversizeCallDropsOnlyThatConnection(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedNodeDir(t)
 	n := startSharedNode(t, dir)
 	conn, err := net.Dial("unix", filepath.Join(dir, desktop.SocketFile))
 	if err != nil {
@@ -234,7 +267,7 @@ func TestSharedDesktopNodeAcceptanceOversizeCallDropsOnlyThatConnection(t *testi
 }
 
 func TestSharedDesktopNodeAcceptanceOversizeForwardedCallReturnsError(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedNodeDir(t)
 	owner := startSharedNode(t, dir)
 	forwarder := startSharedNode(t, dir)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

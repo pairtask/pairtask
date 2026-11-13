@@ -47,6 +47,17 @@ type lockedBuffer struct {
 	b  bytes.Buffer
 }
 
+// Keep node.sock below macOS's Unix socket path limit.
+func sharedProcessDir(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("", "pt-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return filepath.Join(root, "node")
+}
+
 func (b *lockedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -117,7 +128,7 @@ func processWhoami(t *testing.T, p *desktopProcess) desktop.WhoamiResult {
 
 func testDesktopSharedProcesses(t *testing.T) {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "node")
+	dir := sharedProcessDir(t)
 	first := startDesktopProcess(t, dir)
 	want := processWhoami(t, first)
 	second := startDesktopProcess(t, dir)
