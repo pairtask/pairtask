@@ -50,6 +50,43 @@ func TestOperatorIdentityInitWithoutBrokerDoesNotMakeKeys(t *testing.T) {
 	}
 }
 
+func TestOperatorIdentityInitReportsPartialKeysBeforeBrokerError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "identity")
+	t.Setenv(personkey.DirEnv, dir)
+	if _, err := personkey.Create(dir); err != nil {
+		t.Fatal(err)
+	}
+	personPath := filepath.Join(dir, "person.key")
+	personBefore, err := os.ReadFile(personPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "device.key")); err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	code := run(context.Background(), []string{"operator", "identity", "init", "--socket", filepath.Join(t.TempDir(), "absent.sock")}, &out, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), personkey.ErrIncomplete.Error()) {
+		t.Fatalf("partial key error hidden by broker error: exit %d, stderr %s", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "no operator broker answers") {
+		t.Fatalf("partial key was mistaken for a missing broker: %s", stderr.String())
+	}
+	assertPartialKeyUnchanged(t, dir, personBefore)
+}
+
+func assertPartialKeyUnchanged(t *testing.T, dir string, personBefore []byte) {
+	t.Helper()
+	personPath := filepath.Join(dir, "person.key")
+	personAfter, err := os.ReadFile(personPath)
+	if err != nil || !bytes.Equal(personAfter, personBefore) {
+		t.Fatalf("init changed the remaining person key: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "device.key")); !os.IsNotExist(err) {
+		t.Fatalf("init silently replaced the missing device key: %v", err)
+	}
+}
+
 func multiOperatorSocket(t *testing.T, handle func(net.Conn)) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "signed-cli-")
