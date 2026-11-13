@@ -41,9 +41,13 @@ func (m *Model) acceptKeyCommand(fields pairWords) tea.Cmd {
 	return m.request(kindContactAcceptKey, msg, key.contact)
 }
 
-// chosenKey is the pending key to accept, or why there is none.
+// chosenKey is the pending key to accept, or why there is none: a key
+// named explicitly must be pending, and a malformed line never falls back
+// to the only pending key.
 func chosenKey(pending, args []string) (string, string) {
 	switch {
+	case len(args) > 1:
+		return "", "usage: /pair accept-key [KEY]"
 	case len(args) == 1 && slices.Contains(pending, args[0]):
 		return args[0], ""
 	case len(args) == 1:
