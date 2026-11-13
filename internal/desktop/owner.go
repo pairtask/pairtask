@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/pairtask/pairtask/internal/hub"
@@ -25,6 +26,28 @@ const SocketFile = "node.sock"
 
 // maxLine bounds one request or answer on the socket.
 const maxLine = 1 << 20
+
+// ErrSocketPathTooLong: the data directory's path leaves no room for the
+// socket's, so its owner can't share the node.
+var ErrSocketPathTooLong = errors.New("the data folder's path is too long to share the node between Claude surfaces: pass a shorter --dir")
+
+// maxSocketPath is the longest socket path the system binds: sun_path
+// less its terminating NUL.
+func maxSocketPath() int {
+	if runtime.GOOS == "darwin" {
+		return 103
+	}
+	return 107
+}
+
+// socketPath is where dir's owner shares its node, or ErrSocketPathTooLong.
+func socketPath(dir string) (string, error) {
+	sock := filepath.Join(dir, SocketFile)
+	if len(sock) > maxSocketPath() {
+		return sock, ErrSocketPathTooLong
+	}
+	return sock, nil
+}
 
 // owner is the copy that holds the database's lock: it runs the broker and
 // answers the other copies' calls on the socket.
@@ -94,9 +117,15 @@ func dialer(dial func(ctx context.Context, destination string) (net.Conn, error)
 }
 
 // share listens on the data directory's socket, replacing one a former
-// owner left: the lock says none is running.
+// owner left: the lock says none is running. A path too long to bind
+// leaves the node unshared, as it was before sharing existed.
 func (o *owner) share(dir string) error {
-	o.sock = filepath.Join(dir, SocketFile)
+	sock, err := socketPath(dir)
+	if err != nil {
+		o.log.Warn("this node can't be shared", "error", err, "socket", sock)
+		return nil
+	}
+	o.sock = sock
 	if err := os.Remove(o.sock); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("share the node: %w", err)
 	}
@@ -187,8 +216,10 @@ func (o *owner) call(ctx context.Context, msg protocol.Message) protocol.Message
 // close stops sharing (the socket goes while the lock is still held, so
 // no copy reaches a stopping broker), then stops the broker.
 func (o *owner) close() error {
-	o.ln.Close()
-	os.Remove(o.sock)
+	if o.ln != nil {
+		o.ln.Close()
+		os.Remove(o.sock)
+	}
 	o.mu.Lock()
 	for c := range o.conns {
 		c.Close()

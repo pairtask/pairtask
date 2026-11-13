@@ -118,6 +118,9 @@ func (n *Node) reachOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	f, err := dialOwner(ctx, n.cfg.Dir)
+	if errors.Is(err, ErrSocketPathTooLong) {
+		return false, err
+	}
 	if err != nil {
 		return false, nil
 	}

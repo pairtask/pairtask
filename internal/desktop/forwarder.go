@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -29,8 +28,12 @@ var errBroken = errors.New("the connection to the shared node failed")
 
 // dialOwner connects to the owner's socket in dir, if it is ours.
 func dialOwner(ctx context.Context, dir string) (*forwarder, error) {
+	sock, err := socketPath(dir)
+	if err != nil {
+		return nil, err
+	}
 	var d net.Dialer
-	c, err := d.DialContext(ctx, "unix", filepath.Join(dir, SocketFile))
+	c, err := d.DialContext(ctx, "unix", sock)
 	if err != nil {
 		return nil, err
 	}
