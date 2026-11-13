@@ -147,12 +147,8 @@ func (n *Node) Call(ctx context.Context, msg protocol.Message) protocol.Message 
 	}
 	var err error
 	for range forwardTries {
-		o, f := n.current()
-		if o != nil {
-			return o.call(ctx, msg)
-		}
-		var out protocol.Message
-		if out, err = f.call(ctx, msg); err == nil {
+		out, done, f := n.attempt(ctx, msg)
+		if done {
 			return out
 		}
 		if ctx.Err() != nil {
@@ -165,6 +161,21 @@ func (n *Node) Call(ctx context.Context, msg protocol.Message) protocol.Message 
 	return unavailable(err)
 }
 
+// attempt is one try at the broker this copy reaches now: done with its
+// answer, or not, with the forwarder that failed (nil when there was none,
+// after a takeover that reached no broker).
+func (n *Node) attempt(ctx context.Context, msg protocol.Message) (protocol.Message, bool, *forwarder) {
+	o, f := n.current()
+	if o != nil {
+		return o.call(ctx, msg), true, nil
+	}
+	if f == nil {
+		return protocol.Message{}, false, nil
+	}
+	out, err := f.call(ctx, msg)
+	return out, err == nil, f
+}
+
 // current is the owner or the forwarder this copy uses now.
 func (n *Node) current() (*owner, *forwarder) {
 	n.mu.Lock()
@@ -172,15 +183,17 @@ func (n *Node) current() (*owner, *forwarder) {
 	return n.own, n.fwd
 }
 
-// replace drops a forwarder whose owner went away and reaches the broker
-// again, unless another call already did.
+// replace drops a forwarder whose owner went away, if any, and reaches the
+// broker again, unless another call already did.
 func (n *Node) replace(ctx context.Context, gone *forwarder) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.fwd != gone {
+	if n.own != nil || n.fwd != gone {
 		return nil
 	}
-	gone.close()
+	if gone != nil {
+		gone.close()
+	}
 	n.fwd = nil
 	return n.reach(ctx)
 }
