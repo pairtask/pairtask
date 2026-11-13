@@ -89,18 +89,36 @@ func (h *Hub) checkSeal(ctx context.Context, msg protocol.Message, scope store.O
 	if msg.Seal == "" {
 		return nil
 	}
-	seal, err := protocol.DecodeSeal(msg.Seal)
+	seal, rerr := h.ownOperatorSeal(ctx, msg.Seal)
+	if rerr != nil {
+		return rerr
+	}
+	return sealSigns(seal, msg, scope)
+}
+
+// ownOperatorSeal reads a seal from this workspace's own operator client:
+// signed for this workspace, never a paired one whose operator's key is
+// pinned here too, and verified against the roots here.
+func (h *Hub) ownOperatorSeal(ctx context.Context, text string) (signing.Seal, *routingError) {
+	seal, err := protocol.DecodeSeal(text)
 	if err != nil {
-		return invalidSeal("unreadable seal")
+		return signing.Seal{}, invalidSeal("unreadable seal")
+	}
+	own, known, err := h.store.IdentityFingerprint(ctx)
+	if err != nil {
+		return signing.Seal{}, &routingError{protocol.ErrInternal, "workspace identity unavailable"}
+	}
+	if !known || seal.Header.Workspace != own {
+		return signing.Seal{}, invalidSeal("the seal is for another workspace")
 	}
 	roots, err := h.signingRoots(ctx)
 	if err != nil {
-		return &routingError{protocol.ErrInternal, "signing roots unavailable"}
+		return signing.Seal{}, &routingError{protocol.ErrInternal, "signing roots unavailable"}
 	}
 	if result := signing.Verify(&seal, protocol.RootsOf(roots), time.Now()); result.State != signing.Verified {
-		return invalidSeal("seal is " + string(result.State) + ": " + result.Reason)
+		return signing.Seal{}, invalidSeal("seal is " + string(result.State) + ": " + result.Reason)
 	}
-	return sealSigns(seal, msg, scope)
+	return seal, nil
 }
 
 // sealSigns checks that the seal signed this very message as scoped.
@@ -142,5 +160,8 @@ func (h *Hub) welcomeRoots(ctx context.Context, c *Client, welcome protocol.Mess
 		h.log.Error("signing roots unavailable; welcome carries none", "agent_id", c.ID, "error", err)
 	}
 	welcome.SigningRoots = roots
+	if own, known, err := h.store.IdentityFingerprint(ctx); err == nil && known {
+		welcome.Identity = &protocol.IdentityView{Workspace: own}
+	}
 	return welcome
 }

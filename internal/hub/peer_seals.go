@@ -85,16 +85,9 @@ func (h *Hub) contactSealRefused(ctx context.Context, msg protocol.Message) *rou
 	if msg.ContactOp != protocol.ContactOpSend {
 		return &routingError{protocol.ErrMalformedFrame, "only a contact send carries a seal"}
 	}
-	seal, err := protocol.DecodeSeal(msg.Seal)
-	if err != nil {
-		return invalidSeal("unreadable seal")
-	}
-	roots, err := h.signingRoots(ctx)
-	if err != nil {
-		return &routingError{protocol.ErrInternal, "signing roots unavailable"}
-	}
-	if result := signing.Verify(&seal, protocol.RootsOf(roots), time.Now()); result.State != signing.Verified {
-		return invalidSeal("seal is " + string(result.State) + ": " + result.Reason)
+	seal, rerr := h.ownOperatorSeal(ctx, msg.Seal)
+	if rerr != nil {
+		return rerr
 	}
 	if !contactSealSigns(seal, msg) {
 		return invalidSeal("the seal signs another message")

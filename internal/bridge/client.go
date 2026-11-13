@@ -49,6 +49,7 @@ type Client struct {
 	forges          forge.Registry                   // review adapters on this side (#201); none means reviews are refused before any forge work
 	agentID         string
 	roots           []protocol.SigningRoot // the keys seals verify against, from the welcome (#115)
+	ownWorkspace    string                 // this workspace's key, from the welcome; "" when it didn't say
 }
 
 type Inbox struct {
@@ -104,6 +105,9 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Client, error) {
 	c.sessionID = welcome.SessionID
 	c.protocolVersion = welcome.ProtocolVersion
 	c.agentID, c.roots = cfg.AgentID, welcome.SigningRoots
+	if welcome.Identity != nil {
+		c.ownWorkspace = welcome.Identity.Workspace
+	}
 	go c.readLoop(r)
 	return c, nil
 }

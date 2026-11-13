@@ -18,8 +18,18 @@ func (c *Client) verified(msg protocol.Message) protocol.Message {
 	if msg.Type != protocol.TypeMsg || c.protocolVersion < protocol.SealVersion {
 		return msg
 	}
-	msg.Verification = verifyFrame(msg, c.roots, c.agentID, time.Now())
+	msg.Verification = c.ownOperator(msg, verifyFrame(msg, c.roots, c.agentID, time.Now()))
 	return msg
+}
+
+// ownOperator refuses an origin=operator message verified as another
+// workspace's operator: a paired workspace's person key is pinned here
+// too, but only this workspace's operator speaks with operator origin.
+func (c *Client) ownOperator(msg protocol.Message, v *protocol.Verification) *protocol.Verification {
+	if c.ownWorkspace == "" || msg.Origin != protocol.OriginOperator || v.Signer == nil || v.Signer.Workspace == c.ownWorkspace {
+		return v
+	}
+	return &protocol.Verification{State: signing.Invalid, Reason: "signed for another workspace"}
 }
 
 // verifyFrame is a message's verification as recipient self sees it.
