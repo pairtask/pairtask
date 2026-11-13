@@ -185,9 +185,9 @@ func (m *Model) newestResult(req pendingRequest, page *protocol.ContactMessagePa
 	m.directoryChanged(contact)
 	if t.stale {
 		t.stale = false
-		return m.refreshContact(contact, 0)
+		return tea.Batch(m.refreshContact(contact, 0), m.readRoots())
 	}
-	return m.navAfterPage(contact, true)
+	return tea.Batch(m.navAfterPage(contact, true), m.readRoots())
 }
 
 // olderResult takes an older page of a contact's messages.

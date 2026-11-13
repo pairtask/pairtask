@@ -65,7 +65,8 @@ func (m *Model) contactAcceptKeyResult(req pendingRequest, resp protocol.Message
 	}
 	m.contacts.thread(contact).pendingKeys = resp.ContactPage.PendingPersonKeys
 	m.status = "person key accepted: this workspace's operator messages verify from now on"
-	return m.refreshContact(contact, 0)
+	m.signing.asked = false // the roots changed
+	return tea.Batch(m.refreshContact(contact, 0), m.readRoots())
 }
 
 // requireSealsCommand turns on or off refusing the open tab's workspace's
