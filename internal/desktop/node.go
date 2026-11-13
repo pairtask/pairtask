@@ -145,7 +145,6 @@ func (n *Node) Call(ctx context.Context, msg protocol.Message) protocol.Message 
 	if msg.MessageID == "" {
 		msg.MessageID = uuid.NewString()
 	}
-	var err error
 	for range forwardTries {
 		out, done, f := n.attempt(ctx, msg)
 		if done {
@@ -154,11 +153,11 @@ func (n *Node) Call(ctx context.Context, msg protocol.Message) protocol.Message 
 		if ctx.Err() != nil {
 			return unavailable(ctx.Err())
 		}
-		if err = n.replace(ctx, f); err != nil {
+		if err := n.replace(ctx, f); err != nil {
 			return unavailable(err)
 		}
 	}
-	return unavailable(err)
+	return unavailable(errBroken)
 }
 
 // attempt is one try at the broker this copy reaches now: done with its
