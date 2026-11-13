@@ -20,6 +20,8 @@ type Outgoing struct {
 	LocalID string
 	// Review, sent only at ReviewVersion: a review request (#235).
 	Review *ReviewAsk
+	// Seal, sent only at SealVersion: the sender's signed header (#115).
+	Seal []byte
 }
 
 // Limit is how many messages, and how many bytes of their text, one call
@@ -50,6 +52,9 @@ type Row struct {
 	// state and when; local only, never sent.
 	AckState string
 	AckedAt  *time.Time
+	// SealDowngraded: an outbound message's seal didn't travel, because
+	// the peer's version predates seals (#115); local only.
+	SealDowngraded bool `json:"seal_downgraded,omitempty"`
 }
 
 // Answer is the receiver's answer to one Message. Recorded is local: the

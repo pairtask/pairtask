@@ -26,6 +26,11 @@ func (h *Hub) signingRoots(ctx context.Context) ([]protocol.SigningRoot, error) 
 	if err != nil {
 		return nil, err
 	}
+	contacts, err := h.store.ContactSigningRoots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pinned = append(contacts, pinned...)
 	own, ok, err := h.store.IdentityFingerprint(ctx)
 	if err != nil || !ok {
 		return pinned, err

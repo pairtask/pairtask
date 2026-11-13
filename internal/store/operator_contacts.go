@@ -46,6 +46,9 @@ type ContactSend struct {
 	OperatorHere bool
 	Seq          uint64
 	Recipients   []protocol.Recipient
+	// Seal is the operator's own seal on the send (#115), checked by the
+	// hub; nil for an unsigned one.
+	Seal []byte
 }
 
 // ContactRead is one operator read of messages shown to the operator.
@@ -143,7 +146,7 @@ func (s *Store) contactSend(ctx context.Context, c ContactSend) (ContactSent, er
 			sent.Row = held.Row
 			return err
 		}
-		m := messaging.Message{ID: c.OperationID, Text: c.Text, To: c.To, Review: c.Review}
+		m := messaging.Message{ID: c.OperationID, Text: c.Text, To: c.To, Review: c.Review, Seal: c.Seal}
 		if !validOutgoing(m) {
 			return fmt.Errorf("%w: ID, text, routing or review request", messaging.ErrInvalid)
 		}

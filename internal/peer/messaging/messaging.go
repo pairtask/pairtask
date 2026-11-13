@@ -61,11 +61,14 @@ const (
 	// ReasonPeerUpgrade marks, on this side only, a queued message to or
 	// from agents held back while the peer speaks a version before routing.
 	ReasonPeerUpgrade = "peer_upgrade"
+	// ReasonInvalidSeal: the message's seal doesn't hold, or doesn't sign
+	// this message from this contact to this side (#115).
+	ReasonInvalidSeal = "invalid_seal"
 )
 
 var reasonClass = map[string]string{
 	ReasonInvalid: Terminal, ReasonTooLarge: Terminal, ReasonConflict: Terminal, ReasonTooOld: Terminal,
-	ReasonInboxFull: Transient, ReasonBusy: Transient, ReasonNotShared: Terminal,
+	ReasonInboxFull: Transient, ReasonBusy: Transient, ReasonNotShared: Terminal, ReasonInvalidSeal: Terminal,
 }
 
 // Refusal is why a message wasn't stored.

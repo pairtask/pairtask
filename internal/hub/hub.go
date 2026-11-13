@@ -67,6 +67,7 @@ type Hub struct {
 	statuses     statusState
 	pairing      *peer.Invitations       // operator pairing (#178); memory only
 	identity     *peer.WorkspaceIdentity // loaded at Run's start or on a pairing request; never replaced
+	broker       *brokerKey              // seals agents' messages to paired workspaces (#115); hub goroutine only
 	pair         pairingWiring           // redemption and the inbound endpoint
 	msgs         messageWiring           // message sessions with contacts (#210)
 	addresses    addressChecks           // /pair address probes running now

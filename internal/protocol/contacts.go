@@ -150,6 +150,13 @@ type ContactMessageView struct {
 	ReplyID   string   `json:"reply_id,omitempty"`
 	ReplySide string   `json:"reply_side,omitempty"`
 	AgentAcks []string `json:"agent_acks,omitempty"`
+	// Signing (#115): the sender's seal as stored (base64), whether an
+	// outbound one couldn't travel because the contact predates seals, and
+	// the operator client's own verdict on an inbound one (never the
+	// broker's).
+	Seal           string        `json:"seal,omitempty"`
+	SealDowngraded bool          `json:"seal_downgraded,omitempty"`
+	Verification   *Verification `json:"verification,omitempty"`
 	// A review request (#235): what it asks, and for one the contact sent
 	// here, where it is: awaiting this side's operator, pending dispatch,
 	// imported as ReviewID, or withheld with ReviewReason.
@@ -206,6 +213,10 @@ type ContactMessagePage struct {
 	// Acks are the operator's acknowledgments of this contact's messages
 	// (#287), from a broker serving contact_acks.
 	Acks *ContactAckSummary `json:"acks,omitempty"`
+	// PendingPersonKeys are the person keys the contact signed with that
+	// this side's operator hasn't accepted (#115): its operator messages
+	// show unverified until one is (contact_op accept_key).
+	PendingPersonKeys []string `json:"pending_person_keys,omitempty"`
 	// From a broker serving contact_share_sync (#305), read with Shared in
 	// one snapshot: SharedSync is whether the contact has answered exactly
 	// that set, "confirmed" or "pending"; SharedDigest names the set,
@@ -333,6 +344,8 @@ var contactFields = map[string]contactFieldSet{
 	ContactOpAck:          {key: true, id: true, ack: true, epoch: true},
 	// Unpairing a contact (#276).
 	ContactOpUnpair: {key: true, id: true, epoch: true, confirm: true},
+	// Accepting a contact's person key (#115): contact_text is its key ID.
+	ContactOpAcceptKey: {key: true, id: true, text: true},
 	// Pending consent (#293): the list spans every contact without a key.
 	ContactOpConsentList:   {anyKey: true, consentBefore: true},
 	ContactOpConsentDecide: {key: true, id: true, decide: true},
@@ -356,7 +369,7 @@ type contactFieldSet struct {
 func ValidateContactRequest(msg Message) error {
 	allowed, ok := contactFields[msg.ContactOp]
 	if !ok {
-		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, unpair, " +
+		return errors.New("contact_op must be send, list, read, sync, share, unshare, review_grant, review_ask, review_decide, name, address, pause, resume, ack, unpair, accept_key, " +
 			"consent_list, consent_decide, consent_opt, consent_reset, discovery, candidates or find")
 	}
 	if err := contactFieldsPresent(msg, allowed); err != nil {

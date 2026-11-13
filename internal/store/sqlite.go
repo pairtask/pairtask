@@ -86,7 +86,7 @@ func Open(path string) (*Store, error) {
 	// Tables added since the epoch transition's released shape are created
 	// once it has succeeded, so a failed or refused transition leaves no new
 	// schema object behind.
-	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema); err != nil {
+	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply classifier schema: %w", err)
 	}

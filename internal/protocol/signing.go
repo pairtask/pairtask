@@ -27,6 +27,10 @@ const (
 	IdentityOpRegister = "register"
 	IdentityOpStatus   = "status"
 
+	// ContactOpAcceptKey accepts a contact's person key, one it signed
+	// with here, as the operator's approval of it (#115).
+	ContactOpAcceptKey = "accept_key"
+
 	// ErrInvalidSeal refuses a message whose seal doesn't verify or
 	// doesn't match the message.
 	ErrInvalidSeal = "invalid_seal"
@@ -89,4 +93,44 @@ func SealRecipients(to string, group []string, room string) []string {
 	}
 	slices.Sort(recipients)
 	return recipients
+}
+
+// Across a pairing link (#115): a message's recipients as its seal names
+// them are the receiving workspace and its recipient agents, or its
+// operator; a reply names its parent with the side that wrote it.
+
+// PeerWorkspaceRecipient names the receiving workspace in a header.
+func PeerWorkspaceRecipient(key string) string { return "workspace:" + key }
+
+// PeerSealRecipients is a cross-link message's recipients as its seal
+// names them, sorted.
+func PeerSealRecipients(receiver string, to []string) []string {
+	recipients := []string{PeerWorkspaceRecipient(receiver)}
+	if len(to) == 0 {
+		recipients = append(recipients, OperatorID)
+	}
+	recipients = append(recipients, to...)
+	slices.Sort(recipients)
+	return slices.Compact(recipients)
+}
+
+// Reply authors as a header names them, by messaging.ReplyRef's Author.
+const (
+	replyBySender   = 1
+	replyByReceiver = 2
+)
+
+// PeerReplyRef is a reply's parent as a header names it: "sender:<id>"
+// for one the reply's sender wrote, "receiver:<id>" for one the receiver
+// wrote, "" for none.
+func PeerReplyRef(id string, author byte) string {
+	switch {
+	case id == "":
+		return ""
+	case author == replyBySender:
+		return "sender:" + id
+	case author == replyByReceiver:
+		return "receiver:" + id
+	}
+	return "unknown:" + id
 }

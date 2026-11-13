@@ -93,7 +93,8 @@ func (h *Hub) deliverHere(ctx context.Context, clients map[string]*Client, s hom
 // resolved for delivery, so the store keeps the sessions they go to.
 func (h *Hub) contactSendRow(msg protocol.Message, auditID int64, home []protocol.Recipient) store.ContactSend {
 	send := store.ContactSend{OperationID: msg.MessageID, Contact: msg.ContactKey, Text: msg.ContactText, To: peerRecipients(msg),
-		AuditID: auditID, Now: h.contactNow(), Here: msg.ContactHere, OperatorHere: msg.ContactOperatorHere, Recipients: home}
+		AuditID: auditID, Now: h.contactNow(), Here: msg.ContactHere, OperatorHere: msg.ContactOperatorHere, Recipients: home,
+		Seal: sealBytes(msg.Seal)}
 	if sendsHere(msg) {
 		send.Seq = h.seq + 1
 	}

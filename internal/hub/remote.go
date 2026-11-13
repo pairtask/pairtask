@@ -232,7 +232,8 @@ func (h *Hub) remoteRoute(ctx context.Context, in Inbound) (remoteRoute, bool, *
 // replyRoute answers an imported message, back to the workspace it came from.
 func (h *Hub) replyRoute(in Inbound, parent store.RemoteImport) remoteRoute {
 	return remoteRoute{parent.Contact, func(ctx context.Context, out protocol.Message, text string, at time.Time) (store.RemoteReplyResult, error) {
-		return h.store.QueueRemoteReply(ctx, store.RemoteReply{Msg: out, SenderSession: in.From.SessionID, Parent: parent.LocalID, Text: text, Now: at})
+		return h.store.QueueRemoteReply(ctx, store.RemoteReply{Msg: out, SenderSession: in.From.SessionID, Parent: parent.LocalID, Text: text, Now: at,
+			Sealer: h.peerSealer(ctx)})
 	}}
 }
 
@@ -246,7 +247,7 @@ func (h *Hub) workspaceRoute(ctx context.Context, in Inbound) (remoteRoute, *rou
 	if in.Msg.InReplyTo == "" {
 		return remoteRoute{contact, func(ctx context.Context, out protocol.Message, text string, at time.Time) (store.RemoteReplyResult, error) {
 			return h.store.QueueWorkspaceSend(ctx, store.WorkspaceSend{Msg: out, SenderSession: in.From.SessionID, Contact: contact, Text: text,
-				Review: wireAsk(in.Msg.ReviewAsk), Supersedes: askSupersedes(in.Msg.ReviewAsk), Now: at})
+				Review: wireAsk(in.Msg.ReviewAsk), Supersedes: askSupersedes(in.Msg.ReviewAsk), Now: at, Sealer: h.peerSealer(ctx)})
 		}}, nil
 	}
 	parent, rerr := h.workspaceParent(ctx, contact, in.Msg.InReplyTo)

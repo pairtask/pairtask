@@ -377,6 +377,9 @@ func (m *Model) contactDraft(contact string) (*contactOp, bool) {
 	}
 	msg := protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpSend, ContactKey: contact,
 		MessageID: uuid.NewString(), ContactText: a.text, ContactTo: a.to, ContactHere: a.here, ContactOperatorHere: a.operatorHere}
+	if m.opts.Seal != nil {
+		msg.Seal = m.opts.Seal(msg) // signed once, so a retry repeats it exactly (#115)
+	}
 	return &contactOp{msg: msg, draft: draft}, true
 }
 

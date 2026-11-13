@@ -81,13 +81,18 @@ func sealedSend(ctx context.Context, socket string, req protocol.Message, unsign
 	return req, nil
 }
 
-// sealHeader is what an operator_send's seal signs.
+// sealHeader is what an operator message's seal signs: an operator_send
+// here, or a contact send to a paired workspace's operator or agents.
 func sealHeader(msg protocol.Message, workspace string, at time.Time) signing.Header {
+	h := signing.Header{MessageID: msg.MessageID, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID, Workspace: workspace, CreatedAt: at}
+	if msg.Type == protocol.TypeOperatorContact {
+		h.Recipients, h.TextHash = protocol.PeerSealRecipients(msg.ContactKey, msg.ContactTo), signing.TextHash(msg.ContactText)
+		return h
+	}
 	var body struct {
 		Text string `json:"text"`
 	}
 	_ = json.Unmarshal(msg.Payload, &body)
-	return signing.Header{MessageID: msg.MessageID, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID, Workspace: workspace,
-		Recipients: protocol.SealRecipients(msg.To, msg.Group, msg.Room), InReplyTo: msg.InReplyTo, CreatedAt: at,
-		TextHash: signing.TextHash(body.Text)}
+	h.Recipients, h.InReplyTo, h.TextHash = protocol.SealRecipients(msg.To, msg.Group, msg.Room), msg.InReplyTo, signing.TextHash(body.Text)
+	return h
 }

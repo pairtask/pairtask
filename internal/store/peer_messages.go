@@ -140,7 +140,7 @@ func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messagi
 	if err := p.localOnly(); err != nil {
 		return messaging.Row{}, err
 	}
-	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo, Review: o.Review}
+	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo, Review: o.Review, Seal: o.Seal}
 	if !validOutgoing(m) {
 		return messaging.Row{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
 	}
@@ -187,11 +187,27 @@ type outgoing struct {
 	// supersedes is the sender's earlier request a review request replaces
 	// (#259), kept on this side only; "" for none.
 	supersedes string
+	// sealer seals a new message that carries no seal of its own (#115).
+	sealer PeerSealer
 }
 
 // queueIn is Queue inside its transaction: the existing row for a replay,
-// or a new one with the next sequence.
+// or a new one with the next sequence; either keeps the message's seal.
 func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
+	row, err := queueRow(ctx, tx, o)
+	if err != nil {
+		return row, err
+	}
+	if err := keepSeal(ctx, tx, o.key, o.m.Seal); err != nil {
+		return row, err
+	}
+	rows := []messaging.Row{row}
+	err = withSeals(ctx, tx, rows)
+	return rows[0], err
+}
+
+// queueRow finds or queues the message's row.
+func queueRow(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
 	key := o.key
 	if err := requireContact(ctx, tx, contactKey(key.contact)); err != nil {
 		return messaging.Row{}, err
@@ -225,7 +241,13 @@ func queueNew(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error
 	}
 	m := o.m
 	m.N, m.CreatedAt = n, o.now.UTC()
+	if len(m.Seal) == 0 && o.sealer != nil {
+		m.Seal = o.sealer(o.key.contact, m)
+	}
 	if err := insertMessage(ctx, tx, newRow{key: o.key, m: m, now: o.now, localID: o.localID}); err != nil {
+		return messaging.Row{}, err
+	}
+	if err := keepSeal(ctx, tx, o.key, m.Seal); err != nil {
 		return messaging.Row{}, err
 	}
 	if err := recordedAsk(ctx, tx, o); err != nil {
@@ -441,8 +463,11 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 		}
 		rows, err := queryRows(ctx, tx, `WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
     AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
+		if err != nil {
+			return err
+		}
 		out = within(rows, budget{limit.count + 1, limit.bytes})
-		return err
+		return withSeals(ctx, tx, out)
 	})
 	if err != nil {
 		return nil, err
@@ -591,7 +616,7 @@ func (p *PeerMessages) page(ctx context.Context, q pageQuery) ([]messaging.Row, 
 	for _, r := range rows[:min(len(rows), limit)] {
 		out = append(out, r.Row)
 	}
-	return out, more, nil
+	return out, more, withSeals(ctx, p.db, out)
 }
 
 // Confirmed reports a confirmed contact: the only identities a message

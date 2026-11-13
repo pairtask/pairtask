@@ -78,7 +78,7 @@ type Session struct {
 // requests, one without routing at the live version.
 func (s Session) maxVersion() byte {
 	if consentCapable(s.Store) {
-		return MaxVersion
+		return sealVersionFor(s.Store)
 	}
 	switch s.Store.(type) {
 	case OutcomeStore:
@@ -319,7 +319,11 @@ func (s Session) offer(ctx context.Context) ([]Row, error) {
 // sendMessage sends one message and records the peer's answer: stored,
 // held there for its operator, or refused.
 func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
-	if err := s.send(encoderOf(m)(m)); err != nil {
+	inner, err := encoderOf(m)(m)
+	if err != nil {
+		return false, err
+	}
+	if err := s.send(s.sealFrame(ctx, m, inner)); err != nil {
 		return false, err
 	}
 	frame, err := s.Frames.Recv()
@@ -399,6 +403,9 @@ func (s Session) receiveMessages(ctx context.Context, r *Result) error {
 
 // decodeMessage reads a Message, or a routed one at RoutingVersion.
 func (s Session) decodeMessage(kind byte, frame []byte) (Message, error) {
+	if kind == FrameSealed && s.Version >= SealVersion {
+		return s.decodeSealed(frame)
+	}
 	if decode := frameDecoders[kind]; decode.version != 0 && s.Version >= decode.version {
 		return decode.decode(frame)
 	}

@@ -110,6 +110,8 @@ type WorkspaceSend struct {
 	// "" for none; it stays on this side.
 	Supersedes string
 	Now        time.Time
+	// Sealer seals the message as queued (#115); nil leaves it unsigned.
+	Sealer PeerSealer
 }
 
 // QueueWorkspaceSend keeps the message in history and queues it to the
@@ -130,6 +132,6 @@ func (s *Store) QueueWorkspaceSend(ctx context.Context, w WorkspaceSend) (Remote
 		return RemoteReplyResult{}, err
 	}
 	defer tx.Rollback()
-	o := outgoing{key: messageKey{w.Contact, messaging.DirOut, m.ID}, m: m, now: w.Now, localID: m.ID, supersedes: w.Supersedes}
+	o := outgoing{key: messageKey{w.Contact, messaging.DirOut, m.ID}, m: m, now: w.Now, localID: m.ID, supersedes: w.Supersedes, sealer: w.Sealer}
 	return queueFromAgent(ctx, tx, agentMessage{local: w.Msg, session: w.SenderSession, out: o})
 }

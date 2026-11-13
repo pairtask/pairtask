@@ -15,6 +15,8 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/pairtask/pairtask/internal/signing"
 )
 
 // Workspace identity (#178). Each workspace has one long-term Ed25519 key.
@@ -67,6 +69,13 @@ func newIdentity(key ed25519.PrivateKey) (*WorkspaceIdentity, error) {
 	}
 	return &WorkspaceIdentity{key: key, fingerprint: spkiFingerprint(spki)}, nil
 }
+
+// Certify issues c under the workspace key (#115): the workspace attests
+// a key, its broker's, that signs for its agents.
+func (i *WorkspaceIdentity) Certify(c signing.Cert) signing.Cert { return signing.Issue(i.key, c) }
+
+// PublicKey is the workspace key's public half.
+func (i *WorkspaceIdentity) PublicKey() ed25519.PublicKey { return i.key.Public().(ed25519.PublicKey) }
 
 // Fingerprint is the workspace's pairtask SPKI fingerprint.
 func (i *WorkspaceIdentity) Fingerprint() string { return i.fingerprint }

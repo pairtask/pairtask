@@ -161,7 +161,11 @@ func replaceDirectory(ctx context.Context, rs RoutingStore, u directoryUpdate) (
 func wrapStore(st Store) Store {
 	if consentCapable(st) {
 		os, cs := st.(OutcomeStore), st.(ConsentStore)
-		return consentSessionStore{outcomeSessionStore{routingSessionStore{sessionStore{st}, os}, os}, cs}
+		wrapped := consentSessionStore{outcomeSessionStore{routingSessionStore{sessionStore{st}, os}, os}, cs}
+		if ss, ok := st.(SealStore); ok {
+			return sealSessionStore{wrapped, ss}
+		}
+		return wrapped
 	}
 	switch s := st.(type) {
 	case OutcomeStore:
