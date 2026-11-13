@@ -30,10 +30,16 @@ func (m *Model) signedRow(v protocol.ContactMessageView) string {
 		return ""
 	}
 	t := m.contacts.threads[v.Contact]
-	if t == nil || t.signing.own == "" || v.Text == "" {
+	if !checkable(t, v) {
 		return ""
 	}
 	return verdictLine(verifyContactRow(v, t.signing))
+}
+
+// checkable: the row's text is still held and its thread knows this
+// workspace's key to check the seal against.
+func checkable(t *contactThread, v protocol.ContactMessageView) bool {
+	return t != nil && t.signing.own != "" && v.Text != ""
 }
 
 // verifyContactRow is a received row's verdict as this chat sees it.
