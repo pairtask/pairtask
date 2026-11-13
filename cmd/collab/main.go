@@ -32,6 +32,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return runStatus(ctx, args, stdout, stderr)
 	}
+	if code, ok := runSessionCommand(args, stdout, stderr); ok {
+		return code
+	}
 	switch args[0] {
 	case "budget":
 		return runBudget(args[1:], stdout, stderr)
@@ -41,13 +44,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runOperator(ctx, args[1:], stdout, stderr)
 	case "peer":
 		return runPeer(ctx, args[1:], stdout, stderr)
-	case "start":
-		return runStart(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec,
-			Status: status.Fetch, Chdir: os.Chdir})
-	case "join":
-		return runJoin(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec})
 	}
 	return runStatus(ctx, args, stdout, stderr)
+}
+
+// runSessionCommand runs the commands that start or check an agent's
+// session, and reports whether args named one.
+func runSessionCommand(args []string, stdout, stderr io.Writer) (int, bool) {
+	switch args[0] {
+	case "start":
+		return runStart(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec,
+			Status: status.Fetch, Chdir: os.Chdir, Capacity: homeCapacity}), true
+	case "join":
+		return runJoin(args[1:], startRuntime{Stdout: stdout, Stderr: stderr, Layout: defaultStartLayout(), Exec: syscall.Exec}), true
+	case "home-check":
+		return runHomeCheck(stderr), true
+	}
+	return 0, false
 }
 
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int {
