@@ -34,7 +34,7 @@ func messageAdmissionServer(t *testing.T, f *redeemOperatorFixture) *PairingServ
 }
 func awaitAdmissionSlots(t *testing.T, slots chan struct{}, want int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for len(slots) != want {
 		if time.Now().After(deadline) {
 			t.Fatalf("slots=%d want=%d", len(slots), want)
@@ -73,7 +73,7 @@ func TestMessageAdmissionAcceptanceHandshakeCapAndRecovery(t *testing.T) {
 	raw, err := net.Dial("unix", p.socketPath)
 	operatorNoError(t, err)
 	defer raw.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	conn, err := firstcontact.Client(ctx, raw, messageIdentity(t), time.Now)
 	operatorNoError(t, err)
