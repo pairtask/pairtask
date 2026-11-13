@@ -264,6 +264,9 @@ func (h *Hub) contactListPage(ctx context.Context, msg protocol.Message, c conta
 	if page.RequireSeals, err = h.store.PeerMessages().RequiresSeals(ctx, msg.ContactKey); err != nil {
 		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
 	}
+	if err := h.pageRoots(ctx, &page); err != nil {
+		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
+	}
 	out := protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactPage: &page, ContactMarked: msg.ContactMarked}
 	if err := fitContactPage(&out, msg.RequestID); err != nil {
