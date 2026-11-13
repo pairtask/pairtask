@@ -38,7 +38,7 @@ func TestPairingCodecAcceptanceWireConstants(t *testing.T) {
 	got := []byte{messaging.MaxVersion, messaging.PairingVersion, messaging.FramePairingEpoch,
 		messaging.FrameContactState, messaging.FrameContactStateStored, messaging.PairingIDBytes,
 		messaging.ContactStatePaused, messaging.ContactStateResumed, messaging.ContactStateUnpaired}
-	if !bytes.Equal(got, []byte{9, 9, 27, 28, 29, 32, 1, 2, 3}) {
+	if !bytes.Equal(got, []byte{10, 9, 27, 28, 29, 32, 1, 2, 3}) {
 		t.Fatalf("wire constants: %v", got)
 	}
 }
