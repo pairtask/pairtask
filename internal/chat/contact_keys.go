@@ -98,20 +98,19 @@ func (m *Model) contactRequireSealsResult(req pendingRequest, resp protocol.Mess
 		return nil
 	}
 	m.contacts.thread(contact).requireSeals = resp.ContactPage.RequireSeals
-	m.status = "this workspace's unsigned messages are taken, marked unsigned"
-	if resp.ContactPage.RequireSeals {
-		m.status = "this workspace's unsigned messages are refused from now on"
-	}
+	c, _ := m.contact(contact)
+	m.status = requireSealsNote(c, resp.ContactPage.RequireSeals)
 	return m.refreshContact(contact, 0)
 }
 
 // pendingKeyLine names the person keys a workspace awaits acceptance for,
-// and says when its unsigned messages are refused.
-func pendingKeyLine(t *contactThread) string {
+// and says when its unsigned messages are refused: the signing alert
+// says that for a workspace on a version without signatures.
+func pendingKeyLine(t *contactThread, signing string) string {
 	switch {
 	case t == nil:
 		return ""
-	case len(t.pendingKeys) == 0 && t.requireSeals:
+	case len(t.pendingKeys) == 0 && t.requireSeals && signing == "":
 		return "requires signatures: unsigned messages from this workspace are refused"
 	case len(t.pendingKeys) == 0:
 		return ""

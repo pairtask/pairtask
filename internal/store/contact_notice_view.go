@@ -15,7 +15,8 @@ import (
 // agreed, zero while unknown. Notice is the delivery state of this side's
 // newest notice, empty if none, with its attempts. PairingEpoch is the
 // contact's current or last pairing, Legacy that it has no pairing ID,
-// and UnpairedAt when this side unpaired it, zero while paired.
+// and UnpairedAt when this side unpaired it, zero while paired. SealsSeen
+// is that a session with it once agreed a version with seals (#115).
 type ContactNoticeState struct {
 	PeerState      string
 	PeerStateAt    time.Time
@@ -25,12 +26,14 @@ type ContactNoticeState struct {
 	PairingEpoch   int64
 	Legacy         bool
 	UnpairedAt     time.Time
+	SealsSeen      bool
 }
 
 // contactNoticeRead joins each contact to its newest non-superseded notice
 // queued under its current pairing.
 const contactNoticeRead = `SELECT c.identity_key, c.peer_state, COALESCE(c.peer_state_at, ''), COALESCE(c.peer_version, 0),
-    COALESCE(n.state, ''), COALESCE(n.attempts, 0), c.pairing_epoch, c.pairing_id IS NULL, c.unpaired_at
+    COALESCE(n.state, ''), COALESCE(n.attempts, 0), c.pairing_epoch, c.pairing_id IS NULL, c.unpaired_at,
+    EXISTS (SELECT 1 FROM peer_seal_seen s WHERE s.contact = c.identity_key)
 FROM peer_contacts c LEFT JOIN contact_notices_out n ON n.contact = c.identity_key AND n.gen = (
     SELECT MAX(m.gen) FROM contact_notices_out m
     WHERE m.contact = c.identity_key AND m.state != 'superseded' AND m.pairing_id IS c.pairing_id)`
@@ -56,7 +59,7 @@ func (s *Store) ContactNoticeStates(ctx context.Context) (map[string]ContactNoti
 func scanContactNotice(row rowScanner) (string, ContactNoticeState, error) {
 	var key, at, unpairedAt string
 	var c ContactNoticeState
-	if err := row.Scan(&key, &c.PeerState, &at, &c.PeerVersion, &c.Notice, &c.NoticeAttempts, &c.PairingEpoch, &c.Legacy, &unpairedAt); err != nil {
+	if err := row.Scan(&key, &c.PeerState, &at, &c.PeerVersion, &c.Notice, &c.NoticeAttempts, &c.PairingEpoch, &c.Legacy, &unpairedAt, &c.SealsSeen); err != nil {
 		return "", c, err
 	}
 	var err error

@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS peer_person_keys (
     first_seen TEXT NOT NULL,
     PRIMARY KEY (contact, key_id)
 );
+CREATE TABLE IF NOT EXISTS peer_seal_seen (
+    contact  TEXT PRIMARY KEY,
+    first_at TEXT NOT NULL
+);
 `
 
 // PeerSealer seals a new outbound message from an agent, once its
@@ -314,8 +318,10 @@ func requiresSeals(ctx context.Context, q rowQuerier, contact string) (bool, err
 }
 
 // unsignedRefused refuses an unsigned message from a contact this side
-// requires signed: as unsigned to a peer that knows the reason, as invalid
-// to one whose version predates seals.
+// requires signed. At a version with seals it is refused as unsigned.
+// Below that, a contact that never signed is still waiting to update: its
+// message is taken, marked unsigned; one that signed before has gone back,
+// and is refused as invalid, the reason its version knows.
 func unsignedRefused(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer, bool, error) {
 	if len(in.m.Seal) > 0 {
 		return messaging.Answer{}, false, nil
@@ -324,8 +330,30 @@ func unsignedRefused(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.
 	if err != nil || !require {
 		return messaging.Answer{}, false, err
 	}
-	if in.version != 0 && in.version < int(messaging.SealVersion) {
-		return refused(messaging.ReasonInvalid), true, nil
+	if in.version == 0 || in.version >= int(messaging.SealVersion) {
+		return refused(messaging.ReasonUnsigned), true, nil
 	}
-	return refused(messaging.ReasonUnsigned), true, nil
+	signed, err := sealsSeen(ctx, tx, in.key.contact)
+	if err != nil || !signed {
+		return messaging.Answer{}, false, err
+	}
+	return refused(messaging.ReasonInvalid), true, nil
+}
+
+// noteSealsSeen marks a contact as having agreed a version with seals: a
+// later session below it is a step back, never a contact still to update.
+func noteSealsSeen(ctx context.Context, tx *sql.Tx, contact string, v byte) error {
+	if v < messaging.SealVersion {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO peer_seal_seen (contact, first_at) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+		contact, msgStamp(time.Now()))
+	return err
+}
+
+// sealsSeen: a session with the contact once agreed a version with seals.
+func sealsSeen(ctx context.Context, q rowQuerier, contact string) (bool, error) {
+	var seen bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM peer_seal_seen WHERE contact = ?)`, contact).Scan(&seen)
+	return seen, err
 }

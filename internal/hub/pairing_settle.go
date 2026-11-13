@@ -373,10 +373,29 @@ func joinMoved(before, after peer.JoinRecord) bool {
 // durable pairing state changed in the background. Safe from any goroutine.
 func (h *Hub) PairingChanged() {
 	h.fenceDials()
+	h.pairingSeen()
+}
+
+// pairingSeen has the operator session read the pairing state again, with
+// nothing to fence: what it shows of a contact changed, not where it is.
+func (h *Hub) pairingSeen() {
 	h.pair.dirty.Store(true)
 	select {
 	case h.pair.changed <- struct{}{}:
 	default:
+	}
+}
+
+// versionMover is a store that says whether its session changed how its
+// contact's version stands for signing.
+type versionMover interface{ VersionMoved() bool }
+
+// SessionVersionSeen has the operator session told when a session changed
+// how a contact's version stands for signing, which its tab and /pair
+// status show (#115). Safe from any goroutine.
+func (h *Hub) SessionVersionSeen(s messaging.Store) {
+	if m, ok := s.(versionMover); ok && m.VersionMoved() {
+		h.pairingSeen()
 	}
 }
 
@@ -560,6 +579,7 @@ func noticeView(view *protocol.PairingContactView, n store.ContactNoticeState) {
 	if n.PeerVersion > 0 && n.PeerVersion < int(messaging.PairingVersion) {
 		view.PeerStateAvailable = "unavailable"
 	}
+	view.Signing = store.ContactSigning(n.PeerVersion, n.SealsSeen)
 	if n.Notice == "pending" || n.Notice == "undelivered" {
 		view.Notice, view.NoticeAttempts = n.Notice, n.NoticeAttempts
 	}
