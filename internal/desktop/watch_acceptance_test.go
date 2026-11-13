@@ -80,6 +80,22 @@ func TestDesktopWatcherAcceptanceNewContactAnnouncesFirstMessage(t *testing.T) {
 	assertWatcherNotices(t, f.notices, "1 unread from Beta")
 }
 
+func TestDesktopWatcherAcceptanceSkipsUnconfirmedAndUnpairedContacts(t *testing.T) {
+	unpairedAt := time.Now()
+	f := &noticeFixture{
+		contacts: []protocol.PairingContactView{
+			{IdentityKey: "pending-key", LocalName: "Pending"},
+			{IdentityKey: "old-key", LocalName: "Old", Confirmed: true, UnpairedAt: &unpairedAt},
+		},
+		counts: map[string]int{},
+	}
+	w := newWatcher(f.call, f.notifier, slog.New(slog.DiscardHandler))
+	w.checkAll(context.Background())
+	f.counts["pending-key"], f.counts["old-key"] = 1, 1
+	w.checkAll(context.Background())
+	assertWatcherNotices(t, f.notices)
+}
+
 func (f *noticeFixture) notifier(_ context.Context, title, text string) error {
 	if title != "pairtask" {
 		f.notices = append(f.notices, "wrong title: "+title)
