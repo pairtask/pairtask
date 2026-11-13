@@ -62,6 +62,11 @@ func (c Cert) Check(issuer ed25519.PublicKey, now time.Time) error {
 	return nil
 }
 
+// sized: the key and signature have their Ed25519 sizes.
+func (c Cert) sized() bool {
+	return len(c.Key) == ed25519.PublicKeySize && len(c.Sig) == ed25519.SignatureSize
+}
+
 // KeyID is the certified key's ID.
 func (c Cert) KeyID() string { return KeyID(c.Key) }
 
@@ -100,7 +105,10 @@ func ParseCert(b []byte) (Cert, error) {
 	}
 	c := Cert{Kind: Kind(r.str()), Subject: r.str(), Key: ed25519.PublicKey(r.bytes()), Workspace: r.str(), Issuer: r.str(),
 		NotBefore: time.UnixMilli(int64(r.u64())), NotAfter: time.UnixMilli(int64(r.u64())), Sig: sig}
-	if err := r.done(); err != nil || len(c.Key) != ed25519.PublicKeySize || len(c.Sig) != ed25519.SignatureSize {
+	if err := r.done(); err != nil {
+		return Cert{}, err
+	}
+	if !c.sized() {
 		return Cert{}, errMalformed
 	}
 	return c, nil

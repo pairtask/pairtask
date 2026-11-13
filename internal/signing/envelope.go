@@ -123,20 +123,40 @@ func (s Seal) Marshal() []byte {
 func ParseSeal(b []byte) (Seal, error) {
 	r := reader{b: b}
 	s := Seal{Header: readHeader(&r), KeyID: r.str(), Sig: r.bytes()}
-	n := r.u64()
-	if r.err != nil || n == 0 || n > maxChain {
-		return Seal{}, errMalformed
+	chain, err := readChain(&r)
+	if err != nil {
+		return Seal{}, err
 	}
-	for range n {
-		c, err := ParseCert(r.bytes())
-		if err != nil {
-			return Seal{}, err
-		}
-		s.Chain = append(s.Chain, c)
+	s.Chain, s.RootKey = chain, ed25519.PublicKey(r.bytes())
+	if err := r.done(); err != nil {
+		return Seal{}, err
 	}
-	s.RootKey = ed25519.PublicKey(r.bytes())
-	if err := r.done(); err != nil || len(s.Sig) != ed25519.SignatureSize || len(s.RootKey) != ed25519.PublicKeySize {
+	if !s.sized() {
 		return Seal{}, errMalformed
 	}
 	return s, nil
+}
+
+// readChain reads a chain of 1 to maxChain certificates.
+func readChain(r *reader) ([]Cert, error) {
+	n := r.u64()
+	if r.err != nil || !chainLength(n) {
+		return nil, errMalformed
+	}
+	chain := make([]Cert, 0, n)
+	for range n {
+		c, err := ParseCert(r.bytes())
+		if err != nil {
+			return nil, err
+		}
+		chain = append(chain, c)
+	}
+	return chain, nil
+}
+
+func chainLength(n uint64) bool { return n >= 1 && n <= maxChain }
+
+// sized: the signature and root key have their Ed25519 sizes.
+func (s Seal) sized() bool {
+	return len(s.Sig) == ed25519.SignatureSize && len(s.RootKey) == ed25519.PublicKeySize
 }
