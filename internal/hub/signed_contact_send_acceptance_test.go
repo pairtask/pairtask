@@ -1,0 +1,105 @@
+package hub
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"testing"
+	"time"
+
+	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/signing"
+)
+
+func signedContactSendFixture(t *testing.T) (*Hub, string, ed25519.PrivateKey, ed25519.PrivateKey) {
+	t.Helper()
+	h, contact := remoteHubFixture(t)
+	if problem := h.loadIdentity(context.Background()); problem != "" {
+		t.Fatal(problem)
+	}
+	_, person, err := ed25519.GenerateKey(nil)
+	messageWorkerOK(t, err)
+	_, device, err := ed25519.GenerateKey(nil)
+	messageWorkerOK(t, err)
+	register := protocol.Message{Type: protocol.TypeOperatorIdentity, IdentityOp: protocol.IdentityOpRegister,
+		IdentityKey: base64.StdEncoding.EncodeToString(person.Public().(ed25519.PublicKey)), MessageID: "register-person"}
+	if out := h.operatorIdentity(context.Background(), nil, operatorRequest{uid: 0, msg: register}); out.Type != protocol.TypeOperatorIdentityResult {
+		t.Fatalf("operator's person key was not registered: %+v", out)
+	}
+	return h, contact, person, device
+}
+
+func signedContactSend(h *Hub, contact string, person, device ed25519.PrivateKey, id, body string) protocol.Message {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	cert := signing.Issue(person, signing.Cert{
+		Kind: signing.KindDevice, Subject: "chat", Key: device.Public().(ed25519.PublicKey),
+		Workspace: h.identity.Fingerprint(), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+	})
+	header := signing.Header{MessageID: id, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID,
+		Workspace: h.identity.Fingerprint(), Recipients: (protocol.PeerLink{Receiver: contact}).Recipients(),
+		CreatedAt: now, TextHash: signing.TextHash(body)}
+	seal := signing.Sign(device, []signing.Cert{cert}, person.Public().(ed25519.PublicKey), header)
+	return protocol.Message{Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
+		ContactOp: protocol.ContactOpSend, ContactKey: contact, ContactText: body, MessageID: id,
+		Seal: protocol.EncodeSeal(seal)}
+}
+
+func TestSignedContactSendAcceptanceOperatorKeyRequiredAndSealPersists(t *testing.T) {
+	h, contact, person, device := signedContactSendFixture(t)
+	msg := signedContactSend(h, contact, person, device, "contact-send-signed", "hello contact")
+	request := operatorRequest{uid: 0, msg: msg}
+	first := h.operatorContact(context.Background(), nil, request)
+	if first.Type != protocol.TypeOperatorContactResult {
+		t.Fatalf("signed contact send was refused: %+v", first)
+	}
+	if first.ContactMessage == nil || first.ContactMessage.Seal != msg.Seal {
+		t.Fatalf("send result hid operator seal: %+v", first.ContactMessage)
+	}
+	rows, _, err := h.store.PeerMessages().Page(context.Background(), contact, 0, 10)
+	messageWorkerOK(t, err)
+	parsed, err := protocol.DecodeSeal(msg.Seal)
+	messageWorkerOK(t, err)
+	if len(rows) != 1 || !bytes.Equal(rows[0].Seal, parsed.Marshal()) {
+		t.Fatalf("operator's seal was not queued: %+v", rows)
+	}
+	retry := h.operatorContact(context.Background(), nil, request)
+	if retry.Type != protocol.TypeOperatorContactResult {
+		t.Fatalf("same signed send was not replayable: %+v", retry)
+	}
+	if retry.ContactMessage == nil || retry.ContactMessage.Seal != msg.Seal {
+		t.Fatalf("retry result lost original operator seal: %+v", retry.ContactMessage)
+	}
+	rows, _, err = h.store.PeerMessages().Page(context.Background(), contact, 0, 10)
+	messageWorkerOK(t, err)
+	if len(rows) != 1 || !bytes.Equal(rows[0].Seal, parsed.Marshal()) {
+		t.Fatalf("contact-send retry replaced seal: %+v", rows)
+	}
+	for name, change := range map[string]func(*protocol.Message){
+		"text":      func(m *protocol.Message) { m.ContactText = "altered text" },
+		"recipient": func(m *protocol.Message) { m.ContactTo = []string{"agent-elsewhere"} },
+		"signature": func(m *protocol.Message) { m.Seal = base64.StdEncoding.EncodeToString([]byte("forged")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := signedContactSend(h, contact, person, device, "tamper-"+name, "untampered")
+			change(&bad)
+			out := h.operatorContact(context.Background(), nil, operatorRequest{uid: 0, msg: bad})
+			if out.Type != protocol.TypeError || out.Code != protocol.ErrInvalidSeal {
+				t.Fatalf("altered contact send was accepted: %+v", out)
+			}
+		})
+	}
+	_, unapprovedPerson, err := ed25519.GenerateKey(nil)
+	messageWorkerOK(t, err)
+	_, unapprovedDevice, err := ed25519.GenerateKey(nil)
+	messageWorkerOK(t, err)
+	unapproved := signedContactSend(h, contact, unapprovedPerson, unapprovedDevice, "unapproved-person", "who is this")
+	if out := h.operatorContact(context.Background(), nil, operatorRequest{uid: 0, msg: unapproved}); out.Type != protocol.TypeError || out.Code != protocol.ErrInvalidSeal {
+		t.Fatalf("unregistered person key sent as operator: %+v", out)
+	}
+	rows, _, err = h.store.PeerMessages().Page(context.Background(), contact, 0, 10)
+	messageWorkerOK(t, err)
+	if len(rows) != 1 || rows[0].ID != msg.MessageID {
+		t.Fatalf("altered contact send persisted: %+v", rows)
+	}
+}
