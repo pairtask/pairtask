@@ -73,13 +73,21 @@ func verifyContactRow(v protocol.ContactMessageView, view signingView) signing.R
 	if v.From == "" {
 		kind, id = signing.SenderOperator, protocol.OperatorID
 	}
-	frame := signing.Frame{MessageID: v.ID, SenderKind: kind, SenderID: id, Text: v.Text,
-		Addresses: []string{protocol.PeerWorkspaceRecipient(view.own)}}
-	link := protocol.PeerLink{Contact: v.Contact, Own: view.own, To: v.To, ReplyID: v.ReplyID, ReplyAuthor: protocol.ReplyAuthorOf(v.ReplySide)}
-	if result.State != signing.Invalid && (seal.Matches(frame) != nil || !protocol.PeerSealBinds(seal.Header, link)) {
+	link := protocol.PeerLink{Contact: v.Contact, Receiver: view.own, To: v.To, ReplyID: v.ReplyID, ReplyAuthor: replyAuthors[v.ReplySide]}
+	frame := signing.Frame{MessageID: v.ID, SenderKind: kind, SenderID: id, Text: v.Text, Addresses: []string{link.Address()}}
+	if result.State != signing.Invalid && !signsRow(seal, frame, link) {
 		return signing.Result{State: signing.Invalid, Reason: "the seal signs another message"}
 	}
 	return result
+}
+
+// replyAuthors are a view's reply sides as the wire's author byte.
+var replyAuthors = map[string]byte{protocol.ReplyBySender: 1, protocol.ReplyByReceiver: 2}
+
+// signsRow: the seal signs this row's message, from its contact, to its
+// recipients, answering its parent.
+func signsRow(seal signing.Seal, frame signing.Frame, link protocol.PeerLink) bool {
+	return seal.Matches(frame) == nil && link.Binds(seal.Header)
 }
 
 // verdictLine says a verdict on a row.

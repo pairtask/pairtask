@@ -70,13 +70,7 @@ func acceptIn(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer,
 	if err := requireContact(ctx, tx, contactKey(r.key.contact)); err != nil {
 		return messaging.Answer{}, false, err
 	}
-	if answer, known, err := replay(ctx, tx, r.key.contact, r.m); known || err != nil {
-		return answer, false, err
-	}
-	if answer, known, err := consentReplay(ctx, tx, r); known || err != nil {
-		return answer, false, err
-	}
-	if answer, refusedNow, err := unsignedRefused(ctx, tx, in); refusedNow || err != nil {
+	if answer, answered, err := earlyAnswer(ctx, tx, in); answered || err != nil {
 		return answer, false, err
 	}
 	answer, err := decideInbound(ctx, tx, r.key.contact, r.m)
@@ -84,6 +78,29 @@ func acceptIn(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer,
 		return messaging.Answer{}, false, err
 	}
 	return answerInbound(ctx, tx, in, answer)
+}
+
+// earlyAnswers answer an inbound message before its checks, in order: a
+// replay of a stored message, a replay of a held one, and an unsigned one
+// from a contact this side requires signed (#115).
+var earlyAnswers = []func(context.Context, *sql.Tx, inboundRow) (messaging.Answer, bool, error){
+	func(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer, bool, error) {
+		return replay(ctx, tx, in.key.contact, in.m)
+	},
+	func(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer, bool, error) {
+		return consentReplay(ctx, tx, in.newRow)
+	},
+	unsignedRefused,
+}
+
+// earlyAnswer is the first early answer that applies, if any.
+func earlyAnswer(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer, bool, error) {
+	for _, answer := range earlyAnswers {
+		if a, answered, err := answer(ctx, tx, in); answered || err != nil {
+			return a, answered, err
+		}
+	}
+	return messaging.Answer{}, false, nil
 }
 
 // answerInbound acts on a new message's answer: stored, held for the
@@ -243,7 +260,7 @@ func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message
 		return messaging.Answer{}, false, err
 	}
 	if found {
-		return replayedSeal(ctx, tx, messageKey{contact, messaging.DirIn, m.ID}, sameMessage(row, m), m.Seal)
+		return replayedSeal(ctx, tx, sealReplay{messageKey{contact, messaging.DirIn, m.ID}, m.Seal}, sameMessage(row, m))
 	}
 	if !validSequence(m.N) {
 		return messaging.Answer{}, false, nil

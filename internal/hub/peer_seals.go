@@ -43,7 +43,7 @@ func (h *Hub) peerSealer(ctx context.Context) store.PeerSealer {
 		return nil
 	}
 	now := time.Now()
-	if h.broker == nil || h.broker.cert.Workspace != h.identity.Fingerprint() || now.Add(brokerCertRenew).After(h.broker.cert.NotAfter) {
+	if h.broker.stale(h.identity.Fingerprint(), now) {
 		h.broker = newBrokerKey(h.identity, now)
 	}
 	return h.broker.seal
@@ -59,11 +59,16 @@ func newBrokerKey(id *peer.WorkspaceIdentity, now time.Time) *brokerKey {
 	return &brokerKey{key: key, cert: cert, root: id.PublicKey()}
 }
 
+// stale: no key yet, one for another workspace, or one near its end.
+func (b *brokerKey) stale(workspace string, now time.Time) bool {
+	return b == nil || b.cert.Workspace != workspace || now.Add(brokerCertRenew).After(b.cert.NotAfter)
+}
+
 // seal signs m as this workspace's agent m.From sent it to contact.
 func (b *brokerKey) seal(contact string, m messaging.Message) []byte {
+	link := protocol.PeerLink{Receiver: contact, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author}
 	h := signing.Header{MessageID: m.ID, SenderKind: signing.SenderAgent, SenderID: m.From, Workspace: b.cert.Workspace,
-		Recipients: protocol.PeerSealRecipients(contact, m.To), InReplyTo: protocol.PeerReplyRef(m.ReplyTo.ID, m.ReplyTo.Author),
-		CreatedAt: m.CreatedAt, TextHash: signing.TextHash(m.Text)}
+		Recipients: link.Recipients(), InReplyTo: link.ReplyRef(), CreatedAt: m.CreatedAt, TextHash: signing.TextHash(m.Text)}
 	return signing.Sign(b.key, []signing.Cert{b.cert}, b.root, h).Marshal()
 }
 
@@ -99,7 +104,7 @@ func (h *Hub) contactSealRefused(ctx context.Context, msg protocol.Message) *rou
 
 // contactSealSigns: the seal is the operator's for this very send.
 func contactSealSigns(seal signing.Seal, msg protocol.Message) bool {
-	want := protocol.PeerSealRecipients(msg.ContactKey, peerRecipients(msg))
+	want := protocol.PeerLink{Receiver: msg.ContactKey, To: peerRecipients(msg)}.Recipients()
 	frame := signing.Frame{MessageID: msg.MessageID, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID,
 		Text: msg.ContactText, Addresses: want}
 	return slices.Equal(seal.Header.Recipients, want) && seal.Header.InReplyTo == "" && seal.Matches(frame) == nil
