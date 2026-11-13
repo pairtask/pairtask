@@ -86,7 +86,7 @@ func sealedSend(ctx context.Context, socket string, req protocol.Message, unsign
 func sealHeader(msg protocol.Message, workspace string, at time.Time) signing.Header {
 	h := signing.Header{MessageID: msg.MessageID, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID, Workspace: workspace, CreatedAt: at}
 	if msg.Type == protocol.TypeOperatorContact {
-		h.Recipients, h.TextHash = protocol.PeerSealRecipients(msg.ContactKey, msg.ContactTo), signing.TextHash(msg.ContactText)
+		h.Recipients, h.TextHash = protocol.PeerLink{Receiver: msg.ContactKey, To: msg.ContactTo}.Recipients(), signing.TextHash(msg.ContactText)
 		return h
 	}
 	var body struct {

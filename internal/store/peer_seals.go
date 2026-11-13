@@ -121,22 +121,43 @@ func sealRefuses(ctx context.Context, tx *sql.Tx, contact string, m messaging.Me
 	if err != nil {
 		return true, nil
 	}
-	own, known, err := ownIdentity(ctx, tx)
+	check, err := sealCheckFor(ctx, tx, contact)
 	if err != nil {
 		return false, err
 	}
-	if !known {
+	if check.own == "" {
 		return true, nil // a side without an identity can't be addressed
 	}
-	roots, err := contactRoots(ctx, tx, contact)
-	if err != nil {
-		return false, err
-	}
-	result := signing.Verify(&seal, roots, time.Now())
-	if result.State == signing.Invalid || !sealBinds(seal, contact, own, m) {
+	result := signing.Verify(&seal, check.roots, time.Now())
+	if result.State == signing.Invalid || !sealBinds(seal, contact, check.own, m) {
 		return true, nil
 	}
-	return false, notePersonKey(ctx, tx, contact, seal, result)
+	if !unacceptedPerson(result) {
+		return false, nil
+	}
+	return false, notePersonKey(ctx, tx, contact, seal.Chain[0].Issuer)
+}
+
+// unacceptedPerson: an operator's seal under a person key not accepted
+// for this contact.
+func unacceptedPerson(r signing.Result) bool {
+	return r.State == signing.Unverified && r.Signer != nil && r.Signer.Basis == signing.BasisPerson
+}
+
+// sealCheck is what a contact's seals are checked against here: this
+// side's identity key ("" without one) and the contact's roots.
+type sealCheck struct {
+	own   string
+	roots signing.Roots
+}
+
+func sealCheckFor(ctx context.Context, tx *sql.Tx, contact string) (sealCheck, error) {
+	own, known, err := ownIdentity(ctx, tx)
+	if err != nil || !known {
+		return sealCheck{}, err
+	}
+	roots, err := contactRoots(ctx, tx, contact)
+	return sealCheck{own: own, roots: roots}, err
 }
 
 // sealBinds: the seal signs this message from this contact, to exactly the
@@ -147,9 +168,9 @@ func sealBinds(seal signing.Seal, contact, own string, m messaging.Message) bool
 	if m.From == "" {
 		kind, id = signing.SenderOperator, protocol.OperatorID
 	}
-	frame := signing.Frame{MessageID: m.ID, SenderKind: kind, SenderID: id, Text: m.Text, Addresses: []string{protocol.PeerWorkspaceRecipient(own)}}
-	link := protocol.PeerLink{Contact: contact, Own: own, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author}
-	return protocol.PeerSealBinds(h, link) && seal.Matches(frame) == nil
+	link := protocol.PeerLink{Contact: contact, Receiver: own, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author}
+	frame := signing.Frame{MessageID: m.ID, SenderKind: kind, SenderID: id, Text: m.Text, Addresses: []string{link.Address()}}
+	return link.Binds(h) && seal.Matches(frame) == nil
 }
 
 // ownIdentity is this workspace's identity key, once it has one.
@@ -181,14 +202,11 @@ func contactRoots(ctx context.Context, tx *sql.Tx, contact string) (signing.Root
 	return protocol.RootsOf(roots), rows.Err()
 }
 
-// notePersonKey records the person key behind an operator seal that this
-// side hasn't accepted for the contact.
-func notePersonKey(ctx context.Context, tx *sql.Tx, contact string, seal signing.Seal, result signing.Result) error {
-	if result.State != signing.Unverified || result.Signer == nil || result.Signer.Basis != signing.BasisPerson {
-		return nil
-	}
+// notePersonKey records a person key the contact signed with that this
+// side hasn't accepted.
+func notePersonKey(ctx context.Context, tx *sql.Tx, contact, keyID string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO peer_person_keys (contact, key_id, first_seen) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-		contact, seal.Chain[0].Issuer, stamp(time.Now()))
+		contact, keyID, stamp(time.Now()))
 	return err
 }
 
@@ -216,18 +234,24 @@ func (s *Store) AcceptPersonKey(ctx context.Context, contact, keyID string, at t
 	return s.PinSigningRoot(ctx, protocol.SigningRoot{KeyID: keyID, Person: true, Workspace: contact, Approved: true}, at)
 }
 
+// sealReplay is a replayed message's key and the seal it came with.
+type sealReplay struct {
+	key  messageKey
+	seal []byte
+}
+
 // replayedSeal checks a replay's seal against the one stored: another
 // non-empty seal for the same message is a conflict; a message stored
 // unsigned stays so.
-func replayedSeal(ctx context.Context, tx *sql.Tx, key messageKey, answer messaging.Answer, seal []byte) (messaging.Answer, bool, error) {
-	if !answer.Stored || len(seal) == 0 {
+func replayedSeal(ctx context.Context, tx *sql.Tx, r sealReplay, answer messaging.Answer) (messaging.Answer, bool, error) {
+	if !answer.Stored || len(r.seal) == 0 {
 		return answer, true, nil
 	}
-	held, err := currentSeal(ctx, tx, key)
+	held, err := currentSeal(ctx, tx, r.key)
 	switch {
 	case err != nil:
 		return messaging.Answer{}, true, err
-	case held != nil && !slices.Equal(held, seal):
+	case held != nil && !slices.Equal(held, r.seal):
 		return refused(messaging.ReasonConflict), true, nil
 	}
 	return answer, true, nil
