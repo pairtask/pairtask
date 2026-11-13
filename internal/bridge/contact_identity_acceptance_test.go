@@ -59,3 +59,13 @@ func TestContactIdentityAcceptanceBridgeVerifiesPairedAgentIndependently(t *test
 	f.client.roots[0].Approved = false
 	requireBridgeState(t, f.deliver(t), signing.Unverified)
 }
+
+func TestContactIdentityAcceptanceForeignPersonCannotClaimLocalOperator(t *testing.T) {
+	f := newBridgeSignedFixture(t)
+	f.client.ownWorkspace = signing.KeyID(bridgeIdentityKey("another-bridge-workspace").Public().(ed25519.PublicKey))
+	verdict := f.deliver(t)
+	requireBridgeState(t, verdict, signing.Invalid)
+	if verdict.Reason != "signed for another workspace" {
+		t.Fatalf("foreign operator seal explanation: %q", verdict.Reason)
+	}
+}

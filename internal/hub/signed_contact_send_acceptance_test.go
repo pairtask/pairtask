@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/signing"
+	"github.com/pairtask/pairtask/internal/store"
 )
 
 func signedContactSendFixture(t *testing.T) (*Hub, string, ed25519.PrivateKey, ed25519.PrivateKey) {
@@ -118,4 +120,59 @@ func TestSignedContactSendAcceptanceTamperingAndUnapprovedPersonAreRefused(t *te
 	if len(rows) != 0 {
 		t.Fatalf("altered contact send persisted: %+v", rows)
 	}
+}
+
+func TestSignedContactSendAcceptanceContactPersonCannotSignAsOurOperator(t *testing.T) {
+	h, contact, _, _ := signedContactSendFixture(t)
+	ctx := context.Background()
+	const id, body = "foreign-person-send", "this workspace did not sign"
+	header := signing.Header{MessageID: id, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID,
+		Recipients: (protocol.PeerLink{Receiver: contact}).Recipients(), TextHash: signing.TextHash(body)}
+	seal := foreignContactPersonSeal(t, h, contact, header)
+	msg := protocol.Message{Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
+		ContactOp: protocol.ContactOpSend, ContactKey: contact, ContactText: body, MessageID: id,
+		Seal: protocol.EncodeSeal(seal)}
+	refusal := h.contactSealRefused(ctx, msg)
+	if refusal == nil {
+		t.Fatal("contact's pinned person key signed as this workspace's operator")
+	}
+	if refusal.code != protocol.ErrInvalidSeal {
+		t.Fatalf("foreign operator seal refused as %q, want invalid seal", refusal.code)
+	}
+}
+
+func TestSignedContactSendAcceptanceContactPersonCannotSignLocalAgentSend(t *testing.T) {
+	h, contact, _, _ := signedContactSendFixture(t)
+	const id, body, recipient = "foreign-person-local", "not from our operator", "local-agent"
+	header := signing.Header{MessageID: id, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID,
+		Recipients: []string{recipient}, TextHash: signing.TextHash(body)}
+	seal := foreignContactPersonSeal(t, h, contact, header)
+	msg := protocol.Message{Type: protocol.TypeMsg, MessageID: id, To: recipient,
+		Payload: json.RawMessage(`{"text":"not from our operator"}`), Seal: protocol.EncodeSeal(seal)}
+	refusal := h.checkSeal(context.Background(), msg, store.OperatorScope{})
+	if refusal == nil {
+		t.Fatal("contact's pinned person key signed as this workspace's local operator")
+	}
+	if refusal.code != protocol.ErrInvalidSeal {
+		t.Fatalf("foreign operator seal refused as %q, want invalid seal", refusal.code)
+	}
+}
+
+func foreignContactPersonSeal(t *testing.T, h *Hub, contact string, header signing.Header) signing.Seal {
+	t.Helper()
+	_, person, err := ed25519.GenerateKey(nil)
+	messageWorkerOK(t, err)
+	_, device, err := ed25519.GenerateKey(nil)
+	messageWorkerOK(t, err)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	personPublic := person.Public().(ed25519.PublicKey)
+	messageWorkerOK(t, h.store.PinSigningRoot(context.Background(), protocol.SigningRoot{
+		KeyID: signing.KeyID(personPublic), Person: true, Workspace: contact, Approved: true,
+	}, now))
+	cert := signing.Issue(person, signing.Cert{
+		Kind: signing.KindDevice, Subject: "other-operator", Key: device.Public().(ed25519.PublicKey),
+		Workspace: contact, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+	})
+	header.Workspace, header.CreatedAt = contact, now
+	return signing.Sign(device, []signing.Cert{cert}, personPublic, header)
 }
