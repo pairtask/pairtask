@@ -76,33 +76,59 @@ const MaxSkew = 5 * time.Minute
 
 var errFuture = errors.New("signing: signed in the future")
 
-// Verify checks a seal against the recipient's roots. Certificates must be
-// valid when the header was signed, so a stored message still verifies
-// after its certificate lapses; a header dated beyond now and MaxSkew is
-// refused. Revocation, not expiry, is what ends a stolen key's past.
+// Verify checks a seal against the recipient's roots. Everything the seal
+// itself can prove is checked first, pinned or not: the signature, the
+// certificate (by the root key the seal carries, valid when the header was
+// signed) and whether its kind may speak for the claimed sender. Only then
+// does the pin decide: unknown or unapproved is Unverified, a pin that
+// disagrees with the certificate (a person key signing for agents, another
+// workspace) is Invalid. A stored message still verifies after its
+// certificate lapses; revocation, not expiry, ends a stolen key's past.
 func Verify(s *Seal, roots Roots, now time.Time) Result {
 	if s == nil {
 		return Result{State: Unsigned}
 	}
+	signer, err := provable(*s, now)
+	if err != nil {
+		return Result{State: Invalid, Reason: err.Error()}
+	}
+	root, known := roots(signer.issuer)
+	switch {
+	case !known:
+		return Result{State: Unverified, Signer: &signer.Signer, Reason: "signed under a key not pinned here"}
+	case root.Person != (signer.Basis == BasisPerson) || root.Workspace != s.Header.Workspace:
+		return Result{State: Invalid, Reason: errClaim.Error()}
+	case !root.Approved:
+		return Result{State: Unverified, Signer: &signer.Signer, Reason: "signer's key awaits the operator's approval"}
+	}
+	return Result{State: Verified, Signer: &signer.Signer}
+}
+
+// provenSigner is who a seal proves signed it, and the root key it
+// claims to be issued under.
+type provenSigner struct {
+	Signer
+	issuer string
+}
+
+// provable checks what a seal proves on its own, before any pin.
+func provable(s Seal, now time.Time) (provenSigner, error) {
 	if s.Header.CreatedAt.After(now.Add(MaxSkew)) {
-		return Result{State: Invalid, Reason: errFuture.Error()}
+		return provenSigner{}, errFuture
 	}
-	leaf, err := signedBy(*s)
+	leaf, err := signedBy(s)
 	if err != nil {
-		return Result{State: Invalid, Reason: err.Error()}
+		return provenSigner{}, err
 	}
-	root, known := roots(leaf.Issuer)
-	if !known {
-		return Result{State: Unverified, Reason: "signed under a key not pinned here"}
+	if err := leaf.Check(s.RootKey, s.Header.CreatedAt); err != nil {
+		return provenSigner{}, err
 	}
-	signer, err := speaksFor(s.Header, leaf, s.RootKey, root)
-	if err != nil {
-		return Result{State: Invalid, Reason: err.Error()}
+	basis, ok := claimBasis(s.Header, leaf, s.RootKey)
+	if !ok {
+		return provenSigner{}, errClaim
 	}
-	if !root.Approved {
-		return Result{State: Unverified, Signer: signer, Reason: "signer's key awaits the operator's approval"}
-	}
-	return Result{State: Verified, Signer: signer}
+	h := s.Header
+	return provenSigner{Signer{Kind: h.SenderKind, ID: h.SenderID, Workspace: h.Workspace, Basis: basis, KeyID: leaf.KeyID()}, leaf.Issuer}, nil
 }
 
 // signedBy is the certificate whose key signed the header; phase 1 chains
@@ -124,37 +150,27 @@ func signedBy(s Seal) (Cert, error) {
 	return leaf, nil
 }
 
-// speaksFor checks leaf against its root and what h claims, and names the
-// signer: a person's device speaks only for its operator, a workspace's
-// broker only for that workspace's agents, an agent key only for itself.
-func speaksFor(h Header, leaf Cert, rootKey ed25519.PublicKey, root Root) (*Signer, error) {
-	if err := leaf.Check(rootKey, h.CreatedAt); err != nil {
-		return nil, err
-	}
-	if root.Workspace != h.Workspace {
-		return nil, errWorkspace
-	}
-	basis, ok := claimBasis(h, leaf, rootKey, root)
-	if !ok {
-		return nil, errClaim
-	}
-	return &Signer{Kind: h.SenderKind, ID: h.SenderID, Workspace: h.Workspace, Basis: basis, KeyID: leaf.KeyID()}, nil
-}
-
 // OperatorID is the reserved sender ID of a workspace's operator.
 const OperatorID = "operator"
 
-// claimBasis is the basis on which leaf may sign h, if any.
-func claimBasis(h Header, leaf Cert, rootKey ed25519.PublicKey, root Root) (Basis, bool) {
-	switch {
-	case root.Person:
-		return BasisPerson, leaf.Kind == KindDevice && h.SenderKind == SenderOperator && h.SenderID == OperatorID
-	case h.SenderKind != SenderAgent || h.SenderID == OperatorID || KeyID(rootKey) != h.Workspace:
-		return "", false
-	case leaf.Kind == KindBroker:
-		return BasisWorkspace, true
+// claimBasis is the basis on which leaf may sign h, if any: a device
+// speaks only for its operator (under a person key), a workspace's broker
+// only for that workspace's agents and an agent key only for itself (both
+// under the workspace key itself).
+func claimBasis(h Header, leaf Cert, rootKey ed25519.PublicKey) (Basis, bool) {
+	if leaf.Kind == KindDevice {
+		return BasisPerson, h.SenderKind == SenderOperator && h.SenderID == OperatorID
 	}
-	return BasisAgent, leaf.Kind == KindAgent && leaf.Subject == h.SenderID
+	if h.SenderKind != SenderAgent || h.SenderID == OperatorID || KeyID(rootKey) != h.Workspace {
+		return "", false
+	}
+	switch leaf.Kind {
+	case KindBroker:
+		return BasisWorkspace, true
+	case KindAgent:
+		return BasisAgent, leaf.Subject == h.SenderID
+	}
+	return "", false
 }
 
 // Frame is what a recipient received, to check against the signed header:
