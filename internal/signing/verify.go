@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -157,25 +158,40 @@ func claimBasis(h Header, leaf Cert, rootKey ed25519.PublicKey, root Root) (Basi
 }
 
 // Frame is what a recipient received, to check against the signed header:
-// the message, its sender, its text, and the addresses that reach this
-// recipient (its own ID, "*", its room, its group).
+// the message, its sender, its text, the addresses that reach this
+// recipient (its own ID, "*", its group's members) and the room it arrived
+// in ("" for none).
 type Frame struct {
 	MessageID  string
 	SenderKind string
 	SenderID   string
 	Text       string
 	Addresses  []string
+	Room       string
 }
+
+// RoomRecipient is how a header names the room a message was sent in.
+func RoomRecipient(room string) string { return "room:" + room }
 
 // Matches reports whether the received frame is the message the header
 // signed and was addressed to this recipient.
 func (s Seal) Matches(f Frame) error {
 	h := s.Header
 	same := h.MessageID == f.MessageID && h.SenderKind == f.SenderKind && h.SenderID == f.SenderID && h.TextHash == TextHash(f.Text)
-	if !same || !slices.ContainsFunc(f.Addresses, h.addresses) {
+	if !same || !slices.ContainsFunc(f.Addresses, h.addresses) || h.room() != f.Room {
 		return errFrame
 	}
 	return nil
+}
+
+// room is the room the header was signed for, or "".
+func (h Header) room() string {
+	for _, r := range h.Recipients {
+		if room, ok := strings.CutPrefix(r, "room:"); ok {
+			return room
+		}
+	}
+	return ""
 }
 
 func (h Header) addresses(a string) bool { return slices.Contains(h.Recipients, a) }
