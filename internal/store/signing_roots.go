@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -21,7 +22,23 @@ CREATE TABLE IF NOT EXISTS signing_roots (
     approved   INTEGER NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS message_seals (
+    message_id TEXT PRIMARY KEY,
+    seal       TEXT NOT NULL
+);
 `
+
+// A message's seal, kept beside it (its own table, so released tables keep
+// their shape) and read back with it; an unsigned message has no row.
+const sealColumn = `(SELECT seal FROM message_seals ms WHERE ms.message_id = mm.message_id)`
+
+func persistSeal(ctx context.Context, tx *sql.Tx, msg protocol.Message) error {
+	if msg.Seal == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO message_seals (message_id, seal) VALUES (?, ?)`, msg.MessageID, msg.Seal)
+	return err
+}
 
 // ErrRootConflict: the key is pinned already, as another kind of root or
 // for another workspace; a key is bound once.

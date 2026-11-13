@@ -225,7 +225,7 @@ func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error
 	return int(version.Int64), err
 }
 
-const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, mm.review_outcome, ` + remoteColumns + `, mm.seal`
+const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, mm.review_outcome, ` + remoteColumns + `, ` + sealColumn
 
 // groupColumn is a group send's canonical members (JSON), or NULL: an
 // operator group's, or a paired workspace's message to several agents, as

@@ -105,7 +105,6 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"message_metadata", "room", "TEXT"},              // NULL is the Square
 	{"message_metadata", "mentions", "TEXT"},          // a JSON array; NULL is none (#164)
 	{"message_metadata", "review_id", "TEXT"},         // a review notice's review (#220); NULL for any other message
-	{"message_metadata", "seal", "TEXT"},              // the sender's signed header, base64 (#115); NULL is unsigned
 	{"peer_joins", "destination", "TEXT"},             // NULL for joins before operator redemption (#178)
 	{"peer_joins", "decision_confirmed_at", "TEXT"},   // NULL until the inviter confirms (#178)
 	{"peer_pairing_requests", "delivered_at", "TEXT"}, // NULL until the joiner acknowledges (#178)
@@ -396,7 +395,10 @@ func persistMessage(ctx context.Context, tx *sql.Tx, routed routedMessage) error
 	if _, err := tx.ExecContext(ctx, `INSERT INTO messages (seq, ts, sender, recipient, payload) VALUES (?, ?, ?, ?, ?)`, msg.Seq, msg.TS.UTC(), msg.From, msg.To, string(msg.Payload)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO message_metadata (message_id, seq, sender_session, in_reply_to, ack_requested, origin, room, mentions, review_id, seal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, msg.MessageID, msg.Seq, routed.senderSession, msg.InReplyTo, msg.AckRequested, nullString(msg.Origin), nullString(msg.Room), nullList(msg.Mentions), nullString(msg.ReviewID), nullString(msg.Seal)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO message_metadata (message_id, seq, sender_session, in_reply_to, ack_requested, origin, room, mentions, review_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, msg.MessageID, msg.Seq, routed.senderSession, msg.InReplyTo, msg.AckRequested, nullString(msg.Origin), nullString(msg.Room), nullList(msg.Mentions), nullString(msg.ReviewID)); err != nil {
+		return err
+	}
+	if err := persistSeal(ctx, tx, msg); err != nil {
 		return err
 	}
 	if err := insertRecipients(ctx, tx, msg.MessageID, recipients); err != nil {
