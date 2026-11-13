@@ -884,6 +884,36 @@ replies it claimed. Nothing here routes, assigns or claims.
 - A broker older than v28 answers `forbidden`; the bridge refuses before
   sending.
 
+## Signed operator messages (v29)
+
+The operator's own client seals each operator message (#115): a header
+signed by a device key that the operator's person key certified. No agent
+and no broker holds those keys, so none can produce an operator message that
+verifies.
+
+```json
+{"type":"operator_identity","message_id":"i1","identity_op":"register","identity_key":"<Ed25519 person public key, base64>"}
+{"type":"operator_identity_result","message_id":"i1","identity":{"workspace":"sha256:…","roots":[{"key_id":"sha256:…","workspace":"sha256:…","approved":true},{"key_id":"sha256:…","person":true,"workspace":"sha256:…","approved":true}]}}
+{"type":"operator_send","message_id":"m1","to":"*","payload":{"text":"ship it"},"seal":"<base64 seal>"}
+{"type":"welcome","agent_id":"codex-1","protocol_version":29,"signing_roots":[…]}
+{"type":"msg","from":"operator","origin":"operator","message_id":"m1","payload":{"text":"ship it"},"seal":"…","verification":{"state":"verified","signer":{"kind":"operator","id":"operator","workspace_key_id":"sha256:…","basis":"person","key_id":"sha256:…"}}}
+```
+
+- **The seal** (internal/signing) is a fixed binary layout, not JSON. Its header carries the message ID, the sender (`operator`), the sender's workspace key ID, the recipients (`*`, the agent, or the group's members sorted, plus `room:<name>`), `in_reply_to`, the time, and the SHA-256 of the text. Then come the signature, the device certificate and the person key. Key IDs are `sha256:` and the hex SHA-256 of the key's SPKI DER, the same form as a workspace identity key.
+- **`operator_identity register`** pins the person key as an approved root for this workspace. Registering over the authenticated operator socket is the operator's approval. A key pinned already with another binding is refused (`invalid_state`). `status` only reads. It creates the workspace identity if missing.
+- **The broker** checks an `operator_send` that carries a seal before persisting it. It refuses with `invalid_seal`, storing nothing, when:
+  - the seal doesn't verify against its roots;
+  - its header doesn't sign exactly this message: ID, operator, text, `in_reply_to`, and recipients and room as scoped;
+  - the payload isn't `{"text": …}`.
+  An unsigned send still passes. The broker keeps the seal on the frame and in `message_metadata.seal`, so replays carry it.
+- **Agents' own sends** carrying `seal` or `verification` are refused: agents don't sign in this phase. All agents share one Unix user, so an agent key would be readable by every agent.
+- **The welcome** gives a v29 agent the `signing_roots`: this workspace's key, once it has one, and the person keys its operator registered.
+- **`verification`** is the recipient's own verdict, and senders can't set it. The bridge computes it for every `msg` frame from a v29 broker:
+  - `unsigned` without a seal;
+  - otherwise the seal is verified against the welcome's roots, then the frame is checked against the header: same ID, sender and text; addressed to this agent or `*`; same room.
+  States are `verified`, `unverified` (the key isn't pinned or approved here), `unsigned` and `invalid`. `signer.basis` is `person` for the operator.
+- **Validity:** certificates are checked at the header's time, so a stored message still verifies after its certificate lapses. A header dated more than 5 minutes ahead is `invalid`.
+
 ## Finding a paired workspace that moved (#284)
 
 Two `operator_contact` operations take no `contact_key` and serve a host

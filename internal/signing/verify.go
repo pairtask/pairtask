@@ -161,7 +161,7 @@ func claimBasis(h Header, leaf Cert, rootKey ed25519.PublicKey) (Basis, bool) {
 	if leaf.Kind == KindDevice {
 		return BasisPerson, h.SenderKind == SenderOperator && h.SenderID == OperatorID
 	}
-	if h.SenderKind != SenderAgent || h.SenderID == OperatorID || KeyID(rootKey) != h.Workspace {
+	if !workspaceAgent(h, rootKey) {
 		return "", false
 	}
 	switch leaf.Kind {
@@ -171,6 +171,12 @@ func claimBasis(h Header, leaf Cert, rootKey ed25519.PublicKey) (Basis, bool) {
 		return BasisAgent, leaf.Subject == h.SenderID
 	}
 	return "", false
+}
+
+// workspaceAgent: h is from an agent (never the reserved operator ID) of
+// the workspace whose key rootKey is.
+func workspaceAgent(h Header, rootKey ed25519.PublicKey) bool {
+	return h.SenderKind == SenderAgent && h.SenderID != OperatorID && KeyID(rootKey) == h.Workspace
 }
 
 // Frame is what a recipient received, to check against the signed header:
@@ -192,12 +198,17 @@ func RoomRecipient(room string) string { return "room:" + room }
 // Matches reports whether the received frame is the message the header
 // signed and was addressed to this recipient.
 func (s Seal) Matches(f Frame) error {
-	h := s.Header
-	same := h.MessageID == f.MessageID && h.SenderKind == f.SenderKind && h.SenderID == f.SenderID && h.TextHash == TextHash(f.Text)
-	if !same || !slices.ContainsFunc(f.Addresses, h.addresses) || h.room() != f.Room {
+	if !s.Header.signs(f) {
 		return errFrame
 	}
 	return nil
+}
+
+// signs: the header is this frame's message, from this sender, with this
+// text, addressed to this recipient, in this room.
+func (h Header) signs(f Frame) bool {
+	same := h.MessageID == f.MessageID && h.SenderKind == f.SenderKind && h.SenderID == f.SenderID && h.TextHash == TextHash(f.Text)
+	return same && slices.ContainsFunc(f.Addresses, h.addresses) && h.room() == f.Room
 }
 
 // room is the room the header was signed for, or "".

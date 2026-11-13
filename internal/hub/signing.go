@@ -103,7 +103,7 @@ func sealSigns(seal signing.Seal, msg protocol.Message, scope store.OperatorScop
 	text, ok := payloadText(msg.Payload)
 	frame := signing.Frame{MessageID: msg.MessageID, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID,
 		Text: text, Addresses: seal.Header.Recipients, Room: msg.Room}
-	want := protocol.SealRecipients(operatorTo(msg, scope), scope.Members, msg.Room)
+	want := protocol.SealRecipients(msg.To, scope.Members, msg.Room) // To is "" for a group, "*" for everyone
 	switch {
 	case !ok:
 		return invalidSeal("a sealed message's payload is {\"text\": …}")
