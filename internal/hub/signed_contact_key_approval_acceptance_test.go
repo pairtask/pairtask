@@ -103,8 +103,12 @@ func TestSignedContactKeyApprovalAcceptanceRequireSealsOperatorSwitch(t *testing
 	assertRequireSealsChoice(t, h, contact, requireSealsChoice{"require-on", "on", true})
 	m := messaging.Message{ID: "unsigned-under-require", N: 1, CreatedAt: time.Now(), Text: "unsigned"}
 	a, err := h.store.PeerMessages().AcceptVersion(ctx, contact, messaging.Arrival{Version: int(messaging.SealVersion), Message: m, At: time.Now()})
-	if err != nil || a.Stored || a.Reason != messaging.ReasonUnsigned {
-		t.Fatalf("required contact's unsigned message was accepted: answer=%+v err=%v", a, err)
+	messageWorkerOK(t, err)
+	if a.Stored {
+		t.Fatalf("required contact accepted unsigned message: %+v", a)
+	}
+	if a.Reason != messaging.ReasonUnsigned {
+		t.Fatalf("required contact refused for %q, want unsigned", a.Reason)
 	}
 	assertRequireSealsChoice(t, h, contact, requireSealsChoice{"require-off", "off", false})
 	a, err = h.store.PeerMessages().AcceptVersion(ctx, contact, messaging.Arrival{Version: int(messaging.SealVersion), Message: m, At: time.Now()})
