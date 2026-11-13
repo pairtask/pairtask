@@ -40,7 +40,11 @@ type contactThread struct {
 	read      map[readRef]bool            // inbound messages a read was confirmed for
 	refused   map[readRef]bool            // inbound messages a read was refused for; not asked again until reloaded
 	acks      *protocol.ContactAckSummary // the operator's acknowledgments, as last heard (#287)
-	recheck   []int64                     // loaded messages an acknowledgment selected, read again oldest last
+	// pendingKeys are the person keys the contact signed with that this
+	// side's operator hasn't accepted (#115).
+	pendingKeys  []string
+	requireSeals bool    // this side refuses the contact's unsigned messages
+	recheck      []int64 // loaded messages an acknowledgment selected, read again oldest last
 }
 
 // contactOp is a send or a read whose ID and content are fixed when made,
@@ -241,7 +245,7 @@ func keepForward(old, v protocol.ContactMessageView) protocol.ContactMessageView
 func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bool) {
 	if !t.loaded || current {
 		t.sync, t.shared, t.directory, t.grants, t.dirKnown = page.Sync, page.Shared, page.Directory, page.ReviewGrants, true
-		t.acks = page.Acks
+		t.acks, t.pendingKeys, t.requireSeals = page.Acks, page.PendingPersonKeys, page.RequireSeals
 		clear(t.refused) // a fresh page gives refused reads one more try
 	}
 	c := oldestCursor(page.Messages)

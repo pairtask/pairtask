@@ -76,6 +76,9 @@ func acceptIn(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer,
 	if answer, known, err := consentReplay(ctx, tx, r); known || err != nil {
 		return answer, false, err
 	}
+	if answer, refusedNow, err := unsignedRefused(ctx, tx, in); refusedNow || err != nil {
+		return answer, false, err
+	}
 	answer, err := decideInbound(ctx, tx, r.key.contact, r.m)
 	if err != nil {
 		return messaging.Answer{}, false, err

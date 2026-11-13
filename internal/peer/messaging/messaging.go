@@ -64,11 +64,15 @@ const (
 	// ReasonInvalidSeal: the message's seal doesn't hold, or doesn't sign
 	// this message from this contact to this side (#115).
 	ReasonInvalidSeal = "invalid_seal"
+	// ReasonUnsigned: this side requires the contact's messages signed,
+	// and this one isn't (#115).
+	ReasonUnsigned = "unsigned"
 )
 
 var reasonClass = map[string]string{
 	ReasonInvalid: Terminal, ReasonTooLarge: Terminal, ReasonConflict: Terminal, ReasonTooOld: Terminal,
 	ReasonInboxFull: Transient, ReasonBusy: Transient, ReasonNotShared: Terminal, ReasonInvalidSeal: Terminal,
+	ReasonUnsigned: Terminal,
 }
 
 // Refusal is why a message wasn't stored.

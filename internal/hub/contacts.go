@@ -41,7 +41,8 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	// The operator's acknowledgment (#287).
 	protocol.ContactOpAck: (*Hub).contactAck,
 	// Accepting a contact's person key (#115).
-	protocol.ContactOpAcceptKey: (*Hub).contactAcceptKey,
+	protocol.ContactOpAcceptKey:    (*Hub).contactAcceptKey,
+	protocol.ContactOpRequireSeals: (*Hub).contactRequireSeals,
 	// Pending consent (#293).
 	protocol.ContactOpConsentDecide: (*Hub).contactConsentDecide,
 	protocol.ContactOpConsentOpt:    (*Hub).contactConsentOpt,
@@ -260,6 +261,9 @@ func (h *Hub) contactListPage(ctx context.Context, msg protocol.Message, c conta
 		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
 	}
 	page.PendingPersonKeys = pending
+	if page.RequireSeals, err = h.store.PeerMessages().RequiresSeals(ctx, msg.ContactKey); err != nil {
+		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
+	}
 	out := protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactPage: &page, ContactMarked: msg.ContactMarked}
 	if err := fitContactPage(&out, msg.RequestID); err != nil {

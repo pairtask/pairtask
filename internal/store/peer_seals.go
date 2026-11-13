@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS peer_message_seals (
     downgraded INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (contact, direction, message_id)
 );
+CREATE TABLE IF NOT EXISTS peer_seal_policy (
+    contact TEXT PRIMARY KEY,
+    require INTEGER NOT NULL,
+    set_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS peer_person_keys (
     contact    TEXT NOT NULL,
     key_id     TEXT NOT NULL,
@@ -245,4 +250,43 @@ func (s *Store) ContactSigningRoots(ctx context.Context) ([]protocol.SigningRoot
 		}
 	}
 	return roots, nil
+}
+
+// SetRequireSeals is the operator's choice for a contact: refuse its
+// unsigned messages, or take them marked unsigned (the default).
+func (s *Store) SetRequireSeals(ctx context.Context, contact string, require bool, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO peer_seal_policy (contact, require, set_at) VALUES (?, ?, ?)
+		ON CONFLICT(contact) DO UPDATE SET require = excluded.require, set_at = excluded.set_at`, contact, require, stamp(at))
+	return err
+}
+
+// RequiresSeals: this side refuses the contact's unsigned messages.
+func (p *PeerMessages) RequiresSeals(ctx context.Context, contact string) (bool, error) {
+	return requiresSeals(ctx, p.db, contact)
+}
+
+func requiresSeals(ctx context.Context, q rowQuerier, contact string) (bool, error) {
+	var require bool
+	err := q.QueryRowContext(ctx, `SELECT require FROM peer_seal_policy WHERE contact = ?`, contact).Scan(&require)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return require, err
+}
+
+// unsignedRefused refuses an unsigned message from a contact this side
+// requires signed: as unsigned to a peer that knows the reason, as invalid
+// to one whose version predates seals.
+func unsignedRefused(ctx context.Context, tx *sql.Tx, in inboundRow) (messaging.Answer, bool, error) {
+	if len(in.m.Seal) > 0 {
+		return messaging.Answer{}, false, nil
+	}
+	require, err := requiresSeals(ctx, tx, in.key.contact)
+	if err != nil || !require {
+		return messaging.Answer{}, false, err
+	}
+	if in.version != 0 && in.version < int(messaging.SealVersion) {
+		return refused(messaging.ReasonInvalid), true, nil
+	}
+	return refused(messaging.ReasonUnsigned), true, nil
 }

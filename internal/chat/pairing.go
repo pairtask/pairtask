@@ -24,7 +24,7 @@ import (
 const (
 	kindPairing  = "pairing"
 	panelPairing = "pairing"
-	pairUsage    = "usage: /pair [open [--discoverable] | find | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|* | pause | resume | unpair [NAME|KEY] | invite --repair NAME | redeem --repair NAME CODE@HOST:PORT | consent [ID | contact:NAME | on NAME | off NAME | reset NAME [AGENT [OPERATION]]]]"
+	pairUsage    = "usage: /pair [open [--discoverable] | find | status | cancel | accept KEY | reject KEY | redeem HOST:PORT CODE [NAME] | settle [OPERATION_ID] | share AGENT...|* | unshare AGENT...|* | pause | resume | unpair [NAME|KEY] | invite --repair NAME | redeem --repair NAME CODE@HOST:PORT | consent [ID | contact:NAME | on NAME | off NAME | reset NAME [AGENT [OPERATION]]] | accept-key [KEY] | require-seals on|off]"
 )
 
 // pairingView is the last pairing snapshot, its code removed.
@@ -46,7 +46,7 @@ var pairVerbArgs = map[string][]int{
 	protocol.PairingOpList: {1}, protocol.PairingOpOpen: {1, 2}, protocol.PairingOpStatus: {1, 2}, pairFind: {1},
 	protocol.PairingOpCancel: {1, 2}, protocol.PairingOpAccept: {2}, protocol.PairingOpReject: {2},
 	protocol.PairingOpRedeem: {3, 4}, protocol.PairingOpSettle: {1, 2}, pairAddress: {2},
-	pairPause: {1}, pairResume: {1}, pairConsent: {1, 2, 3, 4, 5},
+	pairPause: {1}, pairResume: {1}, pairConsent: {1, 2, 3, 4, 5}, pairAcceptKey: {1, 2}, pairRequireSeals: {2},
 }
 
 // pairWords are a /pair command's words, the verb first.
@@ -130,6 +130,8 @@ var pairCommands = map[string]func(*Model, pairWords) tea.Cmd{
 	pairResume:               (*Model).pauseCommand,
 	pairConsent:              (*Model).consentCommand,
 	pairUnpair:               (*Model).unpairCommand,
+	pairAcceptKey:            (*Model).acceptKeyCommand,
+	pairRequireSeals:         (*Model).requireSealsCommand,
 }
 
 // pairHandler is the command for a /pair line with one: a repair, or its
