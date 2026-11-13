@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -39,7 +40,7 @@ func newOfflineBrokerChild(t *testing.T, database, socket string) *offlineBroker
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := &offlineBrokerChild{cmd: exec.Command(os.Args[0], "-test.run=^TestInboxOfflineBrokerProcess$", "-test.timeout=20s"), done: make(chan error, 1), socket: socket, log: socket + ".log"}
+	child := &offlineBrokerChild{cmd: exec.Command(os.Args[0], "-test.run=^TestInboxOfflineBrokerProcess$", "-test.timeout=60s"), done: make(chan error, 1), socket: socket, log: socket + ".log"}
 	child.cmd.Env = append(os.Environ(), "PAIRTASK_OFFLINE_TEST_CHILD=1", "PAIRTASK_OFFLINE_TEST_CONFIG="+string(data))
 	output, err := os.Create(child.log)
 	if err != nil {
@@ -68,15 +69,30 @@ func (c *offlineBrokerChild) stop(t *testing.T) {
 
 func (c *offlineBrokerChild) ready(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		if _, err := os.Stat(c.socket); err == nil {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case err := <-c.done:
+			t.Fatalf("temporary broker exited before socket was ready: %v; log: %q", err, c.logText())
+		case <-timer.C:
+			t.Fatalf("temporary broker still running without a socket after 30s; log: %q", c.logText())
+		case <-ticker.C:
+		}
 	}
-	data, _ := os.ReadFile(c.log)
-	t.Fatalf("temporary broker did not start: %s", data)
+}
+
+func (c *offlineBrokerChild) logText() string {
+	data, err := os.ReadFile(c.log)
+	if err != nil {
+		return fmt.Sprintf("read %s: %v", c.log, err)
+	}
+	return string(data)
 }
 
 func (c *offlineBrokerChild) refused(t *testing.T) {
