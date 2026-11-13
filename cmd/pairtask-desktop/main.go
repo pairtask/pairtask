@@ -87,15 +87,19 @@ type stdout struct{ io.Writer }
 func (stdout) Close() error { return nil }
 
 // parseFlags reads --dir, the private data directory (the user's config
-// directory's pairtask-desktop by default), and --name, the name to pair
-// under.
+// directory's pairtask-desktop by default), --name, the name to pair
+// under, and --notify, whether to show system notifications (on).
 func parseFlags(args []string) (desktop.Config, error) {
 	fs := flag.NewFlagSet("pairtask-desktop", flag.ContinueOnError)
 	var cfg desktop.Config
 	fs.StringVar(&cfg.Dir, "dir", "", "private data directory (default: the user config directory's pairtask-desktop)")
 	fs.StringVar(&cfg.Name, "name", "", "the name this node pairs under")
+	notify := fs.Bool("notify", true, "show a system notification when a paired workspace sends a message")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
+	}
+	if *notify {
+		cfg.Notify = desktop.SystemNotifier()
 	}
 	if fs.NArg() > 0 {
 		return cfg, fmt.Errorf("unexpected argument %q", fs.Arg(0))
