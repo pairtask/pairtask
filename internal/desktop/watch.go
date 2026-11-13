@@ -75,6 +75,7 @@ func (w *watcher) run(ctx context.Context, h *hub.Hub, sess *hub.OperatorSession
 	go func() {
 		defer close(frames)
 		for msg, ok := sess.Next(ctx); ok; msg, ok = sess.Next(ctx) {
+			sess.Handed(msg) // releases its request ID, as the socket's writer does
 			frames <- msg
 		}
 	}()
@@ -124,6 +125,9 @@ func (w *watcher) checkAll(ctx context.Context) {
 		return
 	}
 	for _, c := range out.PairingResult.Contacts {
+		if !carriesMessages(c) {
+			continue
+		}
 		if w.baseline {
 			w.check(ctx, c.IdentityKey)
 		} else if count, ok := w.unread(ctx, c.IdentityKey); ok {
@@ -133,6 +137,12 @@ func (w *watcher) checkAll(ctx context.Context) {
 		}
 	}
 	w.baseline = true
+}
+
+// carriesMessages: a workspace paired on both sides and not unpaired here,
+// the ones whose messages are counted.
+func carriesMessages(c protocol.PairingContactView) bool {
+	return c.Confirmed && c.UnpairedAt == nil
 }
 
 // check notices a workspace whose unread count rose, unless its window is
