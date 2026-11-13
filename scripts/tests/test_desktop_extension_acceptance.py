@@ -9,10 +9,16 @@ import tempfile
 import unittest
 import zipfile
 
+from scripts.desktop_extension import Target, build
+
 ROOT = Path(__file__).resolve().parents[2]
 BUILDER = ROOT / "scripts" / "build-mcpb.py"
 TOOLS = {"whoami", "pair_redeem", "pair_status", "send", "check_inbox", "mark_read"}
 PLATFORMS = (("linux", "amd64"), ("linux", "arm64"), ("darwin", "amd64"), ("darwin", "arm64"))
+ICONS = (
+    ("light", "icons/pairtask-light-512.png"),
+    ("dark", "icons/pairtask-inverted-512.png"),
+)
 
 
 def executable_header(goos, goarch):
@@ -54,10 +60,21 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 bundle = out / f"pairtask-desktop-{goos}-{goarch}.mcpb"
                 self.assertEqual(result.stdout.strip(), str(bundle))
                 with zipfile.ZipFile(bundle) as archive:
-                    self.assertEqual(set(archive.namelist()), {"manifest.json", "server/pairtask-desktop"})
+                    self.assertEqual(
+                        set(archive.namelist()),
+                        {"manifest.json", "server/pairtask-desktop"} | {path for _, path in ICONS},
+                    )
                     self.assertEqual(archive.read("server/pairtask-desktop"), payload)
                     self.assertEqual(archive.getinfo("server/pairtask-desktop").external_attr >> 16, 0o100755)
                     self.assertEqual(archive.getinfo("manifest.json").external_attr >> 16, 0o100644)
+                    for _, path in ICONS:
+                        icon = archive.read(path)
+                        self.assertEqual(icon, (ROOT / "desktop" / "extension" / path).read_bytes())
+                        self.assertEqual(icon[:8], b"\x89PNG\r\n\x1a\n")
+                        self.assertEqual(icon[12:16], b"IHDR")
+                        self.assertEqual(struct.unpack(">II", icon[16:24]), (512, 512))
+                        self.assertEqual(icon[25], 6, "icon should have RGBA color")
+                        self.assertEqual(archive.getinfo(path).external_attr >> 16, 0o100644)
                     manifest = json.loads(archive.read("manifest.json"))
                 self.assertEqual(manifest["manifest_version"], "0.3")
                 self.assertEqual(manifest["version"], "1.2.3")
@@ -67,6 +84,11 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 self.assertTrue(manifest["author"]["name"])
                 self.assertEqual(manifest["license"], "MIT")
                 self.assertEqual(manifest["repository"]["url"], "https://github.com/pairtask/pairtask")
+                self.assertEqual(manifest["icon"], ICONS[0][1])
+                self.assertEqual(
+                    manifest["icons"],
+                    [{"src": path, "size": "512x512", "theme": theme} for theme, path in ICONS],
+                )
                 server = manifest["server"]
                 self.assertEqual(server["type"], "binary")
                 self.assertEqual(server["entry_point"], "server/pairtask-desktop")
@@ -96,6 +118,19 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 result = self.build(binary, (goos, goarch, version), out)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(list(out.glob("*")), "rejected build left an artifact")
+
+    def test_missing_icon_leaves_no_partial_bundle(self):
+        binary = self.root / "linux-amd64"
+        binary.write_bytes(executable_header("linux", "amd64"))
+        template = self.root / "manifest.json"
+        manifest = json.loads((ROOT / "desktop" / "extension" / "manifest.json").read_text())
+        manifest["icon"] = "icons/missing.png"
+        manifest["icons"] = []
+        template.write_text(json.dumps(manifest))
+        out = self.root / "missing-icon-out"
+        with self.assertRaises(FileNotFoundError):
+            build(binary, Target("linux", "amd64", "1.2.3"), out, template)
+        self.assertFalse(list(out.glob("*")), "missing icon left a partial bundle")
 
 
 if __name__ == "__main__":
