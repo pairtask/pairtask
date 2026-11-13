@@ -67,6 +67,7 @@ type PeerMessages struct {
 	db    *sql.DB
 	fence *linkFence   // nil for the root store; set by Admit (#276)
 	gate  *consentGate // the store's session admission gate (#293)
+	moved bool         // a session through it changed its contact's version (#115)
 }
 
 var _ messaging.Store = (*PeerMessages)(nil)

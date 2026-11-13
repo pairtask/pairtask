@@ -160,6 +160,9 @@ func pairedRow(c protocol.PairingContactView) []string {
 	if standing := standingLine(c); standing != "" {
 		rows = append(rows, warnStyle.Render("      "+standing))
 	}
+	if signing := signingStatusLabel(c); signing != "" {
+		rows = append(rows, alertTitle.Render("      "+signing))
+	}
 	return rows
 }
 

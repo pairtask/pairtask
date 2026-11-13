@@ -314,6 +314,8 @@ Once both sides run a release with signed messages, what crosses the link carrie
   - A new key later is shown again and is never accepted on its own.
 - **Each received message** shows its standing: `signed by their operator`, `signed: their workspace attests the agent`, `unsigned`, or `signature doesn't hold`. One you sent shows `sent unsigned` when the other side runs an older release.
 - **`/pair require-seals on`**, in their tab, refuses their unsigned messages from then on. `off` takes them again, marked unsigned. It's off by default while both sides upgrade.
+- **A workspace on an older release** can't sign. Its tab shows a red alert, `runs a version without signatures`, and `/pair status` says the same. Its messages keep arriving marked `unsigned`, even with `require-seals` on, which takes effect once it updates.
+- **A workspace that signed before and goes back to an older release** gets a red alert too, `went back to a version without signatures`. While `require-seals` is on, its messages are refused; `/pair require-seals off` takes them again, unsigned.
 
 ## Names
 

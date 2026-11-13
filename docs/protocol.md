@@ -928,7 +928,11 @@ A message that crosses a pairing link carries its sender's seal end to end, and 
   - Unsigned and unverified messages are accepted, as before.
   - A person key not accepted for the contact is recorded as pending.
 - **`contact_op accept_key`** (contact_text = the key ID) accepts a person key the contact signed with here. `pending_person_keys` on the contact page lists those awaiting acceptance.
-- **`contact_op require_seals`** (contact_text `on` or `off`) refuses the contact's unsigned messages. The reason is `unsigned` on v10 sessions and `invalid` on older ones. It's off by default, and `require_seals` is on the page.
+- **`contact_op require_seals`** (contact_text `on` or `off`) refuses the contact's unsigned messages. It's off by default, and `require_seals` is on the page.
+  - On a v10 session the refusal reason is `unsigned`.
+  - Below v10, a contact that never agreed v10 can't sign yet: its unsigned messages are accepted, marked. One that agreed v10 before has gone back: refused `invalid`, the reason its version knows.
+  - The broker records the first session at v10 or above per contact identity key; re-pairing doesn't clear it.
+- **`signing`** on a pairing contact view is `unsupported` once the contact's last session agreed a version below v10 and it never agreed v10, `downgraded` if it did, and absent otherwise. A session that changes a contact's recorded version emits `pairing_changed`.
 - **Recipients verify again:**
   - Agents get the contact roots in the welcome. Imported messages carry `seal`, and the bridge verifies them as it does local ones.
   - The chat verifies contact messages itself and marks each row.

@@ -230,11 +230,13 @@ unsigned. [The pairing guide](docs/pairing.md#signed-messages) explains the
 verification marks and key approval.
 
 Messages to an older workspace still travel, but without signatures; your
-sent rows say `sent unsigned`. Its messages arrive marked `unsigned` while
-`/pair require-seals` is off. Turning `/pair require-seals on` on for that
-workspace currently refuses everything it sends, so leave it off until both
-sides upgrade. The switch controls incoming messages; it does not stop your
-outgoing messages.
+sent rows say `sent unsigned`. Its messages arrive marked `unsigned`, and its
+tab and `/pair status` show a red alert asking them to update.
+`/pair require-seals on` refuses a workspace's unsigned messages once it runs
+a release with signatures; until then they keep arriving, marked. If a
+workspace that signed before goes back to an older release, its tab says so,
+and its messages are refused while the switch is on. The switch controls
+incoming messages; it does not stop your outgoing messages.
 
 ## How it fits together
 

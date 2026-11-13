@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,14 +27,6 @@ type reviewBridgeFixture struct {
 	forge           *forge.Fake
 	client          *Client
 	mcp             *mcp.ClientSession
-}
-
-func reviewBridgeTarget() protocol.ReviewTarget {
-	return protocol.ReviewTarget{Forge: "fake", Repository: "fake.example/space/repo", Change: "CR:7~revision"}
-}
-
-func reviewBridgePins() protocol.Revisions {
-	return protocol.Revisions{Base: strings.Repeat("a", 40), Head: strings.Repeat("b", 40)}
 }
 
 func newReviewBridgeFixture(t *testing.T) *reviewBridgeFixture {

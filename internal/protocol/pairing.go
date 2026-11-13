@@ -146,7 +146,17 @@ type PairingContactView struct {
 	// knows.
 	Notice         string `json:"notice,omitempty"`
 	NoticeAttempts int    `json:"notice_attempts,omitempty"`
+	// Signing is set only when the peer is known to speak a version
+	// without seals (#115): unsupported while it never signed, downgraded
+	// once it signed before; empty otherwise.
+	Signing string `json:"signing,omitempty"`
 }
+
+// Signing states of a contact on a version without seals (#115).
+const (
+	ContactSigningUnsupported = "unsupported"
+	ContactSigningDowngraded  = "downgraded"
+)
 
 // PairingContactSummary is how a contact stands now: its sync as this broker
 // observed it since it started, and its review requests waiting for this

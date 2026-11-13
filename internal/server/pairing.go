@@ -211,6 +211,7 @@ func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *first
 	s := messaging.Session{Frames: counted, Store: admitted, Contact: contact, Now: ep.Clock}
 	result, version, err := s.OpenServe(storeCtx)
 	end(result.Moved())
+	p.hub.SessionVersionSeen(admitted)
 	p.hub.ConsentConflicts(contact, result.ConsentConflicts)
 	if err != nil {
 		p.log.Info("message session ended", "cause", hub.PairingCause(err))

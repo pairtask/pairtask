@@ -231,6 +231,7 @@ func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result
 	counted := &messaging.Counted{Frames: conn.MessageFrames(netCtx)}
 	s := messaging.Session{Frames: counted, Store: admitted, Contact: c.IdentityKey, Now: h.pair.cfg.Clock}
 	r, version, err := s.OpenDial(storeCtx)
+	h.SessionVersionSeen(admitted)
 	if err == nil {
 		h.clearRemotePause(storeCtx, admitted, version)
 	}
