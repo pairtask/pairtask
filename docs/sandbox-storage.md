@@ -53,8 +53,10 @@ pairtask apply
 
 The sizes are `cpu_count` (1–8), `memory_gib` (1–16), `disk_gib` (root disk,
 2–100) and the volume quotas in GiB: `workspace_gib`, `agent_home_gib`,
-`docker_gib`, `tools_gib` (1–100). Grow only: a smaller quota than the data
-needs fails, and the volumes refuse to be destroyed.
+`docker_gib`, `tools_gib` (1–100). Only ever raise these by hand: nothing on
+this path stops a smaller value, and shrinking a disk or quota below what it
+holds can fail or lose data. (The volumes themselves refuse to be destroyed.)
+`pairtask size plan|apply`, coming next in #382, refuses to shrink.
 
 The workspace can't use more than the VM has. On macOS, check the VM's line in
 `pairtask size show` first: growing the VM itself still means editing its
