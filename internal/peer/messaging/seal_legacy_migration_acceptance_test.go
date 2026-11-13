@@ -33,10 +33,15 @@ func newLegacyMigrationFixture(t *testing.T) legacyMigrationFixture {
 	return legacyMigrationFixture{a, b, aBound, bBound, legacySealPeer{bBound}}
 }
 
-func legacyQueue(t *testing.T, db *store.Store, id, body string, seal []byte) {
+type legacyQueuedMessage struct {
+	id, body string
+	seal     []byte
+}
+
+func legacyQueue(t *testing.T, db *store.Store, m legacyQueuedMessage) {
 	t.Helper()
 	_, err := db.PeerMessages().Queue(context.Background(), messaging.Outgoing{
-		Contact: sessionContact, ID: id, Text: body, Now: sessionAt, Seal: seal,
+		Contact: sessionContact, ID: m.id, Text: m.body, Now: sessionAt, Seal: m.seal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -66,8 +71,8 @@ func TestSealLegacyMigrationAcceptanceUpgradeAndDowngrade(t *testing.T) {
 
 func (f legacyMigrationFixture) acceptOldContactBothDirections(t *testing.T) {
 	t.Helper()
-	legacyQueue(t, f.a, "a-to-old-b", "hello", []byte("sender seal"))
-	legacyQueue(t, f.b, "old-b-to-a", "old reply", nil)
+	legacyQueue(t, f.a, legacyQueuedMessage{"a-to-old-b", "hello", []byte("sender seal")})
+	legacyQueue(t, f.b, legacyQueuedMessage{id: "old-b-to-a", body: "old reply"})
 	sessionSuccess(t, sessionExchange(t, f.aBound, f.oldB, 0))
 	assertDowngradedSenderRow(t, legacyRow(t, f.a, 2, "a-to-old-b"), []byte("sender seal"))
 	assertUnsignedLegacyRow(t, legacyRow(t, f.a, 2, "old-b-to-a"))
@@ -85,7 +90,7 @@ func (f legacyMigrationFixture) upgradeWithoutMessage(t *testing.T) {
 
 func (f legacyMigrationFixture) refuseLaterDowngrade(t *testing.T) {
 	t.Helper()
-	legacyQueue(t, f.b, "downgraded-b-to-a", "back to v9", nil)
+	legacyQueue(t, f.b, legacyQueuedMessage{id: "downgraded-b-to-a", body: "back to v9"})
 	sessionSuccess(t, sessionExchange(t, f.aBound, f.oldB, 0))
 	row := legacyRow(t, f.b, 3, "downgraded-b-to-a")
 	if row.State != messaging.StateRefused || row.Refusal.Reason != messaging.ReasonInvalid {
@@ -99,7 +104,7 @@ func (f legacyMigrationFixture) acceptDowngradeAfterSwitchOff(t *testing.T) {
 	if err := f.a.SetRequireSeals(context.Background(), sessionContact, false, sessionAt); err != nil {
 		t.Fatal(err)
 	}
-	legacyQueue(t, f.b, "relaxed-b-to-a", "accepted unsigned", nil)
+	legacyQueue(t, f.b, legacyQueuedMessage{id: "relaxed-b-to-a", body: "accepted unsigned"})
 	sessionSuccess(t, sessionExchange(t, f.aBound, f.oldB, 0))
 	assertUnsignedLegacyRow(t, legacyRow(t, f.a, 3, "relaxed-b-to-a"))
 }
