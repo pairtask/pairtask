@@ -56,6 +56,65 @@ func sealBaseInbound() messaging.Message {
 	return messaging.Message{ID: "contact-signed", N: 1, CreatedAt: sessionAt, Text: "message from their operator"}
 }
 
+func requireInboundStored(t *testing.T, answer messaging.Answer, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Stored {
+		t.Fatalf("signed message was not stored: %+v", answer)
+	}
+}
+
+func requireInboundRefusal(t *testing.T, answer messaging.Answer, err error, reason string) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.Stored || answer.Reason != reason {
+		t.Fatalf("message was not refused for %q: %+v", reason, answer)
+	}
+}
+
+func requirePendingPersonKey(t *testing.T, db *store.Store, want string) {
+	t.Helper()
+	keys, err := db.PeerMessages().PendingPersonKeys(context.Background(), sessionContact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("pending person keys=%v, want one", keys)
+	}
+	if keys[0] != want {
+		t.Fatalf("pending person key=%s, want %s", keys[0], want)
+	}
+}
+
+func inboundPage(t *testing.T, db *store.Store, count int) []messaging.Row {
+	t.Helper()
+	page, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != count {
+		t.Fatalf("inbound page has %d rows, want %d: %+v", len(page), count, page)
+	}
+	return page
+}
+
+func verifyInboundSeal(t *testing.T, db *store.Store, raw []byte) signing.Result {
+	t.Helper()
+	seal, err := signing.ParseSeal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots, err := db.SigningRoots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signing.Verify(&seal, protocol.RootsOf(roots), time.Now())
+}
+
 func TestSealInboundAcceptancePendingPersonKeyNeedsApproval(t *testing.T) {
 	db := sealInboundFixture(t)
 	m, keyID := sealOperatorMessage(t, sealBaseInbound(), sealSigner{"contact-person", "contact-device", sessionContact})
@@ -68,26 +127,13 @@ func acceptPendingPersonMessage(t *testing.T, db *store.Store, m messaging.Messa
 	t.Helper()
 	ctx := context.Background()
 	a, err := db.PeerMessages().Accept(ctx, sessionContact, m, sessionAt)
-	if err != nil || !a.Stored {
-		t.Fatalf("unapproved valid signature should be stored as unverified: answer=%+v err=%v", a, err)
+	requireInboundStored(t, a, err)
+	requirePendingPersonKey(t, db, keyID)
+	page := inboundPage(t, db, 1)
+	if !bytes.Equal(page[0].Seal, m.Seal) {
+		t.Fatalf("inbound seal not persisted: %+v", page[0])
 	}
-	keys, err := db.PeerMessages().PendingPersonKeys(ctx, sessionContact)
-	if err != nil || len(keys) != 1 || keys[0] != keyID {
-		t.Fatalf("new contact person key not pending: keys=%v err=%v", keys, err)
-	}
-	page, _, err := db.PeerMessages().Page(ctx, sessionContact, 0, 10)
-	if err != nil || len(page) != 1 || !bytes.Equal(page[0].Seal, m.Seal) {
-		t.Fatalf("inbound seal not persisted: page=%+v err=%v", page, err)
-	}
-	seal, err := signing.ParseSeal(page[0].Seal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	roots, err := db.SigningRoots(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := signing.Verify(&seal, protocol.RootsOf(roots), time.Now()); got.State != signing.Unverified {
+	if got := verifyInboundSeal(t, db, page[0].Seal); got.State != signing.Unverified {
 		t.Fatalf("unapproved person key gained authority: %+v", got)
 	}
 }
@@ -99,18 +145,17 @@ func approvePersonAndVerify(t *testing.T, db *store.Store, rawSeal []byte, keyID
 		t.Fatal(err)
 	}
 	keys, err := db.PeerMessages().PendingPersonKeys(ctx, sessionContact)
-	if err != nil || len(keys) != 0 {
-		t.Fatalf("approved person key remained pending: keys=%v err=%v", keys, err)
-	}
-	roots, err := db.SigningRoots(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	seal, err := signing.ParseSeal(rawSeal)
-	if err != nil {
-		t.Fatal(err)
+	if len(keys) != 0 {
+		t.Fatalf("approved person key remained pending: %v", keys)
 	}
-	if got := signing.Verify(&seal, protocol.RootsOf(roots), time.Now()); got.State != signing.Verified || got.Signer == nil || got.Signer.Basis != signing.BasisPerson {
+	got := verifyInboundSeal(t, db, rawSeal)
+	if got.State != signing.Verified || got.Signer == nil {
+		t.Fatalf("approved contact person not verified: %+v", got)
+	}
+	if got.Signer.Basis != signing.BasisPerson {
 		t.Fatalf("approved contact person not verified: %+v", got)
 	}
 }
@@ -122,22 +167,9 @@ func assertSecondPersonNeedsApproval(t *testing.T, db *store.Store) {
 	changed.ID, changed.N = "contact-new-person-key", 2
 	changed, changedID := sealOperatorMessage(t, changed, sealSigner{"contact-new-person", "contact-new-device", sessionContact})
 	a, err := db.PeerMessages().Accept(ctx, sessionContact, changed, sessionAt)
-	if err != nil || !a.Stored {
-		t.Fatalf("new person key's valid message was not retained: answer=%+v err=%v", a, err)
-	}
-	keys, err := db.PeerMessages().PendingPersonKeys(ctx, sessionContact)
-	if err != nil || len(keys) != 1 || keys[0] != changedID {
-		t.Fatalf("new person key silently inherited first approval: keys=%v err=%v", keys, err)
-	}
-	secondSeal, err := signing.ParseSeal(changed.Seal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	roots, err := db.SigningRoots(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := signing.Verify(&secondSeal, protocol.RootsOf(roots), time.Now()); got.State != signing.Unverified {
+	requireInboundStored(t, a, err)
+	requirePendingPersonKey(t, db, changedID)
+	if got := verifyInboundSeal(t, db, changed.Seal); got.State != signing.Unverified {
 		t.Fatalf("second person key gained authority before approval: %+v", got)
 	}
 }
@@ -158,22 +190,18 @@ func TestSealInboundAcceptanceTamperingIsRefusedBeforePersistence(t *testing.T) 
 			m, _ := sealOperatorMessage(t, sealBaseInbound(), sealSigner{"tamper-person", "tamper-device", sessionContact})
 			change(&m)
 			a, err := db.PeerMessages().Accept(context.Background(), sessionContact, m, sessionAt)
-			if err != nil || a.Stored || a.Reason != messaging.ReasonInvalidSeal {
-				t.Fatalf("tampered signed message: answer=%+v err=%v", a, err)
-			}
-			page, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 10)
-			if err != nil || len(page) != 0 {
-				t.Fatalf("tampered message persisted: page=%+v err=%v", page, err)
-			}
+			requireInboundRefusal(t, a, err, messaging.ReasonInvalidSeal)
+			inboundPage(t, db, 0)
 		})
 	}
+}
+
+func TestSealInboundAcceptanceOtherWorkspaceSealIsRefused(t *testing.T) {
 	// A fully valid seal for another workspace still cannot enter this contact.
 	db := sealInboundFixture(t)
 	m, _ := sealOperatorMessage(t, sealBaseInbound(), sealSigner{"other-person", "other-device", sealReceiver})
 	a, err := db.PeerMessages().Accept(context.Background(), sessionContact, m, sessionAt)
-	if err != nil || a.Stored || a.Reason != messaging.ReasonInvalidSeal {
-		t.Fatalf("another workspace's signed message: answer=%+v err=%v", a, err)
-	}
+	requireInboundRefusal(t, a, err, messaging.ReasonInvalidSeal)
 }
 
 func TestSealInboundAcceptanceChangedSealConflictsOnReplay(t *testing.T) {
@@ -182,20 +210,16 @@ func TestSealInboundAcceptanceChangedSealConflictsOnReplay(t *testing.T) {
 	base := sealBaseInbound()
 	first, _ := sealOperatorMessage(t, base, sealSigner{"replay-person", "first-device", sessionContact})
 	a, err := db.PeerMessages().Accept(ctx, sessionContact, first, sessionAt)
-	if err != nil || !a.Stored {
-		t.Fatalf("first arrival: answer=%+v err=%v", a, err)
-	}
+	requireInboundStored(t, a, err)
 	second, _ := sealOperatorMessage(t, base, sealSigner{"replay-person", "second-device", sessionContact})
 	if bytes.Equal(first.Seal, second.Seal) {
 		t.Fatal("fixture produced the same seal twice")
 	}
 	a, err = db.PeerMessages().Accept(ctx, sessionContact, second, sessionAt)
-	if err != nil || a.Stored || a.Reason != messaging.ReasonConflict {
-		t.Fatalf("changed seal replay: answer=%+v err=%v", a, err)
-	}
-	page, _, err := db.PeerMessages().Page(ctx, sessionContact, 0, 10)
-	if err != nil || len(page) != 1 || !bytes.Equal(page[0].Seal, first.Seal) {
-		t.Fatalf("replay replaced original seal: page=%+v err=%v", page, err)
+	requireInboundRefusal(t, a, err, messaging.ReasonConflict)
+	page := inboundPage(t, db, 1)
+	if !bytes.Equal(page[0].Seal, first.Seal) {
+		t.Fatalf("replay replaced original seal: %+v", page[0])
 	}
 }
 
@@ -204,17 +228,13 @@ func TestSealInboundAcceptanceUnsignedHistoryDoesNotGainSealOnReplay(t *testing.
 	ctx := context.Background()
 	unsigned := sealBaseInbound()
 	a, err := db.PeerMessages().Accept(ctx, sessionContact, unsigned, sessionAt)
-	if err != nil || !a.Stored {
-		t.Fatalf("old unsigned arrival: answer=%+v err=%v", a, err)
-	}
+	requireInboundStored(t, a, err)
 	signed, _ := sealOperatorMessage(t, unsigned, sealSigner{"late-person", "late-device", sessionContact})
 	a, err = db.PeerMessages().Accept(ctx, sessionContact, signed, sessionAt)
-	if err != nil || !a.Stored {
-		t.Fatalf("same-message signed retry: answer=%+v err=%v", a, err)
-	}
-	page, _, err := db.PeerMessages().Page(ctx, sessionContact, 0, 10)
-	if err != nil || len(page) != 1 || len(page[0].Seal) != 0 {
-		t.Fatalf("old unsigned row silently gained a seal: page=%+v err=%v", page, err)
+	requireInboundStored(t, a, err)
+	page := inboundPage(t, db, 1)
+	if len(page[0].Seal) != 0 {
+		t.Fatalf("old unsigned row silently gained a seal: %+v", page[0])
 	}
 }
 
@@ -260,9 +280,7 @@ func assertRequiredUnsignedRefused(t *testing.T, db *store.Store) {
 		m := sealBaseInbound()
 		m.ID, m.N = fmt.Sprintf("unsigned-v%d", tc.version), uint64(tc.version)
 		a, err := db.PeerMessages().AcceptVersion(ctx, sessionContact, messaging.Arrival{Version: tc.version, Message: m, At: sessionAt})
-		if err != nil || a.Stored || a.Reason != tc.reason {
-			t.Fatalf("version %d unsigned policy: answer=%+v err=%v", tc.version, a, err)
-		}
+		requireInboundRefusal(t, a, err, tc.reason)
 	}
 }
 

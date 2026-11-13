@@ -3,6 +3,7 @@ package hub
 import (
 	"bytes"
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -24,9 +25,12 @@ func TestSignedAgentRouteAcceptanceBrokerSealsOnceWithWorkspaceBasis(t *testing.
 	}
 	row := queuedAgentSeal(t, h, contact)
 	seal := bytes.Clone(row.Seal)
-	assertWorkspaceAgentSeal(t, row, agent.ID, contact, h.identity.Fingerprint())
+	assertWorkspaceAgentSeal(t, row, agentSealContext{agent.ID, contact, h.identity.Fingerprint()})
 	retry := workspaceRouteResult(t, h, agent, msg)
-	if retry.Stage != protocol.StageAccepted || !retry.Repeated || retry.Seq != first.Seq {
+	if retry.Stage != protocol.StageAccepted || !retry.Repeated {
+		t.Fatalf("agent retry was not accepted as a retry: %+v", retry)
+	}
+	if retry.Seq != first.Seq {
 		t.Fatalf("agent retry changed send identity: %+v", retry)
 	}
 	row = queuedAgentSeal(t, h, contact)
@@ -45,24 +49,26 @@ func queuedAgentSeal(t *testing.T, h *Hub, contact string) messaging.Row {
 	return rows[0]
 }
 
-func assertWorkspaceAgentSeal(t *testing.T, row messaging.Row, agentID, contact, workspace string) {
+type agentSealContext struct{ agentID, contact, workspace string }
+
+func assertWorkspaceAgentSeal(t *testing.T, row messaging.Row, want agentSealContext) {
 	t.Helper()
 	parsed, err := signing.ParseSeal(row.Seal)
 	messageWorkerOK(t, err)
-	roots := protocol.RootsOf([]protocol.SigningRoot{{KeyID: workspace, Workspace: workspace, Approved: true}})
+	roots := protocol.RootsOf([]protocol.SigningRoot{{KeyID: want.workspace, Workspace: want.workspace, Approved: true}})
 	verified := signing.Verify(&parsed, roots, time.Now())
 	if verified.State != signing.Verified || verified.Signer == nil {
 		t.Fatalf("agent provenance is not verified: %+v", verified)
 	}
-	if verified.Signer.Basis != signing.BasisWorkspace || verified.Signer.ID != agentID {
+	if verified.Signer.Basis != signing.BasisWorkspace || verified.Signer.ID != want.agentID {
 		t.Fatalf("agent provenance is not workspace-attested: %+v", verified)
 	}
-	frame := signing.Frame{MessageID: row.ID, SenderKind: signing.SenderAgent, SenderID: agentID,
-		Text: row.Text, Addresses: []string{(protocol.PeerLink{Receiver: contact}).Address()}}
+	frame := signing.Frame{MessageID: row.ID, SenderKind: signing.SenderAgent, SenderID: want.agentID,
+		Text: row.Text, Addresses: []string{(protocol.PeerLink{Receiver: want.contact}).Address()}}
 	if err := parsed.Matches(frame); err != nil {
 		t.Fatalf("seal does not bind queued agent message: %v", err)
 	}
-	if got := parsed.Header.Recipients; len(got) != 2 || got[0] != protocol.OperatorID || got[1] != (protocol.PeerLink{Receiver: contact}).Address() {
+	if got := parsed.Header.Recipients; !slices.Equal(got, []string{protocol.OperatorID, (protocol.PeerLink{Receiver: want.contact}).Address()}) {
 		t.Fatalf("agent seal did not bind exact recipient set: %v", got)
 	}
 }
@@ -122,10 +128,5 @@ func TestSignedAgentRouteAcceptanceReplySealNamesParentDirection(t *testing.T) {
 }
 
 func hasSigningRoot(roots []protocol.SigningRoot, key string) bool {
-	for _, root := range roots {
-		if root.KeyID == key && root.Workspace == key && root.Approved && !root.Person {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(roots, protocol.SigningRoot{KeyID: key, Workspace: key, Approved: true})
 }

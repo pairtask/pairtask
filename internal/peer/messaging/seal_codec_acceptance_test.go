@@ -72,8 +72,11 @@ func TestSealCodecAcceptanceUnsignedWrapper(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotInner, gotSeal, err := messaging.DecodeSealed(unsigned)
-	if err != nil || !bytes.Equal(gotInner, inner) || len(gotSeal) != 0 {
-		t.Fatalf("unsigned message changed: inner=%x seal=%x err=%v", gotInner, gotSeal, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotInner, inner) || len(gotSeal) != 0 {
+		t.Fatalf("unsigned message changed: inner=%x seal=%x", gotInner, gotSeal)
 	}
 }
 

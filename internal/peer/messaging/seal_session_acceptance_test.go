@@ -46,24 +46,37 @@ func assertNewSideLegacyRows(t *testing.T, rows []messaging.Row, seal []byte) {
 	for _, row := range rows {
 		switch row.ID {
 		case "new-to-old":
-			if row.State != messaging.StateDelivered || !row.SealDowngraded || !bytes.Equal(row.Seal, seal) {
-				t.Fatalf("new sender lost downgrade evidence: %+v", row)
-			}
+			assertDowngradedSenderRow(t, row, seal)
 		case "old-to-new":
-			if row.Direction != messaging.DirIn || len(row.Seal) != 0 {
-				t.Fatalf("legacy message appeared signed: %+v", row)
-			}
+			assertUnsignedLegacyRow(t, row)
 		default:
 			t.Fatalf("unexpected new-side row: %+v", row)
 		}
 	}
 }
 
+func assertDowngradedSenderRow(t *testing.T, row messaging.Row, seal []byte) {
+	t.Helper()
+	if row.State != messaging.StateDelivered || !row.SealDowngraded {
+		t.Fatalf("new sender lost downgrade status: %+v", row)
+	}
+	if !bytes.Equal(row.Seal, seal) {
+		t.Fatalf("new sender lost original seal: %+v", row)
+	}
+}
+
+func assertUnsignedLegacyRow(t *testing.T, row messaging.Row) {
+	t.Helper()
+	if row.Direction != messaging.DirIn || len(row.Seal) != 0 {
+		t.Fatalf("legacy message appeared signed: %+v", row)
+	}
+}
+
 func assertOldSideLegacyRows(t *testing.T, rows []messaging.Row) {
 	t.Helper()
 	for _, row := range rows {
-		if row.ID == "new-to-old" && (row.Direction != messaging.DirIn || len(row.Seal) != 0) {
-			t.Fatalf("v9 peer received a v10 seal: %+v", row)
+		if row.ID == "new-to-old" {
+			assertUnsignedLegacyRow(t, row)
 		}
 	}
 }
@@ -88,10 +101,7 @@ func TestSealSessionAcceptanceNewPeersCarrySealEndToEnd(t *testing.T) {
 	if !bytes.Equal(rows[0].Seal, m.Seal) {
 		t.Fatalf("v10 session did not carry seal end to end: %+v", rows[0])
 	}
-	keys, err := right.PeerMessages().PendingPersonKeys(ctx, sessionContact)
-	if err != nil || len(keys) != 1 || keys[0] != keyID {
-		t.Fatalf("recipient did not notice signer key: keys=%v err=%v", keys, err)
-	}
+	requirePendingPersonKey(t, right, keyID)
 }
 
 func TestSealSessionAcceptanceReceiverRefusesTamperedSignedTraffic(t *testing.T) {

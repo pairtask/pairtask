@@ -19,21 +19,38 @@ func TestSignedContactKeyApprovalAcceptanceOnlySeenKeyCanBeApproved(t *testing.T
 		Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
 		ContactOp: protocol.ContactOpList, ContactKey: contact, MessageID: "list-before-approval",
 	}})
-	if list.Type != protocol.TypeOperatorContactResult || list.ContactPage == nil || len(list.ContactPage.PendingPersonKeys) != 1 || list.ContactPage.PendingPersonKeys[0] != personID {
-		t.Fatalf("operator page did not name pending contact key: %+v", list)
+	page := requireSignedContactPage(t, list)
+	if len(page.PendingPersonKeys) != 1 {
+		t.Fatalf("operator page did not name one pending contact key: %+v", page)
+	}
+	if page.PendingPersonKeys[0] != personID {
+		t.Fatalf("operator page named pending key %s, want %s", page.PendingPersonKeys[0], personID)
 	}
 	out := h.operatorContact(ctx, nil, operatorRequest{uid: 0, msg: approve})
-	if out.Type != protocol.TypeOperatorContactResult {
-		t.Fatalf("operator could not accept seen contact key: %+v", out)
-	}
-	if out.ContactPage == nil || len(out.ContactPage.PendingPersonKeys) != 0 {
-		t.Fatalf("approved key still shown as pending: %+v", out.ContactPage)
+	page = requireSignedContactPage(t, out)
+	if len(page.PendingPersonKeys) != 0 {
+		t.Fatalf("approved key still shown as pending: %+v", page)
 	}
 	roots, err := h.signingRoots(ctx)
 	messageWorkerOK(t, err)
-	if got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now()); got.State != signing.Verified || got.Signer == nil || got.Signer.Basis != signing.BasisPerson {
+	got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now())
+	if got.State != signing.Verified || got.Signer == nil {
 		t.Fatalf("approved contact key did not verify: %+v", got)
 	}
+	if got.Signer.Basis != signing.BasisPerson {
+		t.Fatalf("approved contact key did not verify: %+v", got)
+	}
+}
+
+func requireSignedContactPage(t *testing.T, out protocol.Message) *protocol.ContactMessagePage {
+	t.Helper()
+	if out.Type != protocol.TypeOperatorContactResult {
+		t.Fatalf("contact page request failed: %+v", out)
+	}
+	if out.ContactPage == nil {
+		t.Fatalf("contact page was omitted: %+v", out)
+	}
+	return out.ContactPage
 }
 
 func seedPendingContactPerson(t *testing.T, h *Hub, contact string) (protocol.Message, signing.Seal, string) {
@@ -83,13 +100,13 @@ func TestSignedContactKeyApprovalAcceptanceRequireSealsOperatorSwitch(t *testing
 	if required, err := h.store.PeerMessages().RequiresSeals(ctx, contact); err != nil || required {
 		t.Fatalf("fresh contact policy: required=%t err=%v", required, err)
 	}
-	assertRequireSealsChoice(t, h, contact, "require-on", "on", true)
+	assertRequireSealsChoice(t, h, contact, requireSealsChoice{"require-on", "on", true})
 	m := messaging.Message{ID: "unsigned-under-require", N: 1, CreatedAt: time.Now(), Text: "unsigned"}
 	a, err := h.store.PeerMessages().AcceptVersion(ctx, contact, messaging.Arrival{Version: int(messaging.SealVersion), Message: m, At: time.Now()})
 	if err != nil || a.Stored || a.Reason != messaging.ReasonUnsigned {
 		t.Fatalf("required contact's unsigned message was accepted: answer=%+v err=%v", a, err)
 	}
-	assertRequireSealsChoice(t, h, contact, "require-off", "off", false)
+	assertRequireSealsChoice(t, h, contact, requireSealsChoice{"require-off", "off", false})
 	a, err = h.store.PeerMessages().AcceptVersion(ctx, contact, messaging.Arrival{Version: int(messaging.SealVersion), Message: m, At: time.Now()})
 	if err != nil || !a.Stored {
 		t.Fatalf("unsigned migration did not resume after off: answer=%+v err=%v", a, err)
@@ -104,14 +121,16 @@ func TestSignedContactKeyApprovalAcceptanceInvalidRequireChoice(t *testing.T) {
 	}
 }
 
-func assertRequireSealsChoice(t *testing.T, h *Hub, contact, id, choice string, want bool) {
+type requireSealsChoice struct {
+	id, choice string
+	want       bool
+}
+
+func assertRequireSealsChoice(t *testing.T, h *Hub, contact string, choice requireSealsChoice) {
 	t.Helper()
-	out := requireSealsCommand(h, contact, id, choice)
-	if out.Type != protocol.TypeOperatorContactResult || out.ContactPage == nil {
-		t.Fatalf("operator could not set require-seals=%t: %+v", want, out)
-	}
-	if out.ContactPage.RequireSeals != want {
-		t.Fatalf("operator require-seals=%t, want %t", out.ContactPage.RequireSeals, want)
+	page := requireSignedContactPage(t, requireSealsCommand(h, contact, choice.id, choice.choice))
+	if page.RequireSeals != choice.want {
+		t.Fatalf("operator require-seals=%t, want %t", page.RequireSeals, choice.want)
 	}
 }
 
