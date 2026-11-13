@@ -1,23 +1,25 @@
 // Package desktop is a light pairtask node for Claude Desktop: an embedded
 // broker that redeems other workspaces' invitations and messages the
 // contacts they make, driven in-process by an MCP server on stdio. It
-// listens on nothing: no agent socket, no operator socket and no pairing
-// port, so it only ever dials out.
+// listens on nothing outside its private data directory: no agent socket,
+// no operator socket and no pairing port, so it only ever dials out.
+//
+// Desktop starts one copy per surface (chat, Cowork, Code), all on the
+// same data directory. The copy that takes the database's lock runs the
+// broker and shares it on a socket in that directory; the others forward
+// their calls to it, and one of them takes over when it exits.
 package desktop
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
-	"os"
-	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/pairtask/pairtask/internal/hub"
-	"github.com/pairtask/pairtask/internal/peer/pake"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/store"
 )
@@ -31,23 +33,38 @@ type Config struct {
 	Dial func(ctx context.Context, destination string) (net.Conn, error)
 }
 
-// Node is a running embedded broker that owns its data directory.
+// Node is this copy's way to the broker: the broker itself while it owns
+// the data directory, else a connection to the copy that does.
 type Node struct {
-	hub    *hub.Hub
-	st     *store.Store
-	lock   *store.DatabaseLock
-	cancel context.CancelFunc
+	cfg  Config
+	base context.Context // what an owner's broker runs under, never canceled by a call
+	mu   sync.Mutex      // guards own and fwd, and every change between them
+	own  *owner
+	fwd  *forwarder
 }
 
 // ErrUnsafeDataDir: the data directory isn't a private directory of ours.
 var ErrUnsafeDataDir = errors.New("unsafe data directory")
 
+// ErrNoOwner: another process holds the database but nothing answers on
+// its socket in time.
+var ErrNoOwner = errors.New("another pairtask desktop node holds the database without sharing it (an older version or a maintenance command): quit Claude Desktop fully and start it again")
+
 // databaseFile is the broker's database in the data directory; the
 // workspace identity sits beside it.
 const databaseFile = "broker.db"
 
-// Start locks and opens the node's database, recovers interrupted
-// redemptions and runs its hub until Close.
+// takeoverWait bounds how long a copy tries to reach a broker: to take the
+// lock, or to reach the copy that holds it.
+const takeoverWait = 3 * time.Second
+
+// forwardTries bounds the calls a forwarder retries after reaching a new
+// broker, so a broker that keeps failing ends the call.
+const forwardTries = 3
+
+// Start takes the node's data directory: as its owner, locking and opening
+// the database, recovering interrupted redemptions and sharing the broker;
+// or, when another copy owns it, as a forwarder to that copy.
 func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.DiscardHandler)
@@ -55,65 +72,138 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if err := ensureDataDir(cfg.Dir); err != nil {
 		return nil, err
 	}
-	db := filepath.Join(cfg.Dir, databaseFile)
-	lock, err := store.LockDatabase(db)
-	if err != nil {
-		return nil, fmt.Errorf("lock %s (is another pairtask desktop node running?): %w", db, err)
-	}
-	st, err := store.Open(db)
-	if err != nil {
-		lock.Close()
+	n := &Node{cfg: cfg, base: context.WithoutCancel(ctx)}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if err := n.reach(ctx); err != nil {
 		return nil, err
-	}
-	n := &Node{st: st, lock: lock}
-	if err := n.run(ctx, cfg); err != nil {
-		return nil, errors.Join(err, st.Close(), lock.Close())
 	}
 	return n, nil
 }
 
-// run builds the hub over the open store and starts it.
-func (n *Node) run(ctx context.Context, cfg Config) error {
-	lastSeq, err := n.st.LastSeq(ctx)
+// Owner: this copy runs the broker.
+func (n *Node) Owner() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.own != nil
+}
+
+// reach makes this copy the owner, or a forwarder to the copy that owns the
+// data directory, trying until takeoverWait. Called with mu held.
+func (n *Node) reach(ctx context.Context) error {
+	deadline := time.Now().Add(takeoverWait)
+	for {
+		done, err := n.reachOnce(ctx)
+		if done || err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return ErrNoOwner
+		}
+		if err := pause(ctx, 50*time.Millisecond); err != nil {
+			return err
+		}
+	}
+}
+
+// reachOnce tries the lock, then the owner's socket, once each.
+func (n *Node) reachOnce(ctx context.Context) (bool, error) {
+	o, err := startOwner(ctx, n.base, n.cfg)
+	if err == nil {
+		n.own = o
+		n.cfg.Log.Info("this copy runs the broker", "dir", n.cfg.Dir)
+		return true, nil
+	}
+	if !errors.Is(err, store.ErrDatabaseInUse) {
+		return false, err
+	}
+	f, err := dialOwner(ctx, n.cfg.Dir)
 	if err != nil {
-		return err
+		return false, nil
 	}
-	h := hub.New(n.st, lastSeq, cfg.Log)
-	h.SetPairing(hub.PairingConfig{Dial: dialer(cfg.Dial), Exchanger: pake.New(), Name: cfg.Name})
-	if _, err := h.RecoverJoins(ctx); err != nil {
-		return fmt.Errorf("recover pairing redemptions: %w", err)
-	}
-	ctx, n.cancel = context.WithCancel(context.WithoutCancel(ctx))
-	n.hub = h
-	go h.Run(ctx)
-	return nil
+	n.fwd = f
+	return true, nil
 }
 
-// dialer is dial, or a direct TCP dial without one.
-func dialer(dial func(ctx context.Context, destination string) (net.Conn, error)) func(ctx context.Context, destination string) (net.Conn, error) {
-	if dial != nil {
-		return dial
-	}
-	return func(ctx context.Context, destination string) (net.Conn, error) {
-		var d net.Dialer
-		return d.DialContext(ctx, "tcp", destination)
+// pause waits d, or until ctx ends.
+func pause(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
-// Call hands one operator request to the hub and returns its answer, as
+// Call hands one operator request to the broker and returns its answer, as
 // the operator socket would, at this build's protocol version; a request
-// without a message ID gets a fresh one.
+// without a message ID gets a fresh one, kept if the call is retried.
 func (n *Node) Call(ctx context.Context, msg protocol.Message) protocol.Message {
 	msg.ProtocolVersion = protocol.Version
 	if msg.MessageID == "" {
 		msg.MessageID = uuid.NewString()
 	}
-	return n.hub.SubmitOperator(ctx, os.Getuid(), msg)
+	var err error
+	for range forwardTries {
+		o, f := n.current()
+		if o != nil {
+			return o.call(ctx, msg)
+		}
+		var out protocol.Message
+		if out, err = f.call(ctx, msg); err == nil {
+			return out
+		}
+		if ctx.Err() != nil {
+			return unavailable(ctx.Err())
+		}
+		if err = n.replace(ctx, f); err != nil {
+			return unavailable(err)
+		}
+	}
+	return unavailable(err)
 }
 
-// Close stops the hub and releases the database.
+// current is the owner or the forwarder this copy uses now.
+func (n *Node) current() (*owner, *forwarder) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.own, n.fwd
+}
+
+// replace drops a forwarder whose owner went away and reaches the broker
+// again, unless another call already did.
+func (n *Node) replace(ctx context.Context, gone *forwarder) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.fwd != gone {
+		return nil
+	}
+	gone.close()
+	n.fwd = nil
+	return n.reach(ctx)
+}
+
+// unavailable is a call that reached no broker, as the broker's own errors
+// read.
+func unavailable(err error) protocol.Message {
+	return protocol.Message{Type: protocol.TypeError, Code: "node_unavailable", Detail: err.Error()}
+}
+
+// Close stops the broker this copy owns, or drops its connection to the
+// owner.
 func (n *Node) Close() error {
-	n.cancel()
-	<-n.hub.Done()
-	return errors.Join(n.st.Close(), n.lock.Close())
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.fwd != nil {
+		n.fwd.close()
+		n.fwd = nil
+	}
+	if n.own == nil {
+		return nil
+	}
+	err := n.own.close()
+	n.own = nil
+	return err
 }
