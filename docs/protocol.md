@@ -914,6 +914,26 @@ verifies.
   States are `verified`, `unverified` (the key isn't pinned or approved here), `unsigned` and `invalid`. `signer.basis` is `person` for the operator.
 - **Validity:** certificates are checked at the header's time, so a stored message still verifies after its certificate lapses. A header dated more than 5 minutes ahead is `invalid`.
 
+## Signed messages across pairing links (peer v10)
+
+A message that crosses a pairing link carries its sender's seal end to end, and the receiving side checks it against keys it pinned itself.
+
+- **Peer messaging v10** (`SealVersion`): every message travels as `FrameSealed` (30). Its two fields are the frame the message would otherwise go as (FrameMessage, FrameRouted or FrameReviewAsk, validated by its own decoder) and the seal, empty for unsigned.
+  - A session with an older peer gets the inner frame alone. A sealed outbound message is then marked `seal_downgraded` here.
+  - `Message.Hash()` doesn't cover the seal. Another non-empty seal for the same message is a conflict.
+- **Who seals:**
+  - The operator's client seals contact sends. The header's recipients are `workspace:<their key>` plus the agents, or `operator`; there's no reply reference.
+  - This broker seals its agents' messages and replies with an in-memory key that the workspace key certifies (basis `workspace`). A reply's parent is signed with its direction: `sender:<id>` or `receiver:<id>`.
+- **Receiving:** the broker verifies every inbound seal against the contact's workspace key (confirmed contacts) and the person keys accepted for it. It refuses (`invalid_seal`, terminal), before storing anything, a seal that doesn't hold, isn't from that contact, or doesn't sign exactly this message's ID, sender, text, recipients and reply.
+  - Unsigned and unverified messages are accepted, as before.
+  - A person key not accepted for the contact is recorded as pending.
+- **`contact_op accept_key`** (contact_text = the key ID) accepts a person key the contact signed with here. `pending_person_keys` on the contact page lists those awaiting acceptance.
+- **`contact_op require_seals`** (contact_text `on` or `off`) refuses the contact's unsigned messages. The reason is `unsigned` on v10 sessions and `invalid` on older ones. It's off by default, and `require_seals` is on the page.
+- **Recipients verify again:**
+  - Agents get the contact roots in the welcome. Imported messages carry `seal`, and the bridge verifies them as it does local ones.
+  - The chat verifies contact messages itself and marks each row.
+  - A person key accepted while an agent is connected verifies for it after the agent reconnects.
+
 ## Finding a paired workspace that moved (#284)
 
 Two `operator_contact` operations take no `contact_key` and serve a host
