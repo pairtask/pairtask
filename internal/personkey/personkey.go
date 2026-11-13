@@ -44,19 +44,6 @@ type Keys struct {
 	cert   signing.Cert
 }
 
-// DefaultDir is $XDG_STATE_HOME/pairtask/identity, else
-// ~/.local/state/pairtask/identity.
-func DefaultDir() (string, error) {
-	if state := os.Getenv("XDG_STATE_HOME"); state != "" {
-		return filepath.Join(state, "pairtask", "identity"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "state", "pairtask", "identity"), nil
-}
-
 // ErrNoKeys: this account has no keys yet; ErrIncomplete: one of the two
 // is missing, which is never repaired by making a new one, since a new key
 // is a key change the operator approves (pairtask operator identity init).

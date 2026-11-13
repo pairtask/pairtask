@@ -68,6 +68,8 @@ Step by step: [pair two machines](pairing.md).
 | --- | --- | --- | --- |
 | `pairtask shell` (short: `pairtask sh`, or `pk sh`) | host → workspace | SSH into the workspace as `agent` and restore your terminal afterwards; extra arguments run as a remote command, with a terminal when `--tty` is given. Raw: `ssh -F ~/.pairtask/host/infra/incus/ssh/config workspace`. | no |
 | `pairtask chat` | host → secured | The operator chat (`incus exec -t … pairtask operator chat`), terminal restored afterwards. [Chat guide](operator-chat.md). | no |
+| `pairtask identity init` / `pairtask identity status` | host → secured | Make your signing keys, once, or show them and the folder they are in (`pairtask operator identity …` in secured). The keys stay on secured's state volume and survive upgrades; `init` refuses while keys exist. [Signed messages](operator-chat.md#trust-model). | no |
+| `pairtask secured` | host → secured | A root shell in the secured runtime, where operator commands such as `pairtask operator send` run; terminal restored afterwards. With a command (`pairtask secured pairtask operator receive`) it runs that one command, with a terminal when `--tty` is given. | no |
 | `incus --project pairtask exec colima-pairtask:secured -- pairtask operator send --to codex-1 "text"` | secured | One-shot operator message, receive or ack without the chat; refused while a chat is open. [Secured runtime](secured-runtime.md#operator-messages). | no |
 | `reset` | host | Repairs a terminal left in mouse-reporting mode by a dropped session. | no |
 

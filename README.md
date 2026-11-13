@@ -89,6 +89,17 @@ workspace controlling what it shares.
    git clone https://github.com/you/your-project.git /workspace/your-project
    ```
 
+5. **Make your signing key**, once, on your host:
+
+   ```sh
+   pairtask identity init
+   ```
+
+   Your messages are then signed as you. The key stays in the secured
+   runtime, where the chat runs, and survives upgrades;
+   `pairtask identity status` shows it. Don't run it in the workspace, where
+   agents could read it ([why](docs/operator-chat.md#trust-model)).
+
 ### Every day
 
 1. **Start** the sandbox on your host:
@@ -221,8 +232,8 @@ workspace ([names](docs/pairing.md#names)).
 
 ### Signed messages
 
-Run `pairtask operator identity init` once in the secured runtime to sign
-messages as yourself. When the other operator first signs, their key appears
+Run `pairtask identity init` once on your host to sign messages as yourself
+(step 5 of [first time](#first-time)). When the other operator first signs, their key appears
 in their `⇄` tab as unverified. Compare its fingerprint with them, then use
 `/pair accept-key` in that tab to approve it. Received rows say whether they
 are signed by their operator, attested by their workspace for an agent, or

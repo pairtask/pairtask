@@ -306,7 +306,7 @@ prompts says `consent prompts need a newer broker` and nothing is sent.
 
 Once both sides run a release with signed messages, what crosses the link carries its sender's signature, and each side checks it against keys it pinned itself. A relay, or the other side's broker, can't change a message or claim one as yours.
 
-- **Your messages** are signed by you: run `pairtask operator identity init` once (see [Operator chat](operator-chat.md#trust-model)).
+- **Your messages** are signed by you: run `pairtask identity init` once on your host (see [Operator chat](operator-chat.md#trust-model)).
 - **Your agents' messages** are signed by your workspace, which attests which agent sent them.
 - **The first signed message from the other operator** shows in their ⇄ tab as signed with a key not yet accepted. The tab names the key (`signs as person sha256:…`).
   - Read the first characters to each other by phone, as when you paired.

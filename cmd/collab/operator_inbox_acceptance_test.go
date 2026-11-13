@@ -183,6 +183,7 @@ func TestOperatorInboxCLIAckWire(t *testing.T) {
 	}
 }
 func TestOperatorInboxCLISendReplyCorrelation(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	path, requests := inboxCLISocket(t, func(r inboxCLIRequest) any {
 		return map[string]any{"type": "ack", "stage": "accepted", "message_id": r.MessageID, "seq": 11}
 	})

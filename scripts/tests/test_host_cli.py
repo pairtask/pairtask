@@ -60,6 +60,30 @@ def routed_actions():
 
 
 class HostRoutingTests(unittest.TestCase):
+    def test_identity_and_secured_commands_are_discoverable_and_routed(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["--help"]), 0)
+        help_text = output.getvalue()
+        self.assertRegex(help_text, r"(?m)^\s+identity\s+")
+        self.assertRegex(help_text, r"(?m)^\s+secured\s+")
+
+        for action in ("init", "status"):
+            with self.subTest(action=action):
+                flags = ["--remote", "lab", "--project", "team", "--secured", "vault"]
+                self.assertEqual(
+                    cli.plan(["identity", action, *flags], system="Linux"),
+                    [cli.script("sandbox-session.py", "identity-" + action, *flags)],
+                )
+        command = ["--remote", "lab", "--project", "team", "--secured", "vault",
+                   "--", "printf", "%s", "a b;$(literal)"]
+        self.assertEqual(
+            cli.plan(["secured", *command], system="Linux"),
+            [cli.script("sandbox-session.py", "secured", *command)],
+        )
+        with self.assertRaises(SystemExit), mock.patch.object(cli, "run") as run:
+            cli.plan(["identity", "rotate"], system="Linux")
+        run.assert_not_called()
+
     def test_short_shell_alias_preserves_arguments_and_dry_run_boundary(self):
         flags = ["--remote", "local", "--", "printf", "%s", "a b;$(literal)", "--dry-run"]
         for system in ("Linux", "Darwin"):

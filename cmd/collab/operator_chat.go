@@ -64,7 +64,7 @@ func chatSealer(ctx context.Context, cfg chatConfig, stderr io.Writer) (func(pro
 	seal, err := operatorSealer(ctx, cfg.socket)
 	switch {
 	case errors.Is(err, personkey.ErrNoKeys):
-		fmt.Fprintln(stderr, "operator chat: your messages go unsigned until you run `pairtask operator identity init`")
+		fmt.Fprintln(stderr, "operator chat: your messages go unsigned until you run `pairtask identity init` on the host")
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("can't sign: %w%s", err, errUnsignedHint)

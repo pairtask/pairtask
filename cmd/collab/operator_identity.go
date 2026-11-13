@@ -22,6 +22,7 @@ const operatorIdentityUsage = "usage: pairtask operator identity (init | status)
 // identityReport is what identity init and status show.
 type identityReport struct {
 	PersonKey  string `json:"person_key,omitempty"`
+	Dir        string `json:"dir"`
 	Registered bool   `json:"registered"`
 	protocol.IdentityView
 }
@@ -76,28 +77,56 @@ func identityOpNamed(args []string) bool {
 
 // identityOp creates and registers keys (init) or reports them (status).
 func identityOp(ctx context.Context, req identityRequest) (identityReport, error) {
-	dir, err := personkey.DefaultDir()
+	dir, err := personkey.ResolveDir()
 	if err != nil {
 		return identityReport{}, err
 	}
 	req.dir = dir
+	op := identityStatus
 	if req.op == "init" {
-		return identityInit(ctx, req)
+		op = identityInit
 	}
-	return identityStatus(ctx, req)
+	report, err := op(ctx, req)
+	report.Dir = dir
+	return report, err
 }
 
-// identityInit makes the keys, only when there are none, and registers
-// the person key.
+// errNotSecured: init found no broker to register a key with, so it made
+// none; outside the secured runtime a key would sit where agents can read it.
+var errNotSecured = errors.New("no operator broker answers here, so no key was made: run `pairtask identity init` on the host, which runs this in the secured runtime")
+
+// identityInit makes the keys, only when there are none and the broker
+// answers, and registers the person key. Keys already there, whole or
+// not, are reported as they are before the broker is asked.
 func identityInit(ctx context.Context, req identityRequest) (identityReport, error) {
+	if err := noKeysYet(req.dir); err != nil {
+		return identityReport{}, err
+	}
+	if _, err := brokerIdentity(ctx, req.socket); err != nil {
+		return identityReport{}, fmt.Errorf("%w (%v)", errNotSecured, err)
+	}
 	keys, err := personkey.Create(req.dir)
 	if errors.Is(err, personkey.ErrExists) {
-		return identityReport{}, errors.New("this account has keys already; `pairtask operator identity status` shows them")
+		return identityReport{}, errKeysExist
 	} else if err != nil {
 		return identityReport{}, err
 	}
 	view, err := registerPerson(ctx, req.socket, keys)
 	return identityReport{PersonKey: signing.KeyID(keys.PersonPublic()), Registered: err == nil, IdentityView: view}, err
+}
+
+var errKeysExist = errors.New("this account has keys already; `pairtask identity status` on the host shows them")
+
+// noKeysYet: dir holds no keys; else why init can't make them there.
+func noKeysYet(dir string) error {
+	_, err := personkey.Load(dir)
+	switch {
+	case err == nil:
+		return errKeysExist
+	case errors.Is(err, personkey.ErrNoKeys):
+		return nil
+	}
+	return err
 }
 
 // identityStatus reports this account's keys and the broker's roots.
@@ -108,16 +137,25 @@ func identityStatus(ctx context.Context, req identityRequest) (identityReport, e
 	} else if !errors.Is(err, personkey.ErrNoKeys) {
 		return report, err
 	}
-	resp, err := sendOperator(ctx, req.socket, protocol.Message{Type: protocol.TypeOperatorIdentity, MessageID: uuid.NewString(), IdentityOp: protocol.IdentityOpStatus})
+	view, err := brokerIdentity(ctx, req.socket)
 	if err != nil {
 		return report, err
 	}
-	if resp.Type != protocol.TypeOperatorIdentityResult || resp.Identity == nil {
-		return report, errors.New(resp.Code + " " + resp.Detail)
-	}
-	report.IdentityView = *resp.Identity
+	report.IdentityView = view
 	report.Registered = report.pinned()
 	return report, nil
+}
+
+// brokerIdentity is the broker's identity status, from its operator socket.
+func brokerIdentity(ctx context.Context, socket string) (protocol.IdentityView, error) {
+	resp, err := sendOperator(ctx, socket, protocol.Message{Type: protocol.TypeOperatorIdentity, MessageID: uuid.NewString(), IdentityOp: protocol.IdentityOpStatus})
+	if err != nil {
+		return protocol.IdentityView{}, err
+	}
+	if resp.Type != protocol.TypeOperatorIdentityResult || resp.Identity == nil {
+		return protocol.IdentityView{}, errors.New(resp.Code + " " + resp.Detail)
+	}
+	return *resp.Identity, nil
 }
 
 // pinned: the broker holds this account's person key, approved.
@@ -139,12 +177,12 @@ func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer)
 	}
 	switch {
 	case report.PersonKey == "":
-		fmt.Fprintln(stdout, "no keys: your messages go unsigned; `pairtask operator identity init` makes them")
+		fmt.Fprintln(stdout, "no keys: your messages go unsigned; `pairtask identity init` on the host makes them")
 	case report.Registered:
 		fmt.Fprintf(stdout, "person key %s, registered: your messages are signed\n", report.PersonKey)
 	default:
 		fmt.Fprintf(stdout, "person key %s, not registered with this broker: the chat registers it when it starts\n", report.PersonKey)
 	}
-	fmt.Fprintf(stdout, "workspace %s\n", report.Workspace)
+	fmt.Fprintf(stdout, "workspace %s\nkeys in %s\n", report.Workspace, report.Dir)
 	return 0
 }
