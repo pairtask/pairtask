@@ -52,6 +52,8 @@ ACTIONS = {
                "tell you in Slack when an agent needs a decision: on --slack [--hidden] | off | status"),
     "identity": ("sandbox-session.py", {"init": "identity-init", "status": "identity-status"},
                  "your signing key, kept in the secured runtime: init (once) | status"),
+    "size": ("sandbox-size.py", {"show": "show"},
+             "how big the sandbox is and how full each volume is: show [--json]"),
 }
 # Short names for commands, resolved before anything else.
 ALIASES = {"sh": "shell"}

@@ -21,6 +21,46 @@ replacement. [Control mode](secured-runtime.md) keeps broker history and budgets
 its private volume. Optional [host mounts](sandbox-mounts.md) store data on the host,
 not in `workspace-data`.
 
+## Resize
+
+`pairtask size show` reports how big the sandbox is and how full each volume is:
+
+```text
+VM:        4 CPU · 8 GiB RAM · 40 GiB disk   (pool default 38 GiB, 6.1 GiB used)
+workspace: 2 CPU · 4 GiB RAM · root 10 GiB (31%)
+volumes:   agent-home 2 GiB (98% ⚠) · docker-data 10 GiB (22%) · workspace-data 10 GiB (1%) · workspace-tools 4 GiB (40%)
+warning:   agent-home is 98% full; clear space or grow it (docs/sandbox-storage.md#resize)
+```
+
+It only reads, through Incus and the VM's settings; `--json` prints the same as
+JSON. A volume at 90% or more gets a warning. `pairtask start` also refuses to
+start an agent session when the agent home is nearly full, and lists the caches
+that are safe to clear.
+
+To grow the workspace or a volume today, write your own sizes next to the
+deployment's managed `operator.auto.tfvars.json`, in a file of your own such as
+`size.auto.tfvars.json` (the deployment lives in
+`~/.local/state/pairtask/operator/<project>/`), then review and apply:
+
+```json
+{"memory_gib": 8, "agent_home_gib": 10}
+```
+
+```sh
+pairtask plan     # expect only changes, no replacements
+pairtask apply
+```
+
+The sizes are `cpu_count` (1–8), `memory_gib` (1–16), `disk_gib` (root disk,
+2–100) and the volume quotas in GiB: `workspace_gib`, `agent_home_gib`,
+`docker_gib`, `tools_gib` (1–100). Grow only: a smaller quota than the data
+needs fails, and the volumes refuse to be destroyed.
+
+The workspace can't use more than the VM has. On macOS, check the VM's line in
+`pairtask size show` first: growing the VM itself still means editing its
+Colima profile by hand, which a later step of [#382](https://github.com/pairtask/pairtask/issues/382)
+replaces with a supported command.
+
 ## Back up and restore
 
 The commands below export projects and agent home. For Docker, stop its workloads
