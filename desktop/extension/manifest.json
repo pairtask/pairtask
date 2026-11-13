@@ -16,6 +16,11 @@
   "homepage": "https://github.com/pairtask/pairtask",
   "support": "https://github.com/pairtask/pairtask/issues",
   "license": "MIT",
+  "icon": "icons/pairtask-light-512.png",
+  "icons": [
+    {"src": "icons/pairtask-light-512.png", "size": "512x512", "theme": "light"},
+    {"src": "icons/pairtask-inverted-512.png", "size": "512x512", "theme": "dark"}
+  ],
   "keywords": ["pairtask", "pairing", "agents", "messaging"],
   "server": {
     "type": "binary",

@@ -1,9 +1,9 @@
 """Build pairtask-desktop's Claude Desktop extension: an MCPB bundle.
 
-An .mcpb is a zip with manifest.json at its root (MCPB manifest 0.3) and
-the server it names; this one carries the pairtask-desktop binary for one
-operating system and architecture, since a manifest names platforms only by
-operating system. The manifest is desktop/extension/manifest.json with this
+An .mcpb is a zip with manifest.json at its root (MCPB manifest 0.3), the
+server it names and the icons it lists; this one carries the pairtask-desktop
+binary for one operating system and architecture, since a manifest names
+platforms only by operating system. The manifest is desktop/extension/manifest.json with this
 build's version and platform filled in. The bundle is reproducible: entries
 in a fixed order with a fixed timestamp, the binary executable.
 
@@ -56,10 +56,13 @@ def bundle_name(target):
 
 
 def build(binary, target, out_dir, template=MANIFEST):
-    """Write target's bundle for binary into out_dir and return its path."""
+    """Write target's bundle for binary into out_dir and return its path;
+    everything it carries is read first, so a missing asset fails before
+    any output is created."""
     data = Path(binary).read_bytes()
     check(data, target)
     manifest = manifest_for(json.loads(Path(template).read_text(encoding="utf-8")), target)
+    icons = [(name, read_asset(Path(template).parent, name)) for name in icon_files(manifest)]
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / bundle_name(target)
@@ -67,6 +70,8 @@ def build(binary, target, out_dir, template=MANIFEST):
     with zipfile.ZipFile(partial, "w") as bundle:
         add(bundle, "manifest.json", (json.dumps(manifest, indent=2) + "\n").encode("utf-8"), 0o644)
         add(bundle, ENTRY, data, 0o755)
+        for name, icon in icons:
+            add(bundle, name, icon, 0o644)
     partial.replace(path)
     return path
 
@@ -123,6 +128,21 @@ def manifest_for(template, target):
     compatibility["platforms"] = [target.goos]
     manifest["compatibility"] = compatibility
     return manifest
+
+
+def icon_files(manifest):
+    """The bundle paths of the icons the manifest names, each once, in order."""
+    names = [manifest.get("icon")] + [icon.get("src") for icon in manifest.get("icons", [])]
+    return sorted({name for name in names if name})
+
+
+def read_asset(root, name):
+    """An asset beside the manifest, refused when its path would leave that
+    directory or names a URL: a bundle carries only files of its own."""
+    path = (root / name).resolve()
+    if "://" in name or not path.is_relative_to(root.resolve()):
+        raise ValueError(f"asset {name!r} is not a file beside the manifest")
+    return path.read_bytes()
 
 
 def add(bundle, name, data, mode):
