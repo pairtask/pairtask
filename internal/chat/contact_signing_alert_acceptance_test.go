@@ -76,9 +76,9 @@ func TestContactSigningAlertAcceptanceRequireOnReplyExplainsGrace(t *testing.T) 
 	h, c, _ := signingAlertChat(t, protocol.ContactSigningUnsupported, false)
 	v2Command(h, "/pair require-seals on")
 	req := h.take(protocol.TypeOperatorContact)
-	if req.ContactOp != protocol.ContactOpRequireSeals || req.ContactKey != c.IdentityKey || req.ContactText != "on" {
-		t.Fatalf("require-seals targeted wrong contact: %+v", req)
-	}
+	chatEqual(t, "require-seals operation", req.ContactOp, protocol.ContactOpRequireSeals)
+	chatEqual(t, "require-seals identity", req.ContactKey, c.IdentityKey)
+	chatEqual(t, "require-seals choice", req.ContactText, "on")
 	page := contactMessagesPage(c.IdentityKey)
 	page.ContactPage.RequireSeals = true
 	h.reply(req, page)

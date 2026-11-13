@@ -5,11 +5,17 @@ import (
 	"testing"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/store"
 )
 
-// A's policy can be on while B still speaks v9. Once B has negotiated v10,
-// returning to v9 must not silently regain the migration exception.
-func TestSealLegacyMigrationAcceptanceUpgradeAndDowngrade(t *testing.T) {
+type legacyMigrationFixture struct {
+	a, b           *store.Store
+	aBound, bBound *store.PeerMessages
+	oldB           legacySealPeer
+}
+
+func newLegacyMigrationFixture(t *testing.T) legacyMigrationFixture {
+	t.Helper()
 	a, _ := sessionFixture(t)
 	b, _ := sessionFixture(t)
 	ctx := context.Background()
@@ -24,68 +30,76 @@ func TestSealLegacyMigrationAcceptanceUpgradeAndDowngrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyB := legacySealPeer{bBound}
+	return legacyMigrationFixture{a, b, aBound, bBound, legacySealPeer{bBound}}
+}
 
-	// A can still send, and B's unsigned message arrives visibly unsigned.
-	_, err = a.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: "a-to-old-b", Text: "hello", Now: sessionAt, Seal: []byte("sender seal")})
+func legacyQueue(t *testing.T, db *store.Store, id, body string, seal []byte) {
+	t.Helper()
+	_, err := db.PeerMessages().Queue(context.Background(), messaging.Outgoing{
+		Contact: sessionContact, ID: id, Text: body, Now: sessionAt, Seal: seal,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = b.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: "old-b-to-a", Text: "old reply", Now: sessionAt})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionSuccess(t, sessionExchange(t, aBound, legacyB, 0))
-	for _, row := range sessionRows(t, a.PeerMessages(), 2) {
-		switch row.ID {
-		case "a-to-old-b":
-			assertDowngradedSenderRow(t, row, []byte("sender seal"))
-		case "old-b-to-a":
-			assertUnsignedLegacyRow(t, row)
-		default:
-			t.Fatalf("unexpected row after old contact exchange: %+v", row)
+}
+
+func legacyRow(t *testing.T, db *store.Store, count int, id string) messaging.Row {
+	t.Helper()
+	for _, row := range sessionRows(t, db.PeerMessages(), count) {
+		if row.ID == id {
+			return row
 		}
 	}
-	if rows := sessionRows(t, b.PeerMessages(), 2); rows[0].State == messaging.StateRefused || rows[1].State == messaging.StateRefused {
-		t.Fatalf("migration refused traffic to or from old B: %+v", rows)
-	}
+	t.Fatalf("row %q missing", id)
+	return messaging.Row{}
+}
 
-	// A v10 session is the high-water mark, even if no message is exchanged.
-	sessionSuccess(t, sessionExchange(t, aBound, bBound, 0))
-	_, err = b.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: "downgraded-b-to-a", Text: "back to v9", Now: sessionAt})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionSuccess(t, sessionExchange(t, aBound, legacyB, 0))
-	foundDowngrade := false
-	for _, row := range sessionRows(t, b.PeerMessages(), 3) {
-		if row.ID == "downgraded-b-to-a" {
-			foundDowngrade = true
-			if row.State != messaging.StateRefused || row.Refusal.Reason != messaging.ReasonInvalid {
-				t.Fatalf("v9 downgrade after v10 was not refused: %+v", row)
-			}
-		}
-	}
-	if !foundDowngrade {
-		t.Fatal("downgraded B's message disappeared without a refusal")
-	}
-	if rows := sessionRows(t, a.PeerMessages(), 2); len(rows) != 2 {
-		t.Fatalf("downgraded message reached A: %+v", rows)
-	}
+// A's policy can be on while B still speaks v9. Once B has negotiated v10,
+// returning to v9 must not silently regain the migration exception.
+func TestSealLegacyMigrationAcceptanceUpgradeAndDowngrade(t *testing.T) {
+	f := newLegacyMigrationFixture(t)
+	f.acceptOldContactBothDirections(t)
+	f.upgradeWithoutMessage(t)
+	f.refuseLaterDowngrade(t)
+	f.acceptDowngradeAfterSwitchOff(t)
+}
 
-	if err := a.SetRequireSeals(ctx, sessionContact, false, sessionAt); err != nil {
+func (f legacyMigrationFixture) acceptOldContactBothDirections(t *testing.T) {
+	t.Helper()
+	legacyQueue(t, f.a, "a-to-old-b", "hello", []byte("sender seal"))
+	legacyQueue(t, f.b, "old-b-to-a", "old reply", nil)
+	sessionSuccess(t, sessionExchange(t, f.aBound, f.oldB, 0))
+	assertDowngradedSenderRow(t, legacyRow(t, f.a, 2, "a-to-old-b"), []byte("sender seal"))
+	assertUnsignedLegacyRow(t, legacyRow(t, f.a, 2, "old-b-to-a"))
+	if row := legacyRow(t, f.b, 2, "old-b-to-a"); row.State != messaging.StateDelivered {
+		t.Fatalf("old contact's reply was refused: %+v", row)
+	}
+	assertUnsignedLegacyRow(t, legacyRow(t, f.b, 2, "a-to-old-b"))
+}
+
+func (f legacyMigrationFixture) upgradeWithoutMessage(t *testing.T) {
+	t.Helper()
+	// A v10 session is the high-water mark even without a message.
+	sessionSuccess(t, sessionExchange(t, f.aBound, f.bBound, 0))
+}
+
+func (f legacyMigrationFixture) refuseLaterDowngrade(t *testing.T) {
+	t.Helper()
+	legacyQueue(t, f.b, "downgraded-b-to-a", "back to v9", nil)
+	sessionSuccess(t, sessionExchange(t, f.aBound, f.oldB, 0))
+	row := legacyRow(t, f.b, 3, "downgraded-b-to-a")
+	if row.State != messaging.StateRefused || row.Refusal.Reason != messaging.ReasonInvalid {
+		t.Fatalf("v9 downgrade after v10 was not refused: %+v", row)
+	}
+	sessionRows(t, f.a.PeerMessages(), 2)
+}
+
+func (f legacyMigrationFixture) acceptDowngradeAfterSwitchOff(t *testing.T) {
+	t.Helper()
+	if err := f.a.SetRequireSeals(context.Background(), sessionContact, false, sessionAt); err != nil {
 		t.Fatal(err)
 	}
-	_, err = b.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: sessionContact, ID: "relaxed-b-to-a", Text: "accepted unsigned", Now: sessionAt})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionSuccess(t, sessionExchange(t, aBound, legacyB, 0))
-	for _, row := range sessionRows(t, a.PeerMessages(), 3) {
-		if row.ID == "relaxed-b-to-a" {
-			assertUnsignedLegacyRow(t, row)
-			return
-		}
-	}
-	t.Fatal("turning require-seals off did not admit B's unsigned message")
+	legacyQueue(t, f.b, "relaxed-b-to-a", "accepted unsigned", nil)
+	sessionSuccess(t, sessionExchange(t, f.aBound, f.oldB, 0))
+	assertUnsignedLegacyRow(t, legacyRow(t, f.a, 3, "relaxed-b-to-a"))
 }
