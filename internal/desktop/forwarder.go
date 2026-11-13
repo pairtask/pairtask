@@ -48,10 +48,11 @@ func dialOwner(ctx context.Context, dir string) (*forwarder, error) {
 func (f *forwarder) call(ctx context.Context, msg protocol.Message) (protocol.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.conn == nil {
+	conn := f.conn
+	if conn == nil {
 		return protocol.Message{}, errBroken
 	}
-	stop := context.AfterFunc(ctx, func() { f.conn.SetDeadline(time.Now()) })
+	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Now()) })
 	defer stop()
 	out, err := f.exchange(msg)
 	if err != nil {
