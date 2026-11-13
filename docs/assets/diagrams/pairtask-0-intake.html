@@ -1,0 +1,241 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: one 16:9 slide, left-to-right flow with a rework loop below and a guardrail band at the foot */
+  :root {
+    --bg: #F6F6F4;
+    --slide: #FFFFFF;
+    --surface: #FFFFFF;
+    --ink: #2E353B;
+    --muted: #6B747D;
+    --line: #C9CED2;
+    --accent: #0E9F6E;
+    --accent-soft: #E3F4EC;
+    --warn: #B4620A;
+    --warn-soft: #FBEEDD;
+    --op-bg: #2E353B;
+    --op-fg: #F6F6F4;
+    --op-muted: #B9BFC4;
+    --band: #F1F3F2;
+    --lane: #F6F8F7;
+    --chip: #E4E8EA;
+    --font-sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161A1D; --slide: #1E2327; --surface: #262C31; --ink: #F3F4F1; --muted: #9AA2AA;
+      --line: #3B4349; --accent: #34C08F; --accent-soft: #173A2E; --warn: #E3A046; --warn-soft: #3A2C17;
+      --op-bg: #F3F4F1; --op-fg: #1E2327; --op-muted: #5B646D; --band: #232A2F; --lane: #222A2E; --chip: #343C42; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161A1D; --slide: #1E2327; --surface: #262C31; --ink: #F3F4F1; --muted: #9AA2AA;
+    --line: #3B4349; --accent: #34C08F; --accent-soft: #173A2E; --warn: #E3A046; --warn-soft: #3A2C17;
+    --op-bg: #F3F4F1; --op-fg: #1E2327; --op-muted: #5B646D; --band: #232A2F; --lane: #222A2E; --chip: #343C42; color-scheme: dark;
+  }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--font-sans);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 24px;
+  }
+  .frame { max-width: 1440px; margin: 0 auto; overflow-x: auto; display: grid; gap: 32px; }
+  .lane { fill: var(--lane); }
+  .sep { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 5; }
+  .lead-fill { fill: var(--accent-soft); }
+  .bb { font-size: 15.5px; }
+  .h2 { font-size: 19px; font-weight: 600; }
+  .chip { fill: var(--chip); }
+  .chip-t { font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; fill: var(--ink); }
+  .chip-ok-t { font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; fill: var(--accent); }
+  svg.slide { display: block; width: 100%; min-width: 880px; height: auto; border-radius: 6px; }
+  .sl-bg { fill: var(--slide); }
+  .card { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .card-dash { fill: var(--surface); stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 6 5; }
+  .op { fill: var(--op-bg); }
+  .band { fill: var(--band); }
+  text { font-family: var(--font-sans); fill: var(--ink); }
+  .eyebrow { font-size: 13px; font-weight: 600; letter-spacing: 0.12em; fill: var(--muted); }
+  .title { font-size: 40px; font-weight: 600; letter-spacing: -0.01em; }
+  .sub { font-size: 19px; fill: var(--muted); }
+  .h { font-size: 24px; font-weight: 600; }
+  .hm { font-family: var(--font-mono); font-size: 24px; font-weight: 500; }
+  .b { font-size: 16.5px; }
+  .m { font-family: var(--font-mono); font-size: 14.5px; fill: var(--muted); }
+  .ch { font-size: 17px; font-weight: 600; }
+  .cb { font-size: 14.5px; fill: var(--muted); }
+  .on-op { fill: var(--op-fg); }
+  .on-op-muted { fill: var(--op-muted); }
+  .num-c { fill: var(--accent); }
+  .num-t { font-size: 15px; font-weight: 600; fill: var(--slide); text-anchor: middle; }
+  .num-op { fill: var(--op-fg); }
+  .num-op-t { font-size: 15px; font-weight: 600; fill: var(--op-bg); text-anchor: middle; }
+  .dot { fill: var(--accent); }
+  .flow { stroke: var(--accent); stroke-width: 2.5; fill: none; }
+  .loop { stroke: var(--warn); stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; }
+  .head-a { fill: var(--accent); }
+  .head-w { fill: var(--warn); }
+  .pill-ok { fill: var(--accent-soft); }
+  .pill-ok-t { font-family: var(--font-mono); font-size: 14.5px; font-weight: 500; fill: var(--accent); }
+  .pill-w { fill: var(--warn-soft); }
+  .pill-w-t { font-family: var(--font-mono); font-size: 14.5px; font-weight: 500; fill: var(--warn); }
+  .warn-t { font-family: var(--font-mono); font-size: 15px; font-weight: 500; fill: var(--warn); }
+  .ok-t { font-family: var(--font-mono); font-size: 15px; font-weight: 500; fill: var(--accent); }
+  .icon { stroke: var(--accent); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .icon-op { stroke: var(--op-fg); stroke-width: 2; fill: none; stroke-linecap: round; }
+  .mid { text-anchor: middle; }
+</style>
+
+<style>html,body{margin:0;padding:0!important;background:#fff}svg.slide{min-width:0;width:1600px;border-radius:0}</style></head><body><svg class="slide" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="it id">
+  <title id="it">Intake stage from Jira backlog to To Do</title>
+  <desc id="id">A feature request is raised as a Jira backlog item. The product owner and developer discuss and prioritise it, define acceptance criteria and identify risk, each recorded on the ticket. They then decide whether it is ready: if yes, the ticket moves from Backlog to To Do and is assigned to a developer; if not, it stays in Backlog to be refined. Next comes planning with the agents.</desc>
+  <defs>
+    <marker id="ih" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-a" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="iw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-w" d="M0 0 L10 5 L0 10 z"/></marker>
+  </defs>
+
+  <rect class="sl-bg" x="0" y="0" width="1600" height="900"/>
+
+  <text class="eyebrow" x="60" y="72">PAIRTASK · INTAKE STAGE</text>
+  <text class="title" x="60" y="122">Decide what's ready before any agent starts</text>
+  <text class="sub" x="60" y="158">The product owner and the developer turn a backlog item into a ranked, testable, risk-checked ticket.</text>
+
+  <text class="eyebrow" x="290" y="200">1 · INTAKE</text>
+  <text class="eyebrow" x="470" y="200">2 · DISCUSS AND PRIORITISE</text>
+  <text class="eyebrow" x="780" y="200">3 · ACCEPTANCE CRITERIA</text>
+  <text class="eyebrow" x="1050" y="200">4 · RISK</text>
+  <text class="eyebrow" x="1300" y="200">5 · DECIDE</text>
+
+  <rect class="lane" x="280" y="215" width="1260" height="100" rx="8"/>
+  <rect class="lane" x="280" y="325" width="1260" height="100" rx="8"/>
+  <rect class="lane" x="280" y="440" width="1260" height="140" rx="8"/>
+  <line class="sep" x1="460" y1="188" x2="460" y2="585"/>
+  <line class="sep" x1="770" y1="188" x2="770" y2="585"/>
+  <line class="sep" x1="1040" y1="188" x2="1040" y2="585"/>
+  <line class="sep" x1="1290" y1="188" x2="1290" y2="585"/>
+
+  <rect class="op" x="60" y="215" width="200" height="100" rx="10"/>
+  <text class="eyebrow on-op-muted" x="80" y="252">HUMAN</text>
+  <text class="h on-op" x="80" y="286">Product owner</text>
+  <rect class="op" x="60" y="325" width="200" height="100" rx="10"/>
+  <text class="eyebrow on-op-muted" x="80" y="362">HUMAN</text>
+  <text class="h on-op" x="80" y="396">Developer</text>
+  <rect class="card" x="60" y="440" width="200" height="140" rx="10"/>
+  <text class="eyebrow" x="80" y="480">TRACKER</text>
+  <text class="hm" x="80" y="515">Jira</text>
+  <text class="cb" x="80" y="548">Ticket status and fields</text>
+
+  <!-- 1 Intake -->
+  <rect class="op" x="296" y="232" width="148" height="66" rx="8"/>
+  <text class="b on-op" x="312" y="260">Raises the</text>
+  <text class="b on-op" x="312" y="282">request</text>
+  <line class="flow" x1="370" y1="298" x2="370" y2="451" marker-end="url(#ih)"/>
+  <rect class="card" x="296" y="455" width="148" height="110" rx="8"/>
+  <text class="m" x="310" y="480">PROJ-142</text>
+  <text class="bb" x="310" y="504">New feature</text>
+  <text class="bb" x="310" y="524">or change</text>
+  <rect class="chip" x="310" y="536" width="78" height="22" rx="11"/>
+  <text class="chip-t mid" x="349" y="551">BACKLOG</text>
+
+  <!-- 2 Discuss and prioritise -->
+  <rect class="card" x="480" y="228" width="270" height="184" rx="10"/>
+  <text class="eyebrow" x="498" y="258">PO + DEV</text>
+  <text class="h2" x="498" y="290">Discuss and prioritise</text>
+  <circle class="dot" cx="504" cy="321" r="4"/><text class="bb" x="518" y="326">What problem it solves</text>
+  <circle class="dot" cx="504" cy="351" r="4"/><text class="bb" x="518" y="356">Value against effort</text>
+  <circle class="dot" cx="504" cy="381" r="4"/><text class="bb" x="518" y="386">Rank in the backlog</text>
+  <line class="flow" x1="615" y1="412" x2="615" y2="451" marker-end="url(#ih)"/>
+  <rect class="card" x="480" y="455" width="270" height="110" rx="8"/>
+  <text class="eyebrow" x="498" y="484">TICKET FIELD</text>
+  <text class="bb" x="498" y="514">Priority: High</text>
+  <text class="cb" x="498" y="540">Ranked against the backlog</text>
+
+  <!-- 3 Acceptance criteria -->
+  <rect class="card" x="790" y="228" width="230" height="184" rx="10"/>
+  <text class="eyebrow" x="808" y="258">PO + DEV</text>
+  <text class="h2" x="808" y="290">Acceptance criteria</text>
+  <text class="m" x="808" y="324">Given  a context</text>
+  <text class="m" x="808" y="348">When   an action</text>
+  <text class="m" x="808" y="372">Then   an outcome</text>
+  <text class="cb" x="808" y="398">Each one testable</text>
+  <line class="flow" x1="905" y1="412" x2="905" y2="451" marker-end="url(#ih)"/>
+  <rect class="card" x="790" y="455" width="230" height="110" rx="8"/>
+  <text class="eyebrow" x="808" y="484">TICKET FIELD</text>
+  <text class="bb" x="808" y="514">Criteria listed</text>
+  <text class="cb" x="808" y="540">Become the tests later</text>
+
+  <!-- 4 Risk -->
+  <rect class="card" x="1060" y="228" width="210" height="184" rx="10"/>
+  <text class="eyebrow" x="1078" y="258">PO + DEV</text>
+  <text class="h2" x="1078" y="290">Identify risk</text>
+  <circle class="dot" cx="1084" cy="321" r="4"/><text class="bb" x="1098" y="326">Security and data</text>
+  <circle class="dot" cx="1084" cy="351" r="4"/><text class="bb" x="1098" y="356">Dependencies</text>
+  <circle class="dot" cx="1084" cy="381" r="4"/><text class="bb" x="1098" y="386">Rollback plan</text>
+  <line class="flow" x1="1165" y1="412" x2="1165" y2="451" marker-end="url(#ih)"/>
+  <rect class="card" x="1060" y="455" width="210" height="110" rx="8"/>
+  <text class="eyebrow" x="1078" y="484">TICKET FIELD</text>
+  <text class="bb" x="1078" y="514">Risk: Medium</text>
+  <text class="cb" x="1078" y="540">Each with a mitigation</text>
+
+  <!-- 5 Decide -->
+  <rect class="op" x="1310" y="228" width="220" height="184" rx="10"/>
+  <text class="eyebrow on-op-muted" x="1328" y="258">PO + DEV</text>
+  <text class="h2 on-op" x="1328" y="290">Ready for work?</text>
+  <text class="bb on-op-muted" x="1328" y="324">Meets the definition</text>
+  <text class="bb on-op-muted" x="1328" y="346">of ready below</text>
+  <text class="bb on-op" x="1328" y="380">Yes: move to To Do</text>
+  <text class="bb on-op" x="1328" y="402">No: refine it</text>
+  <line class="flow" x1="1430" y1="412" x2="1430" y2="451" marker-end="url(#ih)"/>
+  <text class="ok-t" x="1442" y="438">yes</text>
+  <rect class="card" x="1336" y="455" width="194" height="110" rx="8"/>
+  <text class="eyebrow" x="1350" y="482">STATUS</text>
+  <rect class="chip" x="1350" y="494" width="78" height="24" rx="12"/>
+  <text class="chip-t mid" x="1389" y="510">BACKLOG</text>
+  <line class="flow" x1="1432" y1="506" x2="1446" y2="506" marker-end="url(#ih)"/>
+  <rect class="pill-ok" x="1450" y="494" width="66" height="24" rx="12"/>
+  <text class="chip-ok-t mid" x="1483" y="510">TO DO</text>
+  <text class="cb" x="1350" y="548">Assigned to a developer</text>
+
+  <!-- Not ready loop -->
+  <path class="loop" d="M1322 412 V606 H370 V573" marker-end="url(#iw)"/>
+  <text class="warn-t mid" x="846" y="634">NOT READY</text>
+  <text class="cb mid" x="846" y="658">Stays in Backlog, gets refined, and is discussed again</text>
+  <text class="ok-t" x="1530" y="658" text-anchor="end">Next: planning →</text>
+
+  <!-- Definition of ready -->
+  <rect class="band" x="0" y="690" width="1600" height="210"/>
+  <text class="eyebrow" x="60" y="728">DEFINITION OF READY</text>
+  <g transform="translate(60 752)">
+    <circle class="icon" cx="10" cy="10" r="8"/><path class="icon" d="M16 16 l7 7"/>
+    <text class="ch" x="38" y="22">Clear problem</text>
+    <text class="cb" x="0" y="54">Everyone can say what it</text>
+    <text class="cb" x="0" y="76">solves and for whom</text>
+  </g>
+  <g transform="translate(360 752)">
+    <path class="icon" d="M3 24 V16 M11 24 V9 M19 24 V3"/>
+    <text class="ch" x="38" y="22">Agreed priority</text>
+    <text class="cb" x="0" y="54">Ranked against the rest</text>
+    <text class="cb" x="0" y="76">of the backlog</text>
+  </g>
+  <g transform="translate(660 752)">
+    <rect class="icon" x="2" y="4" width="20" height="20" rx="3"/><path class="icon" d="M7 14 l4 4 l7 -8"/>
+    <text class="ch" x="38" y="22">Testable criteria</text>
+    <text class="cb" x="0" y="54">Each criterion has one</text>
+    <text class="cb" x="0" y="76">observable outcome</text>
+  </g>
+  <g transform="translate(960 752)">
+    <path class="icon" d="M12 3 L23 23 H1 Z M12 10 V16 M12 19.5 V20"/>
+    <text class="ch" x="38" y="22">Known risk</text>
+    <text class="cb" x="0" y="54">Each risk named, with a</text>
+    <text class="cb" x="0" y="76">mitigation or an owner</text>
+  </g>
+  <g transform="translate(1260 752)">
+    <circle class="icon" cx="11" cy="8" r="6"/><path class="icon" d="M0 27 a11 9 0 0 1 22 0"/>
+    <text class="ch" x="38" y="22">Assigned owner</text>
+    <text class="cb" x="0" y="54">One developer takes it</text>
+    <text class="cb" x="0" y="76">into planning</text>
+  </g>
+</svg></body></html>
