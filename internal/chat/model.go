@@ -65,6 +65,9 @@ type Options struct {
 	Bounds  Bounds
 	Now     func() time.Time
 	Backoff BackoffPolicy
+	// Seal signs an operator_send with the operator's own key (#115); nil
+	// sends unsigned.
+	Seal func(protocol.Message) string
 }
 
 // Connection states.

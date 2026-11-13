@@ -39,8 +39,8 @@ func TestContactHistoryChatAcceptanceNegotiatesProtocol26(t *testing.T) {
 	if req.ProtocolVersion != 26 {
 		t.Fatalf("session_open protocol_version=%d, want 26", req.ProtocolVersion)
 	}
-	if protocol.Version != 28 {
-		t.Fatalf("current protocol=%d, want 28", protocol.Version)
+	if protocol.Version != 29 {
+		t.Fatalf("current protocol=%d, want 29", protocol.Version)
 	}
 	if protocol.ConsentVersion != 24 {
 		t.Fatalf("consent compatibility version changed to %d", protocol.ConsentVersion)

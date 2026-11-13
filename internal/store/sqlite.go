@@ -86,7 +86,7 @@ func Open(path string) (*Store, error) {
 	// Tables added since the epoch transition's released shape are created
 	// once it has succeeded, so a failed or refused transition leaves no new
 	// schema object behind.
-	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema); err != nil {
+	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply classifier schema: %w", err)
 	}
@@ -396,6 +396,9 @@ func persistMessage(ctx context.Context, tx *sql.Tx, routed routedMessage) error
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO message_metadata (message_id, seq, sender_session, in_reply_to, ack_requested, origin, room, mentions, review_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, msg.MessageID, msg.Seq, routed.senderSession, msg.InReplyTo, msg.AckRequested, nullString(msg.Origin), nullString(msg.Room), nullList(msg.Mentions), nullString(msg.ReviewID)); err != nil {
+		return err
+	}
+	if err := persistSeal(ctx, tx, msg); err != nil {
 		return err
 	}
 	if err := insertRecipients(ctx, tx, msg.MessageID, recipients); err != nil {

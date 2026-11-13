@@ -271,6 +271,7 @@ var agentEnvelopeChecks = []func(protocol.Message, int) *routingError{
 	func(msg protocol.Message, _ int) *routingError { return checkNoMentions(msg) },
 	func(msg protocol.Message, _ int) *routingError { return checkNoAssignment(msg) },
 	func(msg protocol.Message, _ int) *routingError { return checkNoConversation(msg) },
+	func(msg protocol.Message, _ int) *routingError { return checkNoSeal(msg) },
 	checkWorkspace,
 }
 

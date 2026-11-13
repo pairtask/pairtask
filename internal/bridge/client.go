@@ -47,6 +47,8 @@ type Client struct {
 	accepted        map[string]chan protocol.Message // review requests waiting for their accepted stage (#304)
 	lastActivity    time.Time                        // last agent_activity written
 	forges          forge.Registry                   // review adapters on this side (#201); none means reviews are refused before any forge work
+	agentID         string
+	roots           []protocol.SigningRoot // the keys seals verify against, from the welcome (#115)
 }
 
 type Inbox struct {
@@ -101,6 +103,7 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Client, error) {
 		forges: cfg.Forges}
 	c.sessionID = welcome.SessionID
 	c.protocolVersion = welcome.ProtocolVersion
+	c.agentID, c.roots = cfg.AgentID, welcome.SigningRoots
 	go c.readLoop(r)
 	return c, nil
 }
@@ -117,7 +120,7 @@ func (c *Client) readLoop(r *bufio.Reader) {
 			continue
 		}
 		c.seeAccepted(msg)
-		if err := c.bufferMessage(protocol.WithDisplayOrigin(msg)); err != nil {
+		if err := c.bufferMessage(c.verified(protocol.WithDisplayOrigin(msg))); err != nil {
 			c.fail(err)
 			return
 		}

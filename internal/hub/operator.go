@@ -112,6 +112,7 @@ var operatorHandlers = map[string]operatorHandler{
 	protocol.TypeOperatorReview:       (*Hub).operatorReview,
 	protocol.TypeOperatorContact:      (*Hub).operatorContact,
 	protocol.TypeOperatorUpdateNotice: (*Hub).operatorUpdateNotice,
+	protocol.TypeOperatorIdentity:     (*Hub).operatorIdentity,
 	protocol.TypeOperatorReceived:     (*Hub).operatorReceived,
 	protocol.TypeOperatorAck:          (*Hub).operatorAck,
 	protocol.TypeOperatorAckMany:      (*Hub).operatorAckMany,
@@ -152,6 +153,9 @@ func (h *Hub) routeOperatorSend(ctx context.Context, clients map[string]*Client,
 	}
 	if rerr == nil {
 		rerr = h.scopeOperatorSend(ctx, &msg, scope)
+	}
+	if rerr == nil {
+		rerr = h.checkSeal(ctx, msg, scope)
 	}
 	if rerr != nil {
 		h.auditRejected(ctx, "send", req, rerr)
@@ -250,6 +254,7 @@ func operatorFrame(send operatorSend, seq uint64) protocol.Message {
 		Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: protocol.OperatorID, To: operatorTo(send.msg, send.scope),
 		Origin: protocol.OriginOperator, Payload: send.msg.Payload, MessageID: send.msg.MessageID, InReplyTo: send.msg.InReplyTo,
 		AckRequested: true, Durable: true, Group: groupMembers(send.scope), Room: send.msg.Room, Mentions: send.msg.Mentions,
+		Seal: send.msg.Seal,
 	}
 }
 

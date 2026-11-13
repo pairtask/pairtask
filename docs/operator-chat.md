@@ -281,6 +281,14 @@ The broker stamps the sender. Agent text may claim to be the operator, but a
 peer message never changes your permissions; treat peer content as untrusted.
 See the trust section in the design archive for the full rules.
 
+**Signed messages.** Your messages can carry your own signature, which each agent's adapter checks, so no agent and not even the broker can send as you. Run this once, in the secured runtime where the chat runs:
+
+```sh
+pairtask operator identity init
+```
+
+It makes your person key and the key your chat signs with, private to your account (`~/.local/state/pairtask/identity`), and registers the person key with the broker; registering over the operator socket is your approval of it. From then on the chat and `pairtask operator send` sign every message; `pairtask operator identity status` shows the key. Agents see `verification: verified` with signer kind `operator` on what you sent. Without keys your messages go unsigned, as before, and agents see `unsigned`. Once you have keys, a chat or send that can't sign stops instead of quietly sending unsigned; `--unsigned` sends without your signature on purpose. If one of the two key files goes missing, nothing makes a new one silently: a new key is a key change, and `identity init` refuses while either file exists.
+
 **Harness permissions.** So the agents' replies and acknowledgments to you aren't held back by their harness, setup allows the pairtask messaging and coordination tools by name. These are `send`, `acknowledge`, `receive`, `wait`, `wait_reply`, `listen`, `listener_status`, `status`, `read_status`, the claim tools and the room tools.
 
 - **Claude Code:** `/etc/pairtask/claude-settings.json`, passed to agent sessions by the `claude` launcher and by `pairtask start claude`. Without the file, `pairtask start` runs Claude as before; a file there that isn't readable stops the start.
