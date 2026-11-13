@@ -175,6 +175,34 @@ func TestSharedDesktopNodeAcceptanceLockWithoutOwnerExplainsRecovery(t *testing.
 	}
 }
 
+func TestSharedDesktopNodeAcceptanceUnavailableOwnerCanBeRetried(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "node")
+	owner := startSharedNode(t, dir)
+	forwarder := startSharedNode(t, dir)
+	if err := owner.close(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := store.LockDatabase(filepath.Join(dir, "broker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	for i := 0; i < 2; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		out := forwarder.n.Call(ctx, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: protocol.PairingOpList})
+		cancel()
+		if out.Type != protocol.TypeError {
+			t.Fatalf("call %d after losing owner returned %+v, want an error", i+1, out)
+		}
+		if out.Code != "node_unavailable" {
+			t.Fatalf("call %d used error code %q, want node_unavailable", i+1, out.Code)
+		}
+		if out.Detail != desktop.ErrNoOwner.Error() {
+			t.Fatalf("call %d explained failure as %q, want ErrNoOwner", i+1, out.Detail)
+		}
+	}
+}
+
 func TestSharedDesktopNodeAcceptanceOversizeCallDropsOnlyThatConnection(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "node")
 	n := startSharedNode(t, dir)
