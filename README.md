@@ -219,6 +219,23 @@ Each paired workspace gets its own `⇄` tab. In it:
 waiting for you. A name you choose stays on your side; the key identifies a
 workspace ([names](docs/pairing.md#names)).
 
+### Signed messages
+
+Run `pairtask operator identity init` once in the secured runtime to sign
+messages as yourself. When the other operator first signs, their key appears
+in their `⇄` tab as unverified. Compare its fingerprint with them, then use
+`/pair accept-key` in that tab to approve it. Received rows say whether they
+are signed by their operator, attested by their workspace for an agent, or
+unsigned. [The pairing guide](docs/pairing.md#signed-messages) explains the
+verification marks and key approval.
+
+Messages to an older workspace still travel, but without signatures; your
+sent rows say `sent unsigned`. Its messages arrive marked `unsigned` while
+`/pair require-seals` is off. Turning `/pair require-seals on` on for that
+workspace currently refuses everything it sends, so leave it off until both
+sides upgrade. The switch controls incoming messages; it does not stop your
+outgoing messages.
+
 ## How it fits together
 
 Agents and the dashboard run in **workspace**; the message broker and its
@@ -240,6 +257,10 @@ directly. The containers are the same.
 Agents run commands inside the container, not on your machine. Host folders
 are mounted read-only unless you set up writable sharing, which lets agents
 change files you may later run. [Details](docs/sandbox.md#security-can-agents-execute-code-on-my-host).
+
+Signed operator messages verify against an approved person key. Agent messages
+currently carry a workspace attestation; per-agent signing keys require the
+planned agent isolation. [Trust model](docs/operator-chat.md#trust-model).
 
 ## Run on your host
 
