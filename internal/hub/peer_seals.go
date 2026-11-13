@@ -164,3 +164,15 @@ func (h *Hub) contactRequireSeals(ctx context.Context, req operatorRequest, audi
 	return h.contactList(ctx, protocol.Message{MessageID: msg.MessageID, RequestID: msg.RequestID, ProtocolVersion: msg.ProtocolVersion,
 		ContactKey: msg.ContactKey, ContactOp: msg.ContactOp}), nil
 }
+
+// pageRoots gives a contact page what the operator's client checks its
+// seals against: this workspace's key, once it has one, and the roots.
+func (h *Hub) pageRoots(ctx context.Context, page *protocol.ContactMessagePage) error {
+	own, ok, err := h.store.IdentityFingerprint(ctx)
+	if err != nil || !ok {
+		return err
+	}
+	roots, err := h.signingRoots(ctx)
+	page.OwnIdentity, page.SigningRoots = own, roots
+	return err
+}

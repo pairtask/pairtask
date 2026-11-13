@@ -3,9 +3,6 @@ package chat
 import (
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/google/uuid"
-
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/signing"
 )
@@ -15,32 +12,11 @@ import (
 // (operator_identity status), and says on the row who it proves sent it.
 // The broker's word is never shown as a verdict.
 
-const kindIdentityStatus = "identity status"
-
-// signingView is what the chat verifies seals against: this workspace's
-// key and the pinned roots, as last read.
+// signingView is what the chat verifies a contact's seals against, from
+// its newest page: this workspace's key and the roots pinned here.
 type signingView struct {
 	own   string
 	roots []protocol.SigningRoot
-	asked bool // a read is in flight or done; cleared to read again
-}
-
-// readRoots reads the signing roots once, or again after a change.
-func (m *Model) readRoots() tea.Cmd {
-	if m.signing.asked {
-		return nil
-	}
-	m.signing.asked = true
-	msg := protocol.Message{Type: protocol.TypeOperatorIdentity, MessageID: uuid.NewString(), IdentityOp: protocol.IdentityOpStatus}
-	return m.request(kindIdentityStatus, msg)
-}
-
-// identityStatusResult keeps the roots; a refusal leaves rows unmarked.
-func (m *Model) identityStatusResult(_ pendingRequest, resp protocol.Message) tea.Cmd {
-	if resp.Type == protocol.TypeOperatorIdentityResult && resp.Identity != nil {
-		m.signing.own, m.signing.roots = resp.Identity.Workspace, resp.Identity.Roots
-	}
-	return nil
 }
 
 // signedRow is a row's signing line: who its seal proves sent it, or that
@@ -53,10 +29,11 @@ func (m *Model) signedRow(v protocol.ContactMessageView) string {
 		}
 		return ""
 	}
-	if m.signing.own == "" || v.Text == "" {
+	t := m.contacts.threads[v.Contact]
+	if t == nil || t.signing.own == "" || v.Text == "" {
 		return ""
 	}
-	return verdictLine(verifyContactRow(v, m.signing))
+	return verdictLine(verifyContactRow(v, t.signing))
 }
 
 // verifyContactRow is a received row's verdict as this chat sees it.

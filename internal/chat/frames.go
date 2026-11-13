@@ -180,7 +180,6 @@ var responseHandlers = map[string]responseHandler{
 	kindContactPause:       (*Model).contactPauseResult,
 	kindContactAcceptKey:   (*Model).contactAcceptKeyResult,
 	kindContactRequireSeal: (*Model).contactRequireSealsResult,
-	kindIdentityStatus:     (*Model).identityStatusResult,
 	kindContactUnpair:      (*Model).contactUnpairResult,
 	kindContactAddress:     (*Model).contactAddressResult,
 	kindContactAsk:         (*Model).contactAskResult,

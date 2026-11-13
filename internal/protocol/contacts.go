@@ -219,6 +219,11 @@ type ContactMessagePage struct {
 	PendingPersonKeys []string `json:"pending_person_keys,omitempty"`
 	// RequireSeals: this side refuses the contact's unsigned messages.
 	RequireSeals bool `json:"require_seals,omitempty"`
+	// OwnIdentity and SigningRoots are what the operator's client checks
+	// these messages' seals against (#115): this workspace's key and the
+	// keys pinned here.
+	OwnIdentity  string        `json:"own_identity,omitempty"`
+	SigningRoots []SigningRoot `json:"signing_roots,omitempty"`
 	// From a broker serving contact_share_sync (#305), read with Shared in
 	// one snapshot: SharedSync is whether the contact has answered exactly
 	// that set, "confirmed" or "pending"; SharedDigest names the set,

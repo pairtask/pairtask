@@ -150,7 +150,6 @@ type Model struct {
 	discovery discoveryView       // the last /pair find snapshot (#284)
 	reviews   reviewState         // review requests (#201): the last list and a request in flight
 	contacts  contactState        // messages with paired workspaces (#210)
-	signing   signingView         // the keys received seals verify against (#115)
 	unpair    unpairState         // an unpair's card and its one request (#276)
 
 	compose   composer
