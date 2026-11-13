@@ -22,6 +22,7 @@ const operatorIdentityUsage = "usage: pairtask operator identity (init | status)
 // identityReport is what identity init and status show.
 type identityReport struct {
 	PersonKey  string `json:"person_key,omitempty"`
+	Dir        string `json:"dir"`
 	Registered bool   `json:"registered"`
 	protocol.IdentityView
 }
@@ -76,20 +77,30 @@ func identityOpNamed(args []string) bool {
 
 // identityOp creates and registers keys (init) or reports them (status).
 func identityOp(ctx context.Context, req identityRequest) (identityReport, error) {
-	dir, err := personkey.DefaultDir()
+	dir, err := personkey.ResolveDir()
 	if err != nil {
 		return identityReport{}, err
 	}
 	req.dir = dir
+	op := identityStatus
 	if req.op == "init" {
-		return identityInit(ctx, req)
+		op = identityInit
 	}
-	return identityStatus(ctx, req)
+	report, err := op(ctx, req)
+	report.Dir = dir
+	return report, err
 }
 
-// identityInit makes the keys, only when there are none, and registers
-// the person key.
+// errNotSecured: init found no broker to register a key with, so it made
+// none; outside the secured runtime a key would sit where agents can read it.
+var errNotSecured = errors.New("no operator broker answers here, so no key was made: run `pairtask identity init` on the host, which runs this in the secured runtime")
+
+// identityInit makes the keys, only when there are none and the broker
+// answers, and registers the person key.
 func identityInit(ctx context.Context, req identityRequest) (identityReport, error) {
+	if _, err := identityStatus(ctx, req); err != nil {
+		return identityReport{}, fmt.Errorf("%w (%v)", errNotSecured, err)
+	}
 	keys, err := personkey.Create(req.dir)
 	if errors.Is(err, personkey.ErrExists) {
 		return identityReport{}, errors.New("this account has keys already; `pairtask operator identity status` shows them")
@@ -145,6 +156,6 @@ func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer)
 	default:
 		fmt.Fprintf(stdout, "person key %s, not registered with this broker: the chat registers it when it starts\n", report.PersonKey)
 	}
-	fmt.Fprintf(stdout, "workspace %s\n", report.Workspace)
+	fmt.Fprintf(stdout, "workspace %s\nkeys in %s\n", report.Workspace, report.Dir)
 	return 0
 }

@@ -281,13 +281,13 @@ The broker stamps the sender. Agent text may claim to be the operator, but a
 peer message never changes your permissions; treat peer content as untrusted.
 See the trust section in the design archive for the full rules.
 
-**Signed messages.** Your messages can carry your own signature, which each agent's adapter checks, so no agent and not even the broker can send as you. Run this once, in the secured runtime where the chat runs:
+**Signed messages.** Your messages can carry your own signature, which each agent's adapter checks, so no agent and not even the broker can send as you. Run this once, on your host:
 
 ```sh
-pairtask operator identity init
+pairtask identity init      # runs `pairtask operator identity init` in the secured runtime
 ```
 
-It makes your person key and the key your chat signs with, private to your account (`~/.local/state/pairtask/identity`), and registers the person key with the broker; registering over the operator socket is your approval of it. From then on the chat and `pairtask operator send` sign every message; `pairtask operator identity status` shows the key. Agents see `verification: verified` with signer kind `operator` on what you sent. Without keys your messages go unsigned, as before, and agents see `unsigned`. Once you have keys, a chat or send that can't sign stops instead of quietly sending unsigned; `--unsigned` sends without your signature on purpose. If one of the two key files goes missing, nothing makes a new one silently: a new key is a key change, and `identity init` refuses while either file exists.
+It makes your person key and the key your chat signs with in the secured runtime, where the chat runs: on its state volume, root-only (`/var/lib/collab-ai-secured/operator-identity`), so they survive upgrades, which replace the container. Outside secured they live in your account's state directory (`~/.local/state/pairtask/identity`); `PAIRTASK_IDENTITY_DIR` overrides both. Keys an earlier release made in root's home there are moved over on first use. Never make them in the workspace: every agent can read its home. `init` refuses to make keys where no operator broker answers. It registers the person key with the broker; registering over the operator socket is your approval of it. From then on the chat and `pairtask operator send` sign every message; `pairtask identity status` on the host (`pairtask operator identity status` in secured) shows the key and the folder it is in. Agents see `verification: verified` with signer kind `operator` on what you sent. Without keys your messages go unsigned, as before, and agents see `unsigned`. Once you have keys, a chat or send that can't sign stops instead of quietly sending unsigned; `--unsigned` sends without your signature on purpose. If one of the two key files goes missing, nothing makes a new one silently: a new key is a key change, and `identity init` refuses while either file exists.
 
 **Harness permissions.** So the agents' replies and acknowledgments to you aren't held back by their harness, setup allows the pairtask messaging and coordination tools by name. These are `send`, `acknowledge`, `receive`, `wait`, `wait_reply`, `listen`, `listener_status`, `status`, `read_status`, the claim tools and the room tools.
 

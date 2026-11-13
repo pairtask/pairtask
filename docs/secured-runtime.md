@@ -88,6 +88,15 @@ message; it is not approval.
 - **Not available yet:** `attach` and seat control. See
   [protocol](protocol.md#origin-and-operator-messages-v4).
 
+### From the host
+
+`pairtask secured` opens a root shell in `secured`, where every
+`pairtask operator …` command below runs; `pairtask secured CMD` runs one
+command there (add `--tty` for a terminal). `pairtask identity init` makes
+your signing keys there, once; they live on the state volume
+(`/var/lib/collab-ai-secured/operator-identity`, root-only) and survive the
+container's replacement. See [signed messages](operator-chat.md#trust-model).
+
 ### Interactive chat
 
 ```sh

@@ -32,7 +32,7 @@ const errUnsignedHint = "; pass --unsigned to send without your signature"
 // sealer for that workspace. With no keys yet it is personkey.ErrNoKeys;
 // any other failure means the operator's messages can't be signed.
 func operatorSealer(ctx context.Context, socket string) (sealer, error) {
-	dir, err := personkey.DefaultDir()
+	dir, err := personkey.ResolveDir()
 	if err != nil {
 		return nil, err
 	}
