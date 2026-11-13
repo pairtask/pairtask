@@ -187,14 +187,10 @@ func (w *watcher) announce(ctx context.Context, contact string, count int) {
 	}
 }
 
-// unread is a workspace's unread received messages, and whether its page
-// could be read.
+// unread is a workspace's unread received messages across its history,
+// and whether all of it could be read.
 func (w *watcher) unread(ctx context.Context, contact string) (int, bool) {
-	out := w.call(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: contact})
-	if out.ContactPage == nil {
-		return 0, false
-	}
-	return unread(out.ContactPage.Messages), true
+	return countUnread(ctx, w.call, contact)
 }
 
 // name is what the person calls a workspace, at most 64 runes, else its
