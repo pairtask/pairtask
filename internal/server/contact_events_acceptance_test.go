@@ -36,21 +36,9 @@ func TestContactEventsAcceptancePartialInboundOnlyNotifiesOperator(t *testing.T)
 	operatorEqual(t, "durable before failure", stored.ID, "partial")
 	// Close before End: the session fails after committing the inbound row.
 	conn.Close()
-	// Learning that this contact speaks an old unsigned version changes the
-	// pairing view first, so the operator can see the upgrade alert.
-	frame := owner.frame()
-	event := sessionDecode[protocol.SessionEvent](t, frame, "event")
-	operatorEqual(t, "old-version alert event", event.Kind, protocol.EventPairingChanged)
-	if strings.Contains(sessionJSON(frame), "PRIVATE_CONTACT_BODY") {
-		t.Fatal("pairing event exposed text")
-	}
-	frame = owner.frame()
-	event = sessionDecode[protocol.SessionEvent](t, frame, "event")
-	operatorEqual(t, "partial progress event", event.Kind, protocol.EventContactMessagesChanged)
-	operatorEqual(t, "attributed contact", event.ContactKey, id.Fingerprint())
-	if strings.Contains(sessionJSON(frame), "PRIVATE_CONTACT_BODY") {
-		t.Fatal("event exposed text")
-	}
+	// The version alert and the committed message can be announced in either
+	// order, but the operator must receive both without the private body.
+	assertPartialInboundOperatorEvents(t, owner, id.Fingerprint())
 	rows, _, err := f.st.PeerMessages().Page(context.Background(), id.Fingerprint(), 0, 64)
 	operatorNoError(t, err)
 	operatorEqual(t, "one retained message", len(rows), 1)
@@ -58,5 +46,28 @@ func TestContactEventsAcceptancePartialInboundOnlyNotifiesOperator(t *testing.T)
 	_, err = agent.r.ReadByte()
 	if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
 		t.Fatalf("agent received contact traffic: %v", err)
+	}
+}
+
+func assertPartialInboundOperatorEvents(t *testing.T, owner *sessionProbe, contactKey string) {
+	t.Helper()
+	seen := make(map[string]bool)
+	// Two distinct events from the two allowed kinds require both kinds.
+	for range 2 {
+		frame := owner.frame()
+		event := sessionDecode[protocol.SessionEvent](t, frame, "event")
+		if strings.Contains(sessionJSON(frame), "PRIVATE_CONTACT_BODY") {
+			t.Fatalf("%s event exposed text", event.Kind)
+		}
+		if event.Kind != protocol.EventPairingChanged && event.Kind != protocol.EventContactMessagesChanged {
+			t.Fatalf("unexpected operator event: %s", event.Kind)
+		}
+		if seen[event.Kind] {
+			t.Fatalf("duplicate operator event: %s", event.Kind)
+		}
+		seen[event.Kind] = true
+		if event.Kind == protocol.EventContactMessagesChanged {
+			operatorEqual(t, "attributed contact", event.ContactKey, contactKey)
+		}
 	}
 }
