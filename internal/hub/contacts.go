@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"time"
@@ -39,6 +40,8 @@ var contactChanges = map[string]func(*Hub, context.Context, operatorRequest, int
 	protocol.ContactOpUnpair: (*Hub).contactUnpair,
 	// The operator's acknowledgment (#287).
 	protocol.ContactOpAck: (*Hub).contactAck,
+	// Accepting a contact's person key (#115).
+	protocol.ContactOpAcceptKey: (*Hub).contactAcceptKey,
 	// Pending consent (#293).
 	protocol.ContactOpConsentDecide: (*Hub).contactConsentDecide,
 	protocol.ContactOpConsentOpt:    (*Hub).contactConsentOpt,
@@ -83,6 +86,9 @@ func (h *Hub) contactRefused(ctx context.Context, clients map[string]*Client, ms
 		return &routingError{protocol.ErrMalformedFrame, err.Error()}
 	}
 	if rerr := h.readableContact(ctx, msg); rerr != nil {
+		return rerr
+	}
+	if rerr := h.contactSealRefused(ctx, msg); rerr != nil {
 		return rerr
 	}
 	return h.ackBound(ctx, msg)
@@ -249,6 +255,11 @@ func (h *Hub) contactListPage(ctx context.Context, msg protocol.Message, c conta
 	if err := h.routingViews(ctx, &page, c); err != nil {
 		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
 	}
+	pending, err := h.store.PeerMessages().PendingPersonKeys(ctx, msg.ContactKey)
+	if err != nil {
+		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
+	}
+	page.PendingPersonKeys = pending
 	out := protocol.Message{Type: protocol.TypeOperatorContactResult, MessageID: msg.MessageID, ContactKey: msg.ContactKey,
 		ContactOp: msg.ContactOp, ContactPage: &page, ContactMarked: msg.ContactMarked}
 	if err := fitContactPage(&out, msg.RequestID); err != nil {
@@ -304,7 +315,10 @@ func contactMessageView(r messaging.Row) protocol.ContactMessageView {
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
 		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
 		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt,
-		PairingEpoch: r.PairingEpoch}
+		PairingEpoch: r.PairingEpoch, SealDowngraded: r.SealDowngraded}
+	if len(r.Seal) > 0 {
+		view.Seal = base64.StdEncoding.EncodeToString(r.Seal)
+	}
 	if r.Direction == messaging.DirKept { // a reply that never went there (#278): this side's, with no sequence there
 		view.Direction, view.Seq = messaging.DirOut, 0
 	}

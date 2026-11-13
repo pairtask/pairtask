@@ -409,6 +409,9 @@ func importedMessage(ctx context.Context, tx *sql.Tx, imp RemoteImport, at impor
 	if len(imp.Recipients) > 1 {
 		msg.To, msg.Group = protocol.Broadcast, slices.Clone(imp.Recipients)
 	}
+	if msg.Seal, err = sealText(ctx, tx, messageKey{imp.Contact, messaging.DirIn, imp.RemoteID}); err != nil {
+		return protocol.Message{}, nil, err
+	}
 	recipients := make([]protocol.Recipient, 0, len(imp.Recipients))
 	for _, agent := range imp.Recipients {
 		recipients = append(recipients, protocol.Recipient{AgentID: agent, SessionID: imp.Sessions[agent]})
@@ -552,6 +555,7 @@ type RemoteReply struct {
 	Parent        string // the import's local ID
 	Text          string
 	Now           time.Time
+	Sealer        PeerSealer // seals the reply as queued (#115); nil leaves it unsigned
 }
 
 // RemoteSender is who an import shows as its sender here, and so whom a
@@ -637,7 +641,7 @@ func replyOutgoing(ctx context.Context, tx *sql.Tx, r RemoteReply) (outgoing, er
 	if !validOutgoing(reply) {
 		return outgoing{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
 	}
-	return outgoing{key: messageKey{parent.Contact, messaging.DirOut, reply.ID}, m: reply, now: r.Now, localID: r.Msg.MessageID}, nil
+	return outgoing{key: messageKey{parent.Contact, messaging.DirOut, reply.ID}, m: reply, now: r.Now, localID: r.Msg.MessageID, sealer: r.Sealer}, nil
 }
 
 // replyParent is the import a reply answers: imported under the contact's

@@ -22,7 +22,7 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 9 // PairingVersion
+	MaxVersion byte = 10 // SealVersion
 )
 
 // LiveVersion is the first version whose sessions can stay open;
@@ -84,6 +84,10 @@ type Message struct {
 	ReplyTo ReplyRef
 	// Review, version 4: a review request for the one agent in To.
 	Review *ReviewAsk
+	// Seal, version 10: the sender's signed header (#115), as
+	// internal/signing encodes it; empty for an unsigned message. Not part
+	// of Hash: a message's identity doesn't change with its signature.
+	Seal []byte
 }
 
 // ReplyRef names the message a reply answers: its ID in the namespace of
@@ -166,7 +170,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameContactStateStored
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameSealed
 }
 
 // shape is a frame type and its exact number of fields.

@@ -153,6 +153,9 @@ func insertAccepted(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer
 	if err := insertMessage(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err // never Stored when the insert failed
 	}
+	if err := keepSeal(ctx, tx, r.key, r.m.Seal); err != nil {
+		return messaging.Answer{}, false, err
+	}
 	if err := stageImport(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err
 	}
@@ -175,6 +178,7 @@ var inboundChecks = []inboundCheck{
 		}
 		return !messaging.ValidRouting(m) || !validAsk(m), nil
 	}},
+	{messaging.ReasonInvalidSeal, sealRefuses},
 	{messaging.ReasonNotShared, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {
 		ok, err := recipientsGranted(ctx, tx, contact, m)
 		return !ok, err
@@ -236,7 +240,7 @@ func replay(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message
 		return messaging.Answer{}, false, err
 	}
 	if found {
-		return sameMessage(row, m), true, nil
+		return replayedSeal(ctx, tx, messageKey{contact, messaging.DirIn, m.ID}, sameMessage(row, m), m.Seal)
 	}
 	if !validSequence(m.N) {
 		return messaging.Answer{}, false, nil
