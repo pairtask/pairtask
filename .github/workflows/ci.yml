@@ -35,29 +35,40 @@ concurrency:
 
 jobs:
   mac-sharing:
-    # The script suite and provisioning on macOS: only for script or image changes.
+    # Native Desktop socket tests, plus the script suite and provisioning on macOS.
     needs: [classify]
-    if: needs.classify.outputs.scripts != 'false'
+    if: needs.classify.outputs.scripts != 'false' || needs.classify.outputs.go != 'false'
     runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: needs.classify.outputs.go != 'false'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+      - name: Test Desktop shared node on macOS
+        if: needs.classify.outputs.go != 'false'
+        run: go test -count=1 -timeout=600s ./internal/desktop ./cmd/pairtask-desktop
       - name: Check provisioning with macOS system Python
+        if: needs.classify.outputs.scripts != 'false'
         run: |
           /usr/bin/python3 --version
           /usr/bin/python3 scripts/sandbox-provision.py --help
       # The Pi shim test runs Node with type stripping; pin it, never the runner's.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - if: needs.classify.outputs.scripts != 'false'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
       - name: Prove restricted file access and dedicated host ownership
+        if: needs.classify.outputs.scripts != 'false'
         env:
           PAIRTASK_MAC_IDENTITY_PROOF: '1'
         run: python3 -m unittest discover -s scripts/tests -v
       # Native multicast remains visible; the operator performs real Mac acceptance.
       - name: Report native multicast acceptance for operator follow-up
+        if: needs.classify.outputs.scripts != 'false'
         continue-on-error: true
         env:
           PAIRTASK_MAC_MDNS_PROOF: '1'
