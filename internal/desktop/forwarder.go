@@ -55,14 +55,34 @@ func (f *forwarder) call(ctx context.Context, msg protocol.Message) (protocol.Me
 	if conn == nil {
 		return protocol.Message{}, errBroken
 	}
-	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Now()) })
-	defer stop()
+	cut := cancelOn(ctx, conn)
 	out, err := f.exchange(msg)
+	if cut() && err == nil {
+		conn.SetDeadline(time.Time{}) // the answer came in time; the connection stays usable
+	}
 	if err != nil {
-		f.conn.Close()
+		conn.Close()
 		f.conn = nil
 	}
 	return out, err
+}
+
+// cancelOn ends conn's pending I/O when ctx ends. The function it returns
+// stops that, and reports whether ctx's end had already reached conn, once
+// that has finished: a deadline set then must be cleared before reuse.
+func cancelOn(ctx context.Context, conn net.Conn) func() bool {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(done)
+		conn.SetDeadline(time.Now())
+	})
+	return func() bool {
+		if stop() {
+			return false
+		}
+		<-done
+		return true
+	}
 }
 
 // exchange writes the request and reads one answer.
