@@ -22,36 +22,48 @@ func TestSignedAgentRouteAcceptanceBrokerSealsOnceWithWorkspaceBasis(t *testing.
 	if first.Stage != protocol.StageAccepted {
 		t.Fatalf("agent send was not queued: %+v", first)
 	}
+	row := queuedAgentSeal(t, h, contact)
+	seal := bytes.Clone(row.Seal)
+	assertWorkspaceAgentSeal(t, row, agent.ID, contact, h.identity.Fingerprint())
+	retry := workspaceRouteResult(t, h, agent, msg)
+	if retry.Stage != protocol.StageAccepted || !retry.Repeated || retry.Seq != first.Seq {
+		t.Fatalf("agent retry changed send identity: %+v", retry)
+	}
+	row = queuedAgentSeal(t, h, contact)
+	if !bytes.Equal(row.Seal, seal) {
+		t.Fatalf("agent retry replaced seal: %+v", row)
+	}
+}
+
+func queuedAgentSeal(t *testing.T, h *Hub, contact string) messaging.Row {
+	t.Helper()
 	rows, err := h.store.PeerMessages().Offer(context.Background(), contact, time.Now(), messaging.SessionLimit)
 	messageWorkerOK(t, err)
 	if len(rows) != 1 || len(rows[0].Seal) == 0 {
 		t.Fatalf("broker did not seal agent's queued message: %+v", rows)
 	}
-	seal := bytes.Clone(rows[0].Seal)
-	parsed, err := signing.ParseSeal(seal)
+	return rows[0]
+}
+
+func assertWorkspaceAgentSeal(t *testing.T, row messaging.Row, agentID, contact, workspace string) {
+	t.Helper()
+	parsed, err := signing.ParseSeal(row.Seal)
 	messageWorkerOK(t, err)
-	workspace := h.identity.Fingerprint()
 	roots := protocol.RootsOf([]protocol.SigningRoot{{KeyID: workspace, Workspace: workspace, Approved: true}})
 	verified := signing.Verify(&parsed, roots, time.Now())
-	if verified.State != signing.Verified || verified.Signer == nil || verified.Signer.Basis != signing.BasisWorkspace || verified.Signer.ID != agent.ID {
+	if verified.State != signing.Verified || verified.Signer == nil {
+		t.Fatalf("agent provenance is not verified: %+v", verified)
+	}
+	if verified.Signer.Basis != signing.BasisWorkspace || verified.Signer.ID != agentID {
 		t.Fatalf("agent provenance is not workspace-attested: %+v", verified)
 	}
-	frame := signing.Frame{MessageID: rows[0].ID, SenderKind: signing.SenderAgent, SenderID: agent.ID,
-		Text: rows[0].Text, Addresses: []string{(protocol.PeerLink{Receiver: contact}).Address()}}
+	frame := signing.Frame{MessageID: row.ID, SenderKind: signing.SenderAgent, SenderID: agentID,
+		Text: row.Text, Addresses: []string{(protocol.PeerLink{Receiver: contact}).Address()}}
 	if err := parsed.Matches(frame); err != nil {
 		t.Fatalf("seal does not bind queued agent message: %v", err)
 	}
 	if got := parsed.Header.Recipients; len(got) != 2 || got[0] != protocol.OperatorID || got[1] != (protocol.PeerLink{Receiver: contact}).Address() {
 		t.Fatalf("agent seal did not bind exact recipient set: %v", got)
-	}
-	retry := workspaceRouteResult(t, h, agent, msg)
-	if retry.Stage != protocol.StageAccepted || !retry.Repeated || retry.Seq != first.Seq {
-		t.Fatalf("agent retry changed send identity: %+v", retry)
-	}
-	rows, err = h.store.PeerMessages().Offer(context.Background(), contact, time.Now(), messaging.SessionLimit)
-	messageWorkerOK(t, err)
-	if len(rows) != 1 || !bytes.Equal(rows[0].Seal, seal) {
-		t.Fatalf("agent retry replaced seal: %+v", rows)
 	}
 }
 
@@ -96,7 +108,10 @@ func TestSignedAgentRouteAcceptanceReplySealNamesParentDirection(t *testing.T) {
 	}
 	rows, err := h.store.PeerMessages().Offer(context.Background(), contact, time.Now(), messaging.SessionLimit)
 	messageWorkerOK(t, err)
-	if len(rows) != 1 || len(rows[0].Seal) == 0 || rows[0].ReplyTo.Author != messaging.ReplyByReceiver {
+	if len(rows) != 1 {
+		t.Fatalf("reply was not queued once: %+v", rows)
+	}
+	if len(rows[0].Seal) == 0 || rows[0].ReplyTo.Author != messaging.ReplyByReceiver {
 		t.Fatalf("reply was not sealed with directional parent: %+v", rows)
 	}
 	seal, err := signing.ParseSeal(rows[0].Seal)

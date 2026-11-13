@@ -38,7 +38,10 @@ func TestContactIdentityAcceptanceBridgeVerifiesPairedAgentIndependently(t *test
 	f := remoteAgentBridgeFixture(t)
 	verdict := f.deliver(t)
 	requireBridgeState(t, verdict, signing.Verified)
-	if verdict.Signer == nil || verdict.Signer.Basis != signing.BasisWorkspace || verdict.Signer.ID != f.message.From {
+	if verdict.Signer == nil {
+		t.Fatalf("paired agent provenance has no signer: %+v", verdict)
+	}
+	if verdict.Signer.Basis != signing.BasisWorkspace || verdict.Signer.ID != f.message.From {
 		t.Fatalf("paired agent provenance: %+v", verdict)
 	}
 	for name, mutate := range map[string]func(*bridgeSignedFixture){

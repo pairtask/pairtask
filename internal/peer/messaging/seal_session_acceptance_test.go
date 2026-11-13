@@ -37,9 +37,13 @@ func TestSealSessionAcceptanceNewAndV9BothDirections(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionSuccess(t, sessionExchange(t, newSide.PeerMessages(), legacySealPeer{oldSide.PeerMessages()}, 0))
+	assertNewSideLegacyRows(t, sessionRows(t, newSide.PeerMessages(), 2), seal)
+	assertOldSideLegacyRows(t, sessionRows(t, oldSide.PeerMessages(), 2))
+}
 
-	newRows := sessionRows(t, newSide.PeerMessages(), 2)
-	for _, row := range newRows {
+func assertNewSideLegacyRows(t *testing.T, rows []messaging.Row, seal []byte) {
+	t.Helper()
+	for _, row := range rows {
 		switch row.ID {
 		case "new-to-old":
 			if row.State != messaging.StateDelivered || !row.SealDowngraded || !bytes.Equal(row.Seal, seal) {
@@ -53,8 +57,11 @@ func TestSealSessionAcceptanceNewAndV9BothDirections(t *testing.T) {
 			t.Fatalf("unexpected new-side row: %+v", row)
 		}
 	}
-	oldRows := sessionRows(t, oldSide.PeerMessages(), 2)
-	for _, row := range oldRows {
+}
+
+func assertOldSideLegacyRows(t *testing.T, rows []messaging.Row) {
+	t.Helper()
+	for _, row := range rows {
 		if row.ID == "new-to-old" && (row.Direction != messaging.DirIn || len(row.Seal) != 0) {
 			t.Fatalf("v9 peer received a v10 seal: %+v", row)
 		}
@@ -66,7 +73,7 @@ func TestSealSessionAcceptanceNewPeersCarrySealEndToEnd(t *testing.T) {
 	right := sealInboundFixture(t)
 	ctx := context.Background()
 	base := sealBaseInbound()
-	m, keyID := sealOperatorMessage(t, base, "session-person", "session-device", sessionContact)
+	m, keyID := sealOperatorMessage(t, base, sealSigner{"session-person", "session-device", sessionContact})
 	_, err := left.PeerMessages().Queue(ctx, messaging.Outgoing{
 		Contact: sessionContact, ID: m.ID, Text: m.Text, Now: sessionAt, Seal: m.Seal,
 	})
@@ -75,7 +82,10 @@ func TestSealSessionAcceptanceNewPeersCarrySealEndToEnd(t *testing.T) {
 	}
 	sessionSuccess(t, sessionExchange(t, left.PeerMessages(), right.PeerMessages(), 0))
 	rows := sessionRows(t, right.PeerMessages(), 1)
-	if rows[0].Direction != messaging.DirIn || !bytes.Equal(rows[0].Seal, m.Seal) {
+	if rows[0].Direction != messaging.DirIn {
+		t.Fatalf("v10 recipient row has wrong direction: %+v", rows[0])
+	}
+	if !bytes.Equal(rows[0].Seal, m.Seal) {
 		t.Fatalf("v10 session did not carry seal end to end: %+v", rows[0])
 	}
 	keys, err := right.PeerMessages().PendingPersonKeys(ctx, sessionContact)
@@ -88,7 +98,7 @@ func TestSealSessionAcceptanceReceiverRefusesTamperedSignedTraffic(t *testing.T)
 	left, _ := sessionFixture(t)
 	right := sealInboundFixture(t)
 	ctx := context.Background()
-	m, _ := sealOperatorMessage(t, sealBaseInbound(), "wire-person", "wire-device", sessionContact)
+	m, _ := sealOperatorMessage(t, sealBaseInbound(), sealSigner{"wire-person", "wire-device", sessionContact})
 	_, err := left.PeerMessages().Queue(ctx, messaging.Outgoing{
 		Contact: sessionContact, ID: m.ID, Text: "relay altered the signed text", Now: sessionAt, Seal: m.Seal,
 	})

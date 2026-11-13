@@ -30,24 +30,31 @@ func signedContactSendFixture(t *testing.T) (*Hub, string, ed25519.PrivateKey, e
 	return h, contact, person, device
 }
 
-func signedContactSend(h *Hub, contact string, person, device ed25519.PrivateKey, id, body string) protocol.Message {
+type contactSendSigner struct {
+	h       *Hub
+	contact string
+	person  ed25519.PrivateKey
+	device  ed25519.PrivateKey
+}
+
+func (s contactSendSigner) message(id, body string) protocol.Message {
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	cert := signing.Issue(person, signing.Cert{
-		Kind: signing.KindDevice, Subject: "chat", Key: device.Public().(ed25519.PublicKey),
-		Workspace: h.identity.Fingerprint(), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+	cert := signing.Issue(s.person, signing.Cert{
+		Kind: signing.KindDevice, Subject: "chat", Key: s.device.Public().(ed25519.PublicKey),
+		Workspace: s.h.identity.Fingerprint(), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 	})
 	header := signing.Header{MessageID: id, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID,
-		Workspace: h.identity.Fingerprint(), Recipients: (protocol.PeerLink{Receiver: contact}).Recipients(),
+		Workspace: s.h.identity.Fingerprint(), Recipients: (protocol.PeerLink{Receiver: s.contact}).Recipients(),
 		CreatedAt: now, TextHash: signing.TextHash(body)}
-	seal := signing.Sign(device, []signing.Cert{cert}, person.Public().(ed25519.PublicKey), header)
+	seal := signing.Sign(s.device, []signing.Cert{cert}, s.person.Public().(ed25519.PublicKey), header)
 	return protocol.Message{Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
-		ContactOp: protocol.ContactOpSend, ContactKey: contact, ContactText: body, MessageID: id,
+		ContactOp: protocol.ContactOpSend, ContactKey: s.contact, ContactText: body, MessageID: id,
 		Seal: protocol.EncodeSeal(seal)}
 }
 
-func TestSignedContactSendAcceptanceOperatorKeyRequiredAndSealPersists(t *testing.T) {
+func TestSignedContactSendAcceptanceSealPersistsAcrossRetry(t *testing.T) {
 	h, contact, person, device := signedContactSendFixture(t)
-	msg := signedContactSend(h, contact, person, device, "contact-send-signed", "hello contact")
+	msg := (contactSendSigner{h, contact, person, device}).message("contact-send-signed", "hello contact")
 	request := operatorRequest{uid: 0, msg: msg}
 	first := h.operatorContact(context.Background(), nil, request)
 	if first.Type != protocol.TypeOperatorContactResult {
@@ -75,13 +82,18 @@ func TestSignedContactSendAcceptanceOperatorKeyRequiredAndSealPersists(t *testin
 	if len(rows) != 1 || !bytes.Equal(rows[0].Seal, parsed.Marshal()) {
 		t.Fatalf("contact-send retry replaced seal: %+v", rows)
 	}
+}
+
+func TestSignedContactSendAcceptanceTamperingAndUnapprovedPersonAreRefused(t *testing.T) {
+	h, contact, person, device := signedContactSendFixture(t)
+	signer := contactSendSigner{h, contact, person, device}
 	for name, change := range map[string]func(*protocol.Message){
 		"text":      func(m *protocol.Message) { m.ContactText = "altered text" },
 		"recipient": func(m *protocol.Message) { m.ContactTo = []string{"agent-elsewhere"} },
 		"signature": func(m *protocol.Message) { m.Seal = base64.StdEncoding.EncodeToString([]byte("forged")) },
 	} {
 		t.Run(name, func(t *testing.T) {
-			bad := signedContactSend(h, contact, person, device, "tamper-"+name, "untampered")
+			bad := signer.message("tamper-"+name, "untampered")
 			change(&bad)
 			out := h.operatorContact(context.Background(), nil, operatorRequest{uid: 0, msg: bad})
 			if out.Type != protocol.TypeError || out.Code != protocol.ErrInvalidSeal {
@@ -93,13 +105,13 @@ func TestSignedContactSendAcceptanceOperatorKeyRequiredAndSealPersists(t *testin
 	messageWorkerOK(t, err)
 	_, unapprovedDevice, err := ed25519.GenerateKey(nil)
 	messageWorkerOK(t, err)
-	unapproved := signedContactSend(h, contact, unapprovedPerson, unapprovedDevice, "unapproved-person", "who is this")
+	unapproved := (contactSendSigner{h, contact, unapprovedPerson, unapprovedDevice}).message("unapproved-person", "who is this")
 	if out := h.operatorContact(context.Background(), nil, operatorRequest{uid: 0, msg: unapproved}); out.Type != protocol.TypeError || out.Code != protocol.ErrInvalidSeal {
 		t.Fatalf("unregistered person key sent as operator: %+v", out)
 	}
-	rows, _, err = h.store.PeerMessages().Page(context.Background(), contact, 0, 10)
+	rows, _, err := h.store.PeerMessages().Page(context.Background(), contact, 0, 10)
 	messageWorkerOK(t, err)
-	if len(rows) != 1 || rows[0].ID != msg.MessageID {
+	if len(rows) != 0 {
 		t.Fatalf("altered contact send persisted: %+v", rows)
 	}
 }

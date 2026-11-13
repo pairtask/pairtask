@@ -15,6 +15,16 @@ import (
 	"github.com/pairtask/pairtask/internal/signing"
 )
 
+type tlsSealReceipt struct {
+	receiver        *Hub
+	agent           *Client
+	ctx             context.Context
+	senderWorkspace string
+	seal            []byte
+	personID        string
+	now             time.Time
+}
+
 func TestSignedContactTLSAcceptancePinnedLinkKeepsOperatorSeal(t *testing.T) {
 	f := newAddressFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -62,26 +72,43 @@ func TestSignedContactTLSAcceptancePinnedLinkKeepsOperatorSeal(t *testing.T) {
 	if result.Sent != 1 {
 		t.Fatalf("pinned TLS session sent %d messages, want 1", result.Sent)
 	}
-	rows, _, err := remote.db.PeerMessages().Page(ctx, senderWorkspace, 0, 10)
+	receipt := tlsSealReceipt{receiver: receiver, agent: agent, ctx: ctx, senderWorkspace: senderWorkspace,
+		seal: seal, personID: signing.KeyID(personPublic), now: now}
+	receipt.assertDelivery(t)
+	receipt.assertApproval(t)
+}
+
+func (r tlsSealReceipt) assertDelivery(t *testing.T) {
+	t.Helper()
+	rows, _, err := r.receiver.store.PeerMessages().Page(r.ctx, r.senderWorkspace, 0, 10)
 	messageWorkerOK(t, err)
-	if len(rows) != 1 || rows[0].Direction != messaging.DirIn || !bytes.Equal(rows[0].Seal, seal) {
+	if len(rows) != 1 {
+		t.Fatalf("pinned TLS recipient got %d rows, want 1", len(rows))
+	}
+	if rows[0].Direction != messaging.DirIn || !bytes.Equal(rows[0].Seal, r.seal) {
 		t.Fatalf("pinned TLS recipient lost seal: %+v", rows)
 	}
-	receiver.drainImports(ctx, map[string]*Client{agent.ID: agent})
-	delivered := recv(t, agent)
-	if delivered.Origin != protocol.OriginRemote || delivered.From != protocol.OperatorID || delivered.Seal != base64.StdEncoding.EncodeToString(seal) {
+	r.receiver.drainImports(r.ctx, map[string]*Client{r.agent.ID: r.agent})
+	delivered := recv(t, r.agent)
+	if delivered.Origin != protocol.OriginRemote || delivered.From != protocol.OperatorID {
 		t.Fatalf("recipient broker/agent delivery lost provenance: %+v", delivered)
 	}
-	personID := signing.KeyID(personPublic)
-	keys, err := remote.db.PeerMessages().PendingPersonKeys(ctx, senderWorkspace)
+	if delivered.Seal != base64.StdEncoding.EncodeToString(r.seal) {
+		t.Fatalf("recipient broker/agent delivery lost provenance: %+v", delivered)
+	}
+	keys, err := r.receiver.store.PeerMessages().PendingPersonKeys(r.ctx, r.senderWorkspace)
 	messageWorkerOK(t, err)
-	if len(keys) != 1 || keys[0] != personID {
+	if len(keys) != 1 || keys[0] != r.personID {
 		t.Fatalf("remote operator key was not held for approval: %v", keys)
 	}
-	messageWorkerOK(t, remote.db.AcceptPersonKey(ctx, senderWorkspace, personID, now))
-	roots, err := remote.db.SigningRoots(ctx)
+}
+
+func (r tlsSealReceipt) assertApproval(t *testing.T) {
+	t.Helper()
+	messageWorkerOK(t, r.receiver.store.AcceptPersonKey(r.ctx, r.senderWorkspace, r.personID, r.now))
+	roots, err := r.receiver.store.SigningRoots(r.ctx)
 	messageWorkerOK(t, err)
-	parsed, err := signing.ParseSeal(rows[0].Seal)
+	parsed, err := signing.ParseSeal(r.seal)
 	messageWorkerOK(t, err)
 	if got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now()); got.State != signing.Verified || got.Signer == nil || got.Signer.Basis != signing.BasisPerson {
 		t.Fatalf("approved TLS contact signature did not verify: %+v", got)

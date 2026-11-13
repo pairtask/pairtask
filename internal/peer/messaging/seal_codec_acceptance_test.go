@@ -32,24 +32,37 @@ func TestSealCodecAcceptancePreservesEachMessageKindAndOpaqueSeal(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			seal := []byte{0, 255, 1, 0, 42}
-			wire, err := messaging.EncodeSealed(inner, seal)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if kind, err := messaging.Kind(wire); err != nil || kind != messaging.FrameSealed {
-				t.Fatalf("outer frame kind=%d: %v", kind, err)
-			}
-			gotInner, gotSeal, err := messaging.DecodeSealed(wire)
-			if err != nil || !bytes.Equal(gotInner, inner) || !bytes.Equal(gotSeal, seal) {
-				t.Fatalf("sealed round trip: inner=%x seal=%x err=%v", gotInner, gotSeal, err)
-			}
-			// A pre-v10 decoder must not mistake the wrapper for an unsigned message.
-			if _, err := messaging.DecodeMessage(wire); !errors.Is(err, messaging.ErrProtocol) {
-				t.Fatalf("legacy message decoder accepted sealed frame: %v", err)
-			}
+			assertSealedRoundTrip(t, inner)
 		})
 	}
+}
+
+func assertSealedRoundTrip(t *testing.T, inner []byte) {
+	t.Helper()
+	seal := []byte{0, 255, 1, 0, 42}
+	wire, err := messaging.EncodeSealed(inner, seal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, err := messaging.Kind(wire)
+	if err != nil || kind != messaging.FrameSealed {
+		t.Fatalf("outer frame kind=%d: %v", kind, err)
+	}
+	gotInner, gotSeal, err := messaging.DecodeSealed(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotInner, inner) || !bytes.Equal(gotSeal, seal) {
+		t.Fatalf("sealed round trip: inner=%x seal=%x", gotInner, gotSeal)
+	}
+	// A pre-v10 decoder must not mistake the wrapper for an unsigned message.
+	if _, err := messaging.DecodeMessage(wire); !errors.Is(err, messaging.ErrProtocol) {
+		t.Fatalf("legacy message decoder accepted sealed frame: %v", err)
+	}
+}
+
+func TestSealCodecAcceptanceUnsignedWrapper(t *testing.T) {
+	base := messaging.Message{ID: "sealed-1", N: 1, CreatedAt: sessionAt, Text: "unsigned migration"}
 	inner, err := messaging.EncodeMessage(base)
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +111,17 @@ func TestSealCodecAcceptanceRejectsControlNestingAndMalformedFrames(t *testing.T
 			}
 		})
 	}
+}
+
+func TestSealCodecAcceptanceRejectsMalformedOuterFrame(t *testing.T) {
+	message, err := messaging.EncodeMessage(messaging.Message{ID: "m", N: 1, CreatedAt: sessionAt, Text: "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := messaging.EncodeSealed(message, []byte("seal"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, wire := range map[string][]byte{
 		"truncated":     valid[:len(valid)-1],
 		"trailing":      append(bytes.Clone(valid), 0),
@@ -108,6 +132,13 @@ func TestSealCodecAcceptanceRejectsControlNestingAndMalformedFrames(t *testing.T
 				t.Fatalf("malformed outer frame accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestSealCodecAcceptanceSealSizeLimit(t *testing.T) {
+	message, err := messaging.EncodeMessage(messaging.Message{ID: "m", N: 1, CreatedAt: sessionAt, Text: "body"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if _, err := messaging.EncodeSealed(message, bytes.Repeat([]byte{1}, messaging.MaxSealBytes+1)); !errors.Is(err, messaging.ErrProtocol) {
 		t.Fatalf("oversized seal accepted: %v", err)

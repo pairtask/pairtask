@@ -13,6 +13,31 @@ import (
 
 func TestSignedContactKeyApprovalAcceptanceOnlySeenKeyCanBeApproved(t *testing.T) {
 	h, contact := remoteHubFixture(t)
+	approve, parsed, personID := seedPendingContactPerson(t, h, contact)
+	ctx := context.Background()
+	list := h.operatorContact(ctx, nil, operatorRequest{uid: 0, msg: protocol.Message{
+		Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
+		ContactOp: protocol.ContactOpList, ContactKey: contact, MessageID: "list-before-approval",
+	}})
+	if list.Type != protocol.TypeOperatorContactResult || list.ContactPage == nil || len(list.ContactPage.PendingPersonKeys) != 1 || list.ContactPage.PendingPersonKeys[0] != personID {
+		t.Fatalf("operator page did not name pending contact key: %+v", list)
+	}
+	out := h.operatorContact(ctx, nil, operatorRequest{uid: 0, msg: approve})
+	if out.Type != protocol.TypeOperatorContactResult {
+		t.Fatalf("operator could not accept seen contact key: %+v", out)
+	}
+	if out.ContactPage == nil || len(out.ContactPage.PendingPersonKeys) != 0 {
+		t.Fatalf("approved key still shown as pending: %+v", out.ContactPage)
+	}
+	roots, err := h.signingRoots(ctx)
+	messageWorkerOK(t, err)
+	if got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now()); got.State != signing.Verified || got.Signer == nil || got.Signer.Basis != signing.BasisPerson {
+		t.Fatalf("approved contact key did not verify: %+v", got)
+	}
+}
+
+func seedPendingContactPerson(t *testing.T, h *Hub, contact string) (protocol.Message, signing.Seal, string) {
+	t.Helper()
 	ctx := context.Background()
 	if problem := h.loadIdentity(ctx); problem != "" {
 		t.Fatal(problem)
@@ -49,55 +74,50 @@ func TestSignedContactKeyApprovalAcceptanceOnlySeenKeyCanBeApproved(t *testing.T
 	if got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now()); got.State != signing.Unverified {
 		t.Fatalf("unapproved contact key already trusted: %+v", got)
 	}
-	list := h.operatorContact(ctx, nil, operatorRequest{uid: 0, msg: protocol.Message{
-		Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
-		ContactOp: protocol.ContactOpList, ContactKey: contact, MessageID: "list-before-approval",
-	}})
-	if list.Type != protocol.TypeOperatorContactResult || list.ContactPage == nil || len(list.ContactPage.PendingPersonKeys) != 1 || list.ContactPage.PendingPersonKeys[0] != personID {
-		t.Fatalf("operator page did not name pending contact key: %+v", list)
-	}
-	out := h.operatorContact(ctx, nil, operatorRequest{uid: 0, msg: approve})
-	if out.Type != protocol.TypeOperatorContactResult {
-		t.Fatalf("operator could not accept seen contact key: %+v", out)
-	}
-	if out.ContactPage == nil || len(out.ContactPage.PendingPersonKeys) != 0 {
-		t.Fatalf("approved key still shown as pending: %+v", out.ContactPage)
-	}
-	roots, err = h.signingRoots(ctx)
-	messageWorkerOK(t, err)
-	if got := signing.Verify(&parsed, protocol.RootsOf(roots), time.Now()); got.State != signing.Verified || got.Signer == nil || got.Signer.Basis != signing.BasisPerson {
-		t.Fatalf("approved contact key did not verify: %+v", got)
-	}
+	return approve, parsed, personID
 }
 
 func TestSignedContactKeyApprovalAcceptanceRequireSealsOperatorSwitch(t *testing.T) {
 	h, contact := remoteHubFixture(t)
 	ctx := context.Background()
-	set := func(id, choice string) protocol.Message {
-		return h.operatorContact(ctx, nil, operatorRequest{uid: 0, msg: protocol.Message{
-			Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
-			ContactOp: protocol.ContactOpRequireSeals, ContactKey: contact, ContactText: choice, MessageID: id,
-		}})
-	}
 	if required, err := h.store.PeerMessages().RequiresSeals(ctx, contact); err != nil || required {
 		t.Fatalf("fresh contact policy: required=%t err=%v", required, err)
 	}
-	if out := set("bad-choice", "maybe"); out.Type != protocol.TypeError || out.Code != protocol.ErrMalformedFrame {
-		t.Fatalf("invalid policy choice accepted: %+v", out)
-	}
-	if out := set("require-on", "on"); out.Type != protocol.TypeOperatorContactResult || out.ContactPage == nil || !out.ContactPage.RequireSeals {
-		t.Fatalf("operator could not require seals: %+v", out)
-	}
+	assertRequireSealsChoice(t, h, contact, "require-on", "on", true)
 	m := messaging.Message{ID: "unsigned-under-require", N: 1, CreatedAt: time.Now(), Text: "unsigned"}
 	a, err := h.store.PeerMessages().AcceptVersion(ctx, contact, messaging.Arrival{Version: int(messaging.SealVersion), Message: m, At: time.Now()})
 	if err != nil || a.Stored || a.Reason != messaging.ReasonUnsigned {
 		t.Fatalf("required contact's unsigned message was accepted: answer=%+v err=%v", a, err)
 	}
-	if out := set("require-off", "off"); out.Type != protocol.TypeOperatorContactResult || out.ContactPage == nil || out.ContactPage.RequireSeals {
-		t.Fatalf("operator could not relax policy: %+v", out)
-	}
+	assertRequireSealsChoice(t, h, contact, "require-off", "off", false)
 	a, err = h.store.PeerMessages().AcceptVersion(ctx, contact, messaging.Arrival{Version: int(messaging.SealVersion), Message: m, At: time.Now()})
 	if err != nil || !a.Stored {
 		t.Fatalf("unsigned migration did not resume after off: answer=%+v err=%v", a, err)
 	}
+}
+
+func TestSignedContactKeyApprovalAcceptanceInvalidRequireChoice(t *testing.T) {
+	h, contact := remoteHubFixture(t)
+	out := requireSealsCommand(h, contact, "bad-choice", "maybe")
+	if out.Type != protocol.TypeError || out.Code != protocol.ErrMalformedFrame {
+		t.Fatalf("invalid policy choice accepted: %+v", out)
+	}
+}
+
+func assertRequireSealsChoice(t *testing.T, h *Hub, contact, id, choice string, want bool) {
+	t.Helper()
+	out := requireSealsCommand(h, contact, id, choice)
+	if out.Type != protocol.TypeOperatorContactResult || out.ContactPage == nil {
+		t.Fatalf("operator could not set require-seals=%t: %+v", want, out)
+	}
+	if out.ContactPage.RequireSeals != want {
+		t.Fatalf("operator require-seals=%t, want %t", out.ContactPage.RequireSeals, want)
+	}
+}
+
+func requireSealsCommand(h *Hub, contact, id, choice string) protocol.Message {
+	return h.operatorContact(context.Background(), nil, operatorRequest{uid: 0, msg: protocol.Message{
+		Type: protocol.TypeOperatorContact, ProtocolVersion: protocol.SealVersion,
+		ContactOp: protocol.ContactOpRequireSeals, ContactKey: contact, ContactText: choice, MessageID: id,
+	}})
 }
