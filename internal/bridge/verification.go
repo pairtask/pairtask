@@ -22,14 +22,32 @@ func (c *Client) verified(msg protocol.Message) protocol.Message {
 	return msg
 }
 
+// takeRoots keeps what the welcome said seals verify against: the roots,
+// and this workspace's key when it named it.
+func (c *Client) takeRoots(welcome protocol.Message) {
+	c.roots = welcome.SigningRoots
+	if welcome.Identity != nil {
+		c.ownWorkspace = welcome.Identity.Workspace
+	}
+}
+
 // ownOperator refuses an origin=operator message verified as another
 // workspace's operator: a paired workspace's person key is pinned here
 // too, but only this workspace's operator speaks with operator origin.
 func (c *Client) ownOperator(msg protocol.Message, v *protocol.Verification) *protocol.Verification {
-	if c.ownWorkspace == "" || msg.Origin != protocol.OriginOperator || v.Signer == nil || v.Signer.Workspace == c.ownWorkspace {
+	if !c.foreignOperator(msg, v) {
 		return v
 	}
 	return &protocol.Verification{State: signing.Invalid, Reason: "signed for another workspace"}
+}
+
+// foreignOperator: an operator-origin message whose signer is another
+// workspace's, when the welcome named this one.
+func (c *Client) foreignOperator(msg protocol.Message, v *protocol.Verification) bool {
+	if c.ownWorkspace == "" || msg.Origin != protocol.OriginOperator {
+		return false
+	}
+	return v.Signer != nil && v.Signer.Workspace != c.ownWorkspace
 }
 
 // verifyFrame is a message's verification as recipient self sees it.
