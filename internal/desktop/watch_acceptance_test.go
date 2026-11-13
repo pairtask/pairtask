@@ -80,6 +80,39 @@ func TestDesktopWatcherAcceptanceNewContactAnnouncesFirstMessage(t *testing.T) {
 	assertWatcherNotices(t, f.notices, "1 unread from Beta")
 }
 
+func TestDesktopWatcherAcceptanceCountsUnreadAcrossContactPages(t *testing.T) {
+	readAt := time.Now()
+	f := &unreadPagesFixture{t: t, pages: map[int64]*protocol.ContactMessagePage{
+		0: {Messages: []protocol.ContactMessageView{{Direction: "in", Cursor: 4}, {Direction: "in", Cursor: 3, ReadAt: &readAt}}, More: true},
+		3: {Messages: []protocol.ContactMessageView{{Direction: "in", Cursor: 2}, {Direction: "in", Cursor: 1}}},
+	}}
+	var notices []string
+	call := func(_ context.Context, req protocol.Message) protocol.Message {
+		if req.Type == protocol.TypeOperatorPairing {
+			return protocol.Message{Type: protocol.TypeOperatorPairingResult,
+				PairingResult: &protocol.PairingSnapshot{Contacts: []protocol.PairingContactView{{IdentityKey: "alpha-key", LocalName: "Alpha", Confirmed: true}}}}
+		}
+		return f.call(context.Background(), req)
+	}
+	w := newWatcher(call, func(_ context.Context, _, body string) error {
+		notices = append(notices, body)
+		return nil
+	}, slog.New(slog.DiscardHandler))
+	w.checkAll(context.Background())
+	if len(notices) != 0 {
+		t.Fatalf("baseline announced old unread messages: %q", notices)
+	}
+	f.pages = map[int64]*protocol.ContactMessagePage{
+		0: {Messages: []protocol.ContactMessageView{{Direction: "in", Cursor: 5}, {Direction: "in", Cursor: 4}}, More: true},
+		4: {Messages: []protocol.ContactMessageView{{Direction: "in", Cursor: 3, ReadAt: &readAt}, {Direction: "in", Cursor: 2}}, More: true},
+		2: {Messages: []protocol.ContactMessageView{{Direction: "in", Cursor: 1}}},
+	}
+	w.check(context.Background(), "alpha-key")
+	if !slices.Equal(notices, []string{"4 unread from Alpha"}) {
+		t.Fatalf("notice after a new message displaced an older one on the first page = %q, want total 4", notices)
+	}
+}
+
 func TestDesktopWatcherAcceptanceSkipsUnconfirmedAndUnpairedContacts(t *testing.T) {
 	unpairedAt := time.Now()
 	f := &noticeFixture{
