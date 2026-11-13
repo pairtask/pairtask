@@ -115,7 +115,7 @@ func identityInit(ctx context.Context, req identityRequest) (identityReport, err
 	return identityReport{PersonKey: signing.KeyID(keys.PersonPublic()), Registered: err == nil, IdentityView: view}, err
 }
 
-var errKeysExist = errors.New("this account has keys already; `pairtask operator identity status` shows them")
+var errKeysExist = errors.New("this account has keys already; `pairtask identity status` on the host shows them")
 
 // noKeysYet: dir holds no keys; else why init can't make them there.
 func noKeysYet(dir string) error {
@@ -177,7 +177,7 @@ func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer)
 	}
 	switch {
 	case report.PersonKey == "":
-		fmt.Fprintln(stdout, "no keys: your messages go unsigned; `pairtask operator identity init` makes them")
+		fmt.Fprintln(stdout, "no keys: your messages go unsigned; `pairtask identity init` on the host makes them")
 	case report.Registered:
 		fmt.Fprintf(stdout, "person key %s, registered: your messages are signed\n", report.PersonKey)
 	default:

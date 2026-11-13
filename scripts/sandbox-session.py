@@ -42,9 +42,10 @@ def identity_command(action):
 
 def secured_command(args):
     """A login shell in the secured runtime, or one command there."""
-    if not args.command:
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if not command:
         return secured_exec(args, ["/bin/bash", "-l"])
-    return secured_exec(args, args.command, tty=args.tty)
+    return secured_exec(args, command, tty=args.tty)
 
 
 def add_secured_target(p):
