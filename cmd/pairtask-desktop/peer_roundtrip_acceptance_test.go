@@ -48,7 +48,7 @@ func newDesktopPair(t *testing.T) *desktopPair {
 	if p.identity == "" {
 		t.Fatal("desktop peer has no identity")
 	}
-	assertNoDesktopListener(t, dir)
+	assertOnlyDesktopNodeSocket(t, dir)
 	return p
 }
 
@@ -69,7 +69,7 @@ func (p *desktopPair) redeem(t *testing.T) {
 		p.bIdentity = confirmedContact(desktopPairStatus(t, p.a))
 		return p.bIdentity != ""
 	})
-	assertNoDesktopListener(t, p.dir)
+	assertOnlyDesktopNodeSocket(t, p.dir)
 }
 
 func hasPairingRequest(status protocol.Message, identity string) bool {
@@ -122,7 +122,7 @@ func (p *desktopPair) restartAndReceive(t *testing.T) {
 	if got := desktopPairStatus(t, a).SelfIdentity; got != p.identity {
 		t.Fatalf("restart changed Desktop identity: got %q, want %q", got, p.identity)
 	}
-	assertNoDesktopListener(t, p.dir)
+	assertOnlyDesktopNodeSocket(t, p.dir)
 	awaitDesktop(t, "A receives B's queued reply after restart", func() bool {
 		return hasContactMessage(a.Call(context.Background(), protocol.Message{Type: protocol.TypeOperatorContact,
 			ContactOp: protocol.ContactOpList, ContactKey: p.bIdentity}), "in", "reply while Desktop is closed")
@@ -161,20 +161,35 @@ func awaitDesktop(t *testing.T, what string, check func() bool) {
 	}
 }
 
-func assertNoDesktopListener(t *testing.T, dir string) {
+func assertOnlyDesktopNodeSocket(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	sockets := 0
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
 			t.Fatal(err)
 		}
 		if info.Mode()&os.ModeSocket != 0 {
-			t.Fatalf("Desktop opened a listener: %s", entry.Name())
+			sockets++
+			assertDesktopNodeSocket(t, entry.Name(), info.Mode().Perm())
 		}
+	}
+	if sockets != 1 {
+		t.Fatalf("Desktop opened %d node sockets, want one", sockets)
+	}
+}
+
+func assertDesktopNodeSocket(t *testing.T, name string, mode os.FileMode) {
+	t.Helper()
+	if name != desktop.SocketFile {
+		t.Fatalf("Desktop opened an unexpected listener: %s", name)
+	}
+	if mode != 0o600 {
+		t.Fatalf("Desktop node socket mode is %o, want 0600", mode)
 	}
 }
 
