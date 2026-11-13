@@ -77,6 +77,18 @@ func TestContactKeyCommandsAcceptanceAmbiguousApproval(t *testing.T) {
 	}
 }
 
+func TestContactKeyCommandsAcceptanceExtraKeyArgumentCannotApprove(t *testing.T) {
+	person := "sha256:" + strings.Repeat("c", 64)
+	h, _ := contactKeyCommandHarness(t, person)
+	v2Command(h, "/pair accept-key different extra")
+	if h.m.State().InFlight != 0 {
+		t.Fatal("extra explicit key arguments sent an approval request")
+	}
+	if !strings.Contains(h.m.State().Status, "usage") {
+		t.Fatalf("malformed approval did not explain the expected command: %q", h.m.State().Status)
+	}
+}
+
 func TestContactKeyCommandsAcceptanceRequireSealsSwitch(t *testing.T) {
 	first, second := "sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64)
 	h, contact := contactKeyCommandHarness(t, first, second)
