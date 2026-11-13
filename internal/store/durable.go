@@ -225,7 +225,7 @@ func (s *Store) AgentProtocolVersion(ctx context.Context, id string) (int, error
 	return int(version.Int64), err
 }
 
-const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, mm.review_outcome, ` + remoteColumns
+const durableColumns = `mm.message_id, m.seq, m.ts, m.sender, mm.sender_session, m.recipient, m.payload, mm.in_reply_to, mm.origin, ` + groupColumn + `, mm.room, mm.mentions, mm.review_id, mm.review_outcome, ` + remoteColumns + `, mm.seal`
 
 // groupColumn is a group send's canonical members (JSON), or NULL: an
 // operator group's, or a paired workspace's message to several agents, as
@@ -296,10 +296,10 @@ type scanner interface{ Scan(...any) error }
 func scanDurableMessage(row scanner) (protocol.Message, error) {
 	msg := protocol.Message{Type: protocol.TypeMsg, Durable: true, AckRequested: true}
 	var payload string
-	var origin, group, room, mentions, reviewID, outcome sql.NullString
+	var origin, group, room, mentions, reviewID, outcome, seal sql.NullString
 	var remote remoteFields
 	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group, &room, &mentions, &reviewID,
-		&outcome, &remote.contact, &remote.label, &remote.sender, &remote.replyID, &remote.replyAuthor)
+		&outcome, &remote.contact, &remote.label, &remote.sender, &remote.replyID, &remote.replyAuthor, &seal)
 	if err != nil {
 		return msg, err
 	}
@@ -307,7 +307,7 @@ func scanDurableMessage(row scanner) (protocol.Message, error) {
 		return msg, err
 	}
 	msg.Remote = remote.view()
-	msg.Room, msg.ReviewID = room.String, reviewID.String
+	msg.Room, msg.ReviewID, msg.Seal = room.String, reviewID.String, seal.String
 	if msg.Mentions, err = groupList(mentions); err != nil {
 		return msg, err
 	}

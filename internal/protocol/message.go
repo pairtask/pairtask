@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = RoleVersion
+	Version                 = SealVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -235,6 +235,12 @@ type Message struct {
 	AgentRole           *AgentRole               `json:"agent_role,omitempty"`            // role_result
 	FeedbackLimit       int                      `json:"feedback_limit,omitempty"`        // classifier_feedback_get: items to list
 	ClassifierFeedback  *ClassifierFeedback      `json:"classifier_feedback,omitempty"`   // classifier_feedback_result
+	Seal                string                   `json:"seal,omitempty"`                  // v29: the sender's signed header, base64; set by the operator's client, kept by the broker (#115)
+	Verification        *Verification            `json:"verification,omitempty"`          // v29: the recipient's own verdict on seal; never sent to a broker
+	SigningRoots        []SigningRoot            `json:"signing_roots,omitempty"`         // v29 welcome: the keys seals verify against here
+	IdentityOp          string                   `json:"identity_op,omitempty"`           // operator_identity: register or status
+	IdentityKey         string                   `json:"identity_key,omitempty"`          // operator_identity register: the person public key, base64
+	Identity            *IdentityView            `json:"identity,omitempty"`              // operator_identity_result
 	ReviewID            string                   `json:"review_id,omitempty"`             // review frames (#201): the review concerned
 	ReviewOp            string                   `json:"review_op,omitempty"`             // operator_review: what to do
 	ReviewSpec          *ReviewSpec              `json:"review_spec,omitempty"`           // operator_review request

@@ -22,7 +22,9 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 	}
 	clients[c.ID] = c
 	h.seq++
-	h.enqueue(clients, c, h.welcomeRooms(context.Background(), c, protocol.Message{Type: protocol.TypeWelcome, AgentID: c.ID, SessionID: c.SessionID, Seq: h.seq, ProtocolVersion: c.ProtocolVersion}))
+	welcome := protocol.Message{Type: protocol.TypeWelcome, AgentID: c.ID, SessionID: c.SessionID, Seq: h.seq, ProtocolVersion: c.ProtocolVersion}
+	welcome = h.welcomeRoots(context.Background(), c, h.welcomeRooms(context.Background(), c, welcome))
+	h.enqueue(clients, c, welcome)
 	for _, msg := range pending {
 		if !h.enqueue(clients, c, msg) {
 			return
