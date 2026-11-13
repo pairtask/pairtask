@@ -29,6 +29,11 @@ func TestPeerSealEpochAcceptanceReusedIDKeepsEachPairingsSeal(t *testing.T) {
 		t.Fatalf("reused ID in new pairing did not keep its own seal: %+v", second)
 	}
 	page := messagePage(t, f.db.PeerMessages(), f.key)
+	assertPairingSeals(t, page, firstSeal, secondSeal)
+}
+
+func assertPairingSeals(t *testing.T, page []messaging.Row, firstSeal, secondSeal []byte) {
+	t.Helper()
 	if len(page) != 2 {
 		t.Fatalf("both pairing histories not retained: %+v", page)
 	}

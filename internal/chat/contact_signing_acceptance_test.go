@@ -41,15 +41,17 @@ func contactSigningFixture(t *testing.T) (protocol.ContactMessageView, signingVi
 
 func TestContactSigningAcceptanceChatShowsTrustAndDowngradeStates(t *testing.T) {
 	row, roots := contactSigningFixture(t)
-	m := &Model{signing: roots}
+	m := &Model{}
+	thread := m.contacts.thread(row.Contact)
+	thread.signing = roots
 	if line := m.signedRow(row); line != "· signed by their operator" {
 		t.Fatalf("verified operator marker: %q", line)
 	}
-	m.signing.roots[0].Approved = false
+	thread.signing.roots[0].Approved = false
 	if line := m.signedRow(row); !strings.Contains(line, "key not accepted") {
 		t.Fatalf("pending person key marker: %q", line)
 	}
-	m.signing.roots[0].Approved = true
+	thread.signing.roots[0].Approved = true
 	unsigned := row
 	unsigned.Seal = ""
 	if line := m.signedRow(unsigned); line != "· unsigned" {
@@ -74,7 +76,11 @@ func TestContactSigningAcceptanceChatShowsTrustAndDowngradeStates(t *testing.T) 
 
 func TestContactSigningAcceptanceChatBindsContactRecipientsAndReply(t *testing.T) {
 	row, roots := contactSigningFixture(t)
-	if got := verifyContactRow(row, roots); got.State != signing.Verified || got.Signer == nil || got.Signer.Basis != signing.BasisPerson {
+	got := verifyContactRow(row, roots)
+	if got.State != signing.Verified || got.Signer == nil {
+		t.Fatalf("intact contact message did not verify: %+v", got)
+	}
+	if got.Signer.Basis != signing.BasisPerson {
 		t.Fatalf("intact contact message did not verify: %+v", got)
 	}
 	for name, change := range map[string]func(*protocol.ContactMessageView){

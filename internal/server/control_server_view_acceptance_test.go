@@ -40,7 +40,7 @@ func TestControlServerViewAcceptancePendingAndOlderPeerAreHonest(t *testing.T) {
 	_, unavailable := f.view(t)["peer_state_available"]
 	operatorEqual(t, "unknown version is unknown", unavailable, false)
 }
-func TestControlServerViewAcceptanceRemotePauseStateAndSuccessfulV9Clear(t *testing.T) {
+func TestControlServerViewAcceptanceRemotePauseStateAndSuccessfulSessionClear(t *testing.T) {
 	f := newControlServerFixture(t)
 	c, err := f.f.st.PeerMessages().AdmitControl(context.Background(), f.id.Fingerprint())
 	operatorNoError(t, err)
@@ -55,7 +55,7 @@ func TestControlServerViewAcceptanceRemotePauseStateAndSuccessfulV9Clear(t *test
 	s := messaging.Session{Frames: conn.MessageFrames(ctx), Store: bound, Contact: f.route.pin, Now: time.Now}
 	_, version, err := s.OpenDial(ctx)
 	operatorNoError(t, err)
-	operatorEqual(t, "v9 session", version, byte(9))
+	operatorEqual(t, "newest session", version, byte(messaging.MaxVersion))
 	_, err = s.OfferLive(false)
 	operatorNoError(t, err)
 	var state string

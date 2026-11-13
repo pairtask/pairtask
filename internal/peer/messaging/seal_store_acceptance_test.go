@@ -9,8 +9,8 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 )
 
-func TestSealStoreAcceptanceOutboundSealSurvivesRestartAndRetry(t *testing.T) {
-	db, path := sessionFixture(t)
+func TestSealStoreAcceptanceRetryKeepsOriginalSeal(t *testing.T) {
+	db, _ := sessionFixture(t)
 	ctx := context.Background()
 	firstSeal := []byte{0, 1, 255, 42}
 	o := messaging.Outgoing{Contact: sessionContact, ID: "signed-outbound", Text: "same content", Now: sessionAt, Seal: firstSeal}
@@ -34,6 +34,18 @@ func TestSealStoreAcceptanceOutboundSealSurvivesRestartAndRetry(t *testing.T) {
 	o.Seal = []byte("second seal")
 	if _, err := db.PeerMessages().Queue(ctx, o); !errors.Is(err, messaging.ErrConflict) {
 		t.Fatalf("different seal on retry: want conflict, got %v", err)
+	}
+}
+
+func TestSealStoreAcceptanceOutboundSealSurvivesRestart(t *testing.T) {
+	db, path := sessionFixture(t)
+	ctx := context.Background()
+	firstSeal := []byte{0, 1, 255, 42}
+	first, err := db.PeerMessages().Queue(ctx, messaging.Outgoing{
+		Contact: sessionContact, ID: "signed-outbound", Text: "same content", Now: sessionAt, Seal: firstSeal,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
