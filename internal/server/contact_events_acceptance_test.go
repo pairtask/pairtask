@@ -36,8 +36,16 @@ func TestContactEventsAcceptancePartialInboundOnlyNotifiesOperator(t *testing.T)
 	operatorEqual(t, "durable before failure", stored.ID, "partial")
 	// Close before End: the session fails after committing the inbound row.
 	conn.Close()
+	// Learning that this contact speaks an old unsigned version changes the
+	// pairing view first, so the operator can see the upgrade alert.
 	frame := owner.frame()
 	event := sessionDecode[protocol.SessionEvent](t, frame, "event")
+	operatorEqual(t, "old-version alert event", event.Kind, protocol.EventPairingChanged)
+	if strings.Contains(sessionJSON(frame), "PRIVATE_CONTACT_BODY") {
+		t.Fatal("pairing event exposed text")
+	}
+	frame = owner.frame()
+	event = sessionDecode[protocol.SessionEvent](t, frame, "event")
 	operatorEqual(t, "partial progress event", event.Kind, protocol.EventContactMessagesChanged)
 	operatorEqual(t, "attributed contact", event.ContactKey, id.Fingerprint())
 	if strings.Contains(sessionJSON(frame), "PRIVATE_CONTACT_BODY") {

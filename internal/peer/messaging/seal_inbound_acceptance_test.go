@@ -270,17 +270,15 @@ func assertRequiredUnsignedRefused(t *testing.T, db *store.Store) {
 	if err != nil || !required {
 		t.Fatalf("require-seals choice was not stored: required=%t err=%v", required, err)
 	}
-	for _, tc := range []struct {
-		version int
-		reason  string
-	}{
-		{int(messaging.SealVersion), messaging.ReasonUnsigned},
-		{int(messaging.PairingVersion), messaging.ReasonInvalid},
-	} {
-		m := sealBaseInbound()
-		m.ID, m.N = fmt.Sprintf("unsigned-v%d", tc.version), uint64(tc.version)
-		a, err := db.PeerMessages().AcceptVersion(ctx, sessionContact, messaging.Arrival{Version: tc.version, Message: m, At: sessionAt})
-		requireInboundRefusal(t, a, err, tc.reason)
+	m := sealBaseInbound()
+	m.ID, m.N = fmt.Sprintf("unsigned-v%d", messaging.SealVersion), uint64(messaging.SealVersion)
+	a, err := db.PeerMessages().AcceptVersion(ctx, sessionContact, messaging.Arrival{Version: int(messaging.SealVersion), Message: m, At: sessionAt})
+	requireInboundRefusal(t, a, err, messaging.ReasonUnsigned)
+	m.ID, m.N = fmt.Sprintf("unsigned-v%d", messaging.PairingVersion), uint64(messaging.PairingVersion)
+	a, err = db.PeerMessages().AcceptVersion(ctx, sessionContact, messaging.Arrival{Version: int(messaging.PairingVersion), Message: m, At: sessionAt})
+	requireInboundStored(t, a, err)
+	if row := inboundPage(t, db, 2)[1]; len(row.Seal) != 0 {
+		t.Fatalf("legacy message was stored as signed: %+v", row)
 	}
 }
 
