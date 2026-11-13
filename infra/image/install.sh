@@ -111,6 +111,8 @@ install -m 0644 infra/image/pairtask-agent-aliases.sh /etc/profile.d/pairtask-ag
 printf '\n. /etc/profile.d/pairtask-agent-aliases.sh\n' >>/etc/bash.bashrc
 install -m 0644 infra/image/pairtask-starship.sh /etc/profile.d/pairtask-starship.sh
 printf '\n. /etc/profile.d/pairtask-starship.sh\n' >>/etc/bash.bashrc
+install -m 0644 infra/image/pairtask-home-check.sh /etc/profile.d/pairtask-home-check.sh
+printf '\n. /etc/profile.d/pairtask-home-check.sh\n' >>/etc/bash.bashrc
 # Legacy names an older host checkout drives (docs/sandbox-tools.md#image-layout).
 python3 infra/image/install-layout.py apply --root / --layout infra/image/layout-v2.json
 systemctl disable ssh.service ssh.socket || true

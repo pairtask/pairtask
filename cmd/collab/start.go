@@ -453,6 +453,7 @@ type startRuntime struct {
 	Exec           execFunc
 	Status         statusFunc             // broker status for the resume checks; nil skips them
 	Chdir          func(dir string) error // os.Chdir in production
+	Capacity       capacityFunc           // the agent home's space (#371); nil skips the check
 }
 
 // runStart is `pairtask start`: write the config if any, then replace this
@@ -474,6 +475,9 @@ func runStart(args []string, rt startRuntime) int {
 	}
 	plan, code := planStart(opts, rt)
 	if code != 0 {
+		return code
+	}
+	if code := checkCapacity(rt); code != 0 {
 		return code
 	}
 	if opts.DryRun {

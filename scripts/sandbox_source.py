@@ -21,7 +21,7 @@ RECIPE_PATHS = ["infra/image/" + name for name in (
     "pairtask-dev-executor@.service", "secured-codex.toml", "secured-environments.toml", "pairtask-executor-connect",
     "pairtask-client-setup.service", "pairtask-broker-setup",
     "pairtask-workspace-setup.service", "pairtask-workspace-setup",
-    "pairtask-agent-aliases.sh", "pairtask-starship.sh", "install-skill.sh",
+    "pairtask-agent-aliases.sh", "pairtask-starship.sh", "pairtask-home-check.sh", "install-skill.sh",
     "pairtask-rtk-setup", "pairtask-rtk-setup.service", "codex-config.toml",
     "docker-packages.txt", "pairtask-docker-setup",
     "pairtask-docker-session.service", "pairtask-docker-setup.service", "pairtask-user-workspace.conf",
