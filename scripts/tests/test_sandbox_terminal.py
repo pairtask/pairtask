@@ -246,6 +246,18 @@ class SessionEntryPointAcceptanceTests(unittest.TestCase):
         self.assertEqual(self.main(["secured", *flags, "--tty", *command]), 23)
         self.run.assert_called_once_with([*target, "-t", "lab:secured-one", "--", *command])
 
+    def test_secured_command_accepts_an_explicit_option_boundary(self):
+        flags = ["--remote", "lab", "--project", "work", "--secured", "secured-one"]
+        command = ["printf", "%s", "a b;$(literal)"]
+        for tty in (False, True):
+            with self.subTest(tty=tty):
+                self.run.reset_mock()
+                argv = ["secured", *flags, *(["--tty"] if tty else []), "--", *command]
+                self.assertEqual(self.main(argv), 23)
+                expected = ["incus", "--project", "work", "exec"]
+                expected += ["-t"] if tty else []
+                self.run.assert_called_once_with([*expected, "lab:secured-one", "--", *command])
+
     def test_invalid_target_is_rejected_before_launch(self):
         with self.assertRaises(SystemExit), mock.patch("sys.stderr", io.StringIO()):
             self.main(["chat", "--remote", "bad:target"])

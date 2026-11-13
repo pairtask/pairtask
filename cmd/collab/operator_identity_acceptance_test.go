@@ -75,6 +75,27 @@ func TestOperatorIdentityInitReportsPartialKeysBeforeBrokerError(t *testing.T) {
 	assertPartialKeyUnchanged(t, dir, personBefore)
 }
 
+func TestOperatorIdentityGuidanceUsesHostCommands(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "identity")
+	t.Setenv(personkey.DirEnv, dir)
+	if _, err := personkey.Create(dir); err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	code := run(context.Background(), []string{"operator", "identity", "init", "--socket", filepath.Join(t.TempDir(), "absent.sock")}, &out, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "pairtask identity status") {
+		t.Fatalf("existing-key guidance is not the host command: exit %d, stderr %s", code, stderr.String())
+	}
+	out.Reset()
+	stderr.Reset()
+	if code := writeIdentity(identityReport{Dir: dir}, false, &out, &stderr); code != 0 {
+		t.Fatalf("status output failed: %d, %s", code, stderr.String())
+	}
+	if !strings.Contains(out.String(), "pairtask identity init") {
+		t.Fatalf("missing-key guidance is not the host command: %s", out.String())
+	}
+}
+
 func assertPartialKeyUnchanged(t *testing.T, dir string, personBefore []byte) {
 	t.Helper()
 	personPath := filepath.Join(dir, "person.key")
