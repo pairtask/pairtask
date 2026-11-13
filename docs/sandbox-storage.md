@@ -67,10 +67,30 @@ and shows the plan; `size apply` carries it out. Read the plan before you
 apply it: it should only change resources, and any replacement means data on
 a root disk would be rebuilt. The volumes refuse to be destroyed.
 
-The workspace can't use more than the VM has. On macOS, check the VM's line in
-`pairtask size show` first: growing the VM itself still means editing its
-Colima profile by hand, which a later step of [#382](https://github.com/pairtask/pairtask/issues/382)
-replaces with a supported command.
+The workspace can't use more than the VM has. On macOS, grow the VM first:
+
+```sh
+pairtask size vm --memory 16 --disk 80            # preview: current → new, and the steps
+pairtask size vm --memory 16 --disk 80 --apply
+```
+
+`--cpu`, `--memory` (GiB) and `--disk` (GiB) set the VM's size. Your choice
+is kept in `~/.local/state/pairtask/host/vm-size.json`, outside the installed
+files, so an update doesn't reset it; `pairtask vm plan|apply` use it too. The
+disk only grows; CPUs and RAM can go down only while they still hold the
+workspace and the other containers. `--apply` stops the VM (running sessions
+end), rewrites its Colima profile, starts it again and, when the disk grew,
+grows the Incus storage pool by the same amount (only for the Incus-managed
+ZFS pool the sandbox creates; any other pool it names for you to grow by
+hand). If a step fails, fix the cause and run the same command again; it
+resumes, and never grows the pool twice. New sizes wait until that resize
+finishes.
+
+Before it records or stops anything, `size vm` checks that the profile is
+the one pairtask installed: settings other than the sizes edited by hand, a
+symlink in the profile or another remote than `colima-pairtask` are refused.
+With Incus down it still takes larger CPUs and RAM; a decrease or a disk
+grow waits until the VM answers.
 
 ## Back up and restore
 

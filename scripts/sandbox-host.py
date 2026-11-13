@@ -15,18 +15,25 @@ from sandbox_mounts import colima_mounts, mount_variables, read_mounts, write_js
 from sandbox_colima_config import check_settings
 from sandbox_incus_version import check as check_server_version, query_server
 from sandbox_remote import PROFILE, REMOTE
+import sandbox_vm_size
 
 
 CONFIG = Path(__file__).resolve().parents[1] / "infra/incus/colima.json"
 
 
-def desired_config():
+def installed_config():
+    """colima.json as installed, for this Mac's architecture."""
     config = json.loads(CONFIG.read_text())
     architecture = {"arm64": "aarch64", "x86_64": "x86_64"}.get(platform.machine())
     if architecture is None:
         raise ValueError("Unsupported Mac architecture")
     config["arch"] = architecture
     return config
+
+
+def desired_config():
+    # The operator's own VM sizes (#382), kept outside this tree, win.
+    return sandbox_vm_size.overlay(installed_config(), sandbox_vm_size.read_choice())
 
 
 def profile_config(directory):
