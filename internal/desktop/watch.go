@@ -37,11 +37,13 @@ type watcher struct {
 	last     map[string]time.Time
 	held     map[string]bool
 	baseline bool
+	unknown  map[string]bool // at start, but its page couldn't be read then
+	quiet    bool            // a notice failed once; later failures aren't logged
 }
 
 func newWatcher(call func(context.Context, protocol.Message) protocol.Message, notify Notifier, log *slog.Logger) *watcher {
 	return &watcher{call: call, notify: notify, log: log, now: time.Now,
-		seen: map[string]int{}, last: map[string]time.Time{}, held: map[string]bool{}}
+		seen: map[string]int{}, last: map[string]time.Time{}, held: map[string]bool{}, unknown: map[string]bool{}}
 }
 
 // watch follows the broker's events for as long as the owner runs. The
@@ -122,20 +124,30 @@ func (w *watcher) checkAll(ctx context.Context) {
 		return
 	}
 	for _, c := range out.PairingResult.Contacts {
-		if !w.baseline {
-			w.seen[c.IdentityKey] = w.unread(ctx, c.IdentityKey)
-			continue
+		if w.baseline {
+			w.check(ctx, c.IdentityKey)
+		} else if count, ok := w.unread(ctx, c.IdentityKey); ok {
+			w.seen[c.IdentityKey] = count
+		} else {
+			w.unknown[c.IdentityKey] = true
 		}
-		w.check(ctx, c.IdentityKey)
 	}
 	w.baseline = true
 }
 
 // check notices a workspace whose unread count rose, unless its window is
-// still open; a fall is only remembered.
+// still open; a fall is only remembered. A page that can't be read changes
+// nothing, so its messages aren't announced again once it can; for a
+// workspace there at start whose page couldn't be read then, the first
+// page that can is its baseline. A workspace paired later starts at none,
+// so its first message is announced.
 func (w *watcher) check(ctx context.Context, contact string) {
-	count := w.unread(ctx, contact)
+	count, ok := w.unread(ctx, contact)
 	switch {
+	case !ok:
+	case w.unknown[contact]:
+		delete(w.unknown, contact)
+		w.seen[contact] = count
 	case count <= w.seen[contact]:
 		w.seen[contact] = count
 	case w.now().Sub(w.last[contact]) < notifyWindow:
@@ -159,19 +171,20 @@ func (w *watcher) release(ctx context.Context) {
 func (w *watcher) announce(ctx context.Context, contact string, count int) {
 	w.seen[contact], w.last[contact] = count, w.now()
 	text := fmt.Sprintf("%d unread from %s", count, w.name(ctx, contact))
-	if err := w.notify(ctx, noticeTitle, text); err != nil {
-		w.log.Debug("notification not shown", "error", err)
+	if err := w.notify(ctx, noticeTitle, text); err != nil && !w.quiet {
+		w.quiet = true
+		w.log.Debug("notification not shown; later failures aren't logged", "error", err)
 	}
 }
 
-// unread is a workspace's unread received messages, 0 when its page can't
-// be read.
-func (w *watcher) unread(ctx context.Context, contact string) int {
+// unread is a workspace's unread received messages, and whether its page
+// could be read.
+func (w *watcher) unread(ctx context.Context, contact string) (int, bool) {
 	out := w.call(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: contact})
 	if out.ContactPage == nil {
-		return 0
+		return 0, false
 	}
-	return unread(out.ContactPage.Messages)
+	return unread(out.ContactPage.Messages), true
 }
 
 // name is what the person calls a workspace, at most 64 runes, else its
