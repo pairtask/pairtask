@@ -137,3 +137,31 @@ func PeerReplyRef(id string, author byte) string {
 	}
 	return "unknown:" + id
 }
+
+// PeerLink is what a cross-link message says of itself beside its seal:
+// the contact it came from, this side's key, its recipient agents (none
+// for the operator) and the parent it answers, with that parent's author.
+type PeerLink struct {
+	Contact, Own string
+	To           []string
+	ReplyID      string
+	ReplyAuthor  byte
+}
+
+// PeerSealBinds: the header was signed by the contact, for exactly these
+// recipients here, answering exactly this parent on this side.
+func PeerSealBinds(h signing.Header, l PeerLink) bool {
+	return h.Workspace == l.Contact && slices.Equal(h.Recipients, PeerSealRecipients(l.Own, l.To)) &&
+		h.InReplyTo == PeerReplyRef(l.ReplyID, l.ReplyAuthor)
+}
+
+// ReplyAuthorOf is a view's reply side as the wire's author byte.
+func ReplyAuthorOf(side string) byte {
+	switch side {
+	case ReplyBySender:
+		return replyBySender
+	case ReplyByReceiver:
+		return replyByReceiver
+	}
+	return 0
+}
