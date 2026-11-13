@@ -31,6 +31,9 @@ type Config struct {
 	Log  *slog.Logger
 	// Dial reaches another workspace; nil dials TCP directly.
 	Dial func(ctx context.Context, destination string) (net.Conn, error)
+	// Notify shows a notice when a paired workspace sends a message; nil
+	// shows none. Only the copy that owns the node notifies.
+	Notify Notifier
 }
 
 // Node is this copy's way to the broker: the broker itself while it owns

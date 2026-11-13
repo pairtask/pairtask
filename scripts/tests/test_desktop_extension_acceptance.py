@@ -93,9 +93,14 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 self.assertEqual(server["type"], "binary")
                 self.assertEqual(server["entry_point"], "server/pairtask-desktop")
                 self.assertEqual(server["mcp_config"]["command"], "${__dirname}/server/pairtask-desktop")
-                self.assertEqual(server["mcp_config"]["args"], ["--name", "${user_config.name}"])
+                self.assertEqual(
+                    server["mcp_config"]["args"],
+                    ["--name", "${user_config.name}", "--notify=${user_config.notify}"],
+                )
                 self.assertEqual(manifest["user_config"]["name"]["type"], "string")
                 self.assertTrue(manifest["user_config"]["name"]["required"])
+                self.assertEqual(manifest["user_config"]["notify"]["type"], "boolean")
+                self.assertTrue(manifest["user_config"]["notify"]["default"])
                 self.assertEqual({tool["name"] for tool in manifest["tools"]}, TOOLS)
                 first = bundle.read_bytes()
                 self.assertEqual(self.build(binary, (goos, goarch, "1.2.3"), out).returncode, 0)

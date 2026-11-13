@@ -85,6 +85,10 @@ func startOwner(ctx, base context.Context, cfg Config) (*owner, error) {
 	if err := o.share(cfg.Dir); err != nil {
 		return nil, errors.Join(err, o.stop())
 	}
+	if cfg.Notify != nil {
+		o.wg.Add(1)
+		go o.watch(cfg.Notify)
+	}
 	return o, nil
 }
 
