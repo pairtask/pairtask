@@ -148,6 +148,9 @@ func (m *Model) messageStatusRows(s contactSides, v protocol.ContactMessageView)
 	if v.Direction == "out" {
 		rows = append(rows, m.outboundState(v))
 	}
+	if signed := m.signedRow(v); signed != "" {
+		rows = append(rows, signed)
+	}
 	for _, a := range v.AgentAcks {
 		rows = append(rows, "· "+theirAgents([]string{a}, s.ws)+": acknowledged")
 	}
