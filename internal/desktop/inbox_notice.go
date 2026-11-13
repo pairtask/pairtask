@@ -21,7 +21,7 @@ type InboxNotice struct {
 }
 
 // unreadNote ends the descriptions of the tools that carry the notice.
-const unreadNote = " unread and unread_from count received messages not yet marked read; call check_inbox to see them."
+const unreadNote = " The unread field counts received messages not yet marked read, and unread_from names the workspaces they came from; call check_inbox to read them."
 
 // notice reads each paired workspace's newest page and counts its unread
 // received messages. A workspace whose page can't be read is left out:
