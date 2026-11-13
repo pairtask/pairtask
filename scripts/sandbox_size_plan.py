@@ -23,6 +23,8 @@ VOLUMES = {"workspace_gib": "workspace-data", "agent_home_gib": "agent-home",
 # (their CPU and RAM limits in the tofu configuration).
 VM_RESERVE_GIB = 1
 RESERVED = {"secured": {"cpu": 1, "memory_gib": 2}, "connector": {"cpu": 1, "memory_gib": 1}}
+# Beside the workspace, the containers whose root disk disk_gib sets too.
+ROOT_SHARERS = ("secured", "connector")
 
 
 def request_from(args):
@@ -39,6 +41,25 @@ def live_sizes(report):
     by_name = {v["name"]: v["size_bytes"] for v in report.get("volumes", [])}
     live.update({var: gib(by_name.get(name)) for var, name in VOLUMES.items()})
     return {var: value for var, value in live.items() if value is not None}
+
+
+def shared_root(query, project, live):
+    """live with disk_gib as the largest root disk the variable now sets: the
+    workspace's and that of each other container that exists. It's left out
+    when one can't be read, so a shrink can't be ruled out."""
+    sizes = [live.get("disk_gib")] + [root_gib(query, name, project) for name in ROOT_SHARERS]
+    rest = {var: value for var, value in live.items() if var != "disk_gib"}
+    return rest if None in sizes else {**rest, "disk_gib": max(sizes)}
+
+
+def root_gib(query, name, project):
+    """A container's root disk in GiB: 0 when it doesn't exist, None when its
+    size can't be read."""
+    instance = query(f"/1.0/instances/{name}?project={project}")
+    if instance is None:
+        return 0
+    root = (instance.get("expanded_devices") or {}).get("root") or {}
+    return gib(sandbox_size.parse_size(root.get("size")))
 
 
 def as_int(value):

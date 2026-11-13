@@ -51,6 +51,9 @@ def live_fixture(names=("secured", "connector"), project="pairtask"):
         responses[f"{root}/volumes/custom/{name}/state?project={project}"] = {
             "usage": {"used": total * GIB // 4}
         }
+    for name in names:
+        responses[f"/1.0/instances/{name}?project={project}"] = {
+            "expanded_devices": {"root": {"pool": "default", "size": "10GiB"}}}
     return responses
 
 
@@ -123,6 +126,25 @@ class SizePlanAcceptance(unittest.TestCase):
 
     def test_unreadable_live_limit_cannot_be_assumed_safe_to_resize(self):
         self.responses["/1.0/instances/workspace?project=pairtask"]["expanded_devices"]["root"].pop("size")
+        code, _output, error = self.invoke("plan", "--disk", "20")
+        self.assertEqual(code, 1)
+        self.assertIn("current", error.lower())
+        self.assertFalse(self.size_file().exists())
+        self.run.assert_not_called()
+
+    def test_shared_root_disk_limit_cannot_shrink_other_containers(self):
+        for name in ("secured", "connector"):
+            with self.subTest(name=name):
+                self.responses = live_fixture()
+                self.responses[f"/1.0/instances/{name}?project=pairtask"]["expanded_devices"]["root"]["size"] = "12GiB"
+                code, _output, error = self.invoke("plan", "--disk", "11")
+                self.assertEqual(code, 1)
+                self.assertIn("shrink", error)
+                self.assertFalse(self.size_file().exists())
+                self.run.assert_not_called()
+
+    def test_unreadable_other_root_size_cannot_be_assumed_safe(self):
+        self.responses["/1.0/instances/secured?project=pairtask"]["expanded_devices"]["root"].pop("size")
         code, _output, error = self.invoke("plan", "--disk", "20")
         self.assertEqual(code, 1)
         self.assertIn("current", error.lower())

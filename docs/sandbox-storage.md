@@ -45,9 +45,12 @@ pairtask size plan --agent-home 10 --memory 6
 pairtask size apply
 ```
 
-`size plan` takes `--cpu`, `--memory` and `--disk` (the root disk) for the
-workspace and `--workspace`, `--agent-home`, `--docker` and `--tools` for the
-volume quotas, in GiB. Before it writes anything it refuses:
+`size plan` takes `--cpu` and `--memory` for the workspace, `--disk` for the
+root disk quota, and `--workspace`, `--agent-home`, `--docker` and `--tools`
+for the volume quotas, in GiB. The root disk quota is shared: `--disk` sets
+it for every sandbox container that exists (the workspace, `secured`, the
+pairing connector and the peer probe), and the plan lists each one. Before it
+writes anything it refuses:
 
 - a smaller value than the sandbox has now; sizes only grow;
 - a value outside the allowed range (`--cpu` 1–8, `--memory` 1–16, `--disk`

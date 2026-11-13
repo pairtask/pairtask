@@ -115,9 +115,13 @@ def plan(ctx, report):
 
 
 def facts(ctx, report, directory, request):
-    """What the request is checked against."""
+    """What the request is checked against. The root disk is shared, so a
+    new one is checked against every container's."""
+    live = sandbox_size_plan.live_sizes(report)
+    if "disk_gib" in request:
+        live = sandbox_size_plan.shared_root(ctx.query, ctx.args.project, live)
     return sandbox_size_plan.Facts(
-        sandbox_size_plan.live_sizes(report), sandbox_size_plan.capacity(ctx.query, report, ctx.system),
+        live, sandbox_size_plan.capacity(ctx.query, report, ctx.system),
         sandbox_size_plan.reserved(ctx.query, ctx.args.project), sandbox_size_plan.conflicts(directory, request))
 
 
