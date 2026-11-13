@@ -25,12 +25,13 @@ import (
 
 const peerSealsSchema = `
 CREATE TABLE IF NOT EXISTS peer_message_seals (
-    contact    TEXT NOT NULL,
-    direction  TEXT NOT NULL,
-    message_id TEXT NOT NULL,
-    seal       BLOB NOT NULL,
-    downgraded INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (contact, direction, message_id)
+    contact       TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL,
+    direction     TEXT NOT NULL,
+    message_id    TEXT NOT NULL,
+    seal          BLOB NOT NULL,
+    downgraded    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (contact, pairing_epoch, direction, message_id)
 );
 CREATE TABLE IF NOT EXISTS peer_seal_policy (
     contact TEXT PRIMARY KEY,
@@ -49,19 +50,23 @@ CREATE TABLE IF NOT EXISTS peer_person_keys (
 // sequence and time are fixed: the workspace's broker attesting the agent.
 type PeerSealer func(contact string, m messaging.Message) []byte
 
-// keepSeal stores a message's seal beside it; the same message again with
-// another seal is a conflict, and none keeps whatever is stored.
+// A seal is kept per pairing (#276), like the message it belongs to: after
+// a repair the same ID names another message, with its own seal.
+const currentSealWhere = `contact = ?1 AND pairing_epoch = ` + currentEpochOf1 + ` AND direction = ?2 AND message_id = ?3`
+
+// keepSeal stores a message's seal beside it, in the contact's current
+// pairing; the same message again with another seal is a conflict, and
+// none keeps whatever is stored.
 func keepSeal(ctx context.Context, tx *sql.Tx, key messageKey, seal []byte) error {
 	if len(seal) == 0 {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_message_seals (contact, direction, message_id, seal) VALUES (?, ?, ?, ?)
-		ON CONFLICT DO NOTHING`, key.contact, key.direction, key.id, seal); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO peer_message_seals (contact, pairing_epoch, direction, message_id, seal)
+		VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4) ON CONFLICT DO NOTHING`, key.contact, key.direction, key.id, seal); err != nil {
 		return err
 	}
-	var held []byte
-	if err := tx.QueryRowContext(ctx, `SELECT seal FROM peer_message_seals WHERE contact = ? AND direction = ? AND message_id = ?`,
-		key.contact, key.direction, key.id).Scan(&held); err != nil {
+	held, err := currentSeal(ctx, tx, key)
+	if err != nil {
 		return err
 	}
 	if !slices.Equal(held, seal) {
@@ -70,13 +75,27 @@ func keepSeal(ctx context.Context, tx *sql.Tx, key messageKey, seal []byte) erro
 	return nil
 }
 
-// withSeals gives rows their seals, and whether an outbound one's seal
-// didn't travel.
+// currentSeal is the seal kept for key in the contact's current pairing,
+// nil for none.
+func currentSeal(ctx context.Context, q rowQuerier, key messageKey) ([]byte, error) {
+	var seal []byte
+	err := q.QueryRowContext(ctx, `SELECT seal FROM peer_message_seals WHERE `+currentSealWhere, key.contact, key.direction, key.id).Scan(&seal)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return seal, err
+}
+
+// epochOf is a stored pairing epoch, the legacy 0 being 1.
+func epochOf(epoch int64) int64 { return max(epoch, 1) }
+
+// withSeals gives rows their seals, each from its own pairing, and whether
+// an outbound one's seal didn't travel.
 func withSeals(ctx context.Context, q rowQuerier, rows []messaging.Row) error {
 	for i := range rows {
 		r := &rows[i]
-		err := q.QueryRowContext(ctx, `SELECT seal, downgraded FROM peer_message_seals WHERE contact = ? AND direction = ? AND message_id = ?`,
-			r.Contact, r.Direction, r.ID).Scan(&r.Seal, &r.SealDowngraded)
+		err := q.QueryRowContext(ctx, `SELECT seal, downgraded FROM peer_message_seals WHERE contact = ? AND pairing_epoch = ? AND direction = ? AND message_id = ?`,
+			r.Contact, epochOf(r.PairingEpoch), r.Direction, r.ID).Scan(&r.Seal, &r.SealDowngraded)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -87,8 +106,7 @@ func withSeals(ctx context.Context, q rowQuerier, rows []messaging.Row) error {
 // SealDowngraded records that an outbound message's seal didn't travel:
 // the contact's version predates seals.
 func (p *PeerMessages) SealDowngraded(ctx context.Context, contact, id string) error {
-	_, err := p.db.ExecContext(ctx, `UPDATE peer_message_seals SET downgraded = 1 WHERE contact = ? AND direction = ? AND message_id = ?`,
-		contact, messaging.DirOut, id)
+	_, err := p.db.ExecContext(ctx, `UPDATE peer_message_seals SET downgraded = 1 WHERE `+currentSealWhere, contact, messaging.DirOut, id)
 	return err
 }
 
@@ -130,8 +148,8 @@ func sealBinds(seal signing.Seal, contact, own string, m messaging.Message) bool
 		kind, id = signing.SenderOperator, protocol.OperatorID
 	}
 	frame := signing.Frame{MessageID: m.ID, SenderKind: kind, SenderID: id, Text: m.Text, Addresses: []string{protocol.PeerWorkspaceRecipient(own)}}
-	addressed := slices.Equal(h.Recipients, protocol.PeerSealRecipients(own, m.To))
-	return h.Workspace == contact && addressed && h.InReplyTo == protocol.PeerReplyRef(m.ReplyTo.ID, m.ReplyTo.Author) && seal.Matches(frame) == nil
+	link := protocol.PeerLink{Contact: contact, Own: own, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author}
+	return protocol.PeerSealBinds(h, link) && seal.Matches(frame) == nil
 }
 
 // ownIdentity is this workspace's identity key, once it has one.
@@ -205,25 +223,22 @@ func replayedSeal(ctx context.Context, tx *sql.Tx, key messageKey, answer messag
 	if !answer.Stored || len(seal) == 0 {
 		return answer, true, nil
 	}
-	var held []byte
-	err := tx.QueryRowContext(ctx, `SELECT seal FROM peer_message_seals WHERE contact = ? AND direction = ? AND message_id = ?`,
-		key.contact, key.direction, key.id).Scan(&held)
+	held, err := currentSeal(ctx, tx, key)
 	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return answer, true, nil
 	case err != nil:
 		return messaging.Answer{}, true, err
-	case !slices.Equal(held, seal):
+	case held != nil && !slices.Equal(held, seal):
 		return refused(messaging.ReasonConflict), true, nil
 	}
 	return answer, true, nil
 }
 
-// sealText is a stored seal as a frame carries it (base64), "" for none.
-func sealText(ctx context.Context, tx *sql.Tx, key messageKey) (string, error) {
+// sealText is an import's seal, from the pairing it was staged under, as
+// a frame carries it (base64); "" for none.
+func sealText(ctx context.Context, tx *sql.Tx, imp RemoteImport) (string, error) {
 	var seal []byte
-	err := tx.QueryRowContext(ctx, `SELECT seal FROM peer_message_seals WHERE contact = ? AND direction = ? AND message_id = ?`,
-		key.contact, key.direction, key.id).Scan(&seal)
+	err := tx.QueryRowContext(ctx, `SELECT seal FROM peer_message_seals WHERE contact = ? AND pairing_epoch = ? AND direction = ? AND message_id = ?`,
+		imp.Contact, epochOf(imp.Epoch), messaging.DirIn, imp.RemoteID).Scan(&seal)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

@@ -409,7 +409,7 @@ func importedMessage(ctx context.Context, tx *sql.Tx, imp RemoteImport, at impor
 	if len(imp.Recipients) > 1 {
 		msg.To, msg.Group = protocol.Broadcast, slices.Clone(imp.Recipients)
 	}
-	if msg.Seal, err = sealText(ctx, tx, messageKey{imp.Contact, messaging.DirIn, imp.RemoteID}); err != nil {
+	if msg.Seal, err = sealText(ctx, tx, imp); err != nil {
 		return protocol.Message{}, nil, err
 	}
 	recipients := make([]protocol.Recipient, 0, len(imp.Recipients))
