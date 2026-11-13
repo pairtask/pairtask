@@ -302,6 +302,19 @@ workspace paired before consent prompts existed treats everything you never
 decided as denied until you reset it this way. A broker without consent
 prompts says `consent prompts need a newer broker` and nothing is sent.
 
+## Signed messages
+
+Once both sides run a release with signed messages, what crosses the link carries its sender's signature, and each side checks it against keys it pinned itself. A relay, or the other side's broker, can't change a message or claim one as yours.
+
+- **Your messages** are signed by you: run `pairtask operator identity init` once (see [Operator chat](operator-chat.md#trust-model)).
+- **Your agents' messages** are signed by your workspace, which attests which agent sent them.
+- **The first signed message from the other operator** shows in their ⇄ tab as signed with a key not yet accepted. The tab names the key (`signs as person sha256:…`).
+  - Read the first characters to each other by phone, as when you paired.
+  - Then type `/pair accept-key` in their tab. From then on their messages show `signed by their operator`.
+  - A new key later is shown again and is never accepted on its own.
+- **Each received message** shows its standing: `signed by their operator`, `signed: their workspace attests the agent`, `unsigned`, or `signature doesn't hold`. One you sent shows `sent unsigned` when the other side runs an older release.
+- **`/pair require-seals on`**, in their tab, refuses their unsigned messages from then on. `off` takes them again, marked unsigned. It's off by default while both sides upgrade.
+
 ## Names
 
 A paired workspace has a key and up to two names:
