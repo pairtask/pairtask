@@ -14,6 +14,7 @@ import (
 type noticeFixture struct {
 	contacts []protocol.PairingContactView
 	counts   map[string]int
+	failed   map[string]bool
 	notices  []string
 }
 
@@ -23,6 +24,9 @@ func (f *noticeFixture) call(_ context.Context, req protocol.Message) protocol.M
 			PairingResult: &protocol.PairingSnapshot{Contacts: f.contacts}}
 	}
 	if req.Type == protocol.TypeOperatorContact && req.ContactOp == protocol.ContactOpList {
+		if f.failed[req.ContactKey] {
+			return protocol.Message{Type: protocol.TypeError}
+		}
 		var messages []protocol.ContactMessageView
 		for range f.counts[req.ContactKey] {
 			messages = append(messages, protocol.ContactMessageView{Direction: "in", Text: "PRIVATE_MESSAGE_BODY"})
@@ -31,6 +35,49 @@ func (f *noticeFixture) call(_ context.Context, req protocol.Message) protocol.M
 			ContactPage: &protocol.ContactMessagePage{Messages: messages}}
 	}
 	return protocol.Message{Type: protocol.TypeError}
+}
+
+func TestDesktopWatcherAcceptanceUnreadablePageKeepsOldMessagesQuiet(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		failAtBaseline bool
+	}{
+		{name: "after baseline"},
+		{name: "at baseline", failAtBaseline: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &noticeFixture{
+				contacts: []protocol.PairingContactView{{IdentityKey: "alpha-key", LocalName: "Alpha", Confirmed: true}},
+				counts:   map[string]int{"alpha-key": 1},
+				failed:   map[string]bool{"alpha-key": tc.failAtBaseline},
+			}
+			w := newWatcher(f.call, f.notifier, slog.New(slog.DiscardHandler))
+			w.checkAll(context.Background())
+			if !tc.failAtBaseline {
+				f.failed["alpha-key"] = true
+				w.check(context.Background(), "alpha-key")
+			}
+			delete(f.failed, "alpha-key")
+			w.check(context.Background(), "alpha-key")
+			assertWatcherNotices(t, f.notices)
+			f.counts["alpha-key"] = 2
+			w.check(context.Background(), "alpha-key")
+			assertWatcherNotices(t, f.notices, "2 unread from Alpha")
+		})
+	}
+}
+
+func TestDesktopWatcherAcceptanceNewContactAnnouncesFirstMessage(t *testing.T) {
+	f := &noticeFixture{
+		contacts: []protocol.PairingContactView{{IdentityKey: "alpha-key", LocalName: "Alpha", Confirmed: true}},
+		counts:   map[string]int{},
+	}
+	w := newWatcher(f.call, f.notifier, slog.New(slog.DiscardHandler))
+	w.checkAll(context.Background())
+	f.contacts = append(f.contacts, protocol.PairingContactView{IdentityKey: "beta-key", LocalName: "Beta", Confirmed: true})
+	f.counts["beta-key"] = 1
+	w.checkAll(context.Background())
+	assertWatcherNotices(t, f.notices, "1 unread from Beta")
 }
 
 func (f *noticeFixture) notifier(_ context.Context, title, text string) error {
