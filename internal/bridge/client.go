@@ -104,10 +104,8 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Client, error) {
 		forges: cfg.Forges}
 	c.sessionID = welcome.SessionID
 	c.protocolVersion = welcome.ProtocolVersion
-	c.agentID, c.roots = cfg.AgentID, welcome.SigningRoots
-	if welcome.Identity != nil {
-		c.ownWorkspace = welcome.Identity.Workspace
-	}
+	c.agentID = cfg.AgentID
+	c.takeRoots(welcome)
 	go c.readLoop(r)
 	return c, nil
 }
