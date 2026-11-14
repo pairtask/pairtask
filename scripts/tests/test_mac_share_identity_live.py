@@ -40,6 +40,7 @@ class MacIdentityLiveTests(unittest.TestCase):
                 account = identity(user)
                 self.assertNotEqual(account.pw_uid, os.getuid())
                 self.verify_name_repair(mounts, user, account)
+                self.verify_primary_group_recovery(mounts, user, account)
                 probe = subprocess.check_output(["sudo", "-n", "/usr/bin/python3", "-I", str(HELPER), user, "--identity", "false", str(os.getpid())], text=True)
                 self.assertEqual(json.loads(probe), dict(uid=account.pw_uid, gid=account.pw_gid, groups=[account.pw_gid]))
                 command = server_command(shared, False, user)
@@ -68,6 +69,38 @@ class MacIdentityLiveTests(unittest.TestCase):
             self.assertIn("collab-ai share", value)
         repaired = identity(user)
         self.assertEqual((repaired.pw_uid, repaired.pw_gid), (original.pw_uid, original.pw_gid))
+
+    def verify_primary_group_recovery(self, mounts, user, original):
+        """Exercise a macOS-update-style GID reset on only this disposable CI account."""
+        record = f"/Users/{user}"
+        command = ["sudo", "-n", "/usr/bin/dscl", ".", "-change", record,
+                   "PrimaryGroupID", str(original.pw_gid), "20"]
+        subprocess.run(command, check=True)
+        self.wait_primary_gid(user, 20)
+        try:
+            with self.assertRaises(ValueError) as raised:
+                setup(mounts, user)
+            message = str(raised.exception)
+            for detail in (user, "staff", "GID 20", f"private group {user}",
+                           f"GID {original.pw_gid}",
+                           f"sudo dscl . -change {record} PrimaryGroupID 20 {original.pw_gid}"):
+                self.assertIn(detail, message)
+            self.assertEqual(pwd.getpwnam(user).pw_gid, 20)
+        finally:
+            subprocess.run(["sudo", "-n", "/usr/bin/dscl", ".", "-change", record,
+                            "PrimaryGroupID", "20", str(original.pw_gid)], check=True)
+            self.wait_primary_gid(user, original.pw_gid)
+        setup(mounts, user)
+        repaired = identity(user)
+        self.assertEqual((repaired.pw_uid, repaired.pw_gid), (original.pw_uid, original.pw_gid))
+
+    def wait_primary_gid(self, user, gid):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if pwd.getpwnam(user).pw_gid == gid:
+                return
+            time.sleep(0.2)
+        self.fail(f"{user} primary GID did not become {gid}")
 
     def verify_operator_death(self, shared, user):
         code = ("import sys,subprocess; from pathlib import Path; "
