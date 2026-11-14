@@ -78,6 +78,20 @@ older accounts; missing names can break macOS account migration.
 If only the group remains after a failed upgrade, setup stops with inspection
 instructions. After the operator repairs the account/group, rerun setup to reapply ACLs.
 
+A macOS update can also reset the sharing account's primary group to `staff`.
+Setup then stops and names the account's group and the private one it needs.
+When nothing else uses that group or its IDs, it prints the repair, e.g.:
+
+```sh
+sudo dscl . -change /Users/collab-share PrimaryGroupID 20 60000
+pairtask share setup --mounts-file /path/to/mounts.json   # reapplies names and ACLs
+id collab-share                                           # gid=60000(collab-share)
+```
+
+Use the IDs setup prints, not these. If another user or group shares them,
+setup prints why and no command; inspect with `dscl . -read /Users/collab-share`.
+Setup never changes the account's group itself.
+
 **Stop:** Ctrl+C disconnects shares. Restart workspace before reconnecting.
 Disconnected mounts refuse writes; files remain on the host. Account/ACL grants
 remain after stopping. This mode does not use `pairtask mounts apply` or require a VM restart.

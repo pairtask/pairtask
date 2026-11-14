@@ -152,3 +152,76 @@ class MacAccountSetupTests(unittest.TestCase):
                 patch.object(shares.grp, "getgrall", return_value=[group]), \
                 self.assertRaisesRegex(ValueError, "already exists"):
             shares.account_commands("collab-share")
+
+
+class MacPrimaryGroupRecoveryTests(unittest.TestCase):
+    """A macOS update can reset the sharing user's primary GID to staff."""
+
+    def setUp(self):
+        self.account = SimpleNamespace(pw_name="collab-share", pw_uid=60000, pw_gid=20,
+                                       pw_dir="/var/empty", pw_shell="/usr/bin/false")
+        self.staff = SimpleNamespace(gr_name="staff", gr_gid=20, gr_mem=[])
+        self.private = SimpleNamespace(gr_name="collab-share", gr_gid=60000, gr_mem=[])
+        self.other = SimpleNamespace(pw_name="operator", pw_uid=501, pw_gid=20)
+
+    def account_commands(self, *, groups=None, accounts=None, private=None):
+        groups = [self.staff, self.private] if groups is None else groups
+        accounts = [self.account, self.other] if accounts is None else accounts
+        private = self.private if private is None else private
+        with patch.object(shares.pwd, "getpwnam", return_value=self.account), \
+                patch.object(shares.pwd, "getpwall", return_value=accounts), \
+                patch.object(shares.grp, "getgrgid", return_value=self.staff), \
+                patch.object(shares.grp, "getgrnam", return_value=private), \
+                patch.object(shares.grp, "getgrall", return_value=groups), \
+                patch.object(shares.os, "getuid", return_value=501), \
+                patch.object(shares.os, "getgrouplist", return_value=[20, 12, 61]), \
+                patch.object(shares.subprocess, "run") as run:
+            with self.assertRaises(ValueError) as raised:
+                shares.account_commands("collab-share")
+            run.assert_not_called()
+        return str(raised.exception)
+
+    def test_staff_primary_group_names_both_records_and_guarded_repair(self):
+        message = self.account_commands()
+        for detail in ("collab-share", "UID 60000", "staff", "GID 20",
+                       "private group collab-share", "GID 60000",
+                       "sudo dscl . -change /Users/collab-share PrimaryGroupID 20 60000",
+                       "pairtask share setup --mounts-file"):
+            with self.subTest(detail=detail):
+                self.assertIn(detail, message)
+
+    def test_conflicting_private_group_never_offers_repair(self):
+        cases = (
+            ("group has another member", lambda: self.private.gr_mem.append("operator"), "other members"),
+            ("another account uses its GID", lambda: setattr(self.other, "pw_gid", 60000),
+             "primary group of operator"),
+            ("another account uses its UID", lambda: setattr(self.other, "pw_uid", 60000),
+             "UID 60000 is also used by operator"),
+            ("another group uses its GID", lambda: None, "also the group unrelated"),
+            ("unsafe login shell", lambda: setattr(self.account, "pw_shell", "/bin/zsh"),
+             "/usr/bin/false shell"),
+        )
+        for name, change, reason in cases:
+            with self.subTest(case=name):
+                self.setUp()
+                change()
+                groups = [self.staff, self.private]
+                if name == "another group uses its GID":
+                    groups.append(SimpleNamespace(gr_name="unrelated", gr_gid=60000, gr_mem=[]))
+                message = self.account_commands(groups=groups)
+                self.assertNotIn("sudo dscl", message)
+                self.assertIn(reason, message)
+
+    def test_missing_private_group_never_offers_repair(self):
+        with patch.object(shares.pwd, "getpwnam", return_value=self.account), \
+                patch.object(shares.pwd, "getpwall", return_value=[self.account, self.other]), \
+                patch.object(shares.grp, "getgrgid", return_value=self.staff), \
+                patch.object(shares.grp, "getgrnam", side_effect=KeyError), \
+                patch.object(shares.grp, "getgrall", return_value=[self.staff]), \
+                patch.object(shares.os, "getuid", return_value=501), \
+                patch.object(shares.os, "getgrouplist", return_value=[20, 12, 61]), \
+                self.assertRaises(ValueError) as raised:
+            shares.account_commands("collab-share")
+        message = str(raised.exception)
+        self.assertIn("/Groups/collab-share", message)
+        self.assertNotIn("sudo dscl", message)

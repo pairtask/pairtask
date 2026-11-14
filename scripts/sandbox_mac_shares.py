@@ -44,9 +44,11 @@ def validate_username(user):
 def identity(user):
     validate_username(user)
     account = pwd.getpwnam(user)
-    group = grp.getgrgid(account.pw_gid)
     validate_login(account)
-    validate_groups(account, group)
+    problem = primary_group_problem(account)
+    if problem:
+        raise ValueError(problem.message())
+    validate_groups(account, grp.getgrgid(account.pw_gid))
     validate_unique(account)
     return account
 
@@ -67,6 +69,81 @@ def validate_groups(account, group):
     groups = set(os.getgrouplist(user, account.pw_gid))
     if groups.intersection({0, 20, 80}):
         raise ValueError("Sharing account belongs to wheel, staff or admin")
+
+
+class PrimaryGroupProblem:
+    """The account's primary group isn't its same-name group (#174; a macOS
+    update has reset it to staff). It names both groups and, only when
+    nothing else uses the same-name group or the IDs, the operator's repair
+    command. Nothing here changes the account."""
+
+    def __init__(self, account, expected, blockers):
+        self.account, self.expected, self.blockers = account, expected, blockers
+
+    def repair_command(self):
+        """dscl -change fails if the primary group changed again meanwhile."""
+        user, gid = self.account.pw_name, self.account.pw_gid
+        return f"sudo dscl . -change /Users/{user} PrimaryGroupID {gid} {self.expected.gr_gid}"
+
+    def message(self):
+        user = self.account.pw_name
+        expected = (f"{user} (GID {self.expected.gr_gid})" if self.expected
+                    else f"{user}, but /Groups/{user} doesn't exist")
+        found = (f"Sharing account {user} (UID {self.account.pw_uid}) has primary group "
+                 f"{group_label(self.account.pw_gid)}; it must be its private group {expected}.")
+        if self.blockers:
+            return (f"{found} No repair is suggested: {'; '.join(self.blockers)}. Inspect with: "
+                    f"dscl . -read /Users/{user} and dscl . -read /Groups/{user}.")
+        return (f"{found} A macOS update can reset it. Repair it with: {self.repair_command()}, then rerun "
+                "pairtask share setup --mounts-file FILE to reapply names and ACLs.")
+
+
+def primary_group_problem(account):
+    """None when the primary group is the account's same-name group."""
+    expected = same_name_group(account.pw_name)
+    if expected is not None and expected.gr_gid == account.pw_gid:
+        return None
+    return PrimaryGroupProblem(account, expected, repair_blockers(account, expected))
+
+
+def same_name_group(user):
+    try:
+        return grp.getgrnam(user)
+    except KeyError:
+        return None
+
+
+def group_label(gid):
+    try:
+        return f"{grp.getgrgid(gid).gr_name} (GID {gid})"
+    except KeyError:
+        return f"GID {gid}, which no group has"
+
+
+def repair_blockers(account, expected):
+    """Why pointing the account at its same-name group would not be safe."""
+    user = account.pw_name
+    if expected is None:
+        return [f"/Groups/{user} doesn't exist"]
+    blockers = [f"/Groups/{user} has other members: {', '.join(sorted(set(expected.gr_mem) - {user}))}"
+                ] if set(expected.gr_mem) - {user} else []
+    if expected.gr_gid <= 0:
+        blockers.append(f"/Groups/{user} has GID {expected.gr_gid}")
+    blockers += [f"GID {expected.gr_gid} is also the group {other.gr_name}"
+                 for other in grp.getgrall() if other.gr_gid == expected.gr_gid and other.gr_name != user]
+    return blockers + id_conflicts(account, expected.gr_gid)
+
+
+def id_conflicts(account, gid):
+    conflicts = []
+    for other in pwd.getpwall():
+        if other.pw_name == account.pw_name:
+            continue
+        if other.pw_gid == gid:
+            conflicts.append(f"GID {gid} is also the primary group of {other.pw_name}")
+        if other.pw_uid == account.pw_uid:
+            conflicts.append(f"UID {account.pw_uid} is also used by {other.pw_name}")
+    return conflicts
 
 
 def validate_unique(account):
