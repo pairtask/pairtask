@@ -25,6 +25,9 @@ const (
 // contactThread is what chat holds of one contact's messages.
 type contactThread struct {
 	rows      map[rowRef]protocol.ContactMessageView // by direction, pairing and ID
+	bodies    map[rowRef]contactBodyLayout           // rendered text at one width, renewed when the body changes
+	render    *contactRenderCache                    // stable message lines between changes and scrolls
+	revision  uint64                                 // message/roots generation for render invalidation
 	loaded    bool                                   // the newest page arrived at least once
 	failed    bool                                   // the last read was refused; no retry until an event, a reconnect or reopening the tab
 	stale     bool                                   // changed while a refresh was in flight
@@ -213,6 +216,8 @@ func pageFor(resp protocol.Message, contact string) bool {
 var stateRank = map[string]int{"queued": 0, "received": 0, "expired": 1, "refused": 1, "not_sent": 1, "delivered": 2, "read": 3}
 
 func (t *contactThread) merge(views []protocol.ContactMessageView) {
+	t.revision++
+	t.render = nil
 	for _, v := range views {
 		if old, held := t.rows[rowKey(v)]; held {
 			v = keepForward(old, v)
@@ -253,6 +258,7 @@ func (t *contactThread) newestPage(page *protocol.ContactMessagePage, current bo
 	c := oldestCursor(page.Messages)
 	if t.gapBelow(page, c) {
 		clear(t.rows)
+		clear(t.bodies)
 		t.offset = 0
 	}
 	t.merge(page.Messages)

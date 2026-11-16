@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/google/uuid"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -60,6 +62,12 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 	if t == nil || !m.contactShowsMessages(c) {
 		return l
 	}
+	now := time.Now()
+	if t.render.matches(m, c, t.revision, now) {
+		l.lines = m.withContactActions(fingerprint, t.render.lines)
+		l.spans = t.render.spans
+		return l
+	}
 	thread := t.ordered()
 	breaks := epochBreaks(thread)
 	for i, v := range thread {
@@ -68,12 +76,88 @@ func (m *Model) contactLines(fingerprint string) contactLayout {
 		}
 		l.lines = append(l.lines, "") // a separator, which shows no message
 		from := len(l.lines)
-		l.lines = append(l.lines, m.messageLines(c, v, thread)...)
+		l.lines = append(l.lines, m.messageLines(c, v, t)...)
 		l.spans = append(l.spans, contactSpan{id: v.ID, direction: v.Direction, epoch: v.PairingEpoch, cursor: v.Cursor, from: from, upto: len(l.lines),
 			unread: v.Direction == "in" && unreadHere(v)})
 	}
-	l.lines = append(l.lines, m.cardLines(contactKey(fingerprint))...) // what the operator just did, below the messages
+	t.render = &contactRenderCache{key: m.contactRenderKey(c, t.revision),
+		checkedAt: now, expiresAt: contactSignaturesExpire(thread, now), lines: slices.Clip(l.lines), spans: l.spans}
+	l.lines = m.withContactActions(fingerprint, l.lines)
 	return l
+}
+
+// withContactActions adds transient action cards without changing cached
+// message rows. Most redraws have no cards and need no copy of the history.
+func (m *Model) withContactActions(fingerprint string, lines []string) []string {
+	cards := m.cardLines(contactKey(fingerprint))
+	if len(cards) == 0 {
+		return lines
+	}
+	return append(slices.Clone(lines), cards...)
+}
+
+// contactRenderCache is the message area below the card. The card and action
+// cards are rebuilt separately; scrolling can reuse the unchanged messages.
+type contactRenderCache struct {
+	key       contactRenderKey
+	checkedAt time.Time
+	expiresAt time.Time // a future-dated seal can become valid when time reaches this point
+	lines     []string
+	spans     []contactSpan
+}
+
+// contactRenderKey names the inputs that can change message rows without a
+// new page. Header and action cards are rendered separately.
+type contactRenderKey struct {
+	revision uint64
+	width    int
+	label    string
+	tag      workspaceLabel
+	dotOff   bool
+	mono     bool
+	pending  bool
+}
+
+func (c *contactRenderCache) matches(m *Model, contact protocol.PairingContactView, revision uint64, now time.Time) bool {
+	if c == nil || c.key != m.contactRenderKey(contact, revision) {
+		return false
+	}
+	if now.Before(c.checkedAt) {
+		return false
+	}
+	return c.expiresAt.IsZero() || now.Before(c.expiresAt)
+}
+
+func (m *Model) contactRenderKey(c protocol.PairingContactView, revision uint64) contactRenderKey {
+	return contactRenderKey{revision: revision, width: m.width, label: contactDisplay(c), tag: workspaceTag(c),
+		dotOff: m.reviewSig.dotOff, mono: m.look(false).mono, pending: m.pendingAvailable()}
+}
+
+// contactSignaturesExpire returns the next time a future-dated seal's
+// verdict may change. All other certificate checks use the signed time.
+func contactSignaturesExpire(rows []protocol.ContactMessageView, now time.Time) time.Time {
+	var next time.Time
+	for _, row := range rows {
+		if row.Seal == "" {
+			continue
+		}
+		seal, err := protocol.DecodeSeal(row.Seal)
+		if err != nil {
+			continue
+		}
+		at := seal.Header.CreatedAt.Add(-5 * time.Minute)
+		if !at.After(now) {
+			continue
+		}
+		if earlier(next, at) {
+			next = at
+		}
+	}
+	return next
+}
+
+func earlier(current, candidate time.Time) bool {
+	return current.IsZero() || candidate.Before(current)
 }
 
 // contactShowsMessages: the broker carries them, and both sides confirmed
@@ -96,40 +180,49 @@ func standsAs(c protocol.PairingContactView) string {
 func (m *Model) contactHeader(c protocol.PairingContactView) []string {
 	lines := m.contactCardLines(c)
 	if standing := standingLine(c); standing != "" {
-		lines = append(lines, warnStyle.Render("  "+standing))
+		lines = append(lines, m.contactDetailRows(standing, warnStyle)...)
 	}
-	if pending := pendingKeyLine(m.contacts.threads[c.IdentityKey], c.Signing); pending != "" {
-		lines = append(lines, warnStyle.Render("  "+pending))
+	for _, pending := range pendingKeyLines(m.contacts.threads[c.IdentityKey], c.Signing) {
+		lines = append(lines, m.contactDetailRows(pending, warnStyle)...)
 	}
-	return append(lines, m.signingAlertLines(c)...)
+	lines = append(lines, m.signingAlertLines(c)...)
+	return append(lines, ruleStyle.Render(strings.Repeat(rule, m.transcriptWidth())))
 }
 
 // contactCardLines are the card's title, key and how it syncs.
 func (m *Model) contactCardLines(c protocol.PairingContactView) []string {
 	state := standsAs(c)
-	lines := []string{
-		titleStyle.Render("⇄ "+safe(contactDisplay(c))) + mutedStyle.Render(" · "+state),
-		mutedStyle.Render("  identity " + safe(c.IdentityKey)),
-	}
+	lines := wrap(titleStyle.Render("⇄ "+safe(contactDisplay(c)))+mutedStyle.Render(" · "+state), m.transcriptWidth())
+	lines = append(lines, m.contactDetailRows("identity "+safe(c.IdentityKey), mutedStyle)...)
 	switch {
 	case !m.contactsAvailable():
-		lines = append(lines, "  this broker doesn't carry contact messages; upgrade it")
+		lines = append(lines, m.contactDetailRows("this broker doesn't carry contact messages; upgrade it", mutedStyle)...)
 	case unpairedHere(c):
-		lines = append(lines, warnStyle.Render("  read-only: nothing is sent, acknowledged or shared; pairing again needs a fresh code"))
+		lines = append(lines, m.contactDetailRows("read-only: nothing is sent, acknowledged or shared; pairing again needs a fresh code", warnStyle)...)
 	case !c.Confirmed:
-		lines = append(lines, "  "+contactConfirming)
+		lines = append(lines, m.contactDetailRows(contactConfirming, mutedStyle)...)
 	case pausedHere(c):
-		lines = append(lines, warnStyle.Render("  "+pausedNote))
+		lines = append(lines, m.contactDetailRows(pausedNote, warnStyle)...)
 	default:
-		lines = append(lines, mutedStyle.Render("  "+m.syncLine(c.IdentityKey)))
+		lines = append(lines, m.contactDetailRows(m.syncLine(c.IdentityKey), mutedStyle)...)
 		if share := sharingLine(m.contacts.threads[c.IdentityKey]); share != "" && m.routingAvailable() {
-			lines = append(lines, mutedStyle.Render("  "+share))
+			lines = append(lines, m.contactDetailRows(share, mutedStyle)...)
 		}
 		if grants := reviewGrantsLine(m.contacts.threads[c.IdentityKey]); grants != "" {
-			lines = append(lines, mutedStyle.Render("  "+grants))
+			lines = append(lines, m.contactDetailRows(grants, mutedStyle)...)
 		}
 	}
 	return lines
+}
+
+// contactDetailRows keep a card fact and its continuation indented, so a
+// full key or its acceptance instruction cannot be cut by the frame.
+func (m *Model) contactDetailRows(text string, style lipgloss.Style) []string {
+	var rows []string
+	for _, part := range wrap(text, m.transcriptWidth()-2) {
+		rows = append(rows, style.Render("  "+part))
+	}
+	return rows
 }
 
 // departureNote says when a message written now leaves: at once over a
@@ -187,9 +280,9 @@ func dialedAt(c protocol.PairingContactView) string {
 // the message it answers, its text, then its status lines, controls
 // escaped. A contact's text only styles: a diagram in it gets no /diagram
 // command and is never drawn.
-func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView, thread []protocol.ContactMessageView) []string {
+func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMessageView, thread *contactThread) []string {
 	s := sidesOf(c)
-	lines := append(m.messageHead(s, v), m.replyRows(s, v, thread)...)
+	lines := append(m.messageHead(s, v), m.replyRows(s, v, thread.rows)...)
 	text := v.Text
 	switch {
 	case refusedHere(v):
@@ -197,12 +290,39 @@ func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMe
 	case text == "":
 		text = "(text no longer kept)"
 	}
-	// formatBody indents the text as a body already, as in local chat.
-	lines = append(lines, m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, 0)...)
+	lines = append(lines, thread.bodyRows(m, v, text)...)
 	if m.pendingAvailable() {
 		lines = append(lines, reviewCard(s, v)...)
 	}
 	return append(lines, m.messageStatusRows(s, v)...)
+}
+
+// contactBodyLayout is one message's formatted body, reused when its text and
+// width are unchanged even if the whole message-area cache is invalidated.
+type contactBodyLayout struct {
+	text  string
+	width int
+	rows  []string
+}
+
+func (c contactBodyLayout) holds(text string, width int) bool {
+	return c.text == text && c.width == width
+}
+
+func (t *contactThread) bodyRows(m *Model, v protocol.ContactMessageView, text string) []string {
+	if t.bodies == nil {
+		t.bodies = make(map[rowRef]contactBodyLayout)
+	}
+	key := rowKey(v)
+	if cached, ok := t.bodies[key]; ok {
+		if cached.holds(text, m.width) {
+			return cached.rows
+		}
+	}
+	// formatBody indents the text as a body already, as in local chat.
+	rows := m.formattedRows(lineBuilder{id: v.ID, inert: true}, text, 0)
+	t.bodies[key] = contactBodyLayout{text: text, width: m.width, rows: rows}
+	return rows
 }
 
 func (m *Model) outboundState(v protocol.ContactMessageView) string {
