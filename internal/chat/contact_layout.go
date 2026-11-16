@@ -86,24 +86,15 @@ func (s contactSides) senderStyled(v protocol.ContactMessageView) string {
 // replyParent is the message v answers in this contact's loaded thread:
 // the same wire ID can be one sent and one received, so the side the reply
 // names decides which, and a side it doesn't name decides nothing; it is
-// one of v's own pairing, never another's that reused the ID (#276). ok is
-// false when none or more than one match.
-func replyParent(v protocol.ContactMessageView, thread []protocol.ContactMessageView) (protocol.ContactMessageView, bool) {
+// one of v's own pairing, never another's that reused the ID (#276).
+func replyParent(v protocol.ContactMessageView, thread map[rowRef]protocol.ContactMessageView) (protocol.ContactMessageView, bool) {
 	direction, ok := parentDirection(v)
 	if !ok {
 		return protocol.ContactMessageView{}, false
 	}
 	want := rowRef{direction, v.PairingEpoch, v.ReplyID}
-	var found []protocol.ContactMessageView
-	for _, p := range thread {
-		if rowKey(p) == want {
-			found = append(found, p)
-		}
-	}
-	if len(found) != 1 {
-		return protocol.ContactMessageView{}, false
-	}
-	return found[0], true
+	p, found := thread[want]
+	return p, found
 }
 
 // parentDirection: a parent by the reply's sender was written on the same
@@ -123,7 +114,7 @@ func parentDirection(v protocol.ContactMessageView) (string, bool) {
 
 // replyRows is "↳ re HH:MM FROM" for a reply whose parent is loaded, else
 // "↳ re an earlier message"; nothing for a message that answers none.
-func (m *Model) replyRows(s contactSides, v protocol.ContactMessageView, thread []protocol.ContactMessageView) []string {
+func (m *Model) replyRows(s contactSides, v protocol.ContactMessageView, thread map[rowRef]protocol.ContactMessageView) []string {
 	if v.ReplyID == "" {
 		return nil
 	}

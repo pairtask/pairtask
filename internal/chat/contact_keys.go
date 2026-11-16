@@ -103,19 +103,19 @@ func (m *Model) contactRequireSealsResult(req pendingRequest, resp protocol.Mess
 	return m.refreshContact(contact, 0)
 }
 
-// pendingKeyLine names the person keys a workspace awaits acceptance for,
+// pendingKeyLines name the person keys a workspace awaits acceptance for,
 // and says when its unsigned messages are refused: the signing alert
 // says that for a workspace on a version without signatures.
-func pendingKeyLine(t *contactThread, signing string) string {
+func pendingKeyLines(t *contactThread, signing string) []string {
 	switch {
 	case t == nil:
-		return ""
+		return nil
 	case len(t.pendingKeys) == 0 && t.requireSeals && signing == "":
-		return "requires signatures: unsigned messages from this workspace are refused"
+		return []string{"requires signatures: unsigned messages from this workspace are refused"}
 	case len(t.pendingKeys) == 0:
-		return ""
+		return nil
 	case len(t.pendingKeys) == 1:
-		return "signs as person " + safe(t.pendingKeys[0]) + ", not yet accepted: compare it with them, then /pair accept-key"
+		return []string{"signs as person " + safe(t.pendingKeys[0]), "not yet accepted: compare it with them, then /pair accept-key"}
 	}
-	return "signs as several person keys, none accepted: compare with them, then /pair accept-key KEY"
+	return []string{"signs as several person keys, none accepted: compare with them, then /pair accept-key KEY"}
 }
