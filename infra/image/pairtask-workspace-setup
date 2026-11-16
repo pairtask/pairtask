@@ -18,15 +18,46 @@ def seed_home(home, skeleton, uid, gid):
             os.fchown(stream.fileno(), uid, gid)
 
 
+# The build-cache volume (#400) is optional: a deployment from before it
+# has none, and its agents keep their caches in the home. Services read
+# where the caches go from CACHE_ENV, written only while the volume is there.
+CACHE = Path("/var/cache/collab-ai-agent")
+CACHE_ENV = Path("/run/pairtask/cache.env")
+CACHE_DIRS = (("GOCACHE", "go-build"), ("GOMODCACHE", "go-mod"), ("npm_config_cache", "npm"),
+              ("PIP_CACHE_DIR", "pip"), ("UV_CACHE_DIR", "uv"))
+
+
+def cache_env(cache):
+    """The environment that points the build tools at cache."""
+    return "".join(f"{name}={cache / sub}\n" for name, sub in CACHE_DIRS)
+
+
+def write_cache_env(cache, env_file):
+    """cache's environment for services, or none while there's no volume."""
+    if not cache.exists():
+        env_file.unlink(missing_ok=True)
+        return
+    env_file.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    env_file.write_text(cache_env(cache))
+    env_file.chmod(0o644)
+
+
+def own_root(path, mode, account):
+    if path.is_symlink() or not path.is_mount():
+        raise ValueError(f"Expected an Incus volume at {path}")
+    # Never recurse into stored repositories or agent-controlled home paths.
+    os.chown(path, account.pw_uid, account.pw_gid)
+    path.chmod(mode)
+
+
 def initialize():
     account = pwd.getpwnam("agent")
     for path, mode in ((Path("/workspace"), 0o750), (Path("/home/agent"), 0o700),
                        (Path("/var/lib/collab-ai-docker"), 0o700)):
-        if path.is_symlink() or not path.is_mount():
-            raise ValueError(f"Expected an Incus volume at {path}")
-        # Never recurse into stored repositories or agent-controlled home paths.
-        os.chown(path, account.pw_uid, account.pw_gid)
-        path.chmod(mode)
+        own_root(path, mode, account)
+    if CACHE.is_symlink() or CACHE.exists():
+        own_root(CACHE, 0o700, account)
+    write_cache_env(CACHE, CACHE_ENV)
     seed_home(Path("/home/agent"), Path("/etc/skel"), account.pw_uid, account.pw_gid)
 
 

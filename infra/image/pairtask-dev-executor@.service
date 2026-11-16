@@ -9,6 +9,8 @@ Group=agent
 WorkingDirectory=/workspace
 Environment=PATH=/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin
 Environment=HOME=/home/agent
+# Build caches on their own volume (#400), when the deployment has one.
+EnvironmentFile=-/run/pairtask/cache.env
 ExecStart=/usr/local/bin/codex exec-server --listen stdio
 StandardInput=socket
 StandardOutput=socket

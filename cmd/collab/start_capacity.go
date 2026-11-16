@@ -52,7 +52,9 @@ func homeCapacity() (homeSpace, error) {
 
 // disposableCaches are the build caches under home that are safe to clear,
 // each with the command that clears it.
-var disposableCaches = []struct{ dir, clear string }{
+type cacheDir struct{ dir, clear string }
+
+var disposableCaches = []cacheDir{
 	{".cache/go-build", "go clean -cache"},
 	{"go/pkg/mod", "go clean -modcache"},
 	{".npm", "npm cache clean --force"},
@@ -60,6 +62,10 @@ var disposableCaches = []struct{ dir, clear string }{
 	{".cache/uv", "uv cache clean"},
 	{".cache/starship", "rm -rf ~/.cache/starship"},
 }
+
+// cacheVolume is where the build caches live once the deployment has the
+// cache volume (#400); copies left in home are then old and only deleted.
+var cacheVolume = "/var/cache/collab-ai-agent"
 
 // checkCapacity refuses to start when home has too little space left and
 // warns when it runs low; a check that can't run doesn't stop the start.
@@ -102,14 +108,34 @@ func reportCapacity(capacity capacityFunc, w io.Writer, who string) bool {
 func writeRecovery(w io.Writer, home string) {
 	ctx, cancel := context.WithTimeout(context.Background(), cacheSizing)
 	defer cancel()
-	fmt.Fprintln(w, "  Build caches are safe to clear; they refill as needed:")
+	moved := cacheMoved()
+	if moved {
+		fmt.Fprintln(w, "  Build caches now live on their own volume ("+cacheVolume+"); old copies in the home are safe to delete:")
+	} else {
+		fmt.Fprintln(w, "  Build caches are safe to clear; they refill as needed:")
+	}
 	for _, c := range disposableCaches {
 		if used := dirSize(ctx, filepath.Join(home, c.dir)); used > 0 {
-			fmt.Fprintf(w, "    ~/%s  %s  →  %s\n", c.dir, size(used), c.clear)
+			fmt.Fprintf(w, "    ~/%s  %s  →  %s\n", c.dir, size(used), c.clearCommand(moved))
 		}
 	}
 	fmt.Fprintln(w, "  Keep ~/.codex, ~/.claude, ~/.pi and ~/.local/state: they hold the agents' settings and sessions.")
 	fmt.Fprintln(w, "  To grow the volume, set agent_home_gib in the sandbox settings on the host, then pairtask plan and pairtask apply.")
+}
+
+// clearCommand clears a home cache: with the tool while the tool uses it,
+// else by removing the old copy, which the tool no longer reads.
+func (c cacheDir) clearCommand(moved bool) string {
+	if moved {
+		return "rm -rf ~/" + c.dir
+	}
+	return c.clear
+}
+
+// cacheMoved: the deployment has the cache volume.
+func cacheMoved() bool {
+	info, err := os.Stat(cacheVolume)
+	return err == nil && info.IsDir()
 }
 
 // dirSize is the bytes of regular files under dir, as far as ctx allows;

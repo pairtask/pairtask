@@ -1,11 +1,12 @@
 # Persistent sandbox data
 
-Dev data lives on three Incus volumes, mounted only in `workspace`:
+Dev data lives on Incus volumes mounted only in `workspace`:
 
 | Volume | Mount | Default quota | Ownership |
 | --- | --- | --- | --- |
 | `workspace-data` | `/workspace` | 10 GiB (`workspace_gib`) | `agent:agent`, directory `0750` |
 | `agent-home` | `/home/agent` | 2 GiB (`agent_home_gib`) | `agent:agent`, directory `0700` |
+| `agent-cache` | `/var/cache/collab-ai-agent` | 10 GiB (`cache_gib`) | `agent:agent`, directory `0700`; Go, npm, pip and uv build caches, kept off the agent home |
 | `docker-data` | `/var/lib/collab-ai-docker` | 10 GiB (`docker_gib`) | `agent:agent`; `0700` initially, Docker sets `0710`; no access for others |
 | `workspace-tools` | `/var/lib/collab-ai-tools` | 4 GiB (`tools_gib`) | `root:root`, `0755`; the [tool store](sandbox-tools.md), written only by the host's rollout |
 | `secured-tools` (secured only) | `/var/lib/collab-ai-tools` | 2 GiB (`secured_tools_gib`) | `root:root`, `0755`; secured's own store, never shared with the workspace |
@@ -37,6 +38,11 @@ JSON. A volume at 90% or more gets a warning. `pairtask start` also refuses to
 start an agent session when the agent home is nearly full, and lists the caches
 that are safe to clear.
 
+Build caches (Go, npm, pip, uv) live on `agent-cache`, so a few builds can't
+fill the agent home. On a deployment from before that volume, the caches stay
+in the home until the next `pairtask upgrade` adds it. The old copies are then
+left in the home, and the start check names them as safe to delete.
+
 To grow the workspace or a volume, ask for the new sizes, review the plan,
 then apply it:
 
@@ -46,7 +52,7 @@ pairtask size apply
 ```
 
 `size plan` takes `--cpu` and `--memory` for the workspace, `--disk` for the
-root disk quota, and `--workspace`, `--agent-home`, `--docker` and `--tools`
+root disk quota, and `--workspace`, `--agent-home`, `--docker`, `--tools` and `--cache`
 for the volume quotas, in GiB. The root disk quota is shared: `--disk` sets
 it for every sandbox container that exists (the workspace, `secured`, the
 pairing connector and the peer probe), and the plan lists each one. Before it

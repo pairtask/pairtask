@@ -11,6 +11,7 @@ memory_gib   = 4
 disk_gib     = 10 # replaceable root disk
 workspace_gib = 10 # persistent project data
 agent_home_gib = 2 # persistent settings, memory and sessions
+cache_gib    = 10 # build caches (Go, npm, pip, uv), off the agent home
 running      = true
 dev_network_enabled = true # set false to remove dev's NIC (offline)
 dev_network = "incusbr0" # existing managed bridge; general network access, not a domain allowlist
