@@ -34,6 +34,9 @@ type Config struct {
 	// Notify shows a notice when a paired workspace sends a message; nil
 	// shows none. Only the copy that owns the node notifies.
 	Notify Notifier
+	// Address is the extension's Workspace address setting (#388): where
+	// paired workspaces are now.
+	Address string
 }
 
 // Node is this copy's way to the broker: the broker itself while it owns
@@ -44,6 +47,9 @@ type Node struct {
 	mu   sync.Mutex      // guards own and fwd, and every change between them
 	own  *owner
 	fwd  *forwarder
+	// addresses is what the Workspace address setting did, when this copy
+	// applied it.
+	addresses addressSetting
 }
 
 // ErrUnsafeDataDir: the data directory isn't a private directory of ours.

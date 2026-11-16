@@ -46,6 +46,7 @@ func run(args []string, log *slog.Logger) error {
 		return err
 	}
 	defer n.Close()
+	go applyAddresses(ctx, n, cfg.Address, log)
 	in := &clientInput{ReadCloser: os.Stdin}
 	err = desktop.NewServer(n, version()).Run(ctx, &mcp.IOTransport{Reader: in, Writer: stdout{os.Stdout}})
 	return sessionEnd(ctx, in, err, log)
@@ -60,6 +61,15 @@ func sessionEnd(ctx context.Context, in *clientInput, err error, log *slog.Logge
 		return nil
 	}
 	return err
+}
+
+// applyAddresses moves the workspaces the Workspace address setting names,
+// off the MCP path, since each move dials and probes; the log and
+// pair_status say what happened.
+func applyAddresses(ctx context.Context, n *desktop.Node, raw string, log *slog.Logger) {
+	for _, o := range n.ApplyAddressSetting(ctx, raw) {
+		log.Info("workspace address setting", "contact", o.Contact, "destination", o.Destination, "result", o.Result, "reason", o.Reason)
+	}
 }
 
 // stoppedByClient: Desktop closed stdin, or a signal stopped the process.
@@ -88,13 +98,15 @@ func (stdout) Close() error { return nil }
 
 // parseFlags reads --dir, the private data directory (the user's config
 // directory's pairtask-desktop by default), --name, the name to pair
-// under, and --notify, whether to show system notifications (on).
+// under, --notify, whether to show system notifications (on), and
+// --address, the Workspace address setting.
 func parseFlags(args []string) (desktop.Config, error) {
 	fs := flag.NewFlagSet("pairtask-desktop", flag.ContinueOnError)
 	var cfg desktop.Config
 	fs.StringVar(&cfg.Dir, "dir", "", "private data directory (default: the user config directory's pairtask-desktop)")
 	fs.StringVar(&cfg.Name, "name", "", "the name this node pairs under")
 	notify := fs.Bool("notify", true, "show a system notification when a paired workspace sends a message")
+	fs.StringVar(&cfg.Address, "address", "", "where paired workspaces are now: HOST:PORT, or NAME=HOST:PORT, comma-separated")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}
@@ -104,15 +116,21 @@ func parseFlags(args []string) (desktop.Config, error) {
 	if fs.NArg() > 0 {
 		return cfg, fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	if cfg.Dir != "" {
-		return cfg, nil
+	dir, err := dataDir(cfg.Dir)
+	cfg.Dir = dir
+	return cfg, err
+}
+
+// dataDir is --dir, else the user config directory's pairtask-desktop.
+func dataDir(dir string) (string, error) {
+	if dir != "" {
+		return dir, nil
 	}
 	base, err := os.UserConfigDir()
 	if err != nil {
-		return cfg, fmt.Errorf("no data directory: pass --dir: %w", err)
+		return "", fmt.Errorf("no data directory: pass --dir: %w", err)
 	}
-	cfg.Dir = filepath.Join(base, "pairtask-desktop")
-	return cfg, nil
+	return filepath.Join(base, "pairtask-desktop"), nil
 }
 
 // version is the module version this binary was built from, or "dev".

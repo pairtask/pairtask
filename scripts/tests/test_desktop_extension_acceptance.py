@@ -13,7 +13,7 @@ from scripts.desktop_extension import Target, build
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILDER = ROOT / "scripts" / "build-mcpb.py"
-TOOLS = {"whoami", "pair_redeem", "pair_status", "send", "check_inbox", "mark_read"}
+TOOLS = {"whoami", "pair_redeem", "pair_status", "pair_address", "send", "check_inbox", "mark_read"}
 PLATFORMS = (("linux", "amd64"), ("linux", "arm64"), ("darwin", "amd64"), ("darwin", "arm64"))
 ICONS = (
     ("light", "icons/pairtask-light-512.png"),
@@ -95,7 +95,8 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 self.assertEqual(server["mcp_config"]["command"], "${__dirname}/server/pairtask-desktop")
                 self.assertEqual(
                     server["mcp_config"]["args"],
-                    ["--name", "${user_config.name}", "--notify=${user_config.notify}"],
+                    ["--name", "${user_config.name}", "--notify=${user_config.notify}",
+                     "--address=${user_config.address}"],
                 )
                 self.assertEqual(manifest["user_config"]["name"]["type"], "string")
                 self.assertTrue(manifest["user_config"]["name"]["required"])

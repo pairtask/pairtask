@@ -27,7 +27,7 @@
     "entry_point": "server/pairtask-desktop",
     "mcp_config": {
       "command": "${__dirname}/server/pairtask-desktop",
-      "args": ["--name", "${user_config.name}", "--notify=${user_config.notify}"],
+      "args": ["--name", "${user_config.name}", "--notify=${user_config.notify}", "--address=${user_config.address}"],
       "env": {}
     }
   },
@@ -43,6 +43,13 @@
       "title": "Notifications",
       "description": "Show a system notification when a paired workspace sends you a message: who sent it and how many are unread, never the text.",
       "default": true
+    },
+    "address": {
+      "type": "string",
+      "title": "Workspace address",
+      "description": "Where a paired workspace is now, if its address changed: HOST:PORT, or NAME=HOST:PORT, NAME2=HOST:PORT for several. It moves only when that workspace's own key answers there; leave empty otherwise.",
+      "required": false,
+      "default": ""
     }
   },
   "tools": [
@@ -51,7 +58,8 @@
     {"name": "pair_status", "description": "Joins in progress and the workspaces you are paired with."},
     {"name": "send", "description": "Send a message to a paired workspace's operator or to the agents it shares."},
     {"name": "check_inbox", "description": "The newest messages with paired workspaces, and which are unread."},
-    {"name": "mark_read", "description": "Mark received messages read; the sender sees the receipt."}
+    {"name": "mark_read", "description": "Mark received messages read; the sender sees the receipt."},
+    {"name": "pair_address", "description": "Move a paired workspace to its new HOST:PORT once the same workspace answers there."}
   ],
   "compatibility": {
     "platforms": ["darwin", "linux"]
