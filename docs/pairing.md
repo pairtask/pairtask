@@ -407,6 +407,17 @@ the old address and syncs there from then on. A refusal (unreachable, or
 another workspace's identity) leaves the old address. Only the side that
 dials keeps the other's address; on A, the command says B must update it.
 
+Without the chat, for example from a script or an agent while your chat
+is open, run the same check from a terminal, in `secured`:
+
+```sh
+pairtask operator contact address A_NAME NEW_A_IP:7445
+```
+
+`A_NAME` is what B calls A, its own name, or its key. The command waits
+for the check (up to 30 seconds) and prints where A is now, or why the
+address stayed; `--json` prints the broker's answer.
+
 Pairing again from B to the new address (steps 2 to 5) works too. Either
 way, only a newer change moves the address, so one finishing late never
 moves it back.
