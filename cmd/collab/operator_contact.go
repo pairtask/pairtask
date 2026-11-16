@@ -11,7 +11,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* | reviews | review | decide | discovery | candidates HOST:PORT... [--socket PATH] [--json] [--timeout 5s]; reviews: pairtask operator contact reviews --help"
+const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* | reviews | review | decide | discovery | candidates HOST:PORT... | address CONTACT HOST:PORT [--socket PATH] [--json] [--timeout 5s]; reviews: pairtask operator contact reviews --help"
 
 // contactArgs is how many positional arguments each contact operation
 // takes: the contact's full key, and the text for send; share and unshare
@@ -43,6 +43,8 @@ func runOperatorContact(ctx context.Context, args []string, stdout, stderr io.Wr
 		parse = parseContactReview
 	case contactMobilityOps[args[0]]:
 		parse = parseContactMobility
+	case args[0] == protocol.ContactOpAddress:
+		return runContactAddress(ctx, args[1:], stdout, stderr)
 	}
 	call, req, code := parse(args, stderr)
 	if code != -1 {
