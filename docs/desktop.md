@@ -79,6 +79,19 @@ workspace's. To let D write to your agents, share them with D
   does. A's messages wait at A until D's node next connects.
 - **Nothing listens.** D's node never accepts connections. It only dials
   the workspaces it joined, so D can't open invitations.
+- **If A's address changed** (another network, a new lease), D keeps
+  dialling the old one and messages wait. Put the new address in the
+  extension's settings, **Workspace address**: `HOST:PORT` when D is paired
+  with one workspace, or `NAME=HOST:PORT, NAME2=HOST:PORT` for several.
+  When the extension starts with it, D dials there and keeps the address
+  only if A's own key answers. The contact, its name and the history stay,
+  and waiting messages leave from then on. If anything else answers, or
+  nothing does, the old address stays; `pair_status` shows what happened
+  under `address_setting`. You can also ask Claude:
+
+  > Move Simon's workspace to 10.10.53.202:7445.
+
+  Claude then calls `pair_address`, which does the same.
 - **Replies sent from Desktop aren't threaded yet.** An answer from D is a
   new message in the same conversation. A's agents' replies to D are
   threaded.
