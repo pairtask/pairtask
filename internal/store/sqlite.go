@@ -180,6 +180,9 @@ var laterColumns = []struct{ table, column, decl string }{
 	// A review outcome notice as delivered (#259): its typed outcome, JSON,
 	// so a replay says what it said; NULL for any other message.
 	{"message_metadata", "review_outcome", "TEXT"},
+	// The signing state a contact was last told how to update from (#395):
+	// "" while it signs, or before any notice.
+	{"peer_contacts", "signing_notice", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the

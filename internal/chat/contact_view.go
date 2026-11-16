@@ -290,7 +290,11 @@ func (m *Model) messageLines(c protocol.PairingContactView, v protocol.ContactMe
 	case text == "":
 		text = "(text no longer kept)"
 	}
-	lines = append(lines, thread.bodyRows(m, v, text)...)
+	if card := m.upgradeCard(c, v); card != nil {
+		lines = append(lines, card...)
+	} else {
+		lines = append(lines, thread.bodyRows(m, v, text)...)
+	}
 	if m.pendingAvailable() {
 		lines = append(lines, reviewCard(s, v)...)
 	}

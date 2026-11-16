@@ -108,8 +108,19 @@ func ValidateAgentID(id string) error {
 	if id == OperatorID {
 		return errors.New("agent ID operator is reserved")
 	}
+	if id == SystemSenderID {
+		return errors.New("agent ID pairtask is reserved")
+	}
 	return nil
 }
+
+// SystemSenderID sends pairtask's own notices to a paired workspace (#395),
+// never typed by an operator; no agent may take it.
+const SystemSenderID = "pairtask"
+
+// SigningNoticeMarker is the first line of pairtask's notice to a paired
+// workspace that can't sign (#395), which a chat draws as a card.
+const SigningNoticeMarker = "pairtask notice: signing-upgrade"
 
 // WithDisplayOrigin labels a delivered msg frame for a host; other frame types
 // carry no origin.

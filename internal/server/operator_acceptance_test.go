@@ -142,6 +142,15 @@ func (f *operatorFixture) count(table string) int {
 	return n
 }
 
+func (f *operatorFixture) countInboundPeerMessages() int {
+	f.t.Helper()
+	var n int
+	if e := f.db.QueryRow("SELECT count(*) FROM peer_messages WHERE direction = 'in'").Scan(&n); e != nil {
+		f.t.Fatal(e)
+	}
+	return n
+}
+
 func TestOperatorAcceptanceDirectAndFrozenRetry(t *testing.T) {
 	f := newOperatorFixture(t, os.Getuid(), "")
 	p := f.peer("alpha", 4)

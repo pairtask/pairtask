@@ -41,7 +41,7 @@ func TestControlFallbackAcceptanceRefusedMessageDialLearnsNoAddressPause(t *test
 	operatorEqual(t, "outgoing queued", reply.Type, protocol.TypeOperatorContactResult)
 	awaitFallbackPeerState(t, dialer, a.Identity.Fingerprint())
 	operatorEqual(t, "one message dial and one control dial", calls.Load(), int32(2))
-	operatorEqual(t, "no imported content at paused receiver", inviter.count("peer_messages"), 0)
+	operatorEqual(t, "no imported content at paused receiver", inviter.countInboundPeerMessages(), 0)
 }
 func awaitFallbackPeerState(t *testing.T, f *redeemOperatorFixture, key string) {
 	t.Helper()

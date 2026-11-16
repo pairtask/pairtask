@@ -52,8 +52,11 @@ func (p *PeerMessages) SawVersion(ctx context.Context, v byte) error {
 			return err
 		}
 		after, err := signingNow(ctx, tx, p.fence.contact)
+		if err != nil {
+			return err
+		}
 		moved = before != after
-		return err
+		return noteSigning(ctx, tx, p.fence.contact, after)
 	})
 	p.moved = p.moved || (err == nil && moved)
 	return err
