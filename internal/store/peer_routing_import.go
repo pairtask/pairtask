@@ -405,7 +405,8 @@ func importedMessage(ctx context.Context, tx *sql.Tx, imp RemoteImport, at impor
 	msg := protocol.Message{Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: sender, To: imp.Recipients[0],
 		Payload: payload, MessageID: imp.LocalID, Origin: protocol.OriginRemote, InReplyTo: parent,
 		AckRequested: true, Durable: true,
-		Remote: &protocol.Remote{Contact: imp.Contact, Label: label, Sender: imp.Sender, ReplyID: imp.ReplyTo.ID, ReplyAuthor: imp.ReplyTo.Author}}
+		Remote: &protocol.Remote{Contact: imp.Contact, MessageID: imp.RemoteID, Label: label, Sender: imp.Sender,
+			ReplyID: imp.ReplyTo.ID, ReplyAuthor: imp.ReplyTo.Author}}
 	if len(imp.Recipients) > 1 {
 		msg.To, msg.Group = protocol.Broadcast, slices.Clone(imp.Recipients)
 	}

@@ -241,7 +241,8 @@ const groupColumn = `COALESCE((SELECT o.members FROM operator_requests o WHERE o
 
 // remoteColumns are where a message from a paired workspace came from.
 const remoteColumns = `mm.remote_contact, (SELECT pc.name FROM peer_contacts pc WHERE pc.identity_key = mm.remote_contact),
-    mm.remote_sender, mm.remote_reply_id, mm.remote_reply_author`
+    mm.remote_sender, mm.remote_reply_id, mm.remote_reply_author,
+    (SELECT ri.remote_id FROM remote_imports ri WHERE ri.local_id = mm.message_id AND mm.remote_contact IS NOT NULL)`
 
 func readPending(ctx context.Context, tx *sql.Tx, id string, shows replayable) ([]protocol.Message, error) {
 	query := `SELECT ` + durableColumns + ` FROM durable_inbox i JOIN message_metadata mm USING(message_id) JOIN messages m USING(seq) WHERE i.agent_id = ? AND i.acknowledged_at IS NULL AND (? OR mm.origin IS NULL OR mm.origin != 'operator') AND (? OR mm.room IS NULL) AND (? OR mm.origin IS NULL OR mm.origin != 'remote') ORDER BY m.seq LIMIT ?`
@@ -299,7 +300,7 @@ func scanDurableMessage(row scanner) (protocol.Message, error) {
 	var origin, group, room, mentions, reviewID, outcome, seal sql.NullString
 	var remote remoteFields
 	err := row.Scan(&msg.MessageID, &msg.Seq, &msg.TS, &msg.From, &msg.SessionID, &msg.To, &payload, &msg.InReplyTo, &origin, &group, &room, &mentions, &reviewID,
-		&outcome, &remote.contact, &remote.label, &remote.sender, &remote.replyID, &remote.replyAuthor, &seal)
+		&outcome, &remote.contact, &remote.label, &remote.sender, &remote.replyID, &remote.replyAuthor, &remote.messageID, &seal)
 	if err != nil {
 		return msg, err
 	}
@@ -348,14 +349,14 @@ func groupList(group sql.NullString) ([]string, error) {
 // remoteFields are a message's remote columns, all NULL unless it came
 // from a paired workspace.
 type remoteFields struct {
-	contact, label, sender, replyID sql.NullString
-	replyAuthor                     sql.NullInt64
+	contact, label, sender, replyID, messageID sql.NullString
+	replyAuthor                                sql.NullInt64
 }
 
 func (r remoteFields) view() *protocol.Remote {
 	if !r.contact.Valid {
 		return nil
 	}
-	return &protocol.Remote{Contact: r.contact.String, Label: r.label.String, Sender: r.sender.String,
+	return &protocol.Remote{Contact: r.contact.String, MessageID: r.messageID.String, Label: r.label.String, Sender: r.sender.String,
 		ReplyID: r.replyID.String, ReplyAuthor: byte(r.replyAuthor.Int64)}
 }

@@ -29,8 +29,9 @@ func remoteAgentBridgeFixture(t *testing.T) bridgeSignedFixture {
 	c.protocolVersion = protocol.Version
 	c.agentID = self
 	c.roots = []protocol.SigningRoot{{KeyID: workspaceID, Workspace: workspaceID, Approved: true}}
-	message := protocol.Message{Type: protocol.TypeMsg, MessageID: header.MessageID, From: sender,
-		Origin: protocol.OriginRemote, To: self, Payload: json.RawMessage(`{"text":"hello from a paired agent"}`), Seal: seal}
+	message := protocol.Message{Type: protocol.TypeMsg, MessageID: "remote:locally-assigned-agent-id", From: sender,
+		Origin: protocol.OriginRemote, Remote: &protocol.Remote{Contact: workspaceID, MessageID: header.MessageID},
+		To: self, Payload: json.RawMessage(`{"text":"hello from a paired agent"}`), Seal: seal}
 	return bridgeSignedFixture{client: c, remote: remote, message: message}
 }
 
@@ -45,8 +46,9 @@ func TestContactIdentityAcceptanceBridgeVerifiesPairedAgentIndependently(t *test
 		t.Fatalf("paired agent provenance: %+v", verdict)
 	}
 	for name, mutate := range map[string]func(*bridgeSignedFixture){
-		"text":   func(f *bridgeSignedFixture) { f.message.Payload = json.RawMessage(`{"text":"relay changed this"}`) },
-		"sender": func(f *bridgeSignedFixture) { f.message.From = "another-agent" },
+		"text":      func(f *bridgeSignedFixture) { f.message.Payload = json.RawMessage(`{"text":"relay changed this"}`) },
+		"sender":    func(f *bridgeSignedFixture) { f.message.From = "another-agent" },
+		"signed ID": func(f *bridgeSignedFixture) { f.message.Remote.MessageID = "another-remote-id" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := remoteAgentBridgeFixture(t)
@@ -58,6 +60,13 @@ func TestContactIdentityAcceptanceBridgeVerifiesPairedAgentIndependently(t *test
 	f = remoteAgentBridgeFixture(t)
 	f.client.roots[0].Approved = false
 	requireBridgeState(t, f.deliver(t), signing.Unverified)
+}
+
+func TestContactIdentityAcceptanceRemoteLocalIDDoesNotChangeSealVerdict(t *testing.T) {
+	f := remoteAgentBridgeFixture(t)
+	f.message.MessageID = "remote:a-different-local-id"
+	f.message.Replayed = true
+	requireBridgeState(t, f.deliver(t), signing.Verified)
 }
 
 func TestContactIdentityAcceptanceForeignPersonCannotClaimLocalOperator(t *testing.T) {
