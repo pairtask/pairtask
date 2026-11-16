@@ -78,7 +78,10 @@ const (
 // operator), and the message it claims to answer there, which InReplyTo
 // names only when it resolves to a message here.
 type Remote struct {
-	Contact     string `json:"contact"`
+	Contact string `json:"contact"`
+	// MessageID is the message's ID on the sending side: a seal signed
+	// that one, not the ID it was given here.
+	MessageID   string `json:"message_id,omitempty"`
 	Label       string `json:"label,omitempty"`
 	Sender      string `json:"sender,omitempty"`
 	ReplyID     string `json:"reply_id,omitempty"`

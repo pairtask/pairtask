@@ -79,6 +79,24 @@ func frameOf(msg protocol.Message, self string) signing.Frame {
 		Text string `json:"text"`
 	}
 	_ = json.Unmarshal(msg.Payload, &body)
-	return signing.Frame{MessageID: msg.MessageID, SenderKind: kind, SenderID: msg.From, Text: body.Text,
+	return signing.Frame{MessageID: signedID(msg), SenderKind: kind, SenderID: msg.From, Text: body.Text,
 		Addresses: []string{self, protocol.Broadcast}, Room: msg.Room}
+}
+
+// signedID is the ID msg's seal signed: a paired workspace's message keeps
+// its ID from there, under the one it was given here (#115).
+func signedID(msg protocol.Message) string {
+	if id := remoteID(msg); id != "" {
+		return id
+	}
+	return msg.MessageID
+}
+
+// remoteID is the sending side's ID of a message from a paired workspace,
+// "" for any other.
+func remoteID(msg protocol.Message) string {
+	if msg.Origin != protocol.OriginRemote || msg.Remote == nil {
+		return ""
+	}
+	return msg.Remote.MessageID
 }

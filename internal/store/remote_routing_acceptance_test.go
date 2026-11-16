@@ -235,6 +235,10 @@ func TestRemoteRoutingAcceptancePendingImportSurvivesRestartAndCollection(t *tes
 		t.Fatal("remote provenance lost on replay")
 	}
 	pairEqual(t, got[0].Remote.Contact, contact)
+	pairEqual(t, got[0].Remote.MessageID, m.ID)
+	if got[0].MessageID == m.ID {
+		t.Fatal("replayed import exposed sender's ID as its local delivery ID")
+	}
 	remaining, err := db.PendingImports(ctx, 10)
 	pairOK(t, err)
 	pairEqual(t, len(remaining), 0)
