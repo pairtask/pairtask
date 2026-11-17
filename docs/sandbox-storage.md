@@ -1,6 +1,6 @@
 # Persistent sandbox data
 
-Dev data lives on three Incus volumes, mounted only in `workspace`:
+Dev data lives on Incus volumes mounted only in `workspace`:
 
 | Volume | Mount | Default quota | Ownership |
 | --- | --- | --- | --- |
@@ -36,6 +36,12 @@ It only reads, through Incus and the VM's settings; `--json` prints the same as
 JSON. A volume at 90% or more gets a warning. `pairtask start` also refuses to
 start an agent session when the agent home is nearly full, and lists the caches
 that are safe to clear.
+
+Build caches (Go, npm, pip, uv) live in `/workspace/.cache`, on the projects
+volume, so a few builds can't fill the agent home. They share the projects
+quota; grow it with `pairtask size plan --workspace N`. After the upgrade
+that moves them, old copies stay in the home, and the start check names them
+as safe to delete.
 
 To grow the workspace or a volume, ask for the new sizes, review the plan,
 then apply it:

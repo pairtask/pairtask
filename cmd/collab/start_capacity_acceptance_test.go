@@ -117,6 +117,26 @@ func TestStartCapacityAcceptanceRecoveryNamesDisposableCachesAndKeepsState(t *te
 	assertCapacityFile(t, keep)
 }
 
+func TestStartCapacityAcceptanceWorkspaceCacheExplainsOldHomeCopies(t *testing.T) {
+	home := t.TempDir()
+	old := capacityFile{filepath.Join(home, ".cache", "go-build", "old"), "old artifact"}
+	writeCapacityFile(t, old)
+	volume := filepath.Join(t.TempDir(), "workspace", ".cache")
+	current := capacityFile{filepath.Join(volume, "go-build", "current"), "current artifact"}
+	writeCapacityFile(t, current)
+	previous := cacheVolume
+	cacheVolume = volume
+	t.Cleanup(func() { cacheVolume = previous })
+
+	var stderr bytes.Buffer
+	reportCapacity(func() (homeSpace, error) {
+		return homeSpace{Path: home, Free: 0, Total: 2 << 30}, nil
+	}, &stderr, "pairtask start")
+	assertCapacityText(t, stderr.String(), volume, "old copies in the home", "rm -rf ~/.cache/go-build")
+	assertCapacityFile(t, old)
+	assertCapacityFile(t, current)
+}
+
 type capacityFile struct {
 	path, contents string
 }
