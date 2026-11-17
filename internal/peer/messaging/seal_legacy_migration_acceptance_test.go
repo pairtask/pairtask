@@ -50,13 +50,33 @@ func legacyQueue(t *testing.T, db *store.Store, m legacyQueuedMessage) {
 
 func legacyRow(t *testing.T, db *store.Store, count int, id string) messaging.Row {
 	t.Helper()
-	for _, row := range sessionRows(t, db.PeerMessages(), count) {
+	for _, row := range legacyUserRows(t, db, count) {
 		if row.ID == id {
 			return row
 		}
 	}
 	t.Fatalf("row %q missing", id)
 	return messaging.Row{}
+}
+
+// The migration assertions concern user messages. A legacy session can also
+// queue pairtask's automatic signing-upgrade notice to that contact.
+func legacyUserRows(t *testing.T, db *store.Store, want int) []messaging.Row {
+	t.Helper()
+	rows, _, err := db.PeerMessages().Page(context.Background(), sessionContact, 0, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := make([]messaging.Row, 0, len(rows))
+	for _, row := range rows {
+		if row.From != messaging.SystemSender {
+			users = append(users, row)
+		}
+	}
+	if len(users) != want {
+		t.Fatalf("user message rows = %d, want %d", len(users), want)
+	}
+	return users
 }
 
 // A's policy can be on while B still speaks v9. Once B has negotiated v10,
@@ -96,7 +116,7 @@ func (f legacyMigrationFixture) refuseLaterDowngrade(t *testing.T) {
 	if row.State != messaging.StateRefused || row.Refusal.Reason != messaging.ReasonInvalid {
 		t.Fatalf("v9 downgrade after v10 was not refused: %+v", row)
 	}
-	sessionRows(t, f.a.PeerMessages(), 2)
+	legacyUserRows(t, f.a, 2)
 }
 
 func (f legacyMigrationFixture) acceptDowngradeAfterSwitchOff(t *testing.T) {

@@ -41,7 +41,14 @@ func TestContactEventsAcceptancePartialInboundOnlyNotifiesOperator(t *testing.T)
 	assertPartialInboundOperatorEvents(t, owner, id.Fingerprint())
 	rows, _, err := f.st.PeerMessages().Page(context.Background(), id.Fingerprint(), 0, 64)
 	operatorNoError(t, err)
-	operatorEqual(t, "one retained message", len(rows), 1)
+	inbound := 0
+	for _, row := range rows {
+		if row.Direction == messaging.DirIn {
+			operatorEqual(t, "retained inbound message", row.ID, "partial")
+			inbound++
+		}
+	}
+	operatorEqual(t, "one retained inbound message", inbound, 1)
 	operatorNoError(t, agent.SetReadDeadline(time.Now().Add(30*time.Millisecond)))
 	_, err = agent.r.ReadByte()
 	if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {

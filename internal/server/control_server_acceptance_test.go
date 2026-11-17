@@ -25,7 +25,7 @@ func TestControlServerAcceptancePausedNoAddressDeliversAndCountsOnce(t *testing.
 	var state string
 	operatorNoError(t, f.remoteInspection(t).QueryRow(`SELECT peer_state FROM peer_contacts WHERE identity_key=?`, f.route.pin).Scan(&state))
 	operatorEqual(t, "authenticated remote pause", state, "paused")
-	operatorEqual(t, "no imported messages", f.f.count("peer_messages"), 0)
+	operatorEqual(t, "no imported messages", f.f.countInboundPeerMessages(), 0)
 }
 func TestControlServerAcceptanceUnpairedRetainedContactStillServes(t *testing.T) {
 	f := newControlServerFixture(t)

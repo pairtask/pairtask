@@ -185,6 +185,9 @@ type outgoing struct {
 	// conversation (#278), which the caller found it holds; it speaks
 	// there without being shared.
 	assigned bool
+	// system: pairtask's own notice (#395), queued only by the store
+	// itself; its reserved sender is never shared.
+	system bool
 	// supersedes is the sender's earlier request a review request replaces
 	// (#259), kept on this side only; "" for none.
 	supersedes string
@@ -261,7 +264,7 @@ func queueNew(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error
 // senderMaySpeak: the operator, an agent shared with the contact, or one
 // replying as its operator assigned it.
 func (o outgoing) senderMaySpeak(ctx context.Context, tx *sql.Tx) error {
-	if o.assigned {
+	if o.assigned || o.system {
 		return nil
 	}
 	return senderShared(ctx, tx, o.key.contact, o.m.From)

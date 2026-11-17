@@ -154,10 +154,14 @@ func ValidText(text string) bool {
 }
 
 // ValidAgent is an agent ID as the broker admits one: 1 to AgentIDBytes
-// bytes, never the broadcast or the operator.
+// bytes, never the broadcast, the operator or pairtask's own sender.
 func ValidAgent(id string) bool {
-	return id != "" && len(id) <= AgentIDBytes && id != "*" && id != "operator"
+	return id != "" && len(id) <= AgentIDBytes && id != "*" && id != "operator" && id != SystemSender
 }
+
+// SystemSender sends pairtask's own notices (#395): a sender, never a
+// recipient, and no agent.
+const SystemSender = "pairtask"
 
 // ValidRouting: a sender that is the operator or an agent, at most MaxAgents
 // distinct recipient agents, and a reply reference whose author is set
@@ -176,8 +180,8 @@ func ValidRouting(m Message) bool {
 	return validReply(m.ReplyTo)
 }
 
-// validSender: the operator ("") or an agent.
-func validSender(from string) bool { return from == "" || ValidAgent(from) }
+// validSender: the operator (""), pairtask's own notices or an agent.
+func validSender(from string) bool { return from == "" || from == SystemSender || ValidAgent(from) }
 
 func validReply(r ReplyRef) bool {
 	if r.Author == ReplyAuthorNone {
