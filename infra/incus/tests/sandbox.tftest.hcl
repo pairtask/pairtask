@@ -32,7 +32,9 @@ run "offline_workspace" {
       one([for device in incus_profile.sandbox.device : device if device.name == "agent-cache"]).properties.path == "/var/cache/collab-ai-agent" &&
       one([for device in incus_profile.sandbox.device : device if device.name == "docker-data"]).properties.path == "/var/lib/collab-ai-docker" &&
       one([for device in incus_profile.sandbox.device : device if device.name == "workspace-tools"]).properties.path == "/var/lib/collab-ai-tools" &&
-      alltrue([for volume in incus_storage_volume.dev_data : volume.config["security.shifted"] == "false"])
+      alltrue([for volume in incus_storage_volume.dev_data : volume.config["security.shifted"] == "false"]) &&
+      incus_storage_volume.agent_cache.config["security.shifted"] == "false" &&
+      !contains(keys(incus_storage_volume.dev_data), "cache")
     )
     error_message = "Dev must have only a bounded root disk and private workspace/home volumes, with no host path or NIC."
   }
@@ -75,7 +77,7 @@ run "configured_limits_and_stop" {
       one([for device in incus_profile.sandbox.device : device if device.name == "root"]).properties.size == "12GiB" &&
       incus_storage_volume.dev_data["workspace"].config["size"] == "20GiB" &&
       incus_storage_volume.dev_data["home"].config["size"] == "4GiB" &&
-      incus_storage_volume.dev_data["cache"].config["size"] == "12GiB" &&
+      incus_storage_volume.agent_cache.config["size"] == "12GiB" &&
       incus_storage_volume.dev_data["docker"].config["size"] == "12GiB" &&
       incus_storage_volume.dev_data["tools"].config["size"] == "6GiB" &&
       incus_instance.workspace.running == false

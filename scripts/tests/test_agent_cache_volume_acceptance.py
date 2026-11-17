@@ -63,6 +63,24 @@ class AgentCacheVolumeAcceptance(unittest.TestCase):
                 SETUP["own_root"](cache, 0o700, types.SimpleNamespace(pw_uid=1, pw_gid=1))
             self.assertTrue(cache.is_symlink())
 
+    def test_unmounted_cache_directory_after_old_rollout_is_not_used(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()  # The old checkout removed the volume, not its mountpoint.
+            env_file = root / "run/pairtask/cache.env"
+            env_file.parent.mkdir(parents=True)
+            env_file.write_text("GOCACHE=/stale\n")
+            globals_ = SETUP["initialize"].__globals__
+            with mock.patch.dict(globals_, {"CACHE": cache, "CACHE_ENV": env_file,
+                                            "own_root": mock.Mock(), "seed_home": mock.Mock()}), \
+                    mock.patch.object(SETUP["pwd"], "getpwnam", return_value=types.SimpleNamespace(pw_uid=1, pw_gid=1)), \
+                    mock.patch.object(Path, "is_mount", return_value=False):
+                SETUP["initialize"]()
+                self.assertNotIn(cache, [call.args[0] for call in globals_["own_root"].call_args_list])
+            self.assertFalse(env_file.exists())
+            self.assertTrue(cache.is_dir())
+
     def test_shell_uses_cache_only_when_present_and_keeps_presets(self):
         source = (ROOT / "infra/image/pairtask-cache.sh").read_text()
         with tempfile.TemporaryDirectory() as temporary:
@@ -72,14 +90,17 @@ class AgentCacheVolumeAcceptance(unittest.TestCase):
             script.write_text(source.replace("/var/cache/collab-ai-agent", str(cache)))
             self.assertEqual(self.source_profile(script), [""] * len(CACHE_KEYS))
             cache.mkdir()
-            self.assertEqual(self.source_profile(script), [str(cache / sub) for sub in
+            # An old checkout can leave this directory after unmounting the volume.
+            self.assertEqual(self.source_profile(script), [""] * len(CACHE_KEYS))
+            self.assertEqual(self.source_profile(script, mounted=True), [str(cache / sub) for sub in
                              ("go-build", "go-mod", "npm", "pip", "uv")])
-            self.assertEqual(self.source_profile(script, GOCACHE="/chosen/go")[0], "/chosen/go")
+            self.assertEqual(self.source_profile(script, mounted=True, GOCACHE="/chosen/go")[0], "/chosen/go")
 
-    def source_profile(self, script, **overrides):
+    def source_profile(self, script, *, mounted=False, **overrides):
         env = {key: value for key, value in os.environ.items() if key not in CACHE_KEYS}
         env.update(overrides)
-        body = ". " + shlex.quote(str(script)) + "\n" + "\n".join(
+        # Simulate mountpoint(1) without requiring a real mount in the test.
+        body = f"mountpoint() {{ return {0 if mounted else 1}; }}\n" + ". " + shlex.quote(str(script)) + "\n" + "\n".join(
             f'printf "%s\\n" "${key}"' for key in CACHE_KEYS)
         result = subprocess.run(["bash", "--noprofile", "--norc", "-c", body],
                                 check=True, text=True, capture_output=True, env=env)

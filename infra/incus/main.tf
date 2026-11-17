@@ -131,14 +131,14 @@ resource "incus_profile" "sandbox" {
   }
 
   dynamic "device" {
-    for_each = incus_storage_volume.dev_data
+    for_each = merge(incus_storage_volume.dev_data, { cache = incus_storage_volume.agent_cache })
     content {
       name = device.value.name
       type = "disk"
       properties = {
         source   = device.value.name
         pool     = var.storage_pool
-        path     = local.dev_storage[device.key].path
+        path     = local.dev_paths[device.key]
         readonly = "false"
       }
     }

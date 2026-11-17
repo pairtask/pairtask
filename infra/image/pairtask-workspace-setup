@@ -42,6 +42,14 @@ def write_cache_env(cache, env_file):
     env_file.chmod(0o644)
 
 
+def cache_mounted(cache):
+    """The cache volume is mounted. A symlink is refused; a bare directory,
+    left after an older checkout removed the volume, counts as none."""
+    if cache.is_symlink():
+        raise ValueError(f"Expected an Incus volume at {cache}")
+    return cache.is_mount()
+
+
 def own_root(path, mode, account):
     if path.is_symlink() or not path.is_mount():
         raise ValueError(f"Expected an Incus volume at {path}")
@@ -55,9 +63,11 @@ def initialize():
     for path, mode in ((Path("/workspace"), 0o750), (Path("/home/agent"), 0o700),
                        (Path("/var/lib/collab-ai-docker"), 0o700)):
         own_root(path, mode, account)
-    if CACHE.is_symlink() or CACHE.exists():
+    if cache_mounted(CACHE):
         own_root(CACHE, 0o700, account)
-    write_cache_env(CACHE, CACHE_ENV)
+        write_cache_env(CACHE, CACHE_ENV)
+    else:
+        CACHE_ENV.unlink(missing_ok=True)
     seed_home(Path("/home/agent"), Path("/etc/skel"), account.pw_uid, account.pw_gid)
 
 
