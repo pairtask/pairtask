@@ -18,10 +18,9 @@ def seed_home(home, skeleton, uid, gid):
             os.fchown(stream.fileno(), uid, gid)
 
 
-# The build-cache volume (#400) is optional: a deployment from before it
-# has none, and its agents keep their caches in the home. Services read
-# where the caches go from CACHE_ENV, written only while the volume is there.
-CACHE = Path("/var/cache/collab-ai-agent")
+# Build caches (#400) live on the projects volume, off the small agent home;
+# services read where they go from CACHE_ENV.
+CACHE = Path("/workspace/.cache")
 CACHE_ENV = Path("/run/pairtask/cache.env")
 CACHE_DIRS = (("GOCACHE", "go-build"), ("GOMODCACHE", "go-mod"), ("npm_config_cache", "npm"),
               ("PIP_CACHE_DIR", "pip"), ("UV_CACHE_DIR", "uv"))
@@ -33,7 +32,7 @@ def cache_env(cache):
 
 
 def write_cache_env(cache, env_file):
-    """cache's environment for services, or none while there's no volume."""
+    """cache's environment for services, or none while there's no cache."""
     if not cache.exists():
         env_file.unlink(missing_ok=True)
         return
@@ -42,12 +41,14 @@ def write_cache_env(cache, env_file):
     env_file.chmod(0o644)
 
 
-def cache_mounted(cache):
-    """The cache volume is mounted. A symlink is refused; a bare directory,
-    left after an older checkout removed the volume, counts as none."""
+def prepare_cache(cache, account):
+    """The agents' private cache directory: created when missing, never
+    followed through a symlink, its content left as it is."""
     if cache.is_symlink():
-        raise ValueError(f"Expected an Incus volume at {cache}")
-    return cache.is_mount()
+        raise ValueError(f"Expected a private directory at {cache}")
+    cache.mkdir(mode=0o700, exist_ok=True)
+    os.chown(cache, account.pw_uid, account.pw_gid, follow_symlinks=False)
+    cache.chmod(0o700)
 
 
 def own_root(path, mode, account):
@@ -63,11 +64,9 @@ def initialize():
     for path, mode in ((Path("/workspace"), 0o750), (Path("/home/agent"), 0o700),
                        (Path("/var/lib/collab-ai-docker"), 0o700)):
         own_root(path, mode, account)
-    if cache_mounted(CACHE):
-        own_root(CACHE, 0o700, account)
-        write_cache_env(CACHE, CACHE_ENV)
-    else:
-        CACHE_ENV.unlink(missing_ok=True)
+    # /workspace is a mounted volume by now; the cache is a directory on it.
+    prepare_cache(CACHE, account)
+    write_cache_env(CACHE, CACHE_ENV)
     seed_home(Path("/home/agent"), Path("/etc/skel"), account.pw_uid, account.pw_gid)
 
 

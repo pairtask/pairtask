@@ -63,9 +63,10 @@ var disposableCaches = []cacheDir{
 	{".cache/starship", "rm -rf ~/.cache/starship"},
 }
 
-// cacheVolume is where the build caches live once the deployment has the
-// cache volume (#400); copies left in home are then old and only deleted.
-var cacheVolume = "/var/cache/collab-ai-agent"
+// cacheVolume is where the build caches live once the image moves them off
+// the home (#400): the projects volume. Copies left in home are then old
+// and only deleted.
+var cacheVolume = "/workspace/.cache"
 
 // checkCapacity refuses to start when home has too little space left and
 // warns when it runs low; a check that can't run doesn't stop the start.
@@ -110,7 +111,7 @@ func writeRecovery(w io.Writer, home string) {
 	defer cancel()
 	moved := cacheMoved()
 	if moved {
-		fmt.Fprintln(w, "  Build caches now live on their own volume ("+cacheVolume+"); old copies in the home are safe to delete:")
+		fmt.Fprintln(w, "  Build caches now live in "+cacheVolume+", on the projects volume; old copies in the home are safe to delete:")
 	} else {
 		fmt.Fprintln(w, "  Build caches are safe to clear; they refill as needed:")
 	}
@@ -132,7 +133,7 @@ func (c cacheDir) clearCommand(moved bool) string {
 	return c.clear
 }
 
-// cacheMoved: the deployment has the cache volume.
+// cacheMoved: the image keeps the caches on the projects volume.
 func cacheMoved() bool {
 	info, err := os.Stat(cacheVolume)
 	return err == nil && info.IsDir()

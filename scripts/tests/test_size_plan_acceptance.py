@@ -124,23 +124,6 @@ class SizePlanAcceptance(unittest.TestCase):
                 self.assertFalse(self.size_file().exists())
                 self.run.assert_not_called()
 
-    def test_cache_volume_can_grow_but_cannot_shrink(self):
-        volume = "/1.0/storage-pools/default/volumes/custom"
-        self.responses[f"{volume}?project=pairtask&recursion=1"].append(
-            {"name": "agent-cache", "config": {"size": "6GiB"}})
-        self.responses[f"{volume}/agent-cache/state?project=pairtask"] = {"usage": {"used": 2 * GIB}}
-
-        code, _output, error = self.invoke("plan", "--cache", "4")
-        self.assertEqual(code, 1)
-        self.assertIn("shrink", error)
-        self.assertFalse(self.size_file().exists())
-        self.run.assert_not_called()
-
-        code, output, error = self.invoke("plan", "--cache", "8")
-        self.assertEqual((code, error), (0, ""))
-        self.assertIn("cache_gib=8", output)
-        self.assertEqual(json.loads(self.size_file().read_text()), {"cache_gib": 8})
-
     def test_unreadable_live_limit_cannot_be_assumed_safe_to_resize(self):
         self.responses["/1.0/instances/workspace?project=pairtask"]["expanded_devices"]["root"].pop("size")
         code, _output, error = self.invoke("plan", "--disk", "20")

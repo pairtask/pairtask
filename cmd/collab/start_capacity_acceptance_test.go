@@ -117,11 +117,11 @@ func TestStartCapacityAcceptanceRecoveryNamesDisposableCachesAndKeepsState(t *te
 	assertCapacityFile(t, keep)
 }
 
-func TestStartCapacityAcceptanceMountedCacheExplainsOldHomeCopies(t *testing.T) {
+func TestStartCapacityAcceptanceWorkspaceCacheExplainsOldHomeCopies(t *testing.T) {
 	home := t.TempDir()
 	old := capacityFile{filepath.Join(home, ".cache", "go-build", "old"), "old artifact"}
 	writeCapacityFile(t, old)
-	volume := filepath.Join(t.TempDir(), "agent-cache")
+	volume := filepath.Join(t.TempDir(), "workspace", ".cache")
 	current := capacityFile{filepath.Join(volume, "go-build", "current"), "current artifact"}
 	writeCapacityFile(t, current)
 	previous := cacheVolume

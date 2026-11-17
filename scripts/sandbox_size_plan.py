@@ -13,12 +13,12 @@ TFVARS_PATTERNS = ("*.auto.tfvars", "*.auto.tfvars.json", "terraform.tfvars", "t
 
 # Command-line flag → tofu variable, and each variable's allowed range.
 REQUEST_FLAGS = {"cpu": "cpu_count", "memory": "memory_gib", "disk": "disk_gib", "workspace": "workspace_gib",
-                 "agent_home": "agent_home_gib", "docker": "docker_gib", "tools": "tools_gib", "cache": "cache_gib"}
+                 "agent_home": "agent_home_gib", "docker": "docker_gib", "tools": "tools_gib"}
 RANGES = {"cpu_count": (1, 8), "memory_gib": (1, 16), "disk_gib": (2, 100), "workspace_gib": (1, 100),
-          "agent_home_gib": (1, 100), "docker_gib": (1, 100), "tools_gib": (1, 100), "cache_gib": (1, 100)}
+          "agent_home_gib": (1, 100), "docker_gib": (1, 100), "tools_gib": (1, 100)}
 # Each volume's name in Incus, by its variable.
 VOLUMES = {"workspace_gib": "workspace-data", "agent_home_gib": "agent-home",
-           "docker_gib": "docker-data", "tools_gib": "workspace-tools", "cache_gib": "agent-cache"}
+           "docker_gib": "docker-data", "tools_gib": "workspace-tools"}
 # What the VM keeps for itself, and what the other containers are given
 # (their CPU and RAM limits in the tofu configuration).
 VM_RESERVE_GIB = 1

@@ -1,5 +1,6 @@
-"""The optional build-cache volume keeps tool caches off agent home (#400)."""
+"""Build caches use the existing workspace volume without changing projects (#400)."""
 
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import runpy
@@ -14,93 +15,106 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 SETUP = runpy.run_path(str(ROOT / "infra/image/pairtask-workspace-setup"))
 CACHE_KEYS = ("GOCACHE", "GOMODCACHE", "npm_config_cache", "PIP_CACHE_DIR", "UV_CACHE_DIR")
+CACHE_SUBDIRS = ("go-build", "go-mod", "npm", "pip", "uv")
 
 
 class AgentCacheVolumeAcceptance(unittest.TestCase):
-    def test_mounted_cache_is_owned_without_recursing_and_service_env_is_written(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            cache = Path(temporary) / "cache"
-            cache.mkdir(mode=0o755)
-            child = cache / "preserve"
-            child.write_text("keep")
-            child.chmod(0o644)
-            account = types.SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
-            with mock.patch.object(Path, "is_mount", return_value=True), mock.patch.object(os, "chown") as chown:
-                SETUP["own_root"](cache, 0o700, account)
-            chown.assert_called_once_with(cache, account.pw_uid, account.pw_gid)
-            self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
-            self.assertEqual(child.read_text(), "keep")
-            self.assertEqual(child.stat().st_mode & 0o777, 0o644)
+    @contextmanager
+    def setup_environment(self, cache, env_file, *, mounted=True):
+        account = types.SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        roots = mock.Mock()
+        if not mounted:
+            roots.side_effect = ValueError("Expected an Incus volume at /workspace")
+        globals_ = SETUP["initialize"].__globals__
+        with mock.patch.dict(globals_, {"CACHE": cache, "CACHE_ENV": env_file,
+                                       "own_root": roots, "seed_home": mock.Mock()}), \
+                mock.patch.object(SETUP["pwd"], "getpwnam", return_value=account), \
+                mock.patch.object(os, "chown") as chown:
+            yield roots, chown, account
 
-            env_file = Path(temporary) / "run/pairtask/cache.env"
-            SETUP["write_cache_env"](cache, env_file)
+    def test_setup_creates_private_cache_and_service_env(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / ".cache"
+            env_file = root / "run/pairtask/cache.env"
+            with self.setup_environment(cache, env_file) as (roots, chown, account):
+                SETUP["initialize"]()
+                roots.assert_any_call(Path("/workspace"), 0o750, account)
+                chown.assert_called_once_with(cache, account.pw_uid, account.pw_gid, follow_symlinks=False)
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
             self.assertEqual(env_file.read_text(), "".join(
-                f"{name}={cache / sub}\n" for name, sub in (
-                    ("GOCACHE", "go-build"), ("GOMODCACHE", "go-mod"),
-                    ("npm_config_cache", "npm"), ("PIP_CACHE_DIR", "pip"), ("UV_CACHE_DIR", "uv"))))
+                f"{name}={cache / sub}\n" for name, sub in zip(CACHE_KEYS, CACHE_SUBDIRS)))
             self.assertEqual(env_file.stat().st_mode & 0o777, 0o644)
 
-    def test_missing_cache_removes_stale_env_and_symlink_is_refused(self):
+    def test_existing_cache_and_projects_are_preserved_without_recursing(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            cache = root / "cache"
-            env_file = root / "run/pairtask/cache.env"
-            env_file.parent.mkdir(parents=True)
-            env_file.write_text("GOCACHE=/stale\n")
-            globals_ = SETUP["initialize"].__globals__
-            with mock.patch.dict(globals_, {"CACHE": cache, "CACHE_ENV": env_file,
-                                            "own_root": mock.Mock(), "seed_home": mock.Mock()}), \
-                    mock.patch.object(SETUP["pwd"], "getpwnam", return_value=types.SimpleNamespace(pw_uid=1, pw_gid=1)):
+            cache = root / ".cache"
+            cache.mkdir(mode=0o755)
+            child = cache / "preserve"
+            child.write_text("cached artifact")
+            child.chmod(0o644)
+            project = root / "project.txt"
+            project.write_text("project data")
+            with self.setup_environment(cache, root / "cache.env") as (_, chown, account):
                 SETUP["initialize"]()
-                globals_["own_root"].assert_any_call(Path("/home/agent"), 0o700, mock.ANY)
-                self.assertNotIn(cache, [call.args[0] for call in globals_["own_root"].call_args_list])
-            self.assertFalse(env_file.exists())
+                chown.assert_called_once_with(cache, account.pw_uid, account.pw_gid, follow_symlinks=False)
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(child.read_text(), "cached artifact")
+            self.assertEqual(child.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(project.read_text(), "project data")
 
-            target = root / "other"
-            target.mkdir()
+    def test_cache_symlink_is_refused_without_touching_its_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "target"
+            target.mkdir(mode=0o755)
+            cache = root / ".cache"
             cache.symlink_to(target, target_is_directory=True)
-            with self.assertRaisesRegex(ValueError, "Expected an Incus volume"):
-                SETUP["own_root"](cache, 0o700, types.SimpleNamespace(pw_uid=1, pw_gid=1))
+            env_file = root / "cache.env"
+            with self.setup_environment(cache, env_file) as (_, chown, _):
+                with self.assertRaisesRegex(ValueError, "Expected a private directory"):
+                    SETUP["initialize"]()
+                chown.assert_not_called()
             self.assertTrue(cache.is_symlink())
+            self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+            self.assertFalse(env_file.exists())
 
-    def test_unmounted_cache_directory_after_old_rollout_is_not_used(self):
+    def test_missing_workspace_mount_stops_setup_before_cache_is_created(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            cache = root / "cache"
-            cache.mkdir()  # The old checkout removed the volume, not its mountpoint.
-            env_file = root / "run/pairtask/cache.env"
-            env_file.parent.mkdir(parents=True)
-            env_file.write_text("GOCACHE=/stale\n")
-            globals_ = SETUP["initialize"].__globals__
-            with mock.patch.dict(globals_, {"CACHE": cache, "CACHE_ENV": env_file,
-                                            "own_root": mock.Mock(), "seed_home": mock.Mock()}), \
-                    mock.patch.object(SETUP["pwd"], "getpwnam", return_value=types.SimpleNamespace(pw_uid=1, pw_gid=1)), \
-                    mock.patch.object(Path, "is_mount", return_value=False):
-                SETUP["initialize"]()
-                self.assertNotIn(cache, [call.args[0] for call in globals_["own_root"].call_args_list])
+            cache, env_file = root / ".cache", root / "cache.env"
+            with self.setup_environment(cache, env_file, mounted=False) as (_, chown, _):
+                with self.assertRaisesRegex(ValueError, "Expected an Incus volume"):
+                    SETUP["initialize"]()
+                chown.assert_not_called()
+            self.assertFalse(cache.exists())
             self.assertFalse(env_file.exists())
-            self.assertTrue(cache.is_dir())
 
-    def test_shell_uses_cache_only_when_present_and_keeps_presets(self):
+    def test_shell_uses_mounted_workspace_and_keeps_presets(self):
         source = (ROOT / "infra/image/pairtask-cache.sh").read_text()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            cache = root / "cache"
-            script = root / "cache.sh"
-            script.write_text(source.replace("/var/cache/collab-ai-agent", str(cache)))
-            self.assertEqual(self.source_profile(script), [""] * len(CACHE_KEYS))
+            workspace = root / "workspace"
+            workspace.mkdir()
+            cache = workspace / ".cache"
             cache.mkdir()
-            # An old checkout can leave this directory after unmounting the volume.
-            self.assertEqual(self.source_profile(script), [""] * len(CACHE_KEYS))
-            self.assertEqual(self.source_profile(script, mounted=True), [str(cache / sub) for sub in
-                             ("go-build", "go-mod", "npm", "pip", "uv")])
-            self.assertEqual(self.source_profile(script, mounted=True, GOCACHE="/chosen/go")[0], "/chosen/go")
+            script = root / "cache.sh"
+            script.write_text(source.replace("/workspace", str(workspace)))
+            self.assertEqual(self.source_profile(script, workspace), [""] * len(CACHE_KEYS))
+            self.assertEqual(self.source_profile(script, workspace, mounted=True),
+                             [str(cache / sub) for sub in CACHE_SUBDIRS])
+            self.assertEqual(self.source_profile(script, workspace, mounted=True,
+                                                 GOCACHE="/chosen/go")[0], "/chosen/go")
 
-    def source_profile(self, script, *, mounted=False, **overrides):
+    def source_profile(self, script, workspace, *, mounted=False, **overrides):
         env = {key: value for key, value in os.environ.items() if key not in CACHE_KEYS}
         env.update(overrides)
-        # Simulate mountpoint(1) without requiring a real mount in the test.
-        body = f"mountpoint() {{ return {0 if mounted else 1}; }}\n" + ". " + shlex.quote(str(script)) + "\n" + "\n".join(
+        # Require the workspace mount, not the .cache child, without making a real mount.
+        body = ('mountpoint() { [ "$1" = "-q" ] && [ "$2" = '
+                + shlex.quote(str(workspace)) + ' ] && return '
+                + str(0 if mounted else 1) + '; return 1; }\n')
+        body += ". " + shlex.quote(str(script)) + "\n" + "\n".join(
             f'printf "%s\\n" "${key}"' for key in CACHE_KEYS)
         result = subprocess.run(["bash", "--noprofile", "--norc", "-c", body],
                                 check=True, text=True, capture_output=True, env=env)

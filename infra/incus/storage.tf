@@ -28,16 +28,6 @@ variable "docker_gib" {
   }
 }
 
-variable "cache_gib" {
-  description = "Persistent build caches (Go, npm, pip, uv) for the agents, off the small agent home; mounted only in dev."
-  type        = number
-  default     = 10
-  validation {
-    condition     = var.cache_gib >= 1 && var.cache_gib <= 100 && floor(var.cache_gib) == var.cache_gib
-    error_message = "cache_gib must be an integer from 1 through 100."
-  }
-}
-
 variable "tools_gib" {
   description = "Persistent, root-owned tool store for the workspace; agents read it, only the host installs into it."
   type        = number
@@ -55,12 +45,6 @@ locals {
     docker    = { name = "docker-data", path = "/var/lib/collab-ai-docker", size = var.docker_gib }
     tools     = { name = "workspace-tools", path = "/var/lib/collab-ai-tools", size = var.tools_gib }
   }
-  # Build caches (#400) are disposable, so unlike the dev data they may be
-  # destroyed: an older checkout that doesn't know the volume removes it, and
-  # the image then keeps caches in the home again.
-  agent_cache_path = "/var/cache/collab-ai-agent"
-  # Where each volume the dev profile mounts goes, the cache included.
-  dev_paths = merge({ for key, volume in local.dev_storage : key => volume.path }, { cache = local.agent_cache_path })
 }
 
 resource "incus_storage_volume" "dev_data" {
@@ -82,22 +66,11 @@ resource "incus_storage_volume" "dev_data" {
   }
 }
 
-resource "incus_storage_volume" "agent_cache" {
-  name         = "agent-cache"
-  project      = incus_project.sandbox.name
-  pool         = var.storage_pool
-  type         = "custom"
-  content_type = "filesystem"
-  config = {
-    "size"             = "${var.cache_gib}GiB"
-    "security.shifted" = "false"
-  }
-}
-
 output "dev_storage" {
-  description = "Persistent dev volumes, and the disposable build cache; never mounted into control."
-  value = merge(
-    { for key, volume in incus_storage_volume.dev_data : key => { volume = volume.name, pool = volume.pool, path = local.dev_storage[key].path } },
-    { cache = { volume = incus_storage_volume.agent_cache.name, pool = incus_storage_volume.agent_cache.pool, path = local.agent_cache_path } },
-  )
+  description = "Persistent dev volumes; never mounted into control."
+  value = { for key, volume in incus_storage_volume.dev_data : key => {
+    volume = volume.name
+    pool   = volume.pool
+    path   = local.dev_storage[key].path
+  } }
 }
