@@ -246,29 +246,46 @@ func (h Held) grow(p Proof) (Held, Effect, error) {
 	}
 	c := h.Conflicts[len(h.Conflicts)-1]
 	i := slices.IndexFunc(c.Branches, func(b []Proof) bool { return head(b) == p.Predecessor })
-	if i < 0 {
+	if i < 0 && p.Predecessor != c.Predecessor {
 		return h, rejected("lineage is frozen"), nil
 	}
-	end, err := h.endOf(c, c.Branches[i])
+	if slices.ContainsFunc(c.Branches, func(b []Proof) bool { return contains(b, p.Digest) }) {
+		return h, Effect{Kind: Duplicate}, nil
+	}
+	end, err := h.endOf(c, i)
 	if err != nil {
 		return h, rejected(err.Error()), nil
 	}
 	if _, err := end.authenticate(p); err != nil {
 		return h, rejected(err.Error()), nil
 	}
-	branches := slices.Clone(c.Branches)
-	branches[i] = append(slices.Clone(branches[i]), p)
-	c.Branches = branches
+	c.Branches = grown(c.Branches, i, p)
 	h.Conflicts = append(slices.Clone(h.Conflicts[:len(h.Conflicts)-1]), c)
 	return h, Effect{Kind: FrozenEffect, Branches: branches}, nil
 }
 
-// endOf is the state at the end of one conflict branch.
-func (h Held) endOf(c Conflict, branch []Proof) (Held, error) {
-	if head(branch) == h.Head {
+// grown is the branch set with p added: extending branch i, or opening a
+// new branch at the shared predecessor when i is -1.
+func grown(branches [][]Proof, i int, p Proof) [][]Proof {
+	out := slices.Clone(branches)
+	if i < 0 {
+		return append(out, []Proof{p})
+	}
+	out[i] = append(slices.Clone(out[i]), p)
+	return out
+}
+
+// endOf is the state at the end of conflict branch i, or at the shared
+// predecessor when i is -1.
+func (h Held) endOf(c Conflict, i int) (Held, error) {
+	var branch []Proof
+	if i >= 0 {
+		branch = c.Branches[i]
+	}
+	if i >= 0 && head(branch) == h.Head {
 		return h, nil
 	}
-	if _, isRecord := branch[len(branch)-1].Statement.(Record); isRecord {
+	if i >= 0 && isRecord(branch[len(branch)-1]) {
 		return h, ErrMalformed
 	}
 	next, _, ok := h.stateAt(c.Predecessor)
@@ -597,6 +614,11 @@ func BranchSetDigest(branches [][]Proof) Digest {
 		sum.Write(d[:])
 	}
 	return Digest(sum.Sum(nil))
+}
+
+func isRecord(p Proof) bool {
+	_, ok := p.Statement.(Record)
+	return ok
 }
 
 func head(b []Proof) Digest {

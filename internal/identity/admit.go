@@ -94,11 +94,19 @@ func (h Held) roots(workspace string) signing.Roots {
 }
 
 // bound: the workspace is one of the lineage's current bindings, or the
-// certificate is a legacy one for exactly that workspace and no record has
-// been approved here yet.
+// legacy exception applies: the operator approved this person's key for
+// exactly that workspace under the per-workspace rule (Held.Legacy), the
+// certificate is scoped to it, and the lineage is still in its first epoch
+// with no record and no recovery applied. A succession ends the exception
+// for good; it never reopens.
 func (h Held) bound(workspace string, leaf signing.Cert) bool {
 	if slices.ContainsFunc(h.Bindings, func(b Binding) bool { return b.Claim.Workspace == workspace }) {
 		return true
 	}
-	return h.Version == 0 && leaf.Workspace != "" && leaf.Workspace == workspace
+	return h.legacyOpen() && slices.Contains(h.Legacy, workspace) && leaf.Workspace == workspace
+}
+
+// legacyOpen: nothing of the lineage proper has been applied here yet.
+func (h Held) legacyOpen() bool {
+	return h.Epoch == 1 && h.Version == 0 && len(h.History) == 0
 }

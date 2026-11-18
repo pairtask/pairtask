@@ -60,6 +60,8 @@ type Held struct {
 	Persons    []string                     // every P key ID the lineage has used (fresh-key guard)
 	Recoveries []string                     // every R key ID the lineage has used
 
+	Legacy []string // workspaces whose operator key was approved under today's per-workspace rule before this lineage was; explicit, never inferred
+
 	Record       Record // the record held for (Epoch, Version), whole
 	RecordDigest Digest
 	Bindings     []Binding
