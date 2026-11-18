@@ -50,6 +50,7 @@ type Hub struct {
 	consent    hubConsent    // held requests and session authority (#293)
 	classify   hubClassifier // shadow predictions for untagged operator sends (#339)
 	notifier   hubNotifier   // decision requests told to the operator outside the chat (#352)
+	spaces     *SpaceConfig  // Pairbook spaces; nil until SetSpaces
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -691,6 +692,7 @@ var operatorOnly = map[string]string{
 	protocol.TypeOperatorReview:  "review requests are operator-only",
 	protocol.TypeOperatorPairing: "pairing is operator-only",
 	protocol.TypeOperatorContact: "contact messages are operator-only",
+	protocol.TypeOperatorSpace:   "spaces are operator-only",
 }
 
 func operatorOnlyRefusal(msg protocol.Message) protocol.Message {

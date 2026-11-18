@@ -222,6 +222,8 @@ type Message struct {
 	PairingOp           string                   `json:"pairing_op,omitempty"`           // operator_pairing: what to do (#178)
 	PairingTarget       string                   `json:"pairing_target,omitempty"`       // operator_pairing: full invitation ID or identity key
 	PairingResult       *PairingSnapshot         `json:"pairing_result,omitempty"`       // operator_pairing_result
+	SpaceRequest        *SpaceRequest            `json:"space_request,omitempty"`        // operator_space: what to do (Pairbook)
+	SpaceResult         *SpaceResult             `json:"space_result,omitempty"`         // operator_space_result
 	PairingDestination  string                   `json:"pairing_destination,omitempty"`  // operator_pairing redeem: host:port of the inviter
 	PairingCode         string                   `json:"pairing_code,omitempty"`         // operator_pairing redeem: never stored, logged or echoed
 	PairingName         string                   `json:"pairing_name,omitempty"`         // operator_pairing redeem: the name to pair under

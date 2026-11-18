@@ -164,6 +164,16 @@ func NewServer(n *Node, version string) *mcp.Server {
 			moved, err := n.move(ctx, args)
 			return nil, AddressResult{Contact: moved, InboxNotice: n.freshNotice(ctx)}, err
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "space_join", Description: spaceJoinDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive, OpenWorldHint: &openWorld}},
+		func(ctx context.Context, _ *mcp.CallToolRequest, args SpaceJoinArgs) (*mcp.CallToolResult, SpaceJoinResult, error) {
+			pin, err := n.spaceJoin(ctx, args)
+			return nil, SpaceJoinResult{Space: pin}, err
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "space_members", Description: spaceMembersDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &openWorld}},
+		func(ctx context.Context, _ *mcp.CallToolRequest, args SpaceMembersArgs) (*mcp.CallToolResult, SpaceMembersResult, error) {
+			members, err := n.spaceMembers(ctx, args)
+			return nil, SpaceMembersResult{Members: members}, err
+		})
 	mcp.AddTool(s, &mcp.Tool{Name: "mark_read", Description: readDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args ReadArgs) (*mcp.CallToolResult, ReadResult, error) {
 			marked, err := n.markRead(ctx, args)
