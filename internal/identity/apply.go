@@ -85,14 +85,8 @@ func (h Held) applyRecord(rec Record) (Held, Effect, error) {
 	if h.Trust == Frozen && rec.Lineage == h.Lineage {
 		return h.growRecord(rec)
 	}
-	if eff, ok := h.currentEpochOnly(signed{rec.Lineage, rec.Epoch, rec.Person, rec}); !ok {
+	if eff, ok := h.recordAdmissible(rec); !ok {
 		return h, eff, nil
-	}
-	if rec.Recovery != h.Recovery || rec.Counter != h.Counter {
-		return h, rejected("record names another recovery state than the one held"), nil
-	}
-	if err := h.checkBindings(rec.Bindings, rec.Epoch); err != nil {
-		return h, rejected(err.Error()), nil
 	}
 	digest := DigestOf(rec.TBS())
 	if h.resolvedAgainst(digest) {
@@ -117,24 +111,49 @@ func (h Held) sameOrOlderRecord(rec Record, digest Digest) (Held, Effect, error)
 	return h.freeze(h.RecordDigest, [][]Proof{{held}, {{Statement: rec, Digest: digest, lineage: h.Lineage}}})
 }
 
+// recordAdmissible: the record is of the current epoch and P, names the
+// recovery state held here, and its bindings verify.
+func (h Held) recordAdmissible(rec Record) (Effect, bool) {
+	if eff, ok := h.currentEpochOnly(signed{rec.Lineage, rec.Epoch, rec.Person, rec}); !ok {
+		return eff, false
+	}
+	if rec.Recovery != h.Recovery || rec.Counter != h.Counter {
+		return rejected("record names another recovery state than the one held"), false
+	}
+	if err := h.checkBindings(rec.Bindings, rec.Epoch); err != nil {
+		return rejected(err.Error()), false
+	}
+	return Effect{}, true
+}
+
 // growRecord, while frozen on a record equivocation, adds a third valid
 // record at the disputed version to the display; anything else is kept out.
 func (h Held) growRecord(rec Record) (Held, Effect, error) {
 	c := h.Conflicts[len(h.Conflicts)-1]
-	disputed, ok := c.Branches[0][0].Statement.(Record)
-	if !ok || rec.Epoch != disputed.Epoch || rec.Version != disputed.Version {
+	if !c.disputes(rec) {
 		return h, rejected("lineage is frozen"), nil
 	}
 	digest := DigestOf(rec.TBS())
 	if slices.ContainsFunc(c.Branches, func(b []Proof) bool { return contains(b, digest) }) {
 		return h, Effect{Kind: Duplicate}, nil
 	}
-	if !h.signedByPerson(signed{rec.Lineage, rec.Epoch, rec.Person, rec}) || h.checkBindings(rec.Bindings, rec.Epoch) != nil {
+	if !h.validRecord(rec) {
 		return h, rejected("not a valid record of the disputed version"), nil
 	}
 	c.Branches = append(slices.Clone(c.Branches), []Proof{{Statement: rec, Digest: digest, lineage: h.Lineage}})
 	h.Conflicts = append(slices.Clone(h.Conflicts[:len(h.Conflicts)-1]), c)
 	return h, Effect{Kind: FrozenEffect, Branches: c.Branches}, nil
+}
+
+// disputes: the conflict is a record equivocation at rec's epoch and version.
+func (c Conflict) disputes(rec Record) bool {
+	disputed, ok := c.Branches[0][0].Statement.(Record)
+	return ok && rec.Epoch == disputed.Epoch && rec.Version == disputed.Version
+}
+
+// validRecord: signed by the current P, with bindings that verify.
+func (h Held) validRecord(rec Record) bool {
+	return h.signedByPerson(signed{rec.Lineage, rec.Epoch, rec.Person, rec}) && h.checkBindings(rec.Bindings, rec.Epoch) == nil
 }
 
 func (h Held) withRecord(rec Record, digest Digest) Held {
@@ -317,12 +336,17 @@ func (c Conflict) prefixTo(d Digest) ([]Proof, bool) {
 func grown(branches [][]Proof, prefix []Proof, p Proof) [][]Proof {
 	out := slices.Clone(branches)
 	for i, b := range out {
-		if len(prefix) > 0 && len(b) == len(prefix) && head(b) == head(prefix) {
+		if endsIn(b, prefix) {
 			out[i] = append(slices.Clone(b), p)
 			return out
 		}
 	}
 	return append(out, append(slices.Clone(prefix), p))
+}
+
+// endsIn: b is exactly the non-empty prefix.
+func endsIn(b, prefix []Proof) bool {
+	return len(prefix) > 0 && len(b) == len(prefix) && head(b) == head(prefix)
 }
 
 // replay is the state at predecessor with branch applied after it.
