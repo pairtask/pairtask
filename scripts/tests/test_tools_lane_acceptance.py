@@ -317,6 +317,56 @@ class CodexHandshake(Workdir):
         self.assertEqual(self.handshake(reply)["codexHome"], str(self.home / "codex-home"))
 
 
+class FirstAnswerBounds(unittest.TestCase):
+    """A server that never stops sending notifications must still be cut off:
+    by the deadline, and by the bytes it sent before answering. A stream that
+    is always readable and a scripted clock make this exact; a read budget
+    turns a missing bound into a failure instead of a hang."""
+
+    NOTICE = b'{"jsonrpc": "2.0", "method": "notice", "params": {}}\n'
+    BUDGET = 500
+
+    class Stream:
+        def fileno(self):
+            return -1
+
+    def answer(self, chunk, step, timeout):
+        reads = []
+        now = [0.0]
+
+        def clock():
+            now[0] += step
+            return now[0]
+
+        def read(fd, size):
+            reads.append(size)
+            if len(reads) > self.BUDGET:
+                raise AssertionError("first_answer kept reading past its bounds")
+            return chunk
+        process = mock.Mock(stdout=self.Stream())
+        with mock.patch.object(tools_lane.select, "select", side_effect=lambda r, w, x, t: (r, [], [])), \
+                mock.patch.object(tools_lane.os, "read", side_effect=read), \
+                mock.patch.object(tools_lane.time, "monotonic", side_effect=clock):
+            with self.assertRaises(tools_lane.LaneError) as caught:
+                tools_lane.first_answer(process, timeout)
+        return str(caught.exception), len(reads)
+
+    def test_continuous_notifications_stop_at_the_deadline(self):
+        # Each clock reading advances 0.05 s, so a 1 s deadline passes within
+        # a few dozen readings however readable the stream stays.
+        message, reads = self.answer(self.NOTICE, step=0.05, timeout=1)
+        self.assertLess(reads, 100)
+        self.assertIn("in time", message)
+
+    def test_notifications_before_the_answer_are_bounded_in_total(self):
+        # The clock stands still, so only the byte bound can stop this: many
+        # complete small lines that together pass MAX_PREAMBLE.
+        burst = self.NOTICE * (65536 // len(self.NOTICE))
+        message, reads = self.answer(burst, step=0.0, timeout=1)
+        self.assertLessEqual(reads, tools_lane.MAX_PREAMBLE // len(burst) + 2)
+        self.assertIn(str(tools_lane.MAX_PREAMBLE), message)
+
+
 class ClientFindings(Workdir):
     LOCK = {"architectures": {"aarch64": {}}, "artifacts": {"claude": {
         "version": "2.1.327", "kind": "binary", "url": "https://example.invalid/{version}/{arch}/claude",
