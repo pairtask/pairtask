@@ -243,9 +243,10 @@ jobs:
   tools-lane:
     # A client-only change to the tool lock (see scripts/tools_lane.py): the
     # publishers' checksums for both architectures against the lock, then the
-    # agent clients downloaded, verified and run on this architecture,
-    # including the Codex App Server handshake that #408 broke. Minutes, with
-    # no race step and no image builds; the merge to main proves the images.
+    # agent clients downloaded, verified and run on this architecture, up to
+    # the Codex App Server's initialize answer. Minutes, with no race step and
+    # no image builds; the merge to main proves the images, and the relay's
+    # own frame limit (#408) has its Go tests in internal/host.
     needs: [classify]
     if: needs.classify.outputs.tools == 'true'
     strategy:

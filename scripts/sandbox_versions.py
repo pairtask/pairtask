@@ -54,14 +54,23 @@ def go_checksum(selected, arch):
 
 def codex_checksum(selected, arch):
     release = publisher_json(f"https://api.github.com/repos/openai/codex/releases/tags/rust-v{selected}")
-    name = f"codex-package-{arch}.tar.gz"
+    return asset_checksum(release, f"codex-package-{arch}.tar.gz")
+
+
+def cs_mcp_checksum(selected, arch):
+    release = publisher_json(f"https://api.github.com/repos/codescene-oss/codescene-mcp-server/releases/tags/MCP-{selected}")
+    return asset_checksum(release, f"cs-mcp-linux-{arch}.zip")
+
+
+def asset_checksum(release, name):
+    """The SHA256 GitHub recorded for one asset of a release."""
     for item in release["assets"]:
         if item["name"] == name:
             digest = item.get("digest") or ""
             if not digest.startswith("sha256:"):
                 raise ValueError(f"No publisher SHA256 for {name}")
             return fingerprint(digest.removeprefix("sha256:"))
-    raise ValueError(f"This Codex version has no supported native package: {name}")
+    raise ValueError(f"This release has no asset {name}")
 
 
 def claude_checksum(selected, arch):
@@ -74,7 +83,7 @@ def claude_checksum(selected, arch):
 def resolver(name):
     """The publisher checksum lookup for a tool, or None when a new version
     needs its checksum pinned by hand. Looked up at call time."""
-    return {"go": go_checksum, "codex": codex_checksum, "claude": claude_checksum}.get(name)
+    return {"go": go_checksum, "codex": codex_checksum, "claude": claude_checksum, "cs-mcp": cs_mcp_checksum}.get(name)
 
 
 def resolve_lock(path, architecture, args):

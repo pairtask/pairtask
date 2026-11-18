@@ -6,11 +6,12 @@ compared with the publisher's, for every architecture in the lock. The agent
 clients (claude, codex, cs-mcp) are then downloaded for this machine's
 architecture, verified against the lock, and run: each reports the lock's
 version, the Claude subcommand list matches the launcher's pass-through list
-in pairtask-agent-aliases.sh, and Codex's App Server answers an initialize
-request, started as pairtask-codex starts it, with the image's config. The
-image proofs on the merge to main stay the final check; this lane catches a
-wrong checksum, a broken download, a renamed subcommand or a protocol break
-first.
+in pairtask-agent-aliases.sh, and Codex's App Server, started with the
+arguments pairtask-codex uses and the image's config, answers an initialize
+request. The image proofs on the merge to main stay the final check, and the
+relay's own limits (#408) are the Go tests' business in internal/host; this
+lane catches a wrong checksum, a broken download, a renamed subcommand or a
+client that no longer starts or initializes, before any image is built.
 
 Findings are sentences naming the tool and the architecture. Nothing from a
 publisher's response reaches the output but what the checks compare.
@@ -26,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 import zipfile
 
@@ -52,19 +54,13 @@ class LaneError(ValueError):
 def checksum_findings(lock, resolve=versions.resolver):
     """Lock checksums that differ from the publisher's, for every tool with a
     lookup and every architecture in the lock."""
-    findings = []
-    for name, spec in lock["artifacts"].items():
-        lookup = resolve(name)
-        if lookup is None:
-            continue
-        for machine, per_arch in spec["architectures"].items():
-            finding = checksum_finding(name, spec["version"], machine, per_arch, lookup)
-            if finding:
-                findings.append(finding)
-    return findings
+    cells = [(name, spec, machine) for name, spec in lock["artifacts"].items() if resolve(name) for machine in spec["architectures"]]
+    findings = [checksum_finding(name, spec, machine, resolve(name)) for name, spec, machine in cells]
+    return [finding for finding in findings if finding]
 
 
-def checksum_finding(name, version, machine, per_arch, lookup):
+def checksum_finding(name, spec, machine, lookup):
+    version, per_arch = spec["version"], spec["architectures"][machine]
     try:
         published = lookup(version, per_arch["arch"])
     except (ValueError, KeyError, OSError) as error:
@@ -129,11 +125,21 @@ def help_subcommands(text):
     for line in text.splitlines():
         if line.startswith("Commands:"):
             listing = True
-        elif listing and line and not line.startswith(" "):
+        elif listing and ends_section(line):
             break
         elif listing and re.match(r"  \S", line):
             names.update(line.split()[0].split("|"))
     return names
+
+
+def ends_section(line):
+    """A non-empty line at the margin starts the next section of a help."""
+    return bool(line) and not line.startswith(" ")
+
+
+def reports(version, text):
+    """text names version as a whole token, not as the start of a longer one."""
+    return re.search(r"(?<![\w.])" + re.escape(version) + r"(?![\w.])", text) is not None
 
 
 def alias_subcommands(path=ALIASES):
@@ -153,7 +159,7 @@ def run_client(binary, args, home, timeout=RUN_TIMEOUT):
 
 def version_finding(item, binary, home):
     reported = run_client(binary, ["--version"], home).stdout
-    if item["version"] not in reported:
+    if not reports(item["version"], reported):
         return "{} reports another version than the lock's {}".format(item["name"], item["version"])
     return None
 
@@ -172,7 +178,7 @@ def claude_findings(item, binary, home):
 def codex_findings(item, binary, home):
     findings = [version_finding(item, binary, home)]
     result = codex_handshake(binary, home)
-    if item["version"] not in result.get("userAgent", ""):
+    if not reports(item["version"], result.get("userAgent", "")):
         findings.append("codex's App Server reports another version than the lock's {}".format(item["version"]))
     return [finding for finding in findings if finding]
 
@@ -188,12 +194,12 @@ def codex_handshake(binary, home, config=CODEX_CONFIG, timeout=RUN_TIMEOUT):
     request = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                "params": {"clientInfo": {"name": "pairtask-tools-lane", "version": "1"}, "capabilities": {"experimentalApi": True}}}
     with subprocess.Popen([str(binary), "app-server", "--listen", "stdio://"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL, env=environment, text=True) as process:
+                          stderr=subprocess.DEVNULL, env=environment) as process:
         try:
-            process.stdin.write(json.dumps(request) + "\n")
+            process.stdin.write((json.dumps(request) + "\n").encode())
             process.stdin.flush()
             answer = first_answer(process, timeout)
-            process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "initialized"}) + "\n")
+            process.stdin.write((json.dumps({"jsonrpc": "2.0", "method": "initialized"}) + "\n").encode())
             process.stdin.flush()
         finally:
             process.terminate()
@@ -201,24 +207,60 @@ def codex_handshake(binary, home, config=CODEX_CONFIG, timeout=RUN_TIMEOUT):
                 process.wait(5)
             except subprocess.TimeoutExpired:
                 process.kill()
-    if answer.get("id") != 1 or "error" in answer or not isinstance(answer.get("result"), dict):
+    if not accepted(answer):
         raise LaneError("the App Server didn't accept initialize")
     if answer["result"].get("codexHome") != str(codex_home):
         raise LaneError("the App Server didn't read the image's config")
     return answer["result"]
 
 
+def accepted(answer):
+    """The answer to request 1 carries a result and no error."""
+    return "error" not in answer and isinstance(answer.get("result"), dict)
+
+
 def first_answer(process, timeout):
-    ready, _, _ = select.select([process.stdout], [], [], timeout)
-    if not ready:
-        raise LaneError("the App Server didn't answer initialize within {}s".format(timeout))
-    line = process.stdout.readline()
-    if not line:
-        raise LaneError("the App Server closed without answering initialize")
-    return json.loads(line)
+    """The App Server's answer to request 1, skipping notifications it sends
+    first. Reads never block past the deadline, a partial line included, and
+    what arrives before the answer is bounded."""
+    deadline = time.monotonic() + timeout
+    buffered = b""
+    while True:
+        line, buffered = next_line(process.stdout, buffered, deadline)
+        frame = json.loads(line)
+        if frame.get("id") == 1:
+            return frame
 
 
-CLIENT_CHECKS = {"claude": claude_findings, "codex": codex_findings}
+# How much the App Server may send before answering initialize.
+MAX_PREAMBLE = 1 << 20
+
+
+def next_line(stream, buffered, deadline):
+    """One complete line from stream, with what followed it; raises at the
+    deadline, at end of stream, and past MAX_PREAMBLE without a newline."""
+    while b"\n" not in buffered:
+        ready, _, _ = select.select([stream], [], [], max(deadline - time.monotonic(), 0))
+        if not ready:
+            raise LaneError("the App Server didn't answer initialize in time")
+        chunk = os.read(stream.fileno(), 1 << 16)
+        if not chunk:
+            raise LaneError("the App Server closed without answering initialize")
+        buffered += chunk
+        if len(buffered) > MAX_PREAMBLE:
+            raise LaneError("the App Server sent over {} bytes before answering initialize".format(MAX_PREAMBLE))
+    line, _, rest = buffered.partition(b"\n")
+    return line.decode("utf-8", "replace"), rest
+
+
+def cs_mcp_findings(item, binary, home):
+    """The MCP server has no protocol check in the lane; its --version proves
+    the binary starts."""
+    finding = version_finding(item, binary, home)
+    return [finding] if finding else []
+
+
+CLIENT_CHECKS = {"claude": claude_findings, "codex": codex_findings, "cs-mcp": cs_mcp_findings}
 
 
 def client_findings(lock, machine, name, workdir):
@@ -226,8 +268,7 @@ def client_findings(lock, machine, name, workdir):
     item = artifact(lock, name, machine)
     try:
         binary = unpack(item, download(item, workdir / "downloads"), workdir / "tools")
-        check = CLIENT_CHECKS.get(name)
-        return check(item, binary, workdir / "home") if check else []
+        return CLIENT_CHECKS[name](item, binary, workdir / "home")
     except (LaneError, OSError, KeyError, json.JSONDecodeError, tarfile.TarError, zipfile.BadZipFile) as error:
         return ["{} {} for {}: {}".format(name, item["version"], machine, error)]
     except subprocess.CalledProcessError as error:
