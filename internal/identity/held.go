@@ -69,6 +69,7 @@ type Held struct {
 
 	History     []Proof      // applied recovery statements in order
 	Parked      []Proof      // authenticated-in-shape statements awaiting their predecessor
+	Deferred    []Statement  // records and revocations of a later epoch, kept until the chain reaches it
 	Conflicts   []Conflict   // frozen branches, whole
 	Resolutions []Resolution // the operator's local choices, retained
 }

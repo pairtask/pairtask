@@ -86,7 +86,7 @@ func (h Held) applyRecord(rec Record) (Held, Effect, error) {
 		return h.growRecord(rec)
 	}
 	if eff, ok := h.recordAdmissible(rec); !ok {
-		return h, eff, nil
+		return h.deferOrRefuse(rec, eff)
 	}
 	digest := DigestOf(rec.TBS())
 	if h.resolvedAgainst(digest) {
@@ -109,6 +109,45 @@ func (h Held) sameOrOlderRecord(rec Record, digest Digest) (Held, Effect, error)
 	}
 	held := Proof{Statement: h.Record, Digest: h.RecordDigest, lineage: h.Lineage}
 	return h.freeze(h.RecordDigest, [][]Proof{{held}, {{Statement: rec, Digest: digest, lineage: h.Lineage}}})
+}
+
+// deferOrRefuse keeps a statement of a later epoch for the catch-up that
+// reaches it (bounded), and returns any other effect as it is.
+func (h Held) deferOrRefuse(st Statement, eff Effect) (Held, Effect, error) {
+	if eff.Kind != Parked {
+		return h, eff, nil
+	}
+	deferred := append(slices.Clone(h.Deferred), st)
+	if len(deferred) > MaxParked {
+		deferred = deferred[len(deferred)-MaxParked:]
+	}
+	h.Deferred = deferred
+	return h, eff, nil
+}
+
+// redeliver applies the deferred statements the chain has now reached.
+func (h Held) redeliver() Held {
+	var later []Statement
+	for _, st := range h.Deferred {
+		if epochOf(st) != h.Epoch {
+			later = append(later, st)
+			continue
+		}
+		h.Deferred = nil
+		h, _, _ = h.Apply(st, time.Time{})
+	}
+	h.Deferred = later
+	return h
+}
+
+func epochOf(st Statement) uint64 {
+	switch s := st.(type) {
+	case Record:
+		return s.Epoch
+	case Revocation:
+		return s.Epoch
+	}
+	return 0
 }
 
 // recordAdmissible: the record is of the current epoch and P, names the
@@ -233,7 +272,7 @@ func (h Held) checkAcceptance(a Acceptance) error {
 // applyRevocation adds a device to the monotonic revoked set.
 func (h Held) applyRevocation(v Revocation) (Held, Effect, error) {
 	if eff, ok := h.currentEpochOnly(signed{v.Lineage, v.Epoch, h.Person, v}); !ok {
-		return h, eff, nil
+		return h.deferOrRefuse(v, eff)
 	}
 	if slices.Contains(h.Revoked, v.Device) {
 		return h, Effect{Kind: Duplicate}, nil
@@ -384,7 +423,8 @@ func (h Held) advance(p Proof) (Held, Effect, error) {
 	if err != nil {
 		return h, rejected(err.Error()), nil
 	}
-	return next.record(p).unpark()
+	next, eff, err := next.record(p).unpark()
+	return next.redeliver(), eff, err
 }
 
 // record appends an authenticated proof to the chain.
