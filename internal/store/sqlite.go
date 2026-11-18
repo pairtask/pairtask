@@ -183,6 +183,9 @@ var laterColumns = []struct{ table, column, decl string }{
 	// The signing state a contact was last told how to update from (#395):
 	// "" while it signs, or before any notice.
 	{"peer_contacts", "signing_notice", "TEXT NOT NULL DEFAULT ''"},
+	// A space connect's pairing ID (Pairbook), as both members derived it;
+	// NULL for a code exchange, whose pairing ID hashes its transcript.
+	{"pairing_exchanges", "space_pairing_id", "BLOB"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the

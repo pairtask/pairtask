@@ -27,6 +27,9 @@ func (h *Hub) spaceConnect(ctx context.Context, r protocol.SpaceRequest) (spaceS
 	if r.Node == "" {
 		return spaceStep{}, &routingError{protocol.ErrMalformedFrame, "connect needs the member's key ID"}
 	}
+	if r.Node == h.identity.Fingerprint() {
+		return spaceStep{}, spaceRefusal("a workspace can't connect to itself")
+	}
 	p, d, rerr := h.pinned(ctx, r.Space)
 	if rerr != nil {
 		return spaceStep{}, rerr
@@ -55,6 +58,9 @@ func (s spaceDialer) connect(net, local context.Context) (*protocol.SpaceResult,
 	}
 	if view, ok, err := s.h.pairedView(local, s.target); ok || err != nil {
 		return &protocol.SpaceResult{Contact: view}, err
+	}
+	if !s.h.canDial() {
+		return nil, errors.New("this broker can't dial other workspaces")
 	}
 	req, err := s.attempt(local)
 	if err != nil {
@@ -145,17 +151,28 @@ type spaceInstall struct {
 	role    string
 }
 
+// installSpace installs in's pairing, or finds it installed by an earlier
+// try of the same attempt. One the ledger has since retired (an unpair
+// after it) is no pairing: the store answers its history without a write,
+// and the connect fails rather than report a contact that isn't one.
 func installSpace(ctx context.Context, h *Hub, in spaceInstall) error {
 	id, err := space.PairingID(in.req.Space, in.own, in.contact.IdentityKey, in.req.ConnectID)
 	if err != nil {
 		return err
 	}
-	_, err = h.store.InstallSpaceContact(ctx, peer.SpaceInstall{Contact: in.contact, Space: in.req.Space, ConnectID: in.req.ConnectID, PairingID: id, Role: in.role})
-	if err == nil {
-		h.PairingChanged()
+	result, err := h.store.InstallSpaceContact(ctx, peer.SpaceInstall{Contact: in.contact, Space: in.req.Space, ConnectID: in.req.ConnectID, PairingID: id, Role: in.role})
+	if err != nil {
+		return err
 	}
-	return err
+	if result.Exchange.State != peer.ExchangeInstalled {
+		return errRetiredAttempt
+	}
+	h.PairingChanged()
+	return nil
 }
+
+// errRetiredAttempt is an attempt whose pairing was installed, then ended.
+var errRetiredAttempt = errors.New("that connect attempt's pairing has since ended; connect again")
 
 // memberCheck reads a space's members from its directory under pin, as
 // self sees them.
@@ -231,14 +248,14 @@ func (r spaceResponder) accept(ctx context.Context, peerLeaf string, req space.C
 	if r.h.spaces == nil {
 		return errors.New("spaces are not configured")
 	}
+	if !r.h.spaceBusy.hold(req.Space) {
+		return errors.New("another change to the space is running; try again")
+	}
+	defer r.h.spaceBusy.release(req.Space)
 	pin, ok, err := r.h.store.SpacePin(ctx, req.Space)
 	if err != nil || !ok {
 		return errors.New("not a member of that space")
 	}
-	if !r.h.spaceBusy.hold(pin.Space) {
-		return errors.New("another change to the space is running; try again")
-	}
-	defer r.h.spaceBusy.release(pin.Space)
 	member, err := r.verify(ctx, pin, peerLeaf)
 	if err != nil {
 		return err
@@ -269,6 +286,8 @@ func installRefusal(err error) error {
 		return nil
 	case errors.Is(err, peer.ErrSpaceConflict):
 		return errors.New("already paired with this workspace")
+	case errors.Is(err, errRetiredAttempt):
+		return err
 	}
 	return errors.New("could not keep the contact")
 }

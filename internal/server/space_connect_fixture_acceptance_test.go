@@ -36,14 +36,21 @@ const connectDirectory = "https://directory.example"
 type connectDirectoryFixture struct {
 	mu        sync.Mutex
 	roster    pairbook.Roster
+	rosters   map[string]pairbook.Roster
 	addresses map[string]pairbook.SignedAddress
 }
-type connectHTTPTransport struct{ directory *connectDirectoryFixture }
+type connectHTTPTransport struct {
+	directory *connectDirectoryFixture
+	requester string
+}
 
 func (tr connectHTTPTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	tr.directory.mu.Lock()
 	defer tr.directory.mu.Unlock()
 	var value any = tr.directory.roster
+	if roster, ok := tr.directory.rosters[tr.requester]; ok {
+		value = roster
+	}
 	status := 200
 	if strings.Contains(r.URL.Path, "/addresses/") {
 		key := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
@@ -85,7 +92,7 @@ func newConnectNode(t *testing.T, directory *connectDirectoryFixture) *connectNo
 	}
 	h.SetPairing(cfg)
 	h.SetSpaces(hub.SpaceConfig{Directory: func(base string, signer crypto.Signer) (space.Directory, error) {
-		return space.NewClient(base, signer, space.Options{HTTP: &http.Client{Transport: connectHTTPTransport{directory}}})
+		return space.NewClient(base, signer, space.Options{HTTP: &http.Client{Transport: connectHTTPTransport{directory, pairbook.KeyID(signer.Public().(ed25519.PublicKey))}}})
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	n.ctx = ctx
@@ -126,7 +133,7 @@ func newConnectPair(t *testing.T) *connectPair {
 	t.Helper()
 	seed := sha256.Sum256([]byte("space integration owner"))
 	owner := ed25519.NewKeyFromSeed(seed[:])
-	d := &connectDirectoryFixture{addresses: make(map[string]pairbook.SignedAddress)}
+	d := &connectDirectoryFixture{addresses: make(map[string]pairbook.SignedAddress), rosters: make(map[string]pairbook.Roster)}
 	p := &connectPair{directory: d, owner: owner}
 	p.a = newConnectNode(t, d)
 	p.b = newConnectNode(t, d)

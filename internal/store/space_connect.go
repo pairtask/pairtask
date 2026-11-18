@@ -84,7 +84,7 @@ func replaySpace(x peer.ExchangeRecord, in peer.SpaceInstall) (peer.InstallResul
 // sameSpaceInstall: the ledger row is in's own: the same peer, role and
 // pairing ID under the operation both name.
 func sameSpaceInstall(x peer.ExchangeRecord, in peer.SpaceInstall) bool {
-	return x.IdentityKey == in.Contact.IdentityKey && x.Role == in.Role && bytes.Equal(x.TranscriptID, in.PairingID[:])
+	return x.SpacePairingID != nil && x.IdentityKey == in.Contact.IdentityKey && x.Role == in.Role && bytes.Equal(x.SpacePairingID, in.PairingID[:])
 }
 
 // recordSpace writes the connect's ledger row, accepted: both members
@@ -103,7 +103,8 @@ func recordSpace(ctx context.Context, tx *sql.Tx, in peer.SpaceInstall, at time.
 	if err := insertExchange(ctx, tx, x, at); err != nil {
 		return peer.ExchangeRecord{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE pairing_exchanges SET decision = 'accepted', decided_at = ? WHERE operation_id = ?`, stamp(at), op); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE pairing_exchanges SET decision = 'accepted', decided_at = ?, space_pairing_id = ? WHERE operation_id = ?`,
+		stamp(at), in.PairingID[:], op); err != nil {
 		return peer.ExchangeRecord{}, err
 	}
 	x, _, err = exchangeRow(ctx, tx, op)

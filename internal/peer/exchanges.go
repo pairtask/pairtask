@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -87,6 +86,9 @@ type ExchangeRecord struct {
 	InstalledAt, RetiredAt   time.Time
 	InstalledEpoch           int64 // 0 unless it was installed
 	Reason                   string
+	// SpacePairingID is a space connect's pairing ID, as both members
+	// derived it; nil for a code exchange.
+	SpacePairingID []byte
 }
 
 // InstallResult is what delivering an exchange did: its ledger row, whether
@@ -156,16 +158,17 @@ const pairingIDDomain = "pairtask/pairing-epoch/1"
 // PairingID is the ID of the pairing an exchange installs:
 // SHA-256(domain || transcript), the same on both sides.
 // SpaceOperationPrefix opens the operation ID of every space connect's
-// exchange: "space:" + space + ":" + hex(connect ID).
+// exchange: "space:" + space + ":" + hex(connect ID). It names the row;
+// what marks a row as a space connect is its SpacePairingID.
 const SpaceOperationPrefix = "space:"
 
 // ExchangePairingID is the pairing ID an exchange installs. A code
-// exchange hashes its transcript; a space connect has no transcript, and
-// its ledger row holds, in its place, the ID both members derived from
-// their space, keys and attempt, which is installed as it is.
+// exchange hashes its transcript, whatever its operation ID; a space
+// connect installs the ID both members derived from their space, keys and
+// attempt, as it is.
 func ExchangePairingID(x ExchangeRecord) []byte {
-	if strings.HasPrefix(x.OperationID, SpaceOperationPrefix) {
-		return bytes.Clone(x.TranscriptID)
+	if x.SpacePairingID != nil {
+		return bytes.Clone(x.SpacePairingID)
 	}
 	return PairingID(x.TranscriptID)
 }
