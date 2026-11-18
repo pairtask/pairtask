@@ -41,8 +41,9 @@ func TestSpaceConnectionReviewExistingLegacyContactRemainsLabeledLegacy(t *testi
 	operatorNoError(t, err)
 	_, err = p.a.st.Deliver(p.a.ctx, key, peer.PairingAccepted, now)
 	operatorNoError(t, err)
+	beforeEpoch, _ := p.a.pairing(t, key)
 	got := requireConnected(t, p.a.connect(key))
 	operatorEqual(t, "legacy status retained", got.Legacy, true)
-	operatorEqual(t, "legacy epoch retained", got.PairingEpoch, int64(0))
+	operatorEqual(t, "legacy epoch retained", got.PairingEpoch, beforeEpoch)
 	operatorEqual(t, "existing name retained", got.Name, "Existing Bob")
 }
