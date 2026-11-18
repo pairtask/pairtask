@@ -2,9 +2,6 @@ package identity
 
 import (
 	"crypto/ed25519"
-	"time"
-
-	"github.com/pairtask/pairtask/internal/signing"
 )
 
 // Trust is what a peer has decided about a lineage.
@@ -24,10 +21,11 @@ const (
 // chain: the signed statement itself, so a conflict at an old predecessor
 // can be authenticated later, never a digest alone.
 type Proof struct {
-	Statement   Statement // a Succession or a Handover
+	Statement   Statement // a Succession or a Handover; a Record in an equivocation
 	Digest      Digest
 	Predecessor Digest
 	Seq         uint64
+	lineage     Lineage
 }
 
 // Conflict is two or more authenticated branches that name the same
@@ -35,6 +33,7 @@ type Proof struct {
 type Conflict struct {
 	Predecessor Digest
 	Branches    [][]Proof
+	Chosen      Digest // the head the operator chose; zero while unresolved
 }
 
 // Held is everything a peer holds about one person (wire-v0 §3), the state
@@ -94,29 +93,4 @@ type Effect struct {
 	Need     Digest    // for Parked
 	Branches [][]Proof // for FrozenEffect: each branch from the shared predecessor
 	Reason   string    // for Rejected
-}
-
-// Clock is the verifier's view of time: the local clock and the persisted
-// high-water mark, so an expiry check never moves backwards.
-type Clock struct {
-	Now  func() time.Time
-	Mark time.Time
-}
-
-// Effective is max(now, mark).
-func (c Clock) Effective() time.Time {
-	now := c.Now()
-	if c.Mark.After(now) {
-		return c.Mark
-	}
-	return now
-}
-
-// Evidence is what a peer keeps about a message's admission, immutable.
-type Evidence struct {
-	AdmittedAt   time.Time
-	State        signing.State
-	Epoch        uint64
-	Device       string
-	RecordDigest Digest
 }
