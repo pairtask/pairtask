@@ -261,7 +261,7 @@ func (h Held) grow(p Proof) (Held, Effect, error) {
 	}
 	c.Branches = grown(c.Branches, i, p)
 	h.Conflicts = append(slices.Clone(h.Conflicts[:len(h.Conflicts)-1]), c)
-	return h, Effect{Kind: FrozenEffect, Branches: branches}, nil
+	return h, Effect{Kind: FrozenEffect, Branches: c.Branches}, nil
 }
 
 // grown is the branch set with p added: extending branch i, or opening a
