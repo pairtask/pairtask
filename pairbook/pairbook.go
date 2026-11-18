@@ -43,10 +43,9 @@ const (
 
 // Errors.
 var (
-	ErrNotImplemented = errors.New("pairbook: not implemented")
-	ErrInvalid        = errors.New("pairbook: invalid record") // malformed, wrong space, bad key or signature
-	ErrExpired        = errors.New("pairbook: expired or not yet valid")
-	ErrNotOwner       = errors.New("pairbook: not signed by the space owner")
+	ErrInvalid  = errors.New("pairbook: invalid record") // malformed, wrong space, bad key or signature
+	ErrExpired  = errors.New("pairbook: expired or not yet valid")
+	ErrNotOwner = errors.New("pairbook: not signed by the space owner")
 )
 
 // Invite is what the owner's node issues: the hash of a one-time join token.
