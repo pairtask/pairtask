@@ -75,10 +75,16 @@ func installSpace(ctx context.Context, tx *sql.Tx, in peer.SpaceInstall, at time
 // replaySpace answers an operation already in the ledger: the same tuple
 // gets what its row installed, or its retirement, and writes nothing.
 func replaySpace(x peer.ExchangeRecord, in peer.SpaceInstall) (peer.InstallResult, error) {
-	if x.IdentityKey != in.Contact.IdentityKey || x.Role != in.Role || !bytes.Equal(x.TranscriptID, in.PairingID[:]) {
+	if !sameSpaceInstall(x, in) {
 		return peer.InstallResult{}, peer.ErrSpaceConflict
 	}
 	return historicalResult(x), nil
+}
+
+// sameSpaceInstall: the ledger row is in's own: the same peer, role and
+// pairing ID under the operation both name.
+func sameSpaceInstall(x peer.ExchangeRecord, in peer.SpaceInstall) bool {
+	return x.IdentityKey == in.Contact.IdentityKey && x.Role == in.Role && bytes.Equal(x.TranscriptID, in.PairingID[:])
 }
 
 // recordSpace writes the connect's ledger row, accepted: both members

@@ -49,7 +49,7 @@ type spaceDialer struct {
 // it is, and otherwise knocks at the target's verified addresses with the
 // attempt kept for this target, installing once the target accepted.
 func (s spaceDialer) connect(net, local context.Context) (*protocol.SpaceResult, error) {
-	member, err := verifiedPair(net, s.dir, s.pin, s.id.Fingerprint(), s.target)
+	member, err := memberCheck{s.dir, s.pin, s.id.Fingerprint()}.verify(net, s.target)
 	if err != nil {
 		return nil, err
 	}
@@ -157,19 +157,27 @@ func installSpace(ctx context.Context, h *Hub, in spaceInstall) error {
 	return err
 }
 
-// verifiedPair is the member target is, once the directory, read under
-// pin, shows both self and target as members the owner vouches for now.
-func verifiedPair(ctx context.Context, d space.Directory, pin space.Pin, self, target string) (pairbook.Member, error) {
-	members, err := d.Members(ctx, pin)
+// memberCheck reads a space's members from its directory under pin, as
+// self sees them.
+type memberCheck struct {
+	dir  space.Directory
+	pin  space.Pin
+	self string
+}
+
+// verify is the member target is, once the directory shows both self and
+// target as members the owner vouches for now.
+func (m memberCheck) verify(ctx context.Context, target string) (pairbook.Member, error) {
+	members, err := m.dir.Members(ctx, m.pin)
 	if err != nil {
 		return pairbook.Member{}, err
 	}
-	if !slices.ContainsFunc(members, keyed(self)) {
-		return pairbook.Member{}, errors.New("this workspace is not a verified member of space " + pin.Space)
+	if !slices.ContainsFunc(members, keyed(m.self)) {
+		return pairbook.Member{}, errors.New("this workspace is not a verified member of space " + m.pin.Space)
 	}
 	i := slices.IndexFunc(members, keyed(target))
 	if i < 0 {
-		return pairbook.Member{}, errors.New(target + " is not a verified member of space " + pin.Space)
+		return pairbook.Member{}, errors.New(target + " is not a verified member of space " + m.pin.Space)
 	}
 	return members[i], nil
 }
@@ -231,21 +239,36 @@ func (r spaceResponder) accept(ctx context.Context, peerLeaf string, req space.C
 		return errors.New("another change to the space is running; try again")
 	}
 	defer r.h.spaceBusy.release(pin.Space)
-	d, err := r.h.spaces.Directory(pin.Base, r.id)
+	member, err := r.verify(ctx, pin, peerLeaf)
 	if err != nil {
-		return errors.New("directory unavailable")
-	}
-	member, err := verifiedPair(ctx, d, pin, r.id.Fingerprint(), peerLeaf)
-	if err != nil {
-		return errors.New("membership not verified")
+		return err
 	}
 	contact := peer.Contact{IdentityKey: peerLeaf, Name: member.Name, EstablishedAt: time.Now(), Invited: true}
-	err = installSpace(ctx, r.h, spaceInstall{contact: contact, req: req, own: r.id.Fingerprint(), role: "inviter"})
-	if errors.Is(err, peer.ErrSpaceConflict) {
+	return installRefusal(installSpace(ctx, r.h, spaceInstall{contact: contact, req: req, own: r.id.Fingerprint(), role: "inviter"}))
+}
+
+// verify is the dialer's membership, checked with this side's own directory
+// client under its pin, with its own membership too.
+func (r spaceResponder) verify(ctx context.Context, pin space.Pin, dialer string) (pairbook.Member, error) {
+	d, err := r.h.spaces.Directory(pin.Base, r.id)
+	if err != nil {
+		return pairbook.Member{}, errors.New("directory unavailable")
+	}
+	member, err := memberCheck{d, pin, r.id.Fingerprint()}.verify(ctx, dialer)
+	if err != nil {
+		return pairbook.Member{}, errors.New("membership not verified")
+	}
+	return member, nil
+}
+
+// installRefusal is what a dialer is told about a failed install: a
+// conflict as such, anything else without internals.
+func installRefusal(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, peer.ErrSpaceConflict):
 		return errors.New("already paired with this workspace")
 	}
-	if err != nil {
-		return errors.New("could not keep the contact")
-	}
-	return nil
+	return errors.New("could not keep the contact")
 }
