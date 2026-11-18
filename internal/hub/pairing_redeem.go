@@ -15,6 +15,7 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/space"
 	"github.com/pairtask/pairtask/internal/store"
 )
 
@@ -84,6 +85,12 @@ type PairingEndpoint struct {
 	// ClaimLink claims a serving live link for contact after a first round
 	// agreed to stay open, replacing one still open for it (#222).
 	ClaimLink func(contact string) (*LiveClaim, bool)
+	// SpacePins admits a space connect's handshake: any valid identity,
+	// while spaces are configured; membership is checked after it.
+	SpacePins func(fingerprint string) bool
+	// SpaceConnect answers a member's connect: peerLeaf is the dialer's
+	// identity from the handshake.
+	SpaceConnect func(ctx context.Context, peerLeaf string, req space.ConnectRequest) space.ConnectAnswer
 }
 
 // pairingWiring is the hub's pairing state beyond the invitation itself.

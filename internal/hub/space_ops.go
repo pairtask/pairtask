@@ -245,3 +245,8 @@ func (h *Hub) unpinAfter(ctx context.Context, id string, check func(space.Pin) *
 		return nil, h.store.UnpinSpace(local, p.Space)
 	}}, nil
 }
+
+// spaceConnect makes a contact with a verified member of the space.
+func (h *Hub) spaceConnect(ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError) {
+	return spaceStep{}, spaceRefusal("space connect not implemented")
+}

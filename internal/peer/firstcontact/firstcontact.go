@@ -40,6 +40,10 @@ const (
 	// carries contact notices only, so the receiver knows by framing, before
 	// any admission, that nothing else runs on it.
 	ControlALPN = "pairtask-control/1"
+	// SpaceALPN names a space connect (Pairbook): the dialer pins the
+	// member it dials; the server admits any valid identity and checks
+	// membership after the handshake.
+	SpaceALPN = "pairtask-space/1"
 	// MaxMessageFrameBytes bounds a message session's frames.
 	MaxMessageFrameBytes = 32 << 10
 	// ExporterLabel is RFC 9266's tls-exporter channel binding.
@@ -101,6 +105,9 @@ type ServerOptions struct {
 	// accepting one only from an identity it reports true for: any
 	// retained contact row, paused or unpaired included.
 	ControlPins func(fingerprint string) bool
+	// SpacePins, when set, also offers space connects, accepting one only
+	// from an identity it reports true for.
+	SpacePins func(fingerprint string) bool
 }
 
 // ClientOptions shape a pairing client's handshake.
@@ -286,4 +293,10 @@ func Dial(ctx context.Context, ep Endpoint, id *peer.WorkspaceIdentity, clock fu
 		return nil, fmt.Errorf("%w: dial: %w", ErrFirstContact, err)
 	}
 	return Client(ctx, raw, id, clock)
+}
+
+// SpaceClient opens a space connect to the member whose identity is pin.
+func SpaceClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
+	raw.Close()
+	return nil, errors.New("firstcontact: space connect not implemented")
 }

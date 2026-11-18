@@ -20,6 +20,7 @@ const (
 	SpaceOpRevoke   = "revoke"   // space, node
 	SpaceOpLeave    = "leave"    // space
 	SpaceOpDelete   = "delete"   // space
+	SpaceOpConnect  = "connect"  // space, node: make a contact with a verified member
 
 	// ErrSpace is a refused space operation; the detail names why.
 	ErrSpace = "space_refused"
@@ -44,10 +45,11 @@ type SpaceRequest struct {
 
 // SpaceResult answers a space operation.
 type SpaceResult struct {
-	Pins     []SpacePin    `json:"pins,omitempty"`     // list, create, join
-	Invite   string        `json:"invite,omitempty"`   // invite: the link, a secret shown to the operator only
-	Members  []SpaceMember `json:"members,omitempty"`  // members: verified against the pin
-	Requests []SpaceMember `json:"requests,omitempty"` // requests: verified pending requests
+	Pins     []SpacePin          `json:"pins,omitempty"`     // list, create, join
+	Invite   string              `json:"invite,omitempty"`   // invite: the link, a secret shown to the operator only
+	Members  []SpaceMember       `json:"members,omitempty"`  // members: verified against the pin
+	Requests []SpaceMember       `json:"requests,omitempty"` // requests: verified pending requests
+	Contact  *PairingContactView `json:"contact,omitempty"`  // connect: the contact, new or already held
 }
 
 // SpacePin is a space this workspace created or joined.

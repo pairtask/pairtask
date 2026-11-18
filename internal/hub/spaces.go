@@ -67,6 +67,7 @@ var spaceOps = map[string]spaceHandler{
 	protocol.SpaceOpRevoke:   (*Hub).spaceRevoke,
 	protocol.SpaceOpLeave:    (*Hub).spaceLeave,
 	protocol.SpaceOpDelete:   (*Hub).spaceDelete,
+	protocol.SpaceOpConnect:  (*Hub).spaceConnect,
 }
 
 // operatorSpace serves one space operation. Local checks and the pins are

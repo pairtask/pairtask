@@ -159,3 +159,18 @@ func PairingID(transcript []byte) []byte {
 	h.Write(transcript)
 	return h.Sum(nil)
 }
+
+// SpaceInstall is a contact made by a Pairbook space connect, installed as
+// an epoch pairing so messaging admits it: Role is "joiner" on the side
+// that dialed and "inviter" on the side that answered.
+type SpaceInstall struct {
+	Contact   Contact
+	Space     string
+	ConnectID [16]byte
+	PairingID [32]byte
+	Role      string
+}
+
+// ErrSpaceConflict refuses a space install that would change a confirmed
+// contact or reuse an operation for another peer, pairing or role.
+var ErrSpaceConflict = errors.New("peer: space connect conflicts with an existing pairing")
