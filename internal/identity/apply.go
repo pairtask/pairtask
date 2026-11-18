@@ -511,7 +511,10 @@ func (h Held) choice(r Resolution) (Conflict, int, error) {
 	}
 	c := h.Conflicts[len(h.Conflicts)-1]
 	i := slices.IndexFunc(c.Branches, func(b []Proof) bool { return head(b) == r.Chosen })
-	if i < 0 || !c.displayed(r, i) {
+	if i < 0 {
+		return Conflict{}, 0, ErrMalformed
+	}
+	if !c.displayed(r, i) {
 		return Conflict{}, 0, ErrMalformed
 	}
 	return c, i, nil
