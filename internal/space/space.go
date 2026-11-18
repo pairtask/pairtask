@@ -5,29 +5,27 @@
 package space
 
 import (
-	"context"
-	"crypto"
-	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
-	"io"
-	"net/http"
+	"net/url"
+	"strings"
 	"time"
-
-	"github.com/pairtask/pairtask/pairbook"
 )
 
 // MaxResponse bounds a Pairbook response body.
 const MaxResponse = 1 << 20
 
 var (
-	errNotImplemented = errors.New("space: not implemented")
-
 	// ErrInvite is a malformed or non-canonical invite link.
 	ErrInvite = errors.New("space: invalid invite link")
 	// ErrPinConflict is a pin for a known space with another owner or directory.
 	ErrPinConflict = errors.New("space: space already pinned to another owner or directory")
 	// ErrDirectory is a pin or invite for another directory than the client's.
 	ErrDirectory = errors.New("space: pin or invite names another directory")
+	// ErrBase is a directory origin that isn't https://HOST[:PORT] exactly.
+	ErrBase = errors.New("space: directory must be https://HOST[:PORT]")
+	// ErrUntrusted is a directory answer that doesn't verify against the pin.
+	ErrUntrusted = errors.New("space: directory record does not verify")
 )
 
 // Pin is what a node keeps for a space it created or joined: the owner key
@@ -52,74 +50,81 @@ type Invite struct {
 	Owner string
 }
 
+const spacesPath = "/v0/spaces/"
+
+var b64 = base64.RawURLEncoding.Strict()
+
 // ParseInvite reads a canonical invite link: https, no userinfo or query,
-// a canonical space ID, token and owner key ID.
-func ParseInvite(link string) (Invite, error) { return Invite{}, errNotImplemented }
+// a canonical space ID, token and owner key ID. Canonical means the link
+// is exactly what String writes for the fields it holds.
+func ParseInvite(link string) (Invite, error) {
+	inv, ok := splitInvite(link)
+	if !ok || !inv.canonical(link) {
+		return Invite{}, ErrInvite
+	}
+	return inv, nil
+}
+
+// splitInvite reads link's parts, valid or not; false when the fragment
+// isn't a token and an owner.
+func splitInvite(link string) (Invite, bool) {
+	head, fragment, _ := strings.Cut(link, "#")
+	base, id, _ := strings.Cut(head, spacesPath)
+	token, owner, ok := inviteFragment(fragment)
+	inv := Invite{Base: base, Space: id, Owner: owner}
+	return inv, ok && decodeToken(token, &inv.Token)
+}
+
+// canonical: every field is valid and link is exactly what String writes.
+func (i Invite) canonical(link string) bool {
+	return checkBase(i.Base) == nil && validSpaceID(i.Space) && validKeyID(i.Owner) && i.String() == link
+}
+
+// decodeToken decodes unpadded base64url of exactly a token's size.
+func decodeToken(s string, into *[32]byte) bool {
+	raw, err := b64.DecodeString(s)
+	if err != nil || len(raw) != len(into) {
+		return false
+	}
+	copy(into[:], raw)
+	return true
+}
+
+// inviteFragment is the token and owner of "token=T&owner=O".
+func inviteFragment(fragment string) (string, string, bool) {
+	tokenField, ownerField, _ := strings.Cut(fragment, "&")
+	token, tokenOK := strings.CutPrefix(tokenField, "token=")
+	owner, ownerOK := strings.CutPrefix(ownerField, "owner=")
+	return token, owner, tokenOK && ownerOK
+}
 
 // String is the invite's canonical link.
-func (i Invite) String() string { return "" }
-
-// Options are a client's injectable parts.
-type Options struct {
-	HTTP  *http.Client     // nil = a default client; never modified, redirects are refused regardless
-	Now   func() time.Time // nil = time.Now
-	Nonce io.Reader        // nil = crypto/rand
+func (i Invite) String() string {
+	return i.Base + spacesPath + i.Space + "#token=" + b64.EncodeToString(i.Token[:]) + "&owner=" + i.Owner
 }
 
-// Client calls one directory, signing as one node.
-type Client struct{}
-
-// NewClient is a client of the directory at base (https://HOST[:PORT]) that
-// signs with signer, whose public key must be Ed25519.
-func NewClient(base string, signer crypto.Signer, opt Options) (*Client, error) {
-	return nil, errNotImplemented
+// checkBase: base is an https origin and nothing more.
+func checkBase(base string) error {
+	u, err := url.Parse(base)
+	if err != nil || !isOrigin(u, base) {
+		return ErrBase
+	}
+	return nil
 }
 
-// Create stores a new space whose owner is the client's key.
-func (c *Client) Create(ctx context.Context, space, name string) (Pin, error) {
-	return Pin{}, errNotImplemented
+// isOrigin: base is exactly https://HOST[:PORT], so no userinfo, path,
+// query or fragment.
+func isOrigin(u *url.URL, base string) bool {
+	return u.Scheme == "https" && u.Host != "" && base == "https://"+u.Host
 }
 
-// Invite issues a one-time invite valid for d.
-func (c *Client) Invite(ctx context.Context, pin Pin, d time.Duration) (Invite, error) {
-	return Invite{}, errNotImplemented
+// validSpaceID: 32 lowercase hex characters.
+func validSpaceID(id string) bool { return len(id) == 32 && isLowerHex(id) }
+
+// validKeyID: "sha256:" and 64 lowercase hex characters.
+func validKeyID(id string) bool {
+	hex, ok := strings.CutPrefix(id, "sha256:")
+	return ok && len(hex) == 64 && isLowerHex(hex)
 }
 
-// Join files the client's join request under inv and returns the pin to keep.
-func (c *Client) Join(ctx context.Context, inv Invite, name string) (Pin, error) {
-	return Pin{}, errNotImplemented
-}
-
-// Requests is the space's pending join requests that verify.
-func (c *Client) Requests(ctx context.Context, pin Pin) ([]pairbook.JoinRequest, error) {
-	return nil, errNotImplemented
-}
-
-// Approve admits node with name for d.
-func (c *Client) Approve(ctx context.Context, pin Pin, node ed25519.PublicKey, name string, d time.Duration) error {
-	return errNotImplemented
-}
-
-// Members is the space's members the pin's owner vouches for now.
-func (c *Client) Members(ctx context.Context, pin Pin) ([]pairbook.Member, error) {
-	return nil, errNotImplemented
-}
-
-// Publish signs and stores the client's addresses for d.
-func (c *Client) Publish(ctx context.Context, pin Pin, addrs []string, d time.Duration) error {
-	return errNotImplemented
-}
-
-// Address is node's current address record, when node is a member the pin
-// vouches for and the record verifies.
-func (c *Client) Address(ctx context.Context, pin Pin, node ed25519.PublicKey) (pairbook.Address, error) {
-	return pairbook.Address{}, errNotImplemented
-}
-
-// Revoke removes node; revoking the client's own key is leaving.
-func (c *Client) Revoke(ctx context.Context, pin Pin, node ed25519.PublicKey) error {
-	return errNotImplemented
-}
-
-// Delete erases the space; only its owner can.
-func (c *Client) Delete(ctx context.Context, pin Pin) error { return errNotImplemented }
+func isLowerHex(s string) bool { return strings.Trim(s, "0123456789abcdef") == "" }
