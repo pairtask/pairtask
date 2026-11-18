@@ -32,7 +32,7 @@ func TestClientAcceptanceJoinSendsTokenOnlyInBodyAndKeepsOwnerLocal(t *testing.T
 	got, err := c.Join(clientContext, inv, "Alice")
 	requireOK(t, err)
 	clientEqual(t, calls, 1, "join calls")
-	assertClientPin(t, got, spaceID, inv.Owner, directory)
+	assertClientPin(t, got, space.Pin{Space: spaceID, Owner: inv.Owner, Base: directory})
 	clientEqual(t, got.JoinedAt.Equal(clientNow), true, "join time")
 }
 
@@ -207,11 +207,11 @@ func assertJoinBody(t *testing.T, data []byte, inv space.Invite, node ed25519.Pr
 	clientEqual(t, bytes.Equal(body.Request.Node, pub(node)), true, "joining identity")
 	requireOK(t, body.Request.Verify(spaceID, clientNow))
 }
-func assertClientPin(t *testing.T, got space.Pin, id, owner, base string) {
+func assertClientPin(t *testing.T, got, want space.Pin) {
 	t.Helper()
-	clientEqual(t, got.Space, id, "space")
-	clientEqual(t, got.Owner, owner, "owner")
-	clientEqual(t, got.Base, base, "directory")
+	clientEqual(t, got.Space, want.Space, "space")
+	clientEqual(t, got.Owner, want.Owner, "owner")
+	clientEqual(t, got.Base, want.Base, "directory")
 }
 
 func clientEqual[T comparable](t *testing.T, got, want T, field string) {
