@@ -110,6 +110,7 @@ func openHub(ctx context.Context, cfg config, st *store.Store, log *slog.Logger)
 	log.Info("state loaded", "db", cfg.DBPath, "last_seq", lastSeq)
 	h := hub.New(st, lastSeq, log)
 	h.SetPairing(pairingConfig(cfg))
+	h.SetSpaces(hub.SpaceConfig{})
 	if err := attachClassifier(h, cfg, log); err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"strings"
 	"time"
@@ -76,6 +78,17 @@ func (i *WorkspaceIdentity) Certify(c signing.Cert) signing.Cert { return signin
 
 // PublicKey is the workspace key's public half.
 func (i *WorkspaceIdentity) PublicKey() ed25519.PublicKey { return i.key.Public().(ed25519.PublicKey) }
+
+// Public is the workspace key's public half, as a crypto.Signer.
+func (i *WorkspaceIdentity) Public() crypto.PublicKey { return i.PublicKey() }
+
+// Sign signs msg with the workspace key under opts, as ed25519.PrivateKey
+// does; the key itself never leaves the identity.
+func (i *WorkspaceIdentity) Sign(rand io.Reader, msg []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return i.key.Sign(rand, msg, opts)
+}
+
+var _ crypto.Signer = (*WorkspaceIdentity)(nil)
 
 // Fingerprint is the workspace's pairtask SPKI fingerprint.
 func (i *WorkspaceIdentity) Fingerprint() string { return i.fingerprint }

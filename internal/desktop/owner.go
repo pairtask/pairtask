@@ -100,6 +100,7 @@ func (o *owner) run(ctx, base context.Context, cfg Config) error {
 	}
 	h := hub.New(o.st, lastSeq, cfg.Log)
 	h.SetPairing(hub.PairingConfig{Dial: dialer(cfg.Dial), Exchanger: pake.New(), Name: cfg.Name})
+	h.SetSpaces(hub.SpaceConfig{})
 	if _, err := h.RecoverJoins(ctx); err != nil {
 		return fmt.Errorf("recover pairing redemptions: %w", err)
 	}

@@ -42,6 +42,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDashboard(ctx, args[1:], stdout, stderr)
 	case "operator":
 		return runOperator(ctx, args[1:], stdout, stderr)
+	case "space":
+		return runOperatorSpace(ctx, args[1:], stdout, stderr)
 	case "peer":
 		return runPeer(ctx, args[1:], stdout, stderr)
 	}
