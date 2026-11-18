@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"time"
 
@@ -92,8 +93,12 @@ func ParseAnchor(b []byte) (Anchor, error) {
 	r := reader{b: tbs}
 	r.domain(string(KindAnchor))
 	a := Anchor{Person: r.key(), Sig: sig}
-	if r.u64() == 1 {
+	switch r.u64() {
+	case 0:
+	case 1:
 		a.Recovery = r.key()
+	default:
+		r.fail()
 	}
 	a.InitAt = r.at()
 	return a, r.done()
@@ -260,13 +265,16 @@ func ParseRecord(b []byte) (Record, error) {
 func readBindings(r *reader) []Binding {
 	n := r.count(MaxBindings)
 	out := make([]Binding, 0, n)
+	var previous []byte
 	for i := 0; i < n; i++ {
-		claim, cerr := ParseClaim(r.bytes())
+		raw := r.bytes()
+		claim, cerr := ParseClaim(raw)
 		acceptance, aerr := ParseAcceptance(r.bytes())
-		if cerr != nil || aerr != nil {
+		if cerr != nil || aerr != nil || (i > 0 && bytes.Compare(previous, raw) >= 0) {
 			r.fail()
 			return nil
 		}
+		previous = raw
 		out = append(out, Binding{claim, acceptance})
 	}
 	return out
@@ -408,8 +416,8 @@ func ParseInventory(b []byte) (Inventory, error) {
 	inv := Inventory{Lineage: r.lineage(), Epoch: r.counter(), Version: r.counter(), Sig: sig}
 	n := r.count(MaxDevices)
 	for i := 0; i < n; i++ {
-		d := Device{ID: r.str(), Label: r.str(), LinkedAt: r.at()}
-		if len(d.Label) > MaxLabel {
+		d := Device{ID: r.str(), Label: r.label(), LinkedAt: r.at()}
+		if i > 0 && inv.Devices[i-1].ID >= d.ID {
 			r.fail()
 		}
 		inv.Devices = append(inv.Devices, d)

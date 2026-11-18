@@ -10,12 +10,15 @@
 package identity
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"math"
 	"time"
+	"unicode/utf8"
 )
 
 // Lineage identifies a person across successions: the digest of the anchor.
@@ -145,7 +148,16 @@ func (r *reader) fixed32() [32]byte {
 
 func (r *reader) lineage() Lineage { return Lineage(r.fixed32()) }
 func (r *reader) digest() Digest   { return Digest(r.fixed32()) }
-func (r *reader) at() time.Time    { return time.UnixMilli(int64(r.u64())).UTC() }
+
+// at is a millisecond timestamp that fits int64.
+func (r *reader) at() time.Time {
+	v := r.u64()
+	if v > math.MaxInt64 {
+		r.fail()
+		return time.Time{}
+	}
+	return time.UnixMilli(int64(v)).UTC()
+}
 
 // count is an element count within limit.
 func (r *reader) count(limit int) int {
@@ -170,13 +182,26 @@ func (r *reader) ids(limit int) []string {
 	return out
 }
 
+// digests reads a sorted, duplicate-free list of digests.
 func (r *reader) digests(limit int) []Digest {
 	n := r.count(limit)
 	out := make([]Digest, 0, n)
 	for i := 0; i < n; i++ {
 		out = append(out, r.digest())
+		if i > 0 && bytes.Compare(out[i-1][:], out[i][:]) >= 0 {
+			r.fail()
+		}
 	}
 	return out
+}
+
+// label is a device label: valid UTF-8, at most MaxLabel bytes.
+func (r *reader) label() string {
+	s := r.str()
+	if len(s) > MaxLabel || !utf8.ValidString(s) {
+		r.fail()
+	}
+	return s
 }
 
 // domain reads the first field and requires it to be d.

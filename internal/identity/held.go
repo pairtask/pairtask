@@ -57,6 +57,7 @@ type Held struct {
 	Head     Digest // the last applied recovery statement, or the anchor
 
 	Keys       map[string]ed25519.PublicKey // key ID → public key, for every P and R ever seen
+	Workspaces map[string]ed25519.PublicKey // key ID → public key of workspaces this peer knows (from pairing or a directory); a binding to an unknown one can't be verified
 	Persons    []string                     // every P key ID the lineage has used (fresh-key guard)
 	Recoveries []string                     // every R key ID the lineage has used
 
@@ -65,9 +66,10 @@ type Held struct {
 	Bindings     []Binding
 	Revoked      []string // monotonic union of device key IDs
 
-	History   []Proof    // applied recovery statements in order
-	Parked    []Proof    // authenticated-in-shape statements awaiting their predecessor
-	Conflicts []Conflict // frozen branches, whole
+	History     []Proof      // applied recovery statements in order
+	Parked      []Proof      // authenticated-in-shape statements awaiting their predecessor
+	Conflicts   []Conflict   // frozen branches, whole
+	Resolutions []Resolution // the operator's local choices, retained
 }
 
 // Key is the public key for id, or nil when the lineage never presented it.
@@ -94,16 +96,6 @@ type Effect struct {
 	Reason   string    // for Rejected
 }
 
-// Apply is one row of the transition table: the next Held, what happened,
-// and an error only for malformed or unsigned input. Behaviour follows the
-// vectors codex-1 authors; the skeleton declares it.
-func (h Held) Apply(st Statement, now time.Time) (Held, Effect, error) {
-	return h, Effect{}, ErrNotImplemented
-}
-
-// Resolve applies the operator's choice between frozen branches.
-func Resolve(h Held, r Resolution) (Held, error) { return h, ErrNotImplemented }
-
 // Clock is the verifier's view of time: the local clock and the persisted
 // high-water mark, so an expiry check never moves backwards.
 type Clock struct {
@@ -127,20 +119,4 @@ type Evidence struct {
 	Epoch        uint64
 	Device       string
 	RecordDigest Digest
-}
-
-// Admit judges a newly received sealed message against the lineage it
-// claims (wire-v0 §4): the seal must match the frame it arrived in
-// (signing.Seal.Matches) and verify as signing does, then the certificate
-// must be valid at the signed time and at the clock's effective time, the
-// epoch current and the lineage Active, the device not revoked, and the
-// header's workspace bound to the lineage. The Result is the current one;
-// the Evidence is stored with the message and never rewritten.
-func Admit(seal signing.Seal, frame signing.Frame, h Held, clock Clock) (signing.Result, Evidence) {
-	if err := seal.Matches(frame); err != nil {
-		return signing.Result{State: signing.Invalid, Reason: err.Error()},
-			Evidence{AdmittedAt: clock.Effective(), State: signing.Invalid}
-	}
-	return signing.Result{State: signing.Unverified, Reason: ErrNotImplemented.Error()},
-		Evidence{AdmittedAt: clock.Effective(), State: signing.Unverified}
 }
