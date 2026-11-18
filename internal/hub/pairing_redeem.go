@@ -159,7 +159,7 @@ func (h *Hub) publishIdentity(id *peer.WorkspaceIdentity) {
 			ContactPins: h.contactPins, Changed: h.PairingChanged, RequestMark: h.requestMark,
 			MessagePins: h.messagePins, Admit: h.admit, BeginMessages: h.beginMessages,
 			ControlPins: h.controlPins, AdmitControl: h.admitControl, ControlDone: h.controlDone,
-			ClaimLink: h.ClaimLink})
+			ClaimLink: h.ClaimLink, SpacePins: spaceResponder{h, id}.pins, SpaceConnect: spaceResponder{h, id}.answer})
 	}
 }
 

@@ -11,16 +11,18 @@ import (
 	"github.com/pairtask/pairtask/internal/peer/firstcontact"
 )
 
-func spaceHandshake(t *testing.T, serverID, clientID *peer.WorkspaceIdentity, pin string, options firstcontact.ServerOptions) (connResult, connResult) {
+type spaceTLSIdentities struct{ server, client *peer.WorkspaceIdentity }
+
+func spaceHandshake(t *testing.T, ids spaceTLSIdentities, pin string, options firstcontact.ServerOptions) (connResult, connResult) {
 	t.Helper()
 	ctx := testContext(t)
 	a, b := tcpPipe(t)
 	result := make(chan connResult, 1)
 	go func() {
-		conn, err := firstcontact.ServerWith(ctx, a, serverID, time.Now, options)
+		conn, err := firstcontact.ServerWith(ctx, a, ids.server, time.Now, options)
 		result <- connResult{conn, err}
 	}()
-	conn, err := firstcontact.SpaceClient(ctx, b, clientID, time.Now, pin)
+	conn, err := firstcontact.SpaceClient(ctx, b, ids.client, time.Now, pin)
 	// A rejected client (and the initial stub) must release the server read.
 	if err != nil {
 		b.Close()
@@ -42,7 +44,7 @@ func spaceHandshake(t *testing.T, serverID, clientID *peer.WorkspaceIdentity, pi
 func TestSpaceTLSAcceptanceMutualIdentityAndSeparateProtocol(t *testing.T) {
 	alice, bob := identity(t), identity(t)
 	opts := firstcontact.ServerOptions{SpacePins: func(key string) bool { return key == bob.Fingerprint() }}
-	server, client := spaceHandshake(t, alice, bob, alice.Fingerprint(), opts)
+	server, client := spaceHandshake(t, spaceTLSIdentities{alice, bob}, alice.Fingerprint(), opts)
 	mustOK(t, server.err)
 	mustOK(t, client.err)
 	equal(t, firstcontact.SpaceALPN, "pairtask-space/1")
@@ -59,14 +61,14 @@ func TestSpaceTLSAcceptanceMutualIdentityAndSeparateProtocol(t *testing.T) {
 
 func TestSpaceTLSAcceptanceChangedServerCannotInheritPin(t *testing.T) {
 	alice, bob, replacement := identity(t), identity(t), identity(t)
-	_, client := spaceHandshake(t, replacement, bob, alice.Fingerprint(), firstcontact.ServerOptions{SpacePins: func(string) bool { return true }})
+	_, client := spaceHandshake(t, spaceTLSIdentities{replacement, bob}, alice.Fingerprint(), firstcontact.ServerOptions{SpacePins: func(string) bool { return true }})
 	equal(t, errors.Is(client.err, peer.ErrPeerMismatch), true)
 	equal(t, client.conn == nil, true)
 }
 
 func TestSpaceTLSAcceptanceRejectsUnknownClient(t *testing.T) {
 	alice, bob := identity(t), identity(t)
-	server, _ := spaceHandshake(t, alice, bob, alice.Fingerprint(), firstcontact.ServerOptions{SpacePins: func(string) bool { return false }})
+	server, _ := spaceHandshake(t, spaceTLSIdentities{alice, bob}, alice.Fingerprint(), firstcontact.ServerOptions{SpacePins: func(string) bool { return false }})
 	mustFail(t, server.err)
 	equal(t, server.conn == nil, true)
 }
@@ -79,7 +81,7 @@ func TestSpaceTLSAcceptanceNeverFallsBackToContactOrPairing(t *testing.T) {
 		"space-denied-contact-allowed": {SpacePins: func(string) bool { return false }, ContactPins: func(string) bool { return true }},
 	} {
 		t.Run(name, func(t *testing.T) {
-			server, client := spaceHandshake(t, alice, bob, alice.Fingerprint(), options)
+			server, client := spaceHandshake(t, spaceTLSIdentities{alice, bob}, alice.Fingerprint(), options)
 			mustFail(t, server.err)
 			equal(t, server.conn == nil, true)
 			// TLS 1.3 client success can precede the server's rejection; if a
@@ -95,7 +97,7 @@ func TestSpaceTLSAcceptanceRequiresWellFormedTargetPin(t *testing.T) {
 	alice, bob := identity(t), identity(t)
 	for _, pin := range []string{"", "sha256:wrong"} {
 		t.Run(pin, func(t *testing.T) {
-			_, client := spaceHandshake(t, alice, bob, pin, firstcontact.ServerOptions{SpacePins: func(string) bool { return true }})
+			_, client := spaceHandshake(t, spaceTLSIdentities{alice, bob}, pin, firstcontact.ServerOptions{SpacePins: func(string) bool { return true }})
 			mustFail(t, client.err)
 			equal(t, client.conn == nil, true)
 		})

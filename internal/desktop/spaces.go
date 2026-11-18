@@ -81,6 +81,14 @@ type SpaceConnectResult struct {
 const spaceConnectDescription = "Connect to a member of a Pairbook space: both sides check each other is a member the owner vouches for, " +
 	"then each holds the other as a contact, as after pairing. Nothing is shared: sharing agents stays a separate step."
 
+// spaceConnect is the same operator_space connect the CLI sends.
 func (n *Node) spaceConnect(ctx context.Context, args SpaceConnectArgs) (protocol.PairingContactView, error) {
-	return protocol.PairingContactView{}, errors.New("space connect not implemented")
+	out, err := n.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpConnect, Node: args.Member, Space: args.Space})
+	if err != nil {
+		return protocol.PairingContactView{}, err
+	}
+	if out.Contact == nil {
+		return protocol.PairingContactView{}, errors.New("connect answered without its contact")
+	}
+	return *out.Contact, nil
 }

@@ -1,9 +1,11 @@
 package peer
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -153,6 +155,21 @@ const pairingIDDomain = "pairtask/pairing-epoch/1"
 
 // PairingID is the ID of the pairing an exchange installs:
 // SHA-256(domain || transcript), the same on both sides.
+// SpaceOperationPrefix opens the operation ID of every space connect's
+// exchange: "space:" + space + ":" + hex(connect ID).
+const SpaceOperationPrefix = "space:"
+
+// ExchangePairingID is the pairing ID an exchange installs. A code
+// exchange hashes its transcript; a space connect has no transcript, and
+// its ledger row holds, in its place, the ID both members derived from
+// their space, keys and attempt, which is installed as it is.
+func ExchangePairingID(x ExchangeRecord) []byte {
+	if strings.HasPrefix(x.OperationID, SpaceOperationPrefix) {
+		return bytes.Clone(x.TranscriptID)
+	}
+	return PairingID(x.TranscriptID)
+}
+
 func PairingID(transcript []byte) []byte {
 	h := sha256.New()
 	h.Write([]byte(pairingIDDomain))

@@ -295,8 +295,9 @@ func Dial(ctx context.Context, ep Endpoint, id *peer.WorkspaceIdentity, clock fu
 	return Client(ctx, raw, id, clock)
 }
 
-// SpaceClient opens a space connect to the member whose identity is pin.
+// SpaceClient opens a space connect to the member whose identity is pin,
+// offering SpaceALPN alone, so it never falls back to a pairing, contact
+// or message session; raw is owned as by Client.
 func SpaceClient(ctx context.Context, raw net.Conn, id *peer.WorkspaceIdentity, clock func() time.Time, pin string) (*Conn, error) {
-	raw.Close()
-	return nil, errors.New("firstcontact: space connect not implemented")
+	return handshake(ctx, raw, id, clock, pinned{SpaceALPN, pin}.role())
 }
