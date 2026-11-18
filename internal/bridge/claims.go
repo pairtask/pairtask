@@ -50,7 +50,7 @@ func addClaimTools(s *mcp.Server, c claimClient) {
 		claimTool(c, protocol.TypeClaimSet))
 	mcp.AddTool(s, &mcp.Tool{Name: "release_claim", Description: "Free your claim so another agent can take the task. Only the holder can release; disconnecting never releases." + claimsMeaning},
 		claimTool(c, protocol.TypeClaimRelease))
-	mcp.AddTool(s, &mcp.Tool{Name: "finish_claim", Description: "Mark your owned task done. Done is final and stays visible; the task can't be claimed again." + claimsMeaning},
+	mcp.AddTool(s, &mcp.Tool{Name: "finish_claim", Description: "Mark your task done, as its owner (default) or as its reviewer. Done is final and stays visible; that role can't be claimed again for the task." + claimsMeaning},
 		claimTool(c, protocol.TypeClaimDone))
 	mcp.AddTool(s, &mcp.Tool{Name: "read_claims", Description: "Read the claims and assignments on an operator message: who owns and who reviews each task, who its tags assigned, and their state." + claimsMeaning + assignmentsMeaning},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args struct {

@@ -140,7 +140,7 @@ func validClaimChange(msg protocol.Message) error {
 	case protocol.TypeClaimRelease:
 		return protocol.ValidateRole(msg.Role)
 	case protocol.TypeClaimDone:
-		// The role may be left out (done is the owner's); one given must
+		// The role may be left out (done is then the owner's); one given must
 		// be a client's role, never an assignment's (#278).
 		if msg.Role != "" {
 			return protocol.ValidateRole(msg.Role)
