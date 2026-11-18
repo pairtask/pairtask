@@ -53,7 +53,11 @@ var pairUsages = map[string]string{
 	"consent":        "consent [ID | contact:NAME | on NAME | off NAME | reset NAME AGENT OPERATION]: what paired workspaces wait for you to decide",
 }
 
-func decidesRequest(word string) bool {
+// pairWord is one /pair word as typed.
+type pairWord string
+
+// decidesRequest: the word accepts or rejects a pairing request.
+func (word pairWord) decidesRequest() bool {
 	return word == "accept" || word == "reject"
 }
 
@@ -167,12 +171,21 @@ type digests []string
 // that no other digest starts with.
 func (all digests) uniquePrefix(digest string) string {
 	for n := len(protocol.ShortKey(digest)); n < len(digest); n++ {
-		prefix := digest[:n]
-		if !slices.ContainsFunc(all, func(o string) bool { return o != digest && strings.HasPrefix(o, prefix) }) {
-			return prefix
+		if !all.anotherStartsWith(digest[:n], digest) {
+			return digest[:n]
 		}
 	}
 	return digest
+}
+
+// anotherStartsWith: a digest other than except has the prefix.
+func (all digests) anotherStartsWith(prefix, except string) bool {
+	for _, o := range all {
+		if o != except && strings.HasPrefix(o, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // pendingRequestLabel is a picker row for an offered key: the key, the
