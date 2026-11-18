@@ -38,6 +38,7 @@ type fakeSpaceDirectory struct {
 	approved                                                       pairbook.JoinRequest
 	revoked                                                        ed25519.PublicKey
 	members                                                        func(context.Context) ([]pairbook.Member, error)
+	revoke                                                         func(context.Context, ed25519.PublicKey) error
 }
 
 func (f *fakeSpaceDirectory) failure() error {
@@ -68,9 +69,12 @@ func (f *fakeSpaceDirectory) Members(ctx context.Context, p space.Pin) ([]pairbo
 	}
 	return nil, f.failure()
 }
-func (f *fakeSpaceDirectory) Revoke(_ context.Context, p space.Pin, node ed25519.PublicKey) error {
+func (f *fakeSpaceDirectory) Revoke(ctx context.Context, p space.Pin, node ed25519.PublicKey) error {
 	f.revokeCalls++
 	f.revoked = node
+	if f.revoke != nil {
+		return f.revoke(ctx, node)
+	}
 	return f.failure()
 }
 func (f *fakeSpaceDirectory) Delete(context.Context, space.Pin) error {
@@ -119,4 +123,11 @@ func requireHubPin(t *testing.T, h *Hub, id string, want bool) {
 	if err != nil || ok != want {
 		t.Fatalf("pin exists=%v want=%v err=%v", ok, want, err)
 	}
+}
+
+func (f *fakeSpaceDirectory) Invite(context.Context, space.Pin, time.Duration) (space.Invite, error) {
+	return space.Invite{}, errors.New("unexpected invite call")
+}
+func (f *fakeSpaceDirectory) Publish(context.Context, space.Pin, []string, time.Duration) error {
+	return errors.New("unexpected publish call")
 }

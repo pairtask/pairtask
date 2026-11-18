@@ -91,3 +91,14 @@ func TestSpaceCommandAcceptanceJoinAndBrokerRefusal(t *testing.T) {
 		t.Fatalf("wrong join arguments: %+v", req)
 	}
 }
+
+func TestSpaceCommandAcceptanceRejectsSubmillisecondValidity(t *testing.T) {
+	_, _, valid := parseSpace([]string{"invite", "--valid", "1ms", "--socket", "/tmp/pairbook-cli-test.sock"}, &bytes.Buffer{})
+	if valid != -1 {
+		t.Fatalf("positive duration control failed: %d", valid)
+	}
+	_, _, code := parseSpace([]string{"invite", "--valid", "1ns", "--socket", "/tmp/pairbook-cli-test.sock"}, &bytes.Buffer{})
+	if code != 2 {
+		t.Fatalf("sub-millisecond validity became a default duration: code=%d", code)
+	}
+}
