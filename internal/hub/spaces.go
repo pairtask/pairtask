@@ -31,6 +31,7 @@ func (h *Hub) SetSpaces(cfg SpaceConfig) {
 		}
 	}
 	h.spaces = &cfg
+	h.spaceBusy = map[string]bool{}
 }
 
 // spaceHandler is one space operation: checks on the Run goroutine, then either
@@ -38,11 +39,16 @@ func (h *Hub) SetSpaces(cfg SpaceConfig) {
 type spaceHandler func(h *Hub, ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError)
 
 // spaceStep is what an operation does next: answer now, or run job on a
-// worker and answer from there.
+// worker and answer from there. space is the space job works on, if known.
 type spaceStep struct {
-	now *protocol.SpaceResult
-	job spaceJob
+	now   *protocol.SpaceResult
+	job   spaceJob
+	space string
 }
+
+// spaceReads only read from the directory, so they may overlap with
+// anything; every other job holds its space until it answers.
+var spaceReads = map[string]bool{protocol.SpaceOpRequests: true, protocol.SpaceOpMembers: true}
 
 // spaceJob talks to the directory under net, then records what the
 // directory accepted under local, which outlives net's cancellation so an
@@ -78,7 +84,14 @@ func (h *Hub) operatorSpace(ctx context.Context, _ map[string]*Client, req opera
 	if step.job == nil {
 		return spaceAnswer(req.msg.MessageID, step.now)
 	}
-	h.startSpaceJob(req, step.job)
+	held := ""
+	if !spaceReads[req.msg.SpaceRequest.Op] && step.space != "" {
+		if held = step.space; h.spaceBusy[held] {
+			return spaceRefusal("another change to space " + held + " is still running; try again once it answers").frame(req.msg.MessageID)
+		}
+		h.spaceBusy[held] = true
+	}
+	h.startSpaceJob(req, step.job, held)
 	return answerLater
 }
 
@@ -100,8 +113,9 @@ func (h *Hub) spaceOpFor(ctx context.Context, msg protocol.Message) (spaceHandle
 }
 
 // startSpaceJob runs job off the Run goroutine, bounded by AttemptBudget
-// and cancelled at shutdown, and answers through the Run goroutine.
-func (h *Hub) startSpaceJob(req operatorRequest, job spaceJob) {
+// and cancelled at shutdown, and answers through the Run goroutine, which
+// then releases held, the space the job changed.
+func (h *Hub) startSpaceJob(req operatorRequest, job spaceJob, held string) {
 	runCtx := h.pair.runCtx
 	h.pair.workers.Add(1)
 	go func() {
@@ -112,6 +126,7 @@ func (h *Hub) startSpaceJob(req operatorRequest, job spaceJob) {
 		defer cancelLocal()
 		result, err := job(net, local)
 		h.finishOperator(runCtx, req, func(context.Context) protocol.Message {
+			delete(h.spaceBusy, held)
 			if err != nil {
 				return spaceRefusal(err.Error()).frame(req.msg.MessageID)
 			}
@@ -211,13 +226,18 @@ func (h *Hub) spaceName(name string) string {
 	return peer.DefaultPairingName
 }
 
-// validFor is the asked validity, or def; never negative.
-func validFor(ms int64, def time.Duration) (time.Duration, *routingError) {
-	if ms < 0 {
-		return 0, &routingError{protocol.ErrMalformedFrame, "valid_for_ms must not be negative"}
+// validity is how long an operation's record may last by default, and at
+// most, as the contract allows.
+type validity struct{ def, max time.Duration }
+
+// of is the asked validity in milliseconds, or v.def when none is asked;
+// it is checked against v.max before it becomes a Duration.
+func (v validity) of(ms int64) (time.Duration, *routingError) {
+	if ms < 0 || ms > v.max.Milliseconds() {
+		return 0, &routingError{protocol.ErrMalformedFrame, "valid_for_ms must be between 1 and " + v.max.String()}
 	}
 	if ms == 0 {
-		return def, nil
+		return v.def, nil
 	}
 	return time.Duration(ms) * time.Millisecond, nil
 }

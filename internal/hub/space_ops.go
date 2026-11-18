@@ -11,11 +11,12 @@ import (
 	"github.com/pairtask/pairtask/pairbook"
 )
 
-// Default validities when an operation names none.
-const (
-	defaultInviteValidity  = 24 * time.Hour
-	defaultMemberValidity  = pairbook.MemberValidity
-	defaultAddressValidity = pairbook.AddressValidity
+// Validities: the default when an operation names none, and the most the
+// contract allows.
+var (
+	inviteValidity  = validity{24 * time.Hour, pairbook.InviteValidity}
+	memberValidity  = validity{pairbook.MemberValidity, pairbook.MemberValidity}
+	addressValidity = validity{pairbook.AddressValidity, pairbook.AddressValidity}
 )
 
 // pinned is the pin id names, or the only one, and its directory's client.
@@ -38,7 +39,7 @@ func (h *Hub) onPin(ctx context.Context, id string, call remoteCall) (spaceStep,
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
-	return spaceStep{job: func(net, _ context.Context) (*protocol.SpaceResult, error) { return call(net, p, d) }}, nil
+	return spaceStep{space: p.Space, job: func(net, _ context.Context) (*protocol.SpaceResult, error) { return call(net, p, d) }}, nil
 }
 
 func (h *Hub) spaceList(ctx context.Context, _ protocol.SpaceRequest) (spaceStep, *routingError) {
@@ -61,7 +62,7 @@ func (h *Hub) spaceCreate(ctx context.Context, r protocol.SpaceRequest) (spaceSt
 			return spaceStep{}, spaceRefusal("space " + r.ID + " is already pinned here; nothing was sent")
 		}
 	}
-	return h.pinAfter(r.Directory, func(net context.Context, d space.Directory) (space.Pin, error) {
+	return h.pinAfter(r.Directory, r.ID, func(net context.Context, d space.Directory) (space.Pin, error) {
 		return d.Create(net, r.ID, h.spaceName(r.Name))
 	})
 }
@@ -77,19 +78,19 @@ func (h *Hub) spaceJoin(ctx context.Context, r protocol.SpaceRequest) (spaceStep
 	if rerr := h.conflicting(ctx, space.Pin{Space: inv.Space, Owner: inv.Owner, Base: inv.Base}); rerr != nil {
 		return spaceStep{}, rerr
 	}
-	return h.pinAfter(inv.Base, func(net context.Context, d space.Directory) (space.Pin, error) {
+	return h.pinAfter(inv.Base, inv.Space, func(net context.Context, d space.Directory) (space.Pin, error) {
 		return d.Join(net, inv, h.spaceName(r.Name))
 	})
 }
 
 // pinAfter runs remote against base's directory on a worker and pins what
-// the directory accepted.
-func (h *Hub) pinAfter(base string, remote func(context.Context, space.Directory) (space.Pin, error)) (spaceStep, *routingError) {
+// the directory accepted; id is the space, when known before the call.
+func (h *Hub) pinAfter(base, id string, remote func(context.Context, space.Directory) (space.Pin, error)) (spaceStep, *routingError) {
 	d, rerr := h.directory(base)
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
-	return spaceStep{job: func(net, local context.Context) (*protocol.SpaceResult, error) {
+	return spaceStep{space: id, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
 		p, err := remote(net, d)
 		if err != nil {
 			return nil, err
@@ -99,7 +100,7 @@ func (h *Hub) pinAfter(base string, remote func(context.Context, space.Directory
 }
 
 func (h *Hub) spaceInvite(ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError) {
-	valid, rerr := validFor(r.ValidFor, defaultInviteValidity)
+	valid, rerr := inviteValidity.of(r.ValidFor)
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
@@ -140,7 +141,7 @@ func memberView(m pairbook.Member) protocol.SpaceMember {
 }
 
 func (h *Hub) spacePublish(ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError) {
-	valid, rerr := validFor(r.ValidFor, defaultAddressValidity)
+	valid, rerr := addressValidity.of(r.ValidFor)
 	if rerr == nil && len(r.Addresses) == 0 {
 		rerr = &routingError{protocol.ErrMalformedFrame, "publish needs at least one HOST:PORT"}
 	}
@@ -155,7 +156,7 @@ func (h *Hub) spacePublish(ctx context.Context, r protocol.SpaceRequest) (spaceS
 // spaceApprove countersigns the verified pending request from node, as the
 // directory lists it now; a node with no such request is refused.
 func (h *Hub) spaceApprove(ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError) {
-	valid, rerr := validFor(r.ValidFor, defaultMemberValidity)
+	valid, rerr := memberValidity.of(r.ValidFor)
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
@@ -237,7 +238,7 @@ func (h *Hub) unpinAfter(ctx context.Context, id string, check func(space.Pin) *
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
-	return spaceStep{job: func(net, local context.Context) (*protocol.SpaceResult, error) {
+	return spaceStep{space: p.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
 		if err := remote(net, p, d); err != nil {
 			return nil, err
 		}

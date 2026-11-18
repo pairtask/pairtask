@@ -141,8 +141,8 @@ func spaceFlags(call *operatorCall, req *protocol.SpaceRequest) *flag.FlagSet {
 	flags.StringVar(&req.ID, "id", "", "create: the space ID; random when empty")
 	flags.Func("valid", "invite, approve, publish: how long it stays valid", func(v string) error {
 		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			return errors.New("--valid must be a positive duration")
+		if err != nil || d < time.Millisecond {
+			return errors.New("--valid must be a duration of at least 1ms")
 		}
 		req.ValidFor = d.Milliseconds()
 		return nil
