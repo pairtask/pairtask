@@ -7,15 +7,19 @@ import (
 	"testing"
 )
 
-func reviewerClaimState(t *testing.T, response sessionWire, role, agent, want string) {
+type reviewerClaimExpectation struct {
+	role, agent, state string
+}
+
+func reviewerClaimState(t *testing.T, response sessionWire, want reviewerClaimExpectation) {
 	t.Helper()
 	for _, record := range claimRecords(t, response) {
-		if record.Role == role && record.Agent == agent {
-			operatorEqual(t, role+" state", record.State, want)
+		if record.Role == want.role && record.Agent == want.agent {
+			operatorEqual(t, want.role+" state", record.State, want.state)
 			return
 		}
 	}
-	t.Fatalf("missing %s claim held by %s", role, agent)
+	t.Fatalf("missing %s claim held by %s", want.role, want.agent)
 }
 
 func TestFinishReviewerAcceptanceCompletionIsRoleScopedAndTerminal(t *testing.T) {
@@ -29,15 +33,15 @@ func TestFinishReviewerAcceptanceCompletionIsRoleScopedAndTerminal(t *testing.T)
 	operatorEqual(t, "outsider cannot finish review", claimCall(outsider, "claim_done", rev).text("code"), "invalid_claim")
 	done := claimCall(reviewer, "claim_done", rev)
 	operatorEqual(t, "reviewer finishes own review", done.text("type"), "claim_result")
-	reviewerClaimState(t, done, "reviewer", "reviewer", "done")
-	reviewerClaimState(t, done, "owner", "owner", "active")
+	reviewerClaimState(t, done, reviewerClaimExpectation{"reviewer", "reviewer", "done"})
+	reviewerClaimState(t, done, reviewerClaimExpectation{"owner", "owner", "active"})
 	operatorEqual(t, "finished review cannot be reclaimed", claimCall(outsider, "claim_set", rev).text("code"), "claim_conflict")
 	operatorEqual(t, "finished review cannot be released", claimCall(reviewer, "claim_release", rev).text("code"), "invalid_claim")
 	own.role = ""
 	ownerDone := claimCall(owner, "claim_done", own)
 	operatorEqual(t, "omitted role still finishes owner", ownerDone.text("type"), "claim_result")
-	reviewerClaimState(t, ownerDone, "owner", "owner", "done")
-	reviewerClaimState(t, claimCall(outsider, "claim_get", rev), "reviewer", "reviewer", "done")
+	reviewerClaimState(t, ownerDone, reviewerClaimExpectation{"owner", "owner", "done"})
+	reviewerClaimState(t, claimCall(outsider, "claim_get", rev), reviewerClaimExpectation{"reviewer", "reviewer", "done"})
 }
 
 func TestFinishReviewerAcceptanceExplicitReviewerCannotFinishOwnOwnerClaim(t *testing.T) {
@@ -48,7 +52,7 @@ func TestFinishReviewerAcceptanceExplicitReviewerCannotFinishOwnOwnerClaim(t *te
 	operatorEqual(t, "owner acquired", claimCall(a, "claim_set", spec).text("type"), "claim_result")
 	spec.role = "reviewer"
 	operatorEqual(t, "explicit reviewer never aliases owner", claimCall(a, "claim_done", spec).text("code"), "invalid_claim")
-	reviewerClaimState(t, claimCall(a, "claim_get", spec), "owner", "worker", "active")
+	reviewerClaimState(t, claimCall(a, "claim_get", spec), reviewerClaimExpectation{"owner", "worker", "active"})
 }
 
 func TestFinishReviewerAcceptanceReplyReviewDoesNotFinishAssignments(t *testing.T) {
@@ -57,7 +61,7 @@ func TestFinishReviewerAcceptanceReplyReviewDoesNotFinishAssignments(t *testing.
 	operatorEqual(t, "review acquired alongside assignments", claimCall(reviewer, "claim_set", rev).text("type"), "claim_result")
 	done := claimCall(reviewer, "claim_done", rev)
 	operatorEqual(t, "reply reviewer finishes", done.text("type"), "claim_result")
-	reviewerClaimState(t, done, "reviewer", "reader", "done")
+	reviewerClaimState(t, done, reviewerClaimExpectation{"reviewer", "reader", "done"})
 	assignmentState(t, done, "alpha", "assigned")
 	assignmentState(t, done, "beta", "assigned")
 	operatorEqual(t, "only review uses ordinary claim row", f.count("claims"), 1)
@@ -66,5 +70,5 @@ func TestFinishReviewerAcceptanceReplyReviewDoesNotFinishAssignments(t *testing.
 	final := claimCall(b, "claim_get", own)
 	assignmentState(t, final, "alpha", "done")
 	assignmentState(t, final, "beta", "assigned")
-	reviewerClaimState(t, final, "reviewer", "reader", "done")
+	reviewerClaimState(t, final, reviewerClaimExpectation{"reviewer", "reader", "done"})
 }
