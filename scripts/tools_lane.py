@@ -233,7 +233,7 @@ def first_answer(process, timeout):
         preamble += len(line) + 1
         if preamble > MAX_PREAMBLE:
             raise LaneError(TOO_MUCH_PREAMBLE)
-        if time.monotonic() > deadline:
+        if time.monotonic() >= deadline:
             raise LaneError(NO_ANSWER_IN_TIME)
 
 
@@ -249,7 +249,7 @@ def next_line(stream, buffered, deadline):
     deadline, at end of stream, and past MAX_PREAMBLE without a newline."""
     while b"\n" not in buffered:
         ready, _, _ = select.select([stream], [], [], max(deadline - time.monotonic(), 0))
-        if not ready or time.monotonic() > deadline:
+        if not ready or time.monotonic() >= deadline:
             raise LaneError(NO_ANSWER_IN_TIME)
         chunk = os.read(stream.fileno(), 1 << 16)
         if not chunk:
