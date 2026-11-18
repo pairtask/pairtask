@@ -59,46 +59,47 @@ func resolveFixture(t *testing.T, p wirePacket, h identity.Held, r identity.Reso
 	return next
 }
 
-func TestIdentityResolutionAcceptanceFrozenAnswerAndAlternateChoice(t *testing.T) {
+func TestIdentityResolutionAcceptanceFrozenCurrentChoice(t *testing.T) {
 	p := loadWirePacket(t)
 	r := parsedVector(t, p, "local-resolution").(identity.Resolution)
-	t.Run("choose-current-branch", func(t *testing.T) {
-		h := displayedConflict(t, p)
-		next := resolveFixture(t, p, h, r)
-		if next.Head != r.Chosen {
-			t.Fatal("selected head differs")
-		}
-		if next.Person != h.Person {
-			t.Fatal("selected person differs")
-		}
-		if next.Recovery != h.Recovery {
-			t.Fatal("selected recovery differs")
-		}
-	})
-	t.Run("choose-alternate-branch", func(t *testing.T) {
-		h := displayedConflict(t, p)
-		fork := parsedVector(t, p, "fork-at-anchor").(identity.Succession)
-		choice := r
-		choice.Rejected = []identity.Digest{r.Chosen}
-		choice.Chosen = identity.DigestOf(fork.TBS())
-		choice = choice.Signed(fixturePrivate(t, p, "W0"))
-		next := resolveFixture(t, p, h, choice)
-		if next.Head != choice.Chosen {
-			t.Fatal("resolution did not adopt alternate head")
-		}
-		if next.Person != identity.KeyID(fork.NextPerson) {
-			t.Fatal("resolution did not adopt PFork")
-		}
-		if next.Recovery != identity.KeyID(h.Anchor.Recovery) {
-			t.Fatal("resolution kept R from rejected handover")
-		}
-		if next.Counter != 1 {
-			t.Fatal("resolution kept counter from rejected handover")
-		}
-		if next.Seq != 1 {
-			t.Fatal("resolution kept rejected recovery sequence")
-		}
-	})
+	h := displayedConflict(t, p)
+	next := resolveFixture(t, p, h, r)
+	if next.Head != r.Chosen {
+		t.Fatal("selected head differs")
+	}
+	if next.Person != h.Person {
+		t.Fatal("selected person differs")
+	}
+	if next.Recovery != h.Recovery {
+		t.Fatal("selected recovery differs")
+	}
+}
+
+func TestIdentityResolutionAcceptanceFrozenAlternateChoice(t *testing.T) {
+	p := loadWirePacket(t)
+	r := parsedVector(t, p, "local-resolution").(identity.Resolution)
+	h := displayedConflict(t, p)
+	fork := parsedVector(t, p, "fork-at-anchor").(identity.Succession)
+	choice := r
+	choice.Rejected = []identity.Digest{r.Chosen}
+	choice.Chosen = identity.DigestOf(fork.TBS())
+	choice = choice.Signed(fixturePrivate(t, p, "W0"))
+	next := resolveFixture(t, p, h, choice)
+	if next.Head != choice.Chosen {
+		t.Fatal("resolution did not adopt alternate head")
+	}
+	if next.Person != identity.KeyID(fork.NextPerson) {
+		t.Fatal("resolution did not adopt PFork")
+	}
+	if next.Recovery != identity.KeyID(h.Anchor.Recovery) {
+		t.Fatal("resolution kept R from rejected handover")
+	}
+	if next.Counter != 1 {
+		t.Fatal("resolution kept counter from rejected handover")
+	}
+	if next.Seq != 1 {
+		t.Fatal("resolution kept rejected recovery sequence")
+	}
 }
 
 func TestIdentityResolutionAcceptanceAuthorityAndDisplayedSet(t *testing.T) {
@@ -147,7 +148,7 @@ func TestIdentityResolutionAcceptanceAuthorityAndDisplayedSet(t *testing.T) {
 	}
 }
 
-func TestIdentityResolutionAcceptanceRejectedReplayAndNewConflict(t *testing.T) {
+func TestIdentityResolutionAcceptanceRejectedReplay(t *testing.T) {
 	p := loadWirePacket(t)
 	r := parsedVector(t, p, "local-resolution").(identity.Resolution)
 	h := resolveFixture(t, p, displayedConflict(t, p), r)
@@ -180,13 +181,20 @@ func TestIdentityResolutionAcceptanceRejectedReplayAndNewConflict(t *testing.T) 
 	if next.Head != h.Head {
 		t.Fatal("rejected descendant changed chosen head")
 	}
+}
+
+func TestIdentityResolutionAcceptanceNewConflict(t *testing.T) {
+	p := loadWirePacket(t)
+	r := parsedVector(t, p, "local-resolution").(identity.Resolution)
+	h := resolveFixture(t, p, displayedConflict(t, p), r)
+	fork := parsedVector(t, p, "fork-at-anchor").(identity.Succession)
 	// A different, newly signed successor of the accepted anchor is a new
 	// conflict; the old local resolution must not suppress it.
 	newFork := fork
 	newFork.NextPerson = ed25519.PublicKey(unhex(t, p.Fixtures["P2"].Public))
 	newFork.At = newFork.At.Add(time.Millisecond)
 	newFork = newFork.Signed(fixturePrivate(t, p, "R0"))
-	next = applyEffect(t, h, newFork, identity.FrozenEffect)
+	next := applyEffect(t, h, newFork, identity.FrozenEffect)
 	if next.Trust != identity.Frozen {
 		t.Fatal("new conflict did not freeze")
 	}

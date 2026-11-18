@@ -95,37 +95,48 @@ func TestIdentityWireAcceptanceFrozenAnswers(t *testing.T) {
 	for _, v := range p.Vectors {
 		t.Run(v.Name, func(t *testing.T) {
 			wire := unhex(t, v.Wire)
-			pub := ed25519.PublicKey(unhex(t, p.Fixtures[v.Signer].Public))
 			if v.Kind == "DeviceCertificate" {
-				cert, err := signing.ParseCert(wire)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !bytes.Equal(cert.Marshal(), wire) {
-					t.Fatal("existing certificate encoding changed")
-				}
+				assertDeviceWire(t, wire)
 				return
 			}
-			st, err := identity.Parse(wire)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(st.TBS(), unhex(t, v.TBS)) {
-				t.Fatal("signed bytes differ from independent frozen fixture")
-			}
-			if !bytes.Equal(st.Marshal(), wire) {
-				t.Fatal("wire bytes differ from independent frozen fixture")
-			}
-			if !bytes.Equal(st.Signature(), unhex(t, v.Signature)) {
-				t.Fatal("signature changed during parse")
-			}
-			if got := identity.DigestOf(st.TBS()).String(); got != v.Digest {
-				t.Fatalf("statement digest %s, want %s", got, v.Digest)
-			}
-			if err := checkStatement(st, pub); err != nil {
-				t.Fatalf("independent signature refused: %v", err)
-			}
+			pub := ed25519.PublicKey(unhex(t, p.Fixtures[v.Signer].Public))
+			assertIdentityWire(t, v, pub)
 		})
+	}
+}
+
+func assertDeviceWire(t *testing.T, wire []byte) {
+	t.Helper()
+	cert, err := signing.ParseCert(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(cert.Marshal(), wire) {
+		t.Fatal("existing certificate encoding changed")
+	}
+}
+
+func assertIdentityWire(t *testing.T, v wireVector, pub ed25519.PublicKey) {
+	t.Helper()
+	wire := unhex(t, v.Wire)
+	st, err := identity.Parse(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(st.TBS(), unhex(t, v.TBS)) {
+		t.Fatal("signed bytes differ from independent frozen fixture")
+	}
+	if !bytes.Equal(st.Marshal(), wire) {
+		t.Fatal("wire bytes differ from independent frozen fixture")
+	}
+	if !bytes.Equal(st.Signature(), unhex(t, v.Signature)) {
+		t.Fatal("signature changed during parse")
+	}
+	if got := identity.DigestOf(st.TBS()).String(); got != v.Digest {
+		t.Fatalf("statement digest %s, want %s", got, v.Digest)
+	}
+	if err := checkStatement(st, pub); err != nil {
+		t.Fatalf("independent signature refused: %v", err)
 	}
 }
 
