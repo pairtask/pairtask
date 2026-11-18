@@ -11,9 +11,9 @@ ALIASES = ROOT / "infra/image/pairtask-agent-aliases.sh"
 SESSION = ["--strict-mcp-config", "--mcp-config", "/etc/pairtask/claude-mcp.json",
            "--settings", "/etc/pairtask/claude-settings.json",
            "--dangerously-load-development-channels", "server:pairtask"]
-# Captured from Claude Code 2.1.283 --help; image proof must confirm its binary.
+# Captured from Claude Code 2.1.327 --help; image proof must confirm its binary.
 SUBCOMMANDS = ("agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import", "install",
-               "logs", "mcp", "plugin", "plugins", "project", "respawn", "rm", "setup-token",
+               "logs", "mcp", "plugin", "plugins", "purge", "respawn", "rm", "setup-token",
                "stop", "kill", "ultrareview", "update", "upgrade")
 
 
