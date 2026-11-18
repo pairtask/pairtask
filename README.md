@@ -234,8 +234,11 @@ workspace ([names](docs/pairing.md#names)).
 
 Run `pairtask identity init` once on your host to sign messages as yourself
 (step 5 of [first time](#first-time)). When the other operator first signs, their key appears
-in their `⇄` tab as unverified. Compare its fingerprint with them, then use
-`/pair accept-key` in that tab to approve it. Received rows say whether they
+in their `⇄` tab as unverified. Compare the whole fingerprint with them over
+another channel, then use `/pair accept-key` in that tab to approve it (Tab
+lists the keys waiting; name one when several wait). Approving a key says who
+signs, not what they may do: authority still comes from the pairing and from
+what you shared. Received rows say whether they
 are signed by their operator, attested by their workspace for an agent, or
 unsigned. [The pairing guide](docs/pairing.md#signed-messages) explains the
 verification marks and key approval.
