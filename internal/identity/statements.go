@@ -46,6 +46,23 @@ func check(pub ed25519.PublicKey, tbs, sig []byte) error {
 	return nil
 }
 
+// parse decodes one Marshal'd statement of kind: the envelope, the domain,
+// the fields by decode, then nothing left over. It checks shape, not trust.
+func parse[T Statement](b []byte, kind Kind, decode func(r *reader, sig []byte) T) (T, error) {
+	var zero T
+	tbs, sig, err := envelope(b)
+	if err != nil {
+		return zero, err
+	}
+	r := reader{b: tbs}
+	r.domain(string(kind))
+	st := decode(&r, sig)
+	if err := r.done(); err != nil {
+		return zero, err
+	}
+	return st, nil
+}
+
 // Anchor is a lineage's genesis: its first person key, its first recovery
 // key (none with --no-recovery) and when it was made. Lineage() is its
 // digest, and the digest is the first recovery statement's predecessor.
@@ -86,22 +103,18 @@ func (a Anchor) Check() error { return check(a.Person, a.TBS(), a.Sig) }
 
 // ParseAnchor decodes a Marshal'd anchor; it checks shape, not the signature.
 func ParseAnchor(b []byte) (Anchor, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Anchor{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindAnchor))
-	a := Anchor{Person: r.key(), Sig: sig}
-	switch r.u64() {
-	case 0:
-	case 1:
-		a.Recovery = r.key()
-	default:
-		r.fail()
-	}
-	a.InitAt = r.at()
-	return a, r.done()
+	return parse(b, KindAnchor, func(r *reader, sig []byte) Anchor {
+		a := Anchor{Person: r.key(), Sig: sig}
+		switch r.u64() {
+		case 0:
+		case 1:
+			a.Recovery = r.key()
+		default:
+			r.fail()
+		}
+		a.InitAt = r.at()
+		return a
+	})
 }
 
 // Claim: P says workspace W is the person's, in epoch e.
@@ -135,14 +148,9 @@ func (c Claim) Signed(person ed25519.PrivateKey) Claim {
 func (c Claim) Check(person ed25519.PublicKey) error { return check(person, c.TBS(), c.Sig) }
 
 func ParseClaim(b []byte) (Claim, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Claim{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindClaim))
-	c := Claim{Lineage: r.lineage(), Epoch: r.counter(), Workspace: r.str(), At: r.at(), Sig: sig}
-	return c, r.done()
+	return parse(b, KindClaim, func(r *reader, sig []byte) Claim {
+		return Claim{Lineage: r.lineage(), Epoch: r.counter(), Workspace: r.str(), At: r.at(), Sig: sig}
+	})
 }
 
 // Acceptance: W says it belongs to person P, for the same claim.
@@ -178,14 +186,9 @@ func (a Acceptance) Signed(workspace ed25519.PrivateKey) Acceptance {
 func (a Acceptance) Check(workspace ed25519.PublicKey) error { return check(workspace, a.TBS(), a.Sig) }
 
 func ParseAcceptance(b []byte) (Acceptance, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Acceptance{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindAcceptance))
-	a := Acceptance{Lineage: r.lineage(), Epoch: r.counter(), Person: r.str(), Workspace: r.str(), At: r.at(), Sig: sig}
-	return a, r.done()
+	return parse(b, KindAcceptance, func(r *reader, sig []byte) Acceptance {
+		return Acceptance{Lineage: r.lineage(), Epoch: r.counter(), Person: r.str(), Workspace: r.str(), At: r.at(), Sig: sig}
+	})
 }
 
 // Binding is a claim with its acceptance; Consistent says they are about
@@ -196,11 +199,16 @@ type Binding struct {
 }
 
 func (b Binding) Consistent() error {
-	c, a := b.Claim, b.Acceptance
-	if c.Lineage != a.Lineage || c.Epoch != a.Epoch || c.Workspace != a.Workspace || !c.At.Equal(a.At) {
-		return ErrMalformed
+	if b.sameSubject() && b.Claim.At.Equal(b.Acceptance.At) {
+		return nil
 	}
-	return nil
+	return ErrMalformed
+}
+
+// sameSubject: claim and acceptance name one lineage, epoch and workspace.
+func (b Binding) sameSubject() bool {
+	c, a := b.Claim, b.Acceptance
+	return c.Lineage == a.Lineage && c.Epoch == a.Epoch && c.Workspace == a.Workspace
 }
 
 // Record is the person's signed public record: the one signed form per
@@ -249,17 +257,13 @@ func (rec Record) Signed(person ed25519.PrivateKey) Record {
 func (rec Record) Check(person ed25519.PublicKey) error { return check(person, rec.TBS(), rec.Sig) }
 
 func ParseRecord(b []byte) (Record, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Record{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindRecord))
-	rec := Record{Lineage: r.lineage(), Epoch: r.counter(), Version: r.counter(), Person: r.str(), Recovery: r.str(), Counter: r.counter(), Sig: sig}
-	rec.Bindings = readBindings(&r)
-	rec.Revoked = r.ids(MaxRevocations)
-	rec.At = r.at()
-	return rec, r.done()
+	return parse(b, KindRecord, func(r *reader, sig []byte) Record {
+		rec := Record{Lineage: r.lineage(), Epoch: r.counter(), Version: r.counter(), Person: r.str(), Recovery: r.str(), Counter: r.counter(), Sig: sig}
+		rec.Bindings = readBindings(r)
+		rec.Revoked = r.ids(MaxRevocations)
+		rec.At = r.at()
+		return rec
+	})
 }
 
 func readBindings(r *reader) []Binding {
@@ -268,16 +272,26 @@ func readBindings(r *reader) []Binding {
 	var previous []byte
 	for i := 0; i < n; i++ {
 		raw := r.bytes()
-		claim, cerr := ParseClaim(raw)
-		acceptance, aerr := ParseAcceptance(r.bytes())
-		if cerr != nil || aerr != nil || (i > 0 && bytes.Compare(previous, raw) >= 0) {
+		if i > 0 && bytes.Compare(previous, raw) >= 0 {
+			r.fail()
+			return nil
+		}
+		b, ok := readBinding(raw, r.bytes())
+		if !ok {
 			r.fail()
 			return nil
 		}
 		previous = raw
-		out = append(out, Binding{claim, acceptance})
+		out = append(out, b)
 	}
 	return out
+}
+
+// readBinding decodes one embedded claim and acceptance pair.
+func readBinding(claim, acceptance []byte) (Binding, bool) {
+	c, cerr := ParseClaim(claim)
+	a, aerr := ParseAcceptance(acceptance)
+	return Binding{c, a}, cerr == nil && aerr == nil
 }
 
 // Revocation retires one device for good.
@@ -311,14 +325,9 @@ func (v Revocation) Signed(person ed25519.PrivateKey) Revocation {
 func (v Revocation) Check(person ed25519.PublicKey) error { return check(person, v.TBS(), v.Sig) }
 
 func ParseRevocation(b []byte) (Revocation, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Revocation{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindRevocation))
-	v := Revocation{Lineage: r.lineage(), Epoch: r.counter(), Device: r.str(), At: r.at(), Sig: sig}
-	return v, r.done()
+	return parse(b, KindRevocation, func(r *reader, sig []byte) Revocation {
+		return Revocation{Lineage: r.lineage(), Epoch: r.counter(), Device: r.str(), At: r.at(), Sig: sig}
+	})
 }
 
 // Notice announces a newly linked device by key ID only: no timestamp, no
@@ -351,14 +360,9 @@ func (n Notice) Signed(person ed25519.PrivateKey) Notice {
 func (n Notice) Check(person ed25519.PublicKey) error { return check(person, n.TBS(), n.Sig) }
 
 func ParseNotice(b []byte) (Notice, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Notice{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindNotice))
-	n := Notice{Lineage: r.lineage(), Epoch: r.counter(), Device: r.str(), Sig: sig}
-	return n, r.done()
+	return parse(b, KindNotice, func(r *reader, sig []byte) Notice {
+		return Notice{Lineage: r.lineage(), Epoch: r.counter(), Device: r.str(), Sig: sig}
+	})
 }
 
 // Device is one entry of the private inventory.
@@ -407,23 +411,26 @@ func (inv Inventory) Signed(person ed25519.PrivateKey) Inventory {
 func (inv Inventory) Check(person ed25519.PublicKey) error { return check(person, inv.TBS(), inv.Sig) }
 
 func ParseInventory(b []byte) (Inventory, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Inventory{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindInventory))
-	inv := Inventory{Lineage: r.lineage(), Epoch: r.counter(), Version: r.counter(), Sig: sig}
+	return parse(b, KindInventory, func(r *reader, sig []byte) Inventory {
+		inv := Inventory{Lineage: r.lineage(), Epoch: r.counter(), Version: r.counter(), Sig: sig}
+		inv.Devices = readDevices(r)
+		inv.At = r.at()
+		return inv
+	})
+}
+
+// readDevices reads the inventory's devices, sorted by ID without duplicates.
+func readDevices(r *reader) []Device {
 	n := r.count(MaxDevices)
+	out := make([]Device, 0, n)
 	for i := 0; i < n; i++ {
 		d := Device{ID: r.str(), Label: r.label(), LinkedAt: r.at()}
-		if i > 0 && inv.Devices[i-1].ID >= d.ID {
+		if i > 0 && out[i-1].ID >= d.ID {
 			r.fail()
 		}
-		inv.Devices = append(inv.Devices, d)
+		out = append(out, d)
 	}
-	inv.At = r.at()
-	return inv, r.done()
+	return out
 }
 
 // Succession opens the next epoch with a new person key, signed by the
@@ -469,18 +476,14 @@ func (s Succession) Signed(recovery ed25519.PrivateKey) Succession {
 func (s Succession) Check(recovery ed25519.PublicKey) error { return check(recovery, s.TBS(), s.Sig) }
 
 func ParseSuccession(b []byte) (Succession, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Succession{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindSuccession))
-	s := Succession{Lineage: r.lineage(), Seq: r.counter(), Prev: r.digest(), Epoch: r.counter(), Person: r.str(), Sig: sig}
-	if r.counter() != s.Epoch+1 {
-		r.fail()
-	}
-	s.NextPerson, s.Recovery, s.Counter, s.At = r.key(), r.str(), r.counter(), r.at()
-	return s, r.done()
+	return parse(b, KindSuccession, func(r *reader, sig []byte) Succession {
+		s := Succession{Lineage: r.lineage(), Seq: r.counter(), Prev: r.digest(), Epoch: r.counter(), Person: r.str(), Sig: sig}
+		if r.counter() != s.Epoch+1 {
+			r.fail()
+		}
+		s.NextPerson, s.Recovery, s.Counter, s.At = r.key(), r.str(), r.counter(), r.at()
+		return s
+	})
 }
 
 // Handover replaces the recovery key, signed by the outgoing one.
@@ -523,18 +526,14 @@ func (h Handover) Signed(recovery ed25519.PrivateKey) Handover {
 func (h Handover) Check(recovery ed25519.PublicKey) error { return check(recovery, h.TBS(), h.Sig) }
 
 func ParseHandover(b []byte) (Handover, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Handover{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindHandover))
-	h := Handover{Lineage: r.lineage(), Seq: r.counter(), Prev: r.digest(), Recovery: r.str(), Counter: r.counter(), Sig: sig}
-	if r.counter() != h.Counter+1 {
-		r.fail()
-	}
-	h.NextRecovery, h.Epoch, h.At = r.key(), r.counter(), r.at()
-	return h, r.done()
+	return parse(b, KindHandover, func(r *reader, sig []byte) Handover {
+		h := Handover{Lineage: r.lineage(), Seq: r.counter(), Prev: r.digest(), Recovery: r.str(), Counter: r.counter(), Sig: sig}
+		if r.counter() != h.Counter+1 {
+			r.fail()
+		}
+		h.NextRecovery, h.Epoch, h.At = r.key(), r.counter(), r.at()
+		return h
+	})
 }
 
 // Migration: a legacy person key says it is succeeded by a lineage's P.
@@ -570,14 +569,9 @@ func (m Migration) Signed(old ed25519.PrivateKey) Migration {
 func (m Migration) Check(old ed25519.PublicKey) error { return check(old, m.TBS(), m.Sig) }
 
 func ParseMigration(b []byte) (Migration, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Migration{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindMigration))
-	m := Migration{OldPerson: r.str(), Lineage: r.lineage(), Person: r.str(), Epoch: r.counter(), At: r.at(), Sig: sig}
-	return m, r.done()
+	return parse(b, KindMigration, func(r *reader, sig []byte) Migration {
+		return Migration{OldPerson: r.str(), Lineage: r.lineage(), Person: r.str(), Epoch: r.counter(), At: r.at(), Sig: sig}
+	})
 }
 
 // Resolution is the operator's local choice between conflicting branches;
@@ -616,14 +610,24 @@ func (res Resolution) Check(workspace ed25519.PublicKey) error {
 }
 
 func ParseResolution(b []byte) (Resolution, error) {
-	tbs, sig, err := envelope(b)
-	if err != nil {
-		return Resolution{}, err
-	}
-	r := reader{b: tbs}
-	r.domain(string(KindResolution))
-	res := Resolution{Lineage: r.lineage(), Chosen: r.digest(), Rejected: r.digests(MaxBindings), BranchSet: r.digest(), At: r.at(), Sig: sig}
-	return res, r.done()
+	return parse(b, KindResolution, func(r *reader, sig []byte) Resolution {
+		return Resolution{Lineage: r.lineage(), Chosen: r.digest(), Rejected: r.digests(MaxBindings), BranchSet: r.digest(), At: r.at(), Sig: sig}
+	})
+}
+
+// parsers decode each kind as a Statement.
+var parsers = map[Kind]func([]byte) (Statement, error){
+	KindAnchor:     func(b []byte) (Statement, error) { return ParseAnchor(b) },
+	KindClaim:      func(b []byte) (Statement, error) { return ParseClaim(b) },
+	KindAcceptance: func(b []byte) (Statement, error) { return ParseAcceptance(b) },
+	KindRecord:     func(b []byte) (Statement, error) { return ParseRecord(b) },
+	KindRevocation: func(b []byte) (Statement, error) { return ParseRevocation(b) },
+	KindNotice:     func(b []byte) (Statement, error) { return ParseNotice(b) },
+	KindInventory:  func(b []byte) (Statement, error) { return ParseInventory(b) },
+	KindSuccession: func(b []byte) (Statement, error) { return ParseSuccession(b) },
+	KindHandover:   func(b []byte) (Statement, error) { return ParseHandover(b) },
+	KindMigration:  func(b []byte) (Statement, error) { return ParseMigration(b) },
+	KindResolution: func(b []byte) (Statement, error) { return ParseResolution(b) },
 }
 
 // Parse decodes any statement by its domain, checking shape only.
@@ -633,31 +637,11 @@ func Parse(b []byte) (Statement, error) {
 		return nil, err
 	}
 	r := reader{b: tbs}
-	switch Kind(r.str()) {
-	case KindAnchor:
-		return ParseAnchor(b)
-	case KindClaim:
-		return ParseClaim(b)
-	case KindAcceptance:
-		return ParseAcceptance(b)
-	case KindRecord:
-		return ParseRecord(b)
-	case KindRevocation:
-		return ParseRevocation(b)
-	case KindNotice:
-		return ParseNotice(b)
-	case KindInventory:
-		return ParseInventory(b)
-	case KindSuccession:
-		return ParseSuccession(b)
-	case KindHandover:
-		return ParseHandover(b)
-	case KindMigration:
-		return ParseMigration(b)
-	case KindResolution:
-		return ParseResolution(b)
+	decode, ok := parsers[Kind(r.str())]
+	if !ok {
+		return nil, ErrMalformed
 	}
-	return nil, ErrMalformed
+	return decode(b)
 }
 
 // KeyID is signing's key ID, so person, device and workspace keys are named

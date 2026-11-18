@@ -82,26 +82,36 @@ func (h Held) Approve() (Held, error) {
 // version of the current epoch; an equal version with another digest is
 // equivocation and freezes.
 func (h Held) applyRecord(rec Record) (Held, Effect, error) {
-	if eff, ok := h.currentEpochOnly(rec.Lineage, rec.Epoch, rec.Person, rec.Sig, rec.TBS()); !ok {
+	if eff, ok := h.currentEpochOnly(signed{rec.Lineage, rec.Epoch, rec.Person, rec}); !ok {
 		return h, eff, nil
 	}
 	if rec.Recovery != h.Recovery || rec.Counter != h.Counter {
 		return h, rejected("record names another recovery state than the one held"), nil
 	}
-	digest := DigestOf(rec.TBS())
-	switch {
-	case rec.Version < h.Version:
-		return h, rejected("older record version"), nil
-	case rec.Version == h.Version && digest == h.RecordDigest:
-		return h, Effect{Kind: Duplicate}, nil
-	case rec.Version == h.Version:
-		held := Proof{Statement: h.Record, Digest: h.RecordDigest, lineage: h.Lineage}
-		return h.freeze(h.RecordDigest, [][]Proof{{held}, {{Statement: rec, Digest: digest, lineage: h.Lineage}}})
-	}
 	if err := h.checkBindings(rec.Bindings, rec.Epoch); err != nil {
 		return h, rejected(err.Error()), nil
 	}
+	digest := DigestOf(rec.TBS())
+	if h.resolvedAgainst(digest) {
+		return h, rejected("resolved against by the operator"), nil
+	}
+	if rec.Version <= h.Version {
+		return h.sameOrOlderRecord(rec, digest)
+	}
 	return h.withRecord(rec, digest), Effect{Kind: Applied}, nil
+}
+
+// sameOrOlderRecord: an older version is ignored, the held one is a
+// duplicate, and another record at the held version is equivocation.
+func (h Held) sameOrOlderRecord(rec Record, digest Digest) (Held, Effect, error) {
+	switch {
+	case rec.Version < h.Version:
+		return h, rejected("older record version"), nil
+	case digest == h.RecordDigest:
+		return h, Effect{Kind: Duplicate}, nil
+	}
+	held := Proof{Statement: h.Record, Digest: h.RecordDigest, lineage: h.Lineage}
+	return h.freeze(h.RecordDigest, [][]Proof{{held}, {{Statement: rec, Digest: digest, lineage: h.Lineage}}})
 }
 
 func (h Held) withRecord(rec Record, digest Digest) Held {
@@ -110,23 +120,36 @@ func (h Held) withRecord(rec Record, digest Digest) Held {
 	return h
 }
 
+// signed is what a P-signed statement of one epoch says about itself.
+type signed struct {
+	lineage Lineage
+	epoch   uint64
+	person  string
+	st      Statement
+}
+
 // currentEpochOnly checks what every P-signed statement of the current
 // epoch needs: the lineage, an Active trust, the current epoch and P, and
 // P's signature. It says what to do otherwise.
-func (h Held) currentEpochOnly(l Lineage, epoch uint64, person string, sig, tbs []byte) (Effect, bool) {
+func (h Held) currentEpochOnly(s signed) (Effect, bool) {
 	switch {
-	case l != h.Lineage:
+	case s.lineage != h.Lineage:
 		return rejected("another lineage"), false
 	case h.Trust == Frozen:
 		return rejected("lineage is frozen"), false
-	case epoch < h.Epoch:
+	case s.epoch < h.Epoch:
 		return rejected("retired epoch"), false
-	case epoch > h.Epoch:
+	case s.epoch > h.Epoch:
 		return Effect{Kind: Parked, Need: h.Head, Reason: "epoch ahead of the held recovery chain"}, false
-	case person != h.Person || check(h.Keys[person], tbs, sig) != nil:
+	case !h.signedByPerson(s):
 		return rejected("not signed by the current person key"), false
 	}
 	return Effect{}, true
+}
+
+// signedByPerson: the statement names the current P and carries its signature.
+func (h Held) signedByPerson(s signed) bool {
+	return s.person == h.Person && check(h.Keys[s.person], s.st.TBS(), s.st.Signature()) == nil
 }
 
 // checkBindings: every binding is consistent, for this epoch and lineage,
@@ -136,7 +159,7 @@ func (h Held) checkBindings(bindings []Binding, epoch uint64) error {
 		if err := b.Consistent(); err != nil {
 			return err
 		}
-		if b.Claim.Lineage != h.Lineage || b.Claim.Epoch != epoch || b.Acceptance.Person != h.Person {
+		if !h.bindingAbout(b, epoch) {
 			return ErrMalformed
 		}
 		if err := b.Claim.Check(h.Keys[h.Person]); err != nil {
@@ -147,6 +170,11 @@ func (h Held) checkBindings(bindings []Binding, epoch uint64) error {
 		}
 	}
 	return nil
+}
+
+// bindingAbout: the binding is about this lineage, epoch and person.
+func (h Held) bindingAbout(b Binding, epoch uint64) bool {
+	return b.Claim.Lineage == h.Lineage && b.Claim.Epoch == epoch && b.Acceptance.Person == h.Person
 }
 
 // checkAcceptance verifies W's signature under a registered key whose ID
@@ -162,7 +190,7 @@ func (h Held) checkAcceptance(a Acceptance) error {
 
 // applyRevocation adds a device to the monotonic revoked set.
 func (h Held) applyRevocation(v Revocation) (Held, Effect, error) {
-	if eff, ok := h.currentEpochOnly(v.Lineage, v.Epoch, h.Person, v.Sig, v.TBS()); !ok {
+	if eff, ok := h.currentEpochOnly(signed{v.Lineage, v.Epoch, h.Person, v}); !ok {
 		return h, eff, nil
 	}
 	if slices.Contains(h.Revoked, v.Device) {
@@ -175,7 +203,7 @@ func (h Held) applyRevocation(v Revocation) (Held, Effect, error) {
 // applyNotice checks a new-device notice; it changes no held state, since
 // the device list is the person's own.
 func (h Held) applyNotice(n Notice) (Held, Effect, error) {
-	if eff, ok := h.currentEpochOnly(n.Lineage, n.Epoch, h.Person, n.Sig, n.TBS()); !ok {
+	if eff, ok := h.currentEpochOnly(signed{n.Lineage, n.Epoch, h.Person, n}); !ok {
 		return h, eff, nil
 	}
 	return h, Effect{Kind: Applied}, nil
@@ -187,14 +215,13 @@ func (h Held) applyNotice(n Notice) (Held, Effect, error) {
 // statement the operator already resolved against, or one descending from
 // it, is rejected without freezing again.
 func (h Held) applyRecovery(p Proof) (Held, Effect, error) {
-	switch {
-	case p.lineage != h.Lineage:
-		return h, rejected("another lineage"), nil
-	case h.Trust == Frozen:
-		return h, rejected("lineage is frozen"), nil
-	case h.resolvedAgainst(p.Digest) || h.resolvedAgainst(p.Predecessor):
-		return h, rejected("resolved against by the operator"), nil
-	case p.Predecessor == h.Head:
+	if h.Trust == Frozen && p.lineage == h.Lineage {
+		return h.grow(p)
+	}
+	if reason := h.refuses(p); reason != "" {
+		return h, rejected(reason), nil
+	}
+	if p.Predecessor == h.Head {
 		return h.advance(p)
 	}
 	at, successor, ok := h.stateAt(p.Predecessor)
@@ -208,6 +235,67 @@ func (h Held) applyRecovery(p Proof) (Held, Effect, error) {
 		return h, rejected(err.Error()), nil
 	}
 	return h.freeze(p.Predecessor, [][]Proof{h.branchFrom(p.Predecessor), {p}})
+}
+
+// grow, while frozen, extends the conflict branch whose head the statement
+// names, so the displayed set changes and a stale confirmation is refused;
+// anything else is kept out until the operator resolves.
+func (h Held) grow(p Proof) (Held, Effect, error) {
+	if len(h.Conflicts) == 0 {
+		return h, rejected("lineage is frozen"), nil
+	}
+	c := h.Conflicts[len(h.Conflicts)-1]
+	i := slices.IndexFunc(c.Branches, func(b []Proof) bool { return head(b) == p.Predecessor })
+	if i < 0 {
+		return h, rejected("lineage is frozen"), nil
+	}
+	end, err := h.endOf(c, c.Branches[i])
+	if err != nil {
+		return h, rejected(err.Error()), nil
+	}
+	if _, err := end.authenticate(p); err != nil {
+		return h, rejected(err.Error()), nil
+	}
+	branches := slices.Clone(c.Branches)
+	branches[i] = append(slices.Clone(branches[i]), p)
+	c.Branches = branches
+	h.Conflicts = append(slices.Clone(h.Conflicts[:len(h.Conflicts)-1]), c)
+	return h, Effect{Kind: FrozenEffect, Branches: branches}, nil
+}
+
+// endOf is the state at the end of one conflict branch.
+func (h Held) endOf(c Conflict, branch []Proof) (Held, error) {
+	if head(branch) == h.Head {
+		return h, nil
+	}
+	if _, isRecord := branch[len(branch)-1].Statement.(Record); isRecord {
+		return h, ErrMalformed
+	}
+	next, _, ok := h.stateAt(c.Predecessor)
+	if !ok {
+		return h, ErrMalformed
+	}
+	for _, q := range branch {
+		after, err := next.authenticate(q)
+		if err != nil {
+			return h, err
+		}
+		next = after.record(q)
+	}
+	return next, nil
+}
+
+// refuses is why a recovery statement isn't considered at all, or "".
+func (h Held) refuses(p Proof) string {
+	switch {
+	case p.lineage != h.Lineage:
+		return "another lineage"
+	case h.Trust == Frozen:
+		return "lineage is frozen"
+	case h.resolvedAgainst(p.Digest) || h.resolvedAgainst(p.Predecessor):
+		return "resolved against by the operator"
+	}
+	return ""
 }
 
 // advance applies an authenticated recovery statement on the head.
@@ -242,7 +330,7 @@ func (h Held) authenticate(p Proof) (Held, error) {
 }
 
 func (h Held) succeed(s Succession) (Held, error) {
-	if s.Epoch != h.Epoch || s.Person != h.Person || s.Recovery != h.Recovery || s.Counter != h.Counter {
+	if !h.activeRecovery(s.Recovery, s.Counter, s.Epoch) || s.Person != h.Person {
 		return h, ErrMalformed
 	}
 	if err := s.Check(h.Keys[h.Recovery]); err != nil {
@@ -260,7 +348,7 @@ func (h Held) succeed(s Succession) (Held, error) {
 }
 
 func (h Held) handOver(s Handover) (Held, error) {
-	if s.Epoch != h.Epoch || s.Recovery != h.Recovery || s.Counter != h.Counter {
+	if !h.activeRecovery(s.Recovery, s.Counter, s.Epoch) {
 		return h, ErrMalformed
 	}
 	if err := s.Check(h.Keys[h.Recovery]); err != nil {
@@ -274,6 +362,12 @@ func (h Held) handOver(s Handover) (Held, error) {
 	h.Keys = withKey(h.Keys, id, s.NextRecovery)
 	h.Recoveries = append(slices.Clone(h.Recoveries), id)
 	return h, nil
+}
+
+// activeRecovery: the statement names exactly the recovery key, counter
+// and epoch active here, not merely ones the lineage once had.
+func (h Held) activeRecovery(recovery string, counter, epoch uint64) bool {
+	return recovery == h.Recovery && counter == h.Counter && epoch == h.Epoch
 }
 
 // fresh: the lineage has never used id as a person or recovery key.
@@ -331,16 +425,32 @@ func (h Held) park(p Proof) (Held, Effect, error) {
 // MaxParked bounds the statements kept while their predecessors are fetched.
 const MaxParked = 32
 
-// unpark applies any parked statement whose predecessor is now the head.
+// unpark applies every parked statement whose predecessor is now known: the
+// first on the head advances, a second one for the same predecessor is a
+// conflict, so nothing valid is stranded in the queue.
 func (h Held) unpark() (Held, Effect, error) {
-	for i, p := range h.Parked {
-		if p.Predecessor == h.Head {
-			h.Parked = slices.Delete(slices.Clone(h.Parked), i, i+1)
-			next, _, err := h.applyRecovery(p)
-			return next, Effect{Kind: Applied}, err
+	effect := Effect{Kind: Applied}
+	for {
+		i := slices.IndexFunc(h.Parked, func(q Proof) bool { return h.knows(q.Predecessor) })
+		if i < 0 {
+			return h, effect, nil
+		}
+		p := h.Parked[i]
+		h.Parked = slices.Delete(slices.Clone(h.Parked), i, i+1)
+		next, eff, err := h.applyRecovery(p)
+		if err != nil {
+			return next, eff, err
+		}
+		h = next
+		if eff.Kind == FrozenEffect {
+			effect = eff
 		}
 	}
-	return h, Effect{Kind: Applied}, nil
+}
+
+// knows: d is the head, the anchor or an applied proof.
+func (h Held) knows(d Digest) bool {
+	return d == h.Head || d == DigestOf(h.Anchor.TBS()) || slices.ContainsFunc(h.History, func(p Proof) bool { return p.Digest == d })
 }
 
 // freeze records a conflict and stops trust from advancing.
@@ -352,17 +462,19 @@ func (h Held) freeze(predecessor Digest, branches [][]Proof) (Held, Effect, erro
 
 // resolvedAgainst: d is a statement on a branch the operator rejected.
 func (h Held) resolvedAgainst(d Digest) bool {
-	for _, c := range h.Conflicts {
-		if c.Chosen == (Digest{}) {
-			continue
-		}
-		for _, b := range c.Branches {
-			if head(b) != c.Chosen && slices.ContainsFunc(b, func(p Proof) bool { return p.Digest == d }) {
-				return true
-			}
-		}
+	return slices.ContainsFunc(h.Conflicts, func(c Conflict) bool { return c.rejects(d) })
+}
+
+// rejects: the conflict was resolved and d is on a branch not chosen.
+func (c Conflict) rejects(d Digest) bool {
+	if c.Chosen == (Digest{}) {
+		return false
 	}
-	return false
+	return slices.ContainsFunc(c.Branches, func(b []Proof) bool { return head(b) != c.Chosen && contains(b, d) })
+}
+
+func contains(b []Proof, d Digest) bool {
+	return slices.ContainsFunc(b, func(p Proof) bool { return p.Digest == d })
 }
 
 // Resolve applies the operator's choice between frozen branches: the state
@@ -375,13 +487,9 @@ func Resolve(h Held, r Resolution, local ed25519.PublicKey) (Held, error) {
 	if err := r.Check(local); err != nil {
 		return h, err
 	}
-	if h.Trust != Frozen || len(h.Conflicts) == 0 || r.Lineage != h.Lineage {
-		return h, ErrMalformed
-	}
-	c := h.Conflicts[len(h.Conflicts)-1]
-	i := slices.IndexFunc(c.Branches, func(b []Proof) bool { return head(b) == r.Chosen })
-	if i < 0 || r.BranchSet != BranchSetDigest(c.Branches) || !slices.Equal(r.Rejected, rejectedHeads(c.Branches, i)) {
-		return h, ErrMalformed
+	c, i, err := h.choice(r)
+	if err != nil {
+		return h, err
 	}
 	next, err := h.onto(c, c.Branches[i])
 	if err != nil {
@@ -394,12 +502,38 @@ func Resolve(h Held, r Resolution, local ed25519.PublicKey) (Held, error) {
 	return next, nil
 }
 
-// onto rebuilds the state on the chosen branch of c: for a recovery
-// conflict, from the predecessor through the branch's proofs; for a record
-// equivocation, the current chain with the chosen record.
+// choice is the frozen conflict and the branch r chooses, when r names
+// exactly what was displayed: the lineage, the branch set, the chosen head
+// and every rejected head.
+func (h Held) choice(r Resolution) (Conflict, int, error) {
+	if h.Trust != Frozen || len(h.Conflicts) == 0 || r.Lineage != h.Lineage {
+		return Conflict{}, 0, ErrMalformed
+	}
+	c := h.Conflicts[len(h.Conflicts)-1]
+	i := slices.IndexFunc(c.Branches, func(b []Proof) bool { return head(b) == r.Chosen })
+	if i < 0 || !c.displayed(r, i) {
+		return Conflict{}, 0, ErrMalformed
+	}
+	return c, i, nil
+}
+
+// displayed: r's branch set and rejected heads are this conflict's, with
+// branch i chosen.
+func (c Conflict) displayed(r Resolution, i int) bool {
+	return r.BranchSet == BranchSetDigest(c.Branches) && slices.Equal(r.Rejected, rejectedHeads(c.Branches, i))
+}
+
+// onto rebuilds the state on the chosen branch of c: for a record
+// equivocation, the current chain with the chosen record; for the branch
+// already applied, the state as it is; for another branch, from the
+// predecessor through that branch's proofs. Whatever branch wins, what is
+// monotonic carries over: revoked devices, and every key the lineage used.
 func (h Held) onto(c Conflict, branch []Proof) (Held, error) {
 	if rec, ok := branch[len(branch)-1].Statement.(Record); ok {
 		return h.withRecord(rec, head(branch)), nil
+	}
+	if head(branch) == h.Head {
+		return h, nil
 	}
 	next, _, ok := h.stateAt(c.Predecessor)
 	if !ok {
@@ -412,8 +546,19 @@ func (h Held) onto(c Conflict, branch []Proof) (Held, error) {
 		}
 		next = after.record(p)
 	}
-	next.Parked, next.Resolutions, next.Conflicts = h.Parked, h.Resolutions, h.Conflicts
-	return next, nil
+	return h.carry(next), nil
+}
+
+// carry moves the monotonic and local parts of h onto a rebuilt state.
+func (h Held) carry(next Held) Held {
+	next.Revoked = union(h.Revoked, next.Revoked)
+	next.Persons = union(h.Persons, next.Persons)
+	next.Recoveries = union(h.Recoveries, next.Recoveries)
+	for id, pub := range h.Keys {
+		next.Keys = withKey(next.Keys, id, pub)
+	}
+	next.Parked, next.Resolutions, next.Conflicts, next.Workspaces = h.Parked, h.Resolutions, h.Conflicts, h.Workspaces
+	return next
 }
 
 // rejectedHeads are the heads of every branch but the chosen one, sorted.
