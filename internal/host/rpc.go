@@ -22,9 +22,16 @@ type Frame struct {
 	Error  json.RawMessage `json:"error,omitempty"`
 }
 
-// Host inventories can exceed 8 MiB (for example plugin/list includes icons).
-// This limit is independent of the broker's 1 MiB peer-message limit.
-const maxHostFrameBytes = 32 << 20
+// Host inventories can exceed 8 MiB (for example plugin/list includes icons),
+// and since 2026-11 Codex's remote plugin catalog sends a plugin/list over
+// 32 MiB at startup (#408). This limit is independent of the broker's 1 MiB
+// peer-message limit.
+const maxHostFrameBytes = 128 << 20
+
+// ErrFrameTooLarge is a frame over the host frame limit: the stream can't
+// continue past it, so the session ends with this, named, rather than a
+// bare scanner error.
+var ErrFrameTooLarge = fmt.Errorf("a frame is larger than %d MiB", maxHostFrameBytes>>20)
 
 // Wire serializes writes and closes the stream on cancellation of a partial
 // write. A closed or malformed stream is terminal; requests are never retried.
@@ -63,9 +70,18 @@ func ReadFrames(reader io.Reader, handle func(Frame) error) error {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return err
+		return scanError(err)
 	}
 	return io.EOF
+}
+
+// scanError is the scanner's error, with a frame over the limit named as
+// ErrFrameTooLarge.
+func scanError(err error) error {
+	if errors.Is(err, bufio.ErrTooLong) {
+		return ErrFrameTooLarge
+	}
+	return err
 }
 
 type Calls struct {
