@@ -30,12 +30,8 @@ func TestHeaderAcceptanceExactFormatAndIndependentParse(t *testing.T) {
 	r.Nonce = [16]byte{99}
 	parsed, err := pairbook.ParseHeader(expected, r)
 	good(t, err)
-	if !bytes.Equal(parsed.Key, a.Key) || !bytes.Equal(parsed.Sig, a.Sig) || parsed.At != a.At || parsed.Nonce != a.Nonce {
-		t.Fatal("header fields changed")
-	}
-	if parsed.Method != r.Method || parsed.Target != r.Target || parsed.BodyHash != sha256.Sum256(r.Body) {
-		t.Fatal("request fields not reconstructed")
-	}
+	assertHeaderAuth(t, parsed, a)
+	assertHeaderRequest(t, parsed, r)
 	good(t, parsed.Verify(r.Method, r.Target, r.Body, contractNow))
 }
 
@@ -83,5 +79,26 @@ func TestHeaderAcceptanceRejectsAmbiguousOrMalformedFields(t *testing.T) {
 	}
 	for name, value := range cases {
 		t.Run(name, func(t *testing.T) { _, err := pairbook.ParseHeader(value, r); bad(t, err) })
+	}
+}
+
+func assertHeaderAuth(t *testing.T, got, want pairbook.HTTPAuth) {
+	t.Helper()
+	headerEqual(t, bytes.Equal(got.Key, want.Key), true, "key")
+	headerEqual(t, bytes.Equal(got.Sig, want.Sig), true, "signature")
+	headerEqual(t, got.At, want.At, "timestamp")
+	headerEqual(t, got.Nonce, want.Nonce, "nonce")
+}
+func assertHeaderRequest(t *testing.T, got pairbook.HTTPAuth, want pairbook.HTTPRequest) {
+	t.Helper()
+	headerEqual(t, got.Method, want.Method, "method")
+	headerEqual(t, got.Target, want.Target, "target")
+	headerEqual(t, got.BodyHash, sha256.Sum256(want.Body), "body hash")
+}
+
+func headerEqual[T comparable](t *testing.T, got, want T, field string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s: got %v, want %v", field, got, want)
 	}
 }
