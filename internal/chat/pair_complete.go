@@ -140,7 +140,7 @@ func (m *Model) pendingRequestKeys() []string {
 	if s == nil {
 		return nil
 	}
-	all := make([]string, 0, len(s.Requests))
+	all := make(digests, 0, len(s.Requests))
 	var pending []string
 	for _, r := range s.Requests {
 		digest := protocol.KeyDigest(r.IdentityKey)
@@ -154,14 +154,18 @@ func (m *Model) pendingRequestKeys() []string {
 	}
 	keys := make([]string, len(pending))
 	for i, d := range pending {
-		keys[i] = uniquePrefix(d, all)
+		keys[i] = all.uniquePrefix(d)
 	}
 	return keys
 }
 
+// digests are the keys of every listed request, which a short key must be
+// unique among.
+type digests []string
+
 // uniquePrefix is the shortest prefix of digest, at least a short key long,
 // that no other digest starts with.
-func uniquePrefix(digest string, all []string) string {
+func (all digests) uniquePrefix(digest string) string {
 	for n := len(protocol.ShortKey(digest)); n < len(digest); n++ {
 		prefix := digest[:n]
 		if !slices.ContainsFunc(all, func(o string) bool { return o != digest && strings.HasPrefix(o, prefix) }) {
@@ -219,7 +223,7 @@ func (m *Model) commandHint() string {
 	}
 	usage := c.usage
 	if c.name == "pair" {
-		usage = pairWordUsage(rest, usage)
+		usage = pairWordUsage(rest, c)
 	}
 	if note := m.reviewerNote(c.name, rest); note != "" {
 		return "/" + c.name + " · " + note + " · " + usage + " · " + keys // first, so a narrow line keeps it
@@ -229,10 +233,10 @@ func (m *Model) commandHint() string {
 
 // pairWordUsage narrows /pair's usage to the word being used, once it is
 // typed or unambiguous.
-func pairWordUsage(rest, all string) string {
+func pairWordUsage(rest string, pair command) string {
 	word, _, _ := strings.Cut(strings.TrimLeft(rest, " "), " ")
 	if word == "" {
-		return all
+		return pair.usage
 	}
 	matches := withPrefix(pairVerbs, word)
 	if usage, ok := pairUsages[word]; ok {
@@ -241,7 +245,7 @@ func pairWordUsage(rest, all string) string {
 	if len(matches) == 1 {
 		return pairUsages[matches[0]]
 	}
-	return all
+	return pair.usage
 }
 
 // invitationLabel is the open invitation's row: when it expires and the
