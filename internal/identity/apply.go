@@ -278,17 +278,22 @@ func grown(branches [][]Proof, i int, p Proof) [][]Proof {
 // endOf is the state at the end of conflict branch i, or at the shared
 // predecessor when i is -1.
 func (h Held) endOf(c Conflict, i int) (Held, error) {
-	var branch []Proof
-	if i >= 0 {
-		branch = c.Branches[i]
+	if i < 0 {
+		return h.replay(c.Predecessor, nil)
 	}
-	if i >= 0 && head(branch) == h.Head {
+	branch := c.Branches[i]
+	if head(branch) == h.Head {
 		return h, nil
 	}
-	if i >= 0 && isRecord(branch[len(branch)-1]) {
+	if isRecord(branch[len(branch)-1]) {
 		return h, ErrMalformed
 	}
-	next, _, ok := h.stateAt(c.Predecessor)
+	return h.replay(c.Predecessor, branch)
+}
+
+// replay is the state at predecessor with branch applied after it.
+func (h Held) replay(predecessor Digest, branch []Proof) (Held, error) {
+	next, _, ok := h.stateAt(predecessor)
 	if !ok {
 		return h, ErrMalformed
 	}
@@ -561,16 +566,9 @@ func (h Held) onto(c Conflict, branch []Proof) (Held, error) {
 	if head(branch) == h.Head {
 		return h, nil
 	}
-	next, _, ok := h.stateAt(c.Predecessor)
-	if !ok {
-		return h, ErrMalformed
-	}
-	for _, p := range branch {
-		after, err := next.authenticate(p)
-		if err != nil {
-			return h, err
-		}
-		next = after.record(p)
+	next, err := h.replay(c.Predecessor, branch)
+	if err != nil {
+		return h, err
 	}
 	return h.carry(next), nil
 }
