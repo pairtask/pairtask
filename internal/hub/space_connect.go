@@ -56,8 +56,8 @@ func (s spaceDialer) connect(net, local context.Context) (*protocol.SpaceResult,
 	if err != nil {
 		return nil, err
 	}
-	if view, ok, err := s.h.pairedView(local, s.target); ok || err != nil {
-		return &protocol.SpaceResult{Contact: view}, err
+	if ok, err := s.h.paired(local, s.target); ok || err != nil {
+		return contactResult(s.target), err
 	}
 	if !s.h.canDial() {
 		return nil, errors.New("this broker can't dial other workspaces")
@@ -138,8 +138,13 @@ func (s spaceDialer) install(local context.Context, req space.ConnectRequest, na
 	if err := s.h.store.EndSpaceAttempt(local, s.pin.Space, s.target); err != nil {
 		return nil, err
 	}
-	view, _, err := s.h.pairedView(local, s.target)
-	return &protocol.SpaceResult{Contact: view}, err
+	return contactResult(s.target), nil
+}
+
+// contactResult names the contact a connect answers with; the answer's
+// full view is made on the Run goroutine (contactAnswer).
+func contactResult(key string) *protocol.SpaceResult {
+	return &protocol.SpaceResult{Contact: &protocol.PairingContactView{IdentityKey: key}}
 }
 
 // spaceInstall is one side's install of a connect: the contact it makes,
@@ -203,23 +208,36 @@ func keyed(id string) func(pairbook.Member) bool {
 	return func(m pairbook.Member) bool { return pairbook.KeyID(m.Node) == id }
 }
 
-// pairedView is the view of a contact already paired and confirmed with
-// key; false when there is none.
-func (h *Hub) pairedView(ctx context.Context, key string) (*protocol.PairingContactView, bool, error) {
+// paired: a contact with key is already paired and confirmed.
+func (h *Hub) paired(ctx context.Context, key string) (bool, error) {
+	if _, found, err := h.store.Contact(ctx, key); err != nil || !found {
+		return false, err
+	}
+	return h.store.PeerMessages().Confirmed(ctx, key)
+}
+
+// contactAnswer fills a connect's result with its contact's full view, as
+// the pairing snapshot shows it; it runs on the Run goroutine.
+func (h *Hub) contactAnswer(ctx context.Context, result *protocol.SpaceResult) error {
+	if result == nil || result.Contact == nil {
+		return nil
+	}
+	key := result.Contact.IdentityKey
 	c, found, err := h.store.Contact(ctx, key)
 	if err != nil || !found {
-		return nil, false, err
+		return errors.Join(err, errors.New("the contact is gone"))
 	}
 	confirmed, err := h.store.PeerMessages().Confirmed(ctx, key)
-	if err != nil || !confirmed {
-		return nil, false, err
-	}
-	states, err := h.store.ContactNoticeStates(ctx)
 	if err != nil {
-		return nil, false, err
+		return err
 	}
-	return &protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name, Destination: c.Destination, EstablishedAt: c.EstablishedAt,
-		Joined: c.Joined, Invited: c.Invited, Confirmed: true, LocalName: c.LocalName, PairingEpoch: states[key].PairingEpoch}, true, nil
+	counts, err := h.contactCounts(ctx)
+	if err != nil {
+		return err
+	}
+	view := h.contactView(c, confirmed, counts, h.identity.Fingerprint())
+	result.Contact = &view
+	return nil
 }
 
 // spaceResponder answers inbound connects as the workspace id.

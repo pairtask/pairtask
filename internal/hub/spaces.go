@@ -153,8 +153,11 @@ func (h *Hub) startSpaceJob(req operatorRequest, job spaceJob, held string) {
 		local, cancelLocal := context.WithTimeout(context.WithoutCancel(runCtx), AttemptBudget+PairingGrace)
 		defer cancelLocal()
 		result, err := job(net, local)
-		h.finishOperator(runCtx, req, func(context.Context) protocol.Message {
+		h.finishOperator(runCtx, req, func(ctx context.Context) protocol.Message {
 			h.spaceBusy.release(held)
+			if err == nil {
+				err = h.contactAnswer(ctx, result)
+			}
 			if err != nil {
 				return spaceRefusal(err.Error()).frame(req.msg.MessageID)
 			}
