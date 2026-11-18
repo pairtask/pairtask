@@ -222,43 +222,49 @@ def accepted(answer):
 def first_answer(process, timeout):
     """The App Server's answer to request 1, skipping notifications it sends
     first. Reads never block past the deadline, a partial line included, and
-    what arrives before the answer is bounded."""
-    deadline = time.monotonic() + timeout
-    buffered, preamble = b"", 0
+    everything read until the answer is bounded by MAX_PREAMBLE."""
+    reader = AnswerReader(process.stdout, time.monotonic() + timeout)
     while True:
-        line, buffered = next_line(process.stdout, buffered, deadline)
-        frame = json.loads(line)
+        frame = json.loads(reader.line())
         if frame.get("id") == 1:
             return frame
-        preamble += len(line) + 1
-        if preamble > MAX_PREAMBLE:
-            raise LaneError(TOO_MUCH_PREAMBLE)
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= reader.deadline:
             raise LaneError(NO_ANSWER_IN_TIME)
 
 
-# How much the App Server may send before answering initialize, across all
-# the frames and the partial line it sends first.
+# How many bytes the App Server may send, in total, up to and including its
+# answer to initialize.
 MAX_PREAMBLE = 1 << 20
 TOO_MUCH_PREAMBLE = "the App Server sent over {} bytes before answering initialize".format(MAX_PREAMBLE)
 NO_ANSWER_IN_TIME = "the App Server didn't answer initialize in time"
 
 
-def next_line(stream, buffered, deadline):
-    """One complete line from stream, with what followed it; raises at the
-    deadline, at end of stream, and past MAX_PREAMBLE without a newline."""
-    while b"\n" not in buffered:
-        ready, _, _ = select.select([stream], [], [], max(deadline - time.monotonic(), 0))
-        if not ready or time.monotonic() >= deadline:
+class AnswerReader:
+    """Lines from the App Server, bounded in time by a deadline and in size
+    by MAX_PREAMBLE over every byte read."""
+
+    def __init__(self, stream, deadline):
+        self.stream, self.deadline = stream, deadline
+        self.buffered, self.read = b"", 0
+
+    def line(self):
+        while b"\n" not in self.buffered:
+            self.fill()
+        line, _, self.buffered = self.buffered.partition(b"\n")
+        return line.decode("utf-8", "replace")
+
+    def fill(self):
+        """One read, once the stream is ready before the deadline."""
+        ready, _, _ = select.select([self.stream], [], [], max(self.deadline - time.monotonic(), 0))
+        if not ready or time.monotonic() >= self.deadline:
             raise LaneError(NO_ANSWER_IN_TIME)
-        chunk = os.read(stream.fileno(), 1 << 16)
+        chunk = os.read(self.stream.fileno(), 1 << 16)
         if not chunk:
             raise LaneError("the App Server closed without answering initialize")
-        buffered += chunk
-        if len(buffered) > MAX_PREAMBLE:
+        self.read += len(chunk)
+        if self.read > MAX_PREAMBLE:
             raise LaneError(TOO_MUCH_PREAMBLE)
-    line, _, rest = buffered.partition(b"\n")
-    return line.decode("utf-8", "replace"), rest
+        self.buffered += chunk
 
 
 def cs_mcp_findings(item, binary, home):
