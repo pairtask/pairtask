@@ -175,13 +175,17 @@ func pending(r pairbook.SignedJoinRequest, space string, now time.Time) bool {
 	return r.Verify(space, at) == nil && now.Sub(at) <= pairbook.InviteValidity && at.Sub(now) <= pairbook.JoinFreshness
 }
 
-// Approve admits node with name for d.
-func (c *Client) Approve(ctx context.Context, pin Pin, node ed25519.PublicKey, name string, d time.Duration) error {
+// Approve admits the node of req, a request the owner saw in pin's space,
+// under its name, for d.
+func (c *Client) Approve(ctx context.Context, pin Pin, req pairbook.JoinRequest, d time.Duration) error {
 	if err := c.bound(pin.Base); err != nil {
 		return err
 	}
+	if req.Space != pin.Space {
+		return fmt.Errorf("%w: request is for another space", ErrUntrusted)
+	}
 	now := c.now()
-	m, err := c.signMember(pairbook.Member{Space: pin.Space, Node: node, Name: name, Role: pairbook.RoleMember, IssuedAt: now.UnixMilli(), ExpiresAt: now.Add(d).UnixMilli()})
+	m, err := c.signMember(pairbook.Member{Space: pin.Space, Node: req.Node, Name: req.Name, Role: pairbook.RoleMember, IssuedAt: now.UnixMilli(), ExpiresAt: now.Add(d).UnixMilli()})
 	if err != nil {
 		return err
 	}

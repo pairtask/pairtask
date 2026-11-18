@@ -72,7 +72,7 @@ func TestClientAcceptanceOwnerOperationsSignExpectedRecords(t *testing.T) {
 	if inv.Owner != p.Owner || inv.Space != spaceID || inv.Base != directory {
 		t.Fatal("invitation lost owner pin")
 	}
-	requireOK(t, c.Approve(clientContext, p, pub(node), "Alice", time.Hour))
+	requireOK(t, c.Approve(clientContext, p, pairbook.JoinRequest{Space: spaceID, Node: pub(node), Name: "Alice"}, time.Hour))
 	requireOK(t, c.Publish(clientContext, p, []string{"a.example:7445"}, time.Hour))
 	requireOK(t, c.Revoke(clientContext, p, pub(node)))
 	requireOK(t, c.Delete(clientContext, p))
@@ -100,5 +100,15 @@ func TestClientAcceptanceRequestsDropUnverifiedEntries(t *testing.T) {
 	requireOK(t, err)
 	if len(got) != 2 || got[0].Name != "Alice" || got[1].Name != "Offline request" {
 		t.Fatalf("unverified join requests returned: %+v", got)
+	}
+}
+
+func TestClientAcceptanceApprovalRejectsRequestFromAnotherSpace(t *testing.T) {
+	calls := 0
+	c := client(t, clientKey("owner"), func(*http.Request) (*http.Response, error) { calls++; return response(201, struct{}{}), nil })
+	request := pairbook.JoinRequest{Space: "fedcba9876543210fedcba9876543210", Node: pub(clientKey("node")), Name: "Alice"}
+	requireError(t, c.Approve(clientContext, pin(), request, time.Hour))
+	if calls != 0 {
+		t.Fatal("cross-space request was countersigned and submitted")
 	}
 }
