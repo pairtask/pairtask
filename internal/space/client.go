@@ -255,12 +255,24 @@ func (c *Client) Revoke(ctx context.Context, pin Pin, node ed25519.PublicKey) er
 	return c.call(ctx, request{method: http.MethodPost, path: spacePath(pin, "/revocations"), body: signed}, nil)
 }
 
-// Delete erases the space; only its owner can.
+// Delete erases the space; only its owner can. A directory that answers
+// with its own not_found error already erased it, as when a retry follows
+// a delete whose answer was lost.
 func (c *Client) Delete(ctx context.Context, pin Pin) error {
 	if err := c.bound(pin.Base); err != nil {
 		return err
 	}
-	return c.call(ctx, request{method: http.MethodDelete, path: spacePath(pin, "")}, nil)
+	err := c.call(ctx, request{method: http.MethodDelete, path: spacePath(pin, "")}, nil)
+	if notFound(err) {
+		return nil
+	}
+	return err
+}
+
+// notFound: err is the directory's own 404 not_found answer, not any 404.
+func notFound(err error) bool {
+	var refused *Refusal
+	return errors.As(err, &refused) && refused.Status == http.StatusNotFound && refused.Code == "not_found"
 }
 
 func spacePath(pin Pin, suffix string) string { return spacesPath + pin.Space + suffix }
@@ -316,11 +328,38 @@ func (c *Client) call(ctx context.Context, r request, out any) error {
 	return answer(resp.StatusCode, data, out)
 }
 
+// Refusal is a directory's non-2xx answer: its status and, when the body
+// is exactly the API's {"error":CODE}, that code.
+type Refusal struct {
+	Status int
+	Code   string
+}
+
+func (r *Refusal) Error() string {
+	if r.Code != "" {
+		return fmt.Sprintf("space: directory answered %d %s", r.Status, r.Code)
+	}
+	return fmt.Sprintf("space: directory answered %d", r.Status)
+}
+
+// refusal reads a non-2xx answer; a body that isn't exactly one JSON
+// object with an error string leaves the code empty.
+func refusal(status int, data []byte) *Refusal {
+	var body struct {
+		Error string `json:"error"`
+	}
+	r := &Refusal{Status: status}
+	if json.Unmarshal(data, &body) == nil {
+		r.Code = body.Error
+	}
+	return r
+}
+
 // answer checks a response: a 2xx status, a bounded body, and JSON that
 // decodes into out.
 func answer(status int, data []byte, out any) error {
 	if status < 200 || status > 299 {
-		return fmt.Errorf("space: directory answered %d", status)
+		return refusal(status, data)
 	}
 	if len(data) > MaxResponse {
 		return errors.New("space: directory answer too large")
