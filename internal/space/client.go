@@ -358,11 +358,11 @@ func refusal(status int, data []byte) *Refusal {
 // answer checks a response: a 2xx status, a bounded body, and JSON that
 // decodes into out.
 func answer(status int, data []byte, out any) error {
+	if len(data) > MaxResponse {
+		return errors.New("space: directory answer too large") // truncated: never parsed, refusals included
+	}
 	if status < 200 || status > 299 {
 		return refusal(status, data)
-	}
-	if len(data) > MaxResponse {
-		return errors.New("space: directory answer too large")
 	}
 	if out == nil {
 		return nil

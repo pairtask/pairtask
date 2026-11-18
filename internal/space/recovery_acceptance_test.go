@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/pairtask/pairtask/internal/space"
 )
 
 func TestClientAcceptanceDeleteRetryAcceptsStructuredAbsence(t *testing.T) {
@@ -27,6 +29,9 @@ func TestClientAcceptanceDeleteRetryDoesNotHideOtherFailures(t *testing.T) {
 		},
 		"forbidden":  func() *http.Response { return response(403, map[string]string{"error": "not_found"}) },
 		"other-code": func() *http.Response { return response(404, map[string]string{"error": "unavailable"}) },
+		"oversized-404": func() *http.Response {
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{"error":"not_found"}` + strings.Repeat(" ", space.MaxResponse) + "trailing"))}
+		},
 		"trailing-data": func() *http.Response {
 			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{"error":"not_found"} trailing`))}
 		},
