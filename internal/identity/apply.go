@@ -190,8 +190,12 @@ func (c Conflict) disputes(rec Record) bool {
 	return ok && rec.Epoch == disputed.Epoch && rec.Version == disputed.Version
 }
 
-// validRecord: signed by the current P, with bindings that verify.
+// validRecord: signed by the current P, naming the recovery state held
+// here, with bindings that verify.
 func (h Held) validRecord(rec Record) bool {
+	if rec.Recovery != h.Recovery || rec.Counter != h.Counter {
+		return false
+	}
 	return h.signedByPerson(signed{rec.Lineage, rec.Epoch, rec.Person, rec}) && h.checkBindings(rec.Bindings, rec.Epoch) == nil
 }
 
@@ -417,14 +421,15 @@ func (h Held) refuses(p Proof) string {
 	return ""
 }
 
-// advance applies an authenticated recovery statement on the head.
+// advance applies an authenticated recovery statement on the head, then
+// what was deferred for the epoch now reached, then anything parked behind
+// it, so each epoch is settled before the chain moves on.
 func (h Held) advance(p Proof) (Held, Effect, error) {
 	next, err := h.authenticate(p)
 	if err != nil {
 		return h, rejected(err.Error()), nil
 	}
-	next, eff, err := next.record(p).unpark()
-	return next.redeliver(), eff, err
+	return next.record(p).redeliver().unpark()
 }
 
 // record appends an authenticated proof to the chain.
@@ -680,7 +685,8 @@ func (h Held) carry(next Held) Held {
 	for id, pub := range h.Keys {
 		next.Keys = withKey(next.Keys, id, pub)
 	}
-	next.Parked, next.Resolutions, next.Conflicts, next.Workspaces = h.Parked, h.Resolutions, h.Conflicts, h.Workspaces
+	next.Parked, next.Deferred, next.Resolutions = h.Parked, h.Deferred, h.Resolutions
+	next.Conflicts, next.Workspaces, next.Legacy = h.Conflicts, h.Workspaces, h.Legacy
 	return next
 }
 
