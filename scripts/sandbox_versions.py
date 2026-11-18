@@ -3,9 +3,11 @@
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 import re
 import sys
+import urllib.parse
 import urllib.request
 
 from sandbox_https import urlopen
@@ -28,7 +30,14 @@ def fingerprint(value):
 
 
 def publisher_json(url):
-    request = urllib.request.Request(url, headers={"User-Agent": "collab-ai-image-builder"})
+    headers = {"User-Agent": "collab-ai-image-builder"}
+    # GitHub's API allows 60 unauthenticated calls an hour per address, which
+    # shared CI runners exhaust; a token from the environment lifts that. It
+    # goes to api.github.com only and is never printed.
+    token = os.environ.get("GH_TOKEN")
+    if token and urllib.parse.urlsplit(url).hostname == "api.github.com":
+        headers["Authorization"] = "Bearer " + token
+    request = urllib.request.Request(url, headers=headers)
     with urlopen(request, timeout=60) as response:
         return json.load(response)
 
