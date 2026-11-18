@@ -16,9 +16,9 @@ func TestInviteAcceptanceRoundTripAndStrictParsing(t *testing.T) {
 	link := inviteLink()
 	inv, err := space.ParseInvite(link)
 	requireOK(t, err)
-	if inv.Base != directory || inv.Space != spaceID || inv.Owner != pin().Owner {
-		t.Fatalf("invite fields changed: %+v", inv)
-	}
+	clientEqual(t, inv.Base, directory, "invite directory")
+	clientEqual(t, inv.Space, spaceID, "invite space")
+	clientEqual(t, inv.Owner, pin().Owner, "invite owner")
 	again, err := space.ParseInvite(inv.String())
 	requireOK(t, err)
 	if again != inv {
@@ -26,9 +26,9 @@ func TestInviteAcceptanceRoundTripAndStrictParsing(t *testing.T) {
 	}
 	u, err := url.Parse(inv.String())
 	requireOK(t, err)
-	if u.RawQuery != "" || u.User != nil || !strings.Contains(u.Fragment, "token=") {
-		t.Fatal("invite secrets left fragment")
-	}
+	clientEqual(t, u.RawQuery, "", "invite query")
+	clientEqual(t, u.User == nil, true, "invite userinfo")
+	clientEqual(t, strings.Contains(u.Fragment, "token="), true, "token in fragment")
 }
 
 func TestInviteAcceptanceRejectsAmbiguousOrInsecureLinks(t *testing.T) {

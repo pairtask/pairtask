@@ -19,16 +19,13 @@ func spaceCLIResult() map[string]any {
 func decodeSpaceCLI(t *testing.T, raw map[string]any) protocol.SpaceRequest {
 	t.Helper()
 	data, err := json.Marshal(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
+	spaceCommandCheck(t, err == nil, "%v", err)
 	var msg protocol.Message
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatal(err)
 	}
-	if msg.Type != protocol.TypeOperatorSpace || msg.SpaceRequest == nil {
-		t.Fatalf("wrong space request: %+v", msg)
-	}
+	spaceCommandCheck(t, msg.Type == protocol.TypeOperatorSpace, "wrong space request: %+v", msg)
+	spaceCommandCheck(t, msg.SpaceRequest != nil, "wrong space request: %+v", msg)
 	return *msg.SpaceRequest
 }
 
@@ -39,13 +36,13 @@ func TestSpaceCommandAcceptanceTopLevelAndOperatorAlias(t *testing.T) {
 			args := append(append([]string{}, prefix...), "create", "--pairbook", "https://directory.example", "--id", commandSpaceID, "--name", "Office", "--socket", path, "--json")
 			var out, stderr bytes.Buffer
 			code := run(context.Background(), args, &out, &stderr)
-			if code != 0 || !json.Valid(out.Bytes()) {
-				t.Fatalf("space create failed: %d %q %q", code, out.String(), stderr.String())
-			}
+			spaceCommandCheck(t, code == 0, "space create failed: %d %q %q", code, out.String(), stderr.String())
+			spaceCommandCheck(t, json.Valid(out.Bytes()), "space create failed: %d %q %q", code, out.String(), stderr.String())
 			req := decodeSpaceCLI(t, roomCLIRequest(t, requests))
-			if req.Op != protocol.SpaceOpCreate || req.Directory != "https://directory.example" || req.ID != commandSpaceID || req.Name != "Office" {
-				t.Fatalf("wrong create arguments: %+v", req)
-			}
+			spaceCommandCheck(t, req.Op == protocol.SpaceOpCreate, "wrong create arguments: %+v", req)
+			spaceCommandCheck(t, req.Directory == "https://directory.example", "wrong create arguments: %+v", req)
+			spaceCommandCheck(t, req.ID == commandSpaceID, "wrong create arguments: %+v", req)
+			spaceCommandCheck(t, req.Name == "Office", "wrong create arguments: %+v", req)
 		})
 	}
 }
@@ -57,23 +54,20 @@ func TestSpaceCommandAcceptanceInviteAndPublishArguments(t *testing.T) {
 	})
 	var out, stderr bytes.Buffer
 	code := run(context.Background(), []string{"space", "invite", "--space", commandSpaceID, "--valid", "2h", "--socket", path}, &out, &stderr)
-	if code != 0 || !strings.Contains(out.String(), link) {
-		t.Fatalf("invite not printed: %d %q %q", code, out.String(), stderr.String())
-	}
+	spaceCommandCheck(t, code == 0, "invite not printed: %d %q %q", code, out.String(), stderr.String())
+	spaceCommandCheck(t, strings.Contains(out.String(), link), "invite not printed: %d %q %q", code, out.String(), stderr.String())
 	req := decodeSpaceCLI(t, roomCLIRequest(t, requests))
-	if req.Op != protocol.SpaceOpInvite || req.Space != commandSpaceID || req.ValidFor != (2*time.Hour).Milliseconds() {
-		t.Fatalf("wrong invite arguments: %+v", req)
-	}
+	spaceCommandCheck(t, req.Op == protocol.SpaceOpInvite, "wrong invite arguments: %+v", req)
+	spaceCommandCheck(t, req.Space == commandSpaceID, "wrong invite arguments: %+v", req)
+	spaceCommandCheck(t, req.ValidFor == (2*time.Hour).Milliseconds(), "wrong invite arguments: %+v", req)
 	out.Reset()
 	stderr.Reset()
 	code = run(context.Background(), []string{"space", "publish", "a.example:7445", "b.example:7445", "--space", commandSpaceID, "--socket", path}, &out, &stderr)
-	if code != 0 {
-		t.Fatalf("publish failed: %s", stderr.String())
-	}
+	spaceCommandCheck(t, code == 0, "publish failed: %s", stderr.String())
 	req = decodeSpaceCLI(t, roomCLIRequest(t, requests))
-	if req.Op != protocol.SpaceOpPublish || len(req.Addresses) != 2 || req.Addresses[0] != "a.example:7445" {
-		t.Fatalf("wrong publish arguments: %+v", req)
-	}
+	spaceCommandCheck(t, req.Op == protocol.SpaceOpPublish, "wrong publish arguments: %+v", req)
+	spaceCommandCheck(t, len(req.Addresses) == 2, "wrong publish arguments: %+v", req)
+	spaceCommandCheck(t, req.Addresses[0] == "a.example:7445", "wrong publish arguments: %+v", req)
 }
 
 func TestSpaceCommandAcceptanceJoinAndBrokerRefusal(t *testing.T) {
@@ -83,22 +77,24 @@ func TestSpaceCommandAcceptanceJoinAndBrokerRefusal(t *testing.T) {
 	})
 	var out, stderr bytes.Buffer
 	code := run(context.Background(), []string{"space", "join", link, "--name", "Alice", "--socket", path}, &out, &stderr)
-	if code == 0 || !strings.Contains(stderr.String(), "conflicts") {
-		t.Fatalf("broker refusal lost: %d %q %q", code, out.String(), stderr.String())
-	}
+	spaceCommandCheck(t, code != 0, "broker refusal lost: %d %q %q", code, out.String(), stderr.String())
+	spaceCommandCheck(t, strings.Contains(stderr.String(), "conflicts"), "broker refusal lost: %d %q %q", code, out.String(), stderr.String())
 	req := decodeSpaceCLI(t, roomCLIRequest(t, requests))
-	if req.Op != protocol.SpaceOpJoin || req.Link != link || req.Name != "Alice" {
-		t.Fatalf("wrong join arguments: %+v", req)
-	}
+	spaceCommandCheck(t, req.Op == protocol.SpaceOpJoin, "wrong join arguments: %+v", req)
+	spaceCommandCheck(t, req.Link == link, "wrong join arguments: %+v", req)
+	spaceCommandCheck(t, req.Name == "Alice", "wrong join arguments: %+v", req)
 }
 
 func TestSpaceCommandAcceptanceRejectsSubmillisecondValidity(t *testing.T) {
 	_, _, valid := parseSpace([]string{"invite", "--valid", "1ms", "--socket", "/tmp/pairbook-cli-test.sock"}, &bytes.Buffer{})
-	if valid != -1 {
-		t.Fatalf("positive duration control failed: %d", valid)
-	}
+	spaceCommandCheck(t, valid == -1, "positive duration control failed: %d", valid)
 	_, _, code := parseSpace([]string{"invite", "--valid", "1ns", "--socket", "/tmp/pairbook-cli-test.sock"}, &bytes.Buffer{})
-	if code != 2 {
-		t.Fatalf("sub-millisecond validity became a default duration: code=%d", code)
+	spaceCommandCheck(t, code == 2, "sub-millisecond validity became a default duration: code=%d", code)
+}
+
+func spaceCommandCheck(t *testing.T, ok bool, format string, args ...any) {
+	t.Helper()
+	if !ok {
+		t.Fatalf(format, args...)
 	}
 }

@@ -18,17 +18,14 @@ func TestHubSpaceAcceptanceCreateUsesWorkspaceSignerAndPins(t *testing.T) {
 	f := &fakeSpaceDirectory{}
 	ctx := startSpaceHub(t, h, f)
 	out := spaceSuccess(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpCreate, Directory: hubDirectory, ID: hubSpaceID, Name: "Office"}))
-	if f.createCalls != 1 || len(out.Pins) != 1 || out.Pins[0].Owner != h.identity.Fingerprint() || !out.Pins[0].Owned {
-		t.Fatalf("wrong owner result: %+v", out)
-	}
+	hubSpaceCheck(t, f.createCalls == 1, "wrong owner result: %+v", out)
+	hubSpaceCheck(t, len(out.Pins) == 1, "wrong owner result: %+v", out)
+	hubSpaceCheck(t, out.Pins[0].Owner == h.identity.Fingerprint(), "wrong owner result: %+v", out)
+	hubSpaceCheck(t, out.Pins[0].Owned, "wrong owner result: %+v", out)
 	msg := []byte("workspace signer acceptance")
 	sig, err := f.signer.Sign(nil, msg, crypto.Hash(0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ed25519.Verify(h.identity.PublicKey(), msg, sig) {
-		t.Fatal("directory signer differs from workspace identity")
-	}
+	hubSpaceCheck(t, err == nil, "%v", err)
+	hubSpaceCheck(t, ed25519.Verify(h.identity.PublicKey(), msg, sig), "directory signer differs from workspace identity")
 	if _, err := f.signer.Sign(nil, msg, crypto.SHA256); err == nil {
 		t.Fatal("workspace signer ignored unsupported hash options")
 	}
@@ -46,12 +43,9 @@ func TestHubSpaceAcceptanceAgentCannotOperateSpaces(t *testing.T) {
 	recv(t, agent)
 	h.Submit(ctx, Inbound{From: agent, Msg: protocol.Message{Type: protocol.TypeOperatorSpace, RequestID: "agent-space", SpaceRequest: &protocol.SpaceRequest{Op: protocol.SpaceOpCreate, ID: hubSpaceID, Directory: hubDirectory}}})
 	got := recv(t, agent)
-	if got.Type != protocol.TypeError || got.Code != protocol.ErrForbidden {
-		t.Fatalf("agent crossed operator boundary: %+v", got)
-	}
-	if f.createCalls != 0 {
-		t.Fatal("agent caused directory mutation")
-	}
+	hubSpaceCheck(t, got.Type == protocol.TypeError, "agent crossed operator boundary: %+v", got)
+	hubSpaceCheck(t, got.Code == protocol.ErrForbidden, "agent crossed operator boundary: %+v", got)
+	hubSpaceCheck(t, f.createCalls == 0, "agent caused directory mutation")
 }
 
 func TestHubSpaceAcceptanceConflictingJoinNeverCallsDirectory(t *testing.T) {
@@ -62,19 +56,15 @@ func TestHubSpaceAcceptanceConflictingJoinNeverCallsDirectory(t *testing.T) {
 	saveHubPin(t, h, original)
 	inv := space.Invite{Base: hubDirectory, Space: hubSpaceID, Owner: pairbook.KeyID(hubSpacePub(hubSpaceKey("other")))}
 	spaceRefused(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpJoin, Link: inv.String()}))
-	if f.joinCalls != 0 {
-		t.Fatal("conflicting join sent token before checking local trust")
-	}
+	hubSpaceCheck(t, f.joinCalls == 0, "conflicting join sent token before checking local trust")
 	inv.Owner = original.Owner
 	inv.Base = "https://different.example"
 	spaceRefused(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpJoin, Link: inv.String()}))
-	if f.joinCalls != 0 {
-		t.Fatal("conflicting directory was contacted")
-	}
+	hubSpaceCheck(t, f.joinCalls == 0, "conflicting directory was contacted")
 	held, _, err := h.store.SpacePin(ctx, hubSpaceID)
-	if err != nil || held.Owner != original.Owner || held.Base != original.Base {
-		t.Fatal("conflict replaced pin")
-	}
+	hubSpaceCheck(t, err == nil, "conflict replaced pin")
+	hubSpaceCheck(t, held.Owner == original.Owner, "conflict replaced pin")
+	hubSpaceCheck(t, held.Base == original.Base, "conflict replaced pin")
 }
 
 func TestHubSpaceAcceptanceLeaveUnpinsOnlyAfterRemoteSuccess(t *testing.T) {
@@ -88,9 +78,7 @@ func TestHubSpaceAcceptanceLeaveUnpinsOnlyAfterRemoteSuccess(t *testing.T) {
 	f.fail = false
 	spaceSuccess(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpLeave, Space: hubSpaceID}))
 	requireHubPin(t, h, hubSpaceID, false)
-	if pairbook.KeyID(f.revoked) != h.identity.Fingerprint() {
-		t.Fatal("leave revoked another member")
-	}
+	hubSpaceCheck(t, pairbook.KeyID(f.revoked) == h.identity.Fingerprint(), "leave revoked another member")
 }
 
 func TestHubSpaceAcceptanceOwnerCannotLeaveAndFailedDeleteKeepsPin(t *testing.T) {
@@ -99,9 +87,7 @@ func TestHubSpaceAcceptanceOwnerCannotLeaveAndFailedDeleteKeepsPin(t *testing.T)
 	ctx := startSpaceHub(t, h, f)
 	saveHubPin(t, h, hubPin(h.identity.Fingerprint()))
 	spaceRefused(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpLeave, Space: hubSpaceID}))
-	if f.revokeCalls != 0 {
-		t.Fatal("owner leave sent revocation")
-	}
+	hubSpaceCheck(t, f.revokeCalls == 0, "owner leave sent revocation")
 	f.fail = true
 	spaceRefused(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpDelete, Space: hubSpaceID}))
 	requireHubPin(t, h, hubSpaceID, true)
@@ -115,14 +101,12 @@ func TestHubSpaceAcceptanceApprovalRequiresSeenVerifiedRequest(t *testing.T) {
 	node := hubSpacePub(hubSpaceKey("node"))
 	key := pairbook.KeyID(node)
 	spaceRefused(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpApprove, Node: key}))
-	if f.approveCalls != 0 {
-		t.Fatal("unseen node countersigned")
-	}
+	hubSpaceCheck(t, f.approveCalls == 0, "unseen node countersigned")
 	f.requests = []pairbook.JoinRequest{{Space: hubSpaceID, Node: node, Name: "Alice", At: hubSpaceNow.UnixMilli()}}
 	spaceSuccess(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpApprove, Node: key}))
-	if f.approveCalls != 1 || f.approved.Name != "Alice" || pairbook.KeyID(f.approved.Node) != key {
-		t.Fatal("approved wrong request")
-	}
+	hubSpaceCheck(t, f.approveCalls == 1, "approved wrong request")
+	hubSpaceCheck(t, f.approved.Name == "Alice", "approved wrong request")
+	hubSpaceCheck(t, pairbook.KeyID(f.approved.Node) == key, "approved wrong request")
 }
 
 func TestHubSpaceAcceptanceAmbiguousSelectionRequiresSpace(t *testing.T) {
@@ -136,9 +120,7 @@ func TestHubSpaceAcceptanceAmbiguousSelectionRequiresSpace(t *testing.T) {
 	saveHubPin(t, h, b)
 	spaceRefused(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMembers}))
 	out := spaceSuccess(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpList}))
-	if len(out.Pins) != 2 {
-		t.Fatal("space list lost pins")
-	}
+	hubSpaceCheck(t, len(out.Pins) == 2, "space list lost pins")
 	spaceSuccess(t, spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMembers, Space: a.Space}))
 }
 
@@ -158,13 +140,7 @@ func TestHubSpaceAcceptanceSlowDirectoryDoesNotBlockLocalList(t *testing.T) {
 	saveHubPin(t, h, hubPin(h.identity.Fingerprint()))
 	pending := make(chan protocol.Message, 1)
 	go func() { pending <- spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMembers}) }()
-	select {
-	case <-started:
-	case m := <-pending:
-		t.Fatalf("directory was never called: type=%s code=%s detail=%s", m.Type, m.Code, m.Detail)
-	case <-time.After(2 * time.Second):
-		t.Fatal("directory call never started")
-	}
+	awaitSpaceDirectoryStart(t, started, pending)
 	list := make(chan protocol.Message, 1)
 	go func() { list <- spaceOp(h, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpList}) }()
 	var got protocol.Message
@@ -197,7 +173,25 @@ func TestHubSpaceAcceptancePinsSurviveHubRestart(t *testing.T) {
 	restarted := New(h.store, 0, h.log)
 	ctx = startSpaceHub(t, restarted, f)
 	got := spaceSuccess(t, spaceOp(restarted, ctx, protocol.SpaceRequest{Op: protocol.SpaceOpList}))
-	if len(got.Pins) != 1 || got.Pins[0].Space != hubSpaceID || got.Pins[0].Owner != h.identity.Fingerprint() {
-		t.Fatalf("restart changed space pins: %+v", got)
+	hubSpaceCheck(t, len(got.Pins) == 1, "restart changed space pins: %+v", got)
+	hubSpaceCheck(t, got.Pins[0].Space == hubSpaceID, "restart changed space pins: %+v", got)
+	hubSpaceCheck(t, got.Pins[0].Owner == h.identity.Fingerprint(), "restart changed space pins: %+v", got)
+}
+
+func hubSpaceCheck(t *testing.T, ok bool, format string, args ...any) {
+	t.Helper()
+	if !ok {
+		t.Fatalf(format, args...)
+	}
+}
+
+func awaitSpaceDirectoryStart(t *testing.T, started <-chan struct{}, pending <-chan protocol.Message) {
+	t.Helper()
+	select {
+	case <-started:
+	case m := <-pending:
+		t.Fatalf("directory was never called: type=%s code=%s detail=%s", m.Type, m.Code, m.Detail)
+	case <-time.After(2 * time.Second):
+		t.Fatal("directory call never started")
 	}
 }

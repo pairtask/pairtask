@@ -18,45 +18,17 @@ func TestClientAcceptanceOwnerOperationsSignExpectedRecords(t *testing.T) {
 		data := readRequest(t, r)
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/v0/spaces":
-			m := decode[pairbook.SignedMember](t, data)
-			requireOK(t, m.Verify(spaceID, pin().Owner, clientNow))
-			if m.Role != pairbook.RoleOwner || m.Name != "Office" || !bytes.Equal(m.Node, pub(owner)) {
-				t.Fatal("invalid owner creation")
-			}
-			return response(201, struct{}{}), nil
+			return ownerCreateResponse(t, r, data)
 		case strings.HasSuffix(r.URL.Path, "/invites"):
-			inv := decode[pairbook.SignedInvite](t, data)
-			requireOK(t, inv.Verify(spaceID, pin().Owner, clientNow))
-			if inv.ExpiresAt != clientNow.Add(time.Hour).UnixMilli() {
-				t.Fatal("wrong invitation expiry")
-			}
-			return response(201, struct{}{}), nil
+			return ownerInviteResponse(t, r, data)
 		case strings.HasSuffix(r.URL.Path, "/members"):
-			m := decode[pairbook.SignedMember](t, data)
-			requireOK(t, m.Verify(spaceID, pin().Owner, clientNow))
-			if !bytes.Equal(m.Node, pub(node)) || m.Name != "Alice" || m.Role != pairbook.RoleMember {
-				t.Fatal("wrong admission")
-			}
-			return response(201, struct{}{}), nil
+			return ownerApproveResponse(t, r, data)
 		case strings.Contains(r.URL.Path, "/addresses/"):
-			a := decode[pairbook.SignedAddress](t, data)
-			requireOK(t, a.Verify(spaceID, clientNow))
-			if r.Method != "PUT" || !bytes.Equal(a.Node, pub(owner)) || !strings.HasSuffix(r.URL.Path, pin().Owner) {
-				t.Fatal("wrong address publisher")
-			}
-			return response(204, nil), nil
+			return ownerPublishResponse(t, r, data)
 		case strings.HasSuffix(r.URL.Path, "/revocations"):
-			rev := decode[pairbook.SignedRevocation](t, data)
-			requireOK(t, rev.Verify(spaceID, pin().Owner))
-			if !bytes.Equal(rev.Node, pub(node)) {
-				t.Fatal("wrong revoked member")
-			}
-			return response(201, struct{}{}), nil
+			return ownerRevokeResponse(t, r, data)
 		case r.Method == "DELETE":
-			if r.URL.Path != "/v0/spaces/"+spaceID {
-				t.Fatal("wrong erased space")
-			}
-			return response(204, nil), nil
+			return ownerDeleteResponse(t, r, data)
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL)
 			return nil, nil
@@ -64,21 +36,19 @@ func TestClientAcceptanceOwnerOperationsSignExpectedRecords(t *testing.T) {
 	})
 	p, err := c.Create(clientContext, spaceID, "Office")
 	requireOK(t, err)
-	if p.Space != spaceID || p.Owner != pin().Owner || p.Base != directory {
-		t.Fatalf("wrong created pin: %+v", p)
-	}
+	clientCheck(t, p.Space == spaceID, "wrong created pin: %+v", p)
+	clientCheck(t, p.Owner == pin().Owner, "wrong created pin: %+v", p)
+	clientCheck(t, p.Base == directory, "wrong created pin: %+v", p)
 	inv, err := c.Invite(clientContext, p, time.Hour)
 	requireOK(t, err)
-	if inv.Owner != p.Owner || inv.Space != spaceID || inv.Base != directory {
-		t.Fatal("invitation lost owner pin")
-	}
+	clientCheck(t, inv.Owner == p.Owner, "invitation lost owner pin")
+	clientCheck(t, inv.Space == spaceID, "invitation lost owner pin")
+	clientCheck(t, inv.Base == directory, "invitation lost owner pin")
 	requireOK(t, c.Approve(clientContext, p, pairbook.JoinRequest{Space: spaceID, Node: pub(node), Name: "Alice"}, time.Hour))
 	requireOK(t, c.Publish(clientContext, p, []string{"a.example:7445"}, time.Hour))
 	requireOK(t, c.Revoke(clientContext, p, pub(node)))
 	requireOK(t, c.Delete(clientContext, p))
-	if calls != 6 {
-		t.Fatalf("expected six signed operations: %d", calls)
-	}
+	clientCheck(t, calls == 6, "expected six signed operations: %d", calls)
 }
 
 func TestClientAcceptanceRequestsDropUnverifiedEntries(t *testing.T) {
@@ -98,9 +68,9 @@ func TestClientAcceptanceRequestsDropUnverifiedEntries(t *testing.T) {
 	})
 	got, err := c.Requests(clientContext, pin())
 	requireOK(t, err)
-	if len(got) != 2 || got[0].Name != "Alice" || got[1].Name != "Offline request" {
-		t.Fatalf("unverified join requests returned: %+v", got)
-	}
+	clientCheck(t, len(got) == 2, "unverified join requests returned: %+v", got)
+	clientCheck(t, got[0].Name == "Alice", "unverified join requests returned: %+v", got)
+	clientCheck(t, got[1].Name == "Offline request", "unverified join requests returned: %+v", got)
 }
 
 func TestClientAcceptanceApprovalRejectsRequestFromAnotherSpace(t *testing.T) {
@@ -108,7 +78,64 @@ func TestClientAcceptanceApprovalRejectsRequestFromAnotherSpace(t *testing.T) {
 	c := client(t, clientKey("owner"), func(*http.Request) (*http.Response, error) { calls++; return response(201, struct{}{}), nil })
 	request := pairbook.JoinRequest{Space: "fedcba9876543210fedcba9876543210", Node: pub(clientKey("node")), Name: "Alice"}
 	requireError(t, c.Approve(clientContext, pin(), request, time.Hour))
-	if calls != 0 {
-		t.Fatal("cross-space request was countersigned and submitted")
+	clientCheck(t, calls == 0, "cross-space request was countersigned and submitted")
+}
+
+func clientCheck(t *testing.T, ok bool, format string, args ...any) {
+	t.Helper()
+	if !ok {
+		t.Fatalf(format, args...)
 	}
+}
+
+func ownerCreateResponse(t *testing.T, r *http.Request, data []byte) (*http.Response, error) {
+	t.Helper()
+	m := decode[pairbook.SignedMember](t, data)
+	requireOK(t, m.Verify(spaceID, pin().Owner, clientNow))
+	clientCheck(t, m.Role == pairbook.RoleOwner, "invalid owner creation")
+	clientCheck(t, m.Name == "Office", "invalid owner creation")
+	clientCheck(t, bytes.Equal(m.Node, pub(clientKey("owner"))), "invalid owner creation")
+	return response(201, struct{}{}), nil
+}
+
+func ownerInviteResponse(t *testing.T, r *http.Request, data []byte) (*http.Response, error) {
+	t.Helper()
+	inv := decode[pairbook.SignedInvite](t, data)
+	requireOK(t, inv.Verify(spaceID, pin().Owner, clientNow))
+	clientCheck(t, inv.ExpiresAt == clientNow.Add(time.Hour).UnixMilli(), "wrong invitation expiry")
+	return response(201, struct{}{}), nil
+}
+
+func ownerApproveResponse(t *testing.T, r *http.Request, data []byte) (*http.Response, error) {
+	t.Helper()
+	m := decode[pairbook.SignedMember](t, data)
+	requireOK(t, m.Verify(spaceID, pin().Owner, clientNow))
+	clientCheck(t, bytes.Equal(m.Node, pub(clientKey("node"))), "wrong admission")
+	clientCheck(t, m.Name == "Alice", "wrong admission")
+	clientCheck(t, m.Role == pairbook.RoleMember, "wrong admission")
+	return response(201, struct{}{}), nil
+}
+
+func ownerPublishResponse(t *testing.T, r *http.Request, data []byte) (*http.Response, error) {
+	t.Helper()
+	a := decode[pairbook.SignedAddress](t, data)
+	requireOK(t, a.Verify(spaceID, clientNow))
+	clientCheck(t, r.Method == "PUT", "wrong address publisher")
+	clientCheck(t, bytes.Equal(a.Node, pub(clientKey("owner"))), "wrong address publisher")
+	clientCheck(t, strings.HasSuffix(r.URL.Path, pin().Owner), "wrong address publisher")
+	return response(204, nil), nil
+}
+
+func ownerRevokeResponse(t *testing.T, r *http.Request, data []byte) (*http.Response, error) {
+	t.Helper()
+	rev := decode[pairbook.SignedRevocation](t, data)
+	requireOK(t, rev.Verify(spaceID, pin().Owner))
+	clientCheck(t, bytes.Equal(rev.Node, pub(clientKey("node"))), "wrong revoked member")
+	return response(201, struct{}{}), nil
+}
+
+func ownerDeleteResponse(t *testing.T, r *http.Request, data []byte) (*http.Response, error) {
+	t.Helper()
+	clientCheck(t, r.URL.Path == "/v0/spaces/"+spaceID, "wrong erased space")
+	return response(204, nil), nil
 }

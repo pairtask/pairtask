@@ -52,9 +52,9 @@ func TestHubSpaceAcceptanceConcurrentLeaveCannotEraseNewPin(t *testing.T) {
 	unblock()
 	addressAwait(t, first)
 	held, ok, err := h.store.SpacePin(ctx, hubSpaceID)
-	if err != nil || !ok || held.Owner != inv.Owner {
-		t.Fatal("late leave erased the newer joined pin")
-	}
+	hubSpaceCheck(t, err == nil, "late leave erased the newer joined pin")
+	hubSpaceCheck(t, ok, "late leave erased the newer joined pin")
+	hubSpaceCheck(t, held.Owner == inv.Owner, "late leave erased the newer joined pin")
 }
 
 func TestHubSpaceAcceptanceDurationBoundsBeforeNetwork(t *testing.T) {
@@ -72,8 +72,6 @@ func TestHubSpaceAcceptanceDurationBoundsBeforeNetwork(t *testing.T) {
 		r.Space = hubSpaceID
 		out := spaceOp(h, ctx, r)
 		spaceRefused(t, out)
-		if out.Code != protocol.ErrMalformedFrame {
-			t.Fatalf("invalid duration not rejected before directory I/O: %s %s", out.Code, out.Detail)
-		}
+		hubSpaceCheck(t, out.Code == protocol.ErrMalformedFrame, "invalid duration not rejected before directory I/O: %s %s", out.Code, out.Detail)
 	}
 }

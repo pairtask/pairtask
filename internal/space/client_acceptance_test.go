@@ -25,40 +25,15 @@ func TestClientAcceptanceJoinSendsTokenOnlyInBodyAndKeepsOwnerLocal(t *testing.T
 	c := client(t, node, func(r *http.Request) (*http.Response, error) {
 		calls++
 		data := readRequest(t, r)
-		if r.Method != "POST" || r.URL.Path != "/v0/spaces/"+spaceID+"/requests" {
-			t.Fatal("wrong join endpoint")
-		}
-		if r.URL.Fragment != "" || strings.Contains(r.URL.String(), "token=") || strings.Contains(r.URL.String(), inv.Owner) {
-			t.Fatal("invite leaked into request URL")
-		}
-		if strings.Contains(string(data), inv.Owner) {
-			t.Fatal("owner trust anchor leaked into join body")
-		}
-		for _, values := range r.Header {
-			for _, v := range values {
-				if strings.Contains(v, inv.Owner) || strings.Contains(v, "token=") {
-					t.Fatal("invite leaked into headers")
-				}
-			}
-		}
-		body := decode[struct {
-			Request pairbook.SignedJoinRequest `json:"request"`
-			Token   string                     `json:"token"`
-		}](t, data)
-		if body.Token != base64.RawURLEncoding.EncodeToString(inv.Token[:]) || body.Request.TokenHash != sha256.Sum256(inv.Token[:]) {
-			t.Fatal("join token mismatch")
-		}
-		if !bytes.Equal(body.Request.Node, pub(node)) {
-			t.Fatal("wrong joining identity")
-		}
-		requireOK(t, body.Request.Verify(spaceID, clientNow))
+		assertJoinPrivacy(t, r, data, inv)
+		assertJoinBody(t, data, inv, node)
 		return response(202, map[string]string{"status": "pending"}), nil
 	})
 	got, err := c.Join(clientContext, inv, "Alice")
 	requireOK(t, err)
-	if calls != 1 || got.Space != spaceID || got.Owner != inv.Owner || got.Base != directory || !got.JoinedAt.Equal(clientNow) {
-		t.Fatalf("wrong local pin: %+v calls=%d", got, calls)
-	}
+	clientEqual(t, calls, 1, "join calls")
+	assertClientPin(t, got, spaceID, inv.Owner, directory)
+	clientEqual(t, got.JoinedAt.Equal(clientNow), true, "join time")
 }
 
 func TestClientAcceptanceReturnsOnlyOwnerVerifiedMembers(t *testing.T) {
@@ -203,5 +178,45 @@ func TestClientAcceptanceRejectsBadDirectoryResponses(t *testing.T) {
 			_, err := c.Members(clientContext, pin())
 			requireError(t, err)
 		})
+	}
+}
+
+func assertJoinPrivacy(t *testing.T, r *http.Request, data []byte, inv space.Invite) {
+	t.Helper()
+	clientEqual(t, r.Method, "POST", "join method")
+	clientEqual(t, r.URL.Path, "/v0/spaces/"+spaceID+"/requests", "join endpoint")
+	clientEqual(t, r.URL.Fragment, "", "URL fragment")
+	clientEqual(t, strings.Contains(r.URL.String(), "token="), false, "token in URL")
+	clientEqual(t, strings.Contains(r.URL.String(), inv.Owner), false, "owner in URL")
+	clientEqual(t, strings.Contains(string(data), inv.Owner), false, "owner in body")
+	for _, values := range r.Header {
+		for _, v := range values {
+			clientEqual(t, strings.Contains(v, inv.Owner), false, "owner in header")
+			clientEqual(t, strings.Contains(v, "token="), false, "token in header")
+		}
+	}
+}
+func assertJoinBody(t *testing.T, data []byte, inv space.Invite, node ed25519.PrivateKey) {
+	t.Helper()
+	body := decode[struct {
+		Request pairbook.SignedJoinRequest `json:"request"`
+		Token   string                     `json:"token"`
+	}](t, data)
+	clientEqual(t, body.Token, base64.RawURLEncoding.EncodeToString(inv.Token[:]), "join token")
+	clientEqual(t, body.Request.TokenHash, sha256.Sum256(inv.Token[:]), "token hash")
+	clientEqual(t, bytes.Equal(body.Request.Node, pub(node)), true, "joining identity")
+	requireOK(t, body.Request.Verify(spaceID, clientNow))
+}
+func assertClientPin(t *testing.T, got space.Pin, id, owner, base string) {
+	t.Helper()
+	clientEqual(t, got.Space, id, "space")
+	clientEqual(t, got.Owner, owner, "owner")
+	clientEqual(t, got.Base, base, "directory")
+}
+
+func clientEqual[T comparable](t *testing.T, got, want T, field string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s: got %v, want %v", field, got, want)
 	}
 }
