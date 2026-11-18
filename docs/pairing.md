@@ -309,8 +309,9 @@ Once both sides run a release with signed messages, what crosses the link carrie
 - **Your messages** are signed by you: run `pairtask identity init` once on your host (see [Operator chat](operator-chat.md#trust-model)).
 - **Your agents' messages** are signed by your workspace, which attests which agent sent them.
 - **The first signed message from the other operator** shows in their ⇄ tab as signed with a key not yet accepted. The tab names the key (`signs as person sha256:…`).
-  - Read the first characters to each other by phone, as when you paired.
-  - Then type `/pair accept-key` in their tab. From then on their messages show `signed by their operator`.
+  - Compare the **whole** fingerprint with them over another channel (phone, in person), not only its start: a key is accepted exactly, never by prefix.
+  - Then type `/pair accept-key` in their tab. Tab after `accept-key` lists the keys waiting for your approval and fills one in whole; Enter approves it. With one key waiting, `/pair accept-key` alone accepts it; with several, name one: `/pair accept-key sha256:…`; with none, the command says so. From then on their messages show `signed by their operator`.
+  - This is separate from `/pair accept KEY`, which accepts a *pairing request*. Accepting a person key says who signs; it grants no new authority: what that workspace may do here still comes from the pairing, `/pair share` and `/pair reviews`.
   - A new key later is shown again and is never accepted on its own.
 - **Each received message** shows its standing: `signed by their operator`, `signed: their workspace attests the agent`, `unsigned`, or `signature doesn't hold`. One you sent shows `sent unsigned` when the other side runs an older release.
 - **`/pair require-seals on`**, in their tab, refuses their unsigned messages from then on. `off` takes them again, marked unsigned. It's off by default while both sides upgrade.

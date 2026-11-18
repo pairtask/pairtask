@@ -52,7 +52,7 @@ func sharesHere(l argLine) bool {
 
 // readsSnapshot: the word's choices come from the pairing snapshot.
 func readsSnapshot(word string) bool {
-	return decidesRequest(word) || word == protocol.PairingOpCancel
+	return pairWord(word).decidesRequest() || word == protocol.PairingOpCancel
 }
 
 // awaitsWord handles Enter on a /pair line that lacks its word: it offers
