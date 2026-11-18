@@ -171,21 +171,15 @@ type digests []string
 // that no other digest starts with.
 func (all digests) uniquePrefix(digest string) string {
 	for n := len(protocol.ShortKey(digest)); n < len(digest); n++ {
-		if !all.anotherStartsWith(digest[:n], digest) {
+		shared := false
+		for _, o := range all {
+			shared = shared || (o != digest && strings.HasPrefix(o, digest[:n]))
+		}
+		if !shared {
 			return digest[:n]
 		}
 	}
 	return digest
-}
-
-// anotherStartsWith: a digest other than except has the prefix.
-func (all digests) anotherStartsWith(prefix, except string) bool {
-	for _, o := range all {
-		if o != except && strings.HasPrefix(o, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // pendingRequestLabel is a picker row for an offered key: the key, the
@@ -235,8 +229,8 @@ func (m *Model) commandHint() string {
 		return "command · " + keys
 	}
 	usage := c.usage
-	if c.name == "pair" {
-		usage = pairWordUsage(rest, c)
+	if l, ok := splitArgLine(m.compose.cmd.input.Value()); ok && c.name == "pair" {
+		usage = pairWordUsage(l, c)
 	}
 	if note := m.reviewerNote(c.name, rest); note != "" {
 		return "/" + c.name + " · " + note + " · " + usage + " · " + keys // first, so a narrow line keeps it
@@ -246,8 +240,11 @@ func (m *Model) commandHint() string {
 
 // pairWordUsage narrows /pair's usage to the word being used, once it is
 // typed or unambiguous.
-func pairWordUsage(rest string, pair command) string {
-	word, _, _ := strings.Cut(strings.TrimLeft(rest, " "), " ")
+func pairWordUsage(l argLine, pair command) string {
+	word := l.current
+	if len(l.words) > 0 {
+		word = l.words[0]
+	}
 	if word == "" {
 		return pair.usage
 	}
