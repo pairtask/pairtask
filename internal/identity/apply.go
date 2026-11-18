@@ -82,6 +82,9 @@ func (h Held) Approve() (Held, error) {
 // version of the current epoch; an equal version with another digest is
 // equivocation and freezes.
 func (h Held) applyRecord(rec Record) (Held, Effect, error) {
+	if h.Trust == Frozen && rec.Lineage == h.Lineage {
+		return h.growRecord(rec)
+	}
 	if eff, ok := h.currentEpochOnly(signed{rec.Lineage, rec.Epoch, rec.Person, rec}); !ok {
 		return h, eff, nil
 	}
@@ -112,6 +115,26 @@ func (h Held) sameOrOlderRecord(rec Record, digest Digest) (Held, Effect, error)
 	}
 	held := Proof{Statement: h.Record, Digest: h.RecordDigest, lineage: h.Lineage}
 	return h.freeze(h.RecordDigest, [][]Proof{{held}, {{Statement: rec, Digest: digest, lineage: h.Lineage}}})
+}
+
+// growRecord, while frozen on a record equivocation, adds a third valid
+// record at the disputed version to the display; anything else is kept out.
+func (h Held) growRecord(rec Record) (Held, Effect, error) {
+	c := h.Conflicts[len(h.Conflicts)-1]
+	disputed, ok := c.Branches[0][0].Statement.(Record)
+	if !ok || rec.Epoch != disputed.Epoch || rec.Version != disputed.Version {
+		return h, rejected("lineage is frozen"), nil
+	}
+	digest := DigestOf(rec.TBS())
+	if slices.ContainsFunc(c.Branches, func(b []Proof) bool { return contains(b, digest) }) {
+		return h, Effect{Kind: Duplicate}, nil
+	}
+	if !h.signedByPerson(signed{rec.Lineage, rec.Epoch, rec.Person, rec}) || h.checkBindings(rec.Bindings, rec.Epoch) != nil {
+		return h, rejected("not a valid record of the disputed version"), nil
+	}
+	c.Branches = append(slices.Clone(c.Branches), []Proof{{Statement: rec, Digest: digest, lineage: h.Lineage}})
+	h.Conflicts = append(slices.Clone(h.Conflicts[:len(h.Conflicts)-1]), c)
+	return h, Effect{Kind: FrozenEffect, Branches: c.Branches}, nil
 }
 
 func (h Held) withRecord(rec Record, digest Digest) Held {
@@ -237,58 +260,69 @@ func (h Held) applyRecovery(p Proof) (Held, Effect, error) {
 	return h.freeze(p.Predecessor, [][]Proof{h.branchFrom(p.Predecessor), {p}})
 }
 
-// grow, while frozen, extends the conflict branch whose head the statement
-// names, so the displayed set changes and a stale confirmation is refused;
-// anything else is kept out until the operator resolves.
+// grow, while frozen, adds a valid recovery statement to the displayed
+// conflict wherever its predecessor sits: extending a branch whose head it
+// names, forking a branch at an interior statement (the shared prefix is
+// copied), or opening a new branch at the shared predecessor. The displayed
+// set changes, so a stale confirmation is refused; anything else is kept
+// out until the operator resolves.
 func (h Held) grow(p Proof) (Held, Effect, error) {
 	if len(h.Conflicts) == 0 {
 		return h, rejected("lineage is frozen"), nil
 	}
 	c := h.Conflicts[len(h.Conflicts)-1]
-	i := slices.IndexFunc(c.Branches, func(b []Proof) bool { return head(b) == p.Predecessor })
-	if i < 0 && p.Predecessor != c.Predecessor {
+	if c.hasRecords() {
 		return h, rejected("lineage is frozen"), nil
 	}
 	if slices.ContainsFunc(c.Branches, func(b []Proof) bool { return contains(b, p.Digest) }) {
 		return h, Effect{Kind: Duplicate}, nil
 	}
-	end, err := h.endOf(c, i)
+	prefix, ok := c.prefixTo(p.Predecessor)
+	if !ok {
+		return h, rejected("lineage is frozen"), nil
+	}
+	end, err := h.replay(c.Predecessor, prefix)
 	if err != nil {
 		return h, rejected(err.Error()), nil
 	}
 	if _, err := end.authenticate(p); err != nil {
 		return h, rejected(err.Error()), nil
 	}
-	c.Branches = grown(c.Branches, i, p)
+	c.Branches = grown(c.Branches, prefix, p)
 	h.Conflicts = append(slices.Clone(h.Conflicts[:len(h.Conflicts)-1]), c)
 	return h, Effect{Kind: FrozenEffect, Branches: c.Branches}, nil
 }
 
-// grown is the branch set with p added: extending branch i, or opening a
-// new branch at the shared predecessor when i is -1.
-func grown(branches [][]Proof, i int, p Proof) [][]Proof {
-	out := slices.Clone(branches)
-	if i < 0 {
-		return append(out, []Proof{p})
-	}
-	out[i] = append(slices.Clone(out[i]), p)
-	return out
+// hasRecords: the conflict is a record equivocation, not a recovery fork.
+func (c Conflict) hasRecords() bool {
+	return len(c.Branches) > 0 && len(c.Branches[0]) > 0 && isRecord(c.Branches[0][0])
 }
 
-// endOf is the state at the end of conflict branch i, or at the shared
-// predecessor when i is -1.
-func (h Held) endOf(c Conflict, i int) (Held, error) {
-	if i < 0 {
-		return h.replay(c.Predecessor, nil)
+// prefixTo is the chain from the shared predecessor to the statement with
+// digest d (empty for the predecessor itself), and whether d is displayed.
+func (c Conflict) prefixTo(d Digest) ([]Proof, bool) {
+	if d == c.Predecessor {
+		return nil, true
 	}
-	branch := c.Branches[i]
-	if head(branch) == h.Head {
-		return h, nil
+	for _, b := range c.Branches {
+		if k := slices.IndexFunc(b, func(p Proof) bool { return p.Digest == d }); k >= 0 {
+			return slices.Clone(b[:k+1]), true
+		}
 	}
-	if isRecord(branch[len(branch)-1]) {
-		return h, ErrMalformed
+	return nil, false
+}
+
+// grown is the branch set with p added after prefix: a branch that ends
+// exactly in prefix is extended, otherwise a new branch prefix+p opens.
+func grown(branches [][]Proof, prefix []Proof, p Proof) [][]Proof {
+	out := slices.Clone(branches)
+	for i, b := range out {
+		if len(prefix) > 0 && len(b) == len(prefix) && head(b) == head(prefix) {
+			out[i] = append(slices.Clone(b), p)
+			return out
+		}
 	}
-	return h.replay(c.Predecessor, branch)
+	return append(out, append(slices.Clone(prefix), p))
 }
 
 // replay is the state at predecessor with branch applied after it.
@@ -492,7 +526,8 @@ func (c Conflict) rejects(d Digest) bool {
 	if c.Chosen == (Digest{}) {
 		return false
 	}
-	return slices.ContainsFunc(c.Branches, func(b []Proof) bool { return head(b) != c.Chosen && contains(b, d) })
+	onChosen := slices.ContainsFunc(c.Branches, func(b []Proof) bool { return head(b) == c.Chosen && contains(b, d) })
+	return !onChosen && slices.ContainsFunc(c.Branches, func(b []Proof) bool { return head(b) != c.Chosen && contains(b, d) })
 }
 
 func contains(b []Proof, d Digest) bool {
