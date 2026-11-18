@@ -506,7 +506,7 @@ func Resolve(h Held, r Resolution, local ed25519.PublicKey) (Held, error) {
 // exactly what was displayed: the lineage, the branch set, the chosen head
 // and every rejected head.
 func (h Held) choice(r Resolution) (Conflict, int, error) {
-	if h.Trust != Frozen || len(h.Conflicts) == 0 || r.Lineage != h.Lineage {
+	if !h.resolvable(r.Lineage) {
 		return Conflict{}, 0, ErrMalformed
 	}
 	c := h.Conflicts[len(h.Conflicts)-1]
@@ -518,6 +518,12 @@ func (h Held) choice(r Resolution) (Conflict, int, error) {
 		return Conflict{}, 0, ErrMalformed
 	}
 	return c, i, nil
+}
+
+// resolvable: this lineage is frozen on a recorded conflict.
+func (h Held) resolvable(l Lineage) bool {
+	frozen := h.Trust == Frozen && len(h.Conflicts) > 0
+	return frozen && l == h.Lineage
 }
 
 // displayed: r's branch set and rejected heads are this conflict's, with
