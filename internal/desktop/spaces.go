@@ -34,12 +34,35 @@ const (
 	spaceMembersDescription = "List a Pairbook space's members, only those the pinned owner vouches for now, to pick one to connect to."
 )
 
-var errSpacesNotImplemented = errors.New("spaces not implemented")
-
+// spaceJoin is the same operator_space join the CLI sends; the answer
+// carries the pin, never the link or its token.
 func (n *Node) spaceJoin(ctx context.Context, args SpaceJoinArgs) (protocol.SpacePin, error) {
-	return protocol.SpacePin{}, errSpacesNotImplemented
+	out, err := n.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpJoin, Link: args.Link, Name: args.Name})
+	if err != nil {
+		return protocol.SpacePin{}, err
+	}
+	if len(out.Pins) != 1 {
+		return protocol.SpacePin{}, errors.New("join answered without its space")
+	}
+	return out.Pins[0], nil
 }
 
 func (n *Node) spaceMembers(ctx context.Context, args SpaceMembersArgs) ([]protocol.SpaceMember, error) {
-	return nil, errSpacesNotImplemented
+	out, err := n.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMembers, Space: args.Space})
+	if err != nil {
+		return nil, err
+	}
+	return out.Members, nil
+}
+
+// space makes one space request and returns its result.
+func (n *Node) space(ctx context.Context, r protocol.SpaceRequest) (*protocol.SpaceResult, error) {
+	out, err := n.ask(ctx, protocol.Message{Type: protocol.TypeOperatorSpace, SpaceRequest: &r}, protocol.TypeOperatorSpaceResult)
+	if err != nil {
+		return nil, err
+	}
+	if out.SpaceResult == nil {
+		return &protocol.SpaceResult{}, nil
+	}
+	return out.SpaceResult, nil
 }

@@ -80,12 +80,12 @@ func (i *WorkspaceIdentity) Certify(c signing.Cert) signing.Cert { return signin
 func (i *WorkspaceIdentity) PublicKey() ed25519.PublicKey { return i.key.Public().(ed25519.PublicKey) }
 
 // Public is the workspace key's public half, as a crypto.Signer.
-func (i *WorkspaceIdentity) Public() crypto.PublicKey { return nil }
+func (i *WorkspaceIdentity) Public() crypto.PublicKey { return i.PublicKey() }
 
 // Sign signs msg with the workspace key under opts, as ed25519.PrivateKey
 // does; the key itself never leaves the identity.
 func (i *WorkspaceIdentity) Sign(rand io.Reader, msg []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return nil, errors.New("peer: workspace signing not implemented")
+	return i.key.Sign(rand, msg, opts)
 }
 
 var _ crypto.Signer = (*WorkspaceIdentity)(nil)
