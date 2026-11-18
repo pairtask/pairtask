@@ -32,9 +32,9 @@ func TestAcceptKeyCompletionFullFingerprintAndExplicitExecution(t *testing.T) {
 	chatEqual(t, "no second argument", h.m.State().Picker, nil)
 	h.input(chatKey(tea.KeyEnter, 0))
 	req := h.take(protocol.TypeOperatorContact)
-	if req.ContactOp != protocol.ContactOpAcceptKey || req.ContactKey != contact || req.ContactText != second {
-		t.Fatalf("completion approved wrong contact/key: %+v", req)
-	}
+	chatEqual(t, "accept-key operation", req.ContactOp, protocol.ContactOpAcceptKey)
+	chatEqual(t, "selected contact", req.ContactKey, contact)
+	chatEqual(t, "selected full fingerprint", req.ContactText, second)
 }
 
 func TestAcceptKeyCompletionNoSuggestionsOutsideContact(t *testing.T) {
