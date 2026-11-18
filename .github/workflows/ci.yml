@@ -207,14 +207,19 @@ jobs:
       reason: ${{ steps.decide.outputs.reason }}
       # docs_only: a pull request or main push touching only safe documentation;
       # the Go, macOS and vector jobs skip (reported as skipped, never as a
-      # pass they did not earn). The four flags select PR suites by path;
+      # pass they did not earn). The flags select PR suites by path;
       # docs-only main pushes skip all suites. Other pushes and events,
       # workflow or classifier changes, and unknown paths run every suite.
+      # tools: a pull request changed the lock in the agent clients' versions
+      # or checksums only; the tools lane runs, and such a change alone (with
+      # safe docs and script tests) skips the image builds, which the merge
+      # to main then runs as for every release.
       docs_only: ${{ steps.decide.outputs.docs_only }}
       go: ${{ steps.decide.outputs.go }}
       scripts: ${{ steps.decide.outputs.scripts }}
       pi: ${{ steps.decide.outputs.pi }}
       infra: ${{ steps.decide.outputs.infra }}
+      tools: ${{ steps.decide.outputs.tools }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,6 +239,30 @@ jobs:
           force=()
           if [[ "$FORCE_FULL" == true ]]; then force=(--force-full); fi
           python3 scripts/ci-classify.py --event "$EVENT" --ref "$REF" --base "$BASE" --head "$HEAD" "${force[@]}" | tee -a "$GITHUB_OUTPUT"
+
+  tools-lane:
+    # A client-only change to the tool lock (see scripts/tools_lane.py): the
+    # publishers' checksums for both architectures against the lock, then the
+    # agent clients downloaded, verified and run on this architecture, up to
+    # the Codex App Server's initialize answer. Minutes, with no race step and
+    # no image builds; the merge to main proves the images, and the relay's
+    # own frame limit (#408) has its Go tests in internal/host.
+    needs: [classify]
+    if: needs.classify.outputs.tools == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the lock against the publishers and run the agent clients
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/tools-lane.py --architecture "$(uname -m)" --workdir "$RUNNER_TEMP/tools-lane"
 
   images:
     # On pushes, wait for base-mirror so images build from the just-published mirror; elsewhere it is skipped.

@@ -12,6 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import sandbox_source
 
+FLAGS = ("go", "scripts", "pi", "infra", "tools")
+# A full run selects every job; the tools lane follows only a pull request's
+# lane-eligible lock change, so it stays off here.
+FULL = {"go": "true", "scripts": "true", "pi": "true", "infra": "true", "tools": "false"}
+
 
 class ClassifierAcceptanceTests(unittest.TestCase):
     def setUp(self):
@@ -49,7 +54,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         result = self.run_cli("--event", "pull_request", "--base=" + base, "--head=" + head)
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines(keepends=True)
-        self.assertEqual(len(lines), 7, result.stdout)
+        self.assertEqual(len(lines), 8, result.stdout)
         self.assertIn(lines[2], ("docs_only=true\n", "docs_only=false\n"))
         return "".join(lines[:2])
 
@@ -58,7 +63,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                               "--head=" + head, *args)
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines(keepends=True)
-        self.assertEqual(len(lines), 7, result.stdout)
+        self.assertEqual(len(lines), 8, result.stdout)
         return lines[2]
 
     def job_flags(self, base, head, *args, event="pull_request"):
@@ -66,7 +71,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                               "--head=" + head, *args)
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines(keepends=True)
-        self.assertEqual(len(lines), 7, result.stdout)
+        self.assertEqual(len(lines), 8, result.stdout)
         return dict(line.rstrip("\n").split("=", 1) for line in lines[3:])
 
     def assert_builds(self, base, head):
@@ -91,7 +96,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                                  "images=false\nreason=safe-docs-only\n")
                 self.assertEqual(self.docs_only(self.base, head), "docs_only=true\n")
                 self.assertEqual(self.job_flags(self.base, head),
-                                 {name: "false" for name in ("go", "scripts", "pi", "infra")})
+                                 {name: "false" for name in FLAGS})
 
     def test_docs_only_does_not_hide_a_shipped_or_ci_change(self):
         self.write("docs/quickstart.md")
@@ -131,7 +136,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout,
                          "images=false\nreason=safe-docs-only\ndocs_only=true\n"
-                         "go=false\nscripts=false\npi=false\ninfra=false\n")
+                         "go=false\nscripts=false\npi=false\ninfra=false\ntools=false\n")
 
     def test_main_push_with_code_then_docs_still_builds(self):
         self.write("cmd/broker/main.go")
@@ -143,7 +148,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout,
                          "images=true\nreason=event-always-builds\ndocs_only=false\n"
-                         "go=true\nscripts=true\npi=true\ninfra=true\n")
+                         "go=true\nscripts=true\npi=true\ninfra=true\ntools=false\n")
 
     def test_main_push_with_unreadable_diff_builds(self):
         self.write("docs/quickstart.md")
@@ -155,7 +160,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout,
                                  "images=true\nreason=diff-failed\ndocs_only=false\n"
-                                 "go=true\nscripts=true\npi=true\ninfra=true\n")
+                                 "go=true\nscripts=true\npi=true\ninfra=true\ntools=false\n")
 
     def test_only_main_push_may_skip_docs_builds(self):
         self.write("docs/quickstart.md")
@@ -169,7 +174,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout,
                                  "images=true\nreason=event-always-builds\ndocs_only=false\n"
-                                 "go=true\nscripts=true\npi=true\ninfra=true\n")
+                                 "go=true\nscripts=true\npi=true\ninfra=true\ntools=false\n")
 
     def test_main_docs_push_can_be_forced_to_build(self):
         self.write("docs/quickstart.md")
@@ -179,7 +184,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout,
                          "images=true\nreason=forced-full\ndocs_only=false\n"
-                         "go=true\nscripts=true\npi=true\ninfra=true\n")
+                         "go=true\nscripts=true\npi=true\ninfra=true\ntools=false\n")
 
     def test_workflow_wires_main_push_diff_and_filters_safe_docs(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
@@ -208,7 +213,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
             "scripts/base-image-mirror.py": ("scripts", "infra"),
             "docs/skills/pairtask/SKILL.md": ("scripts", "infra"),
         }
-        names = ("go", "scripts", "pi", "infra")
+        names = FLAGS
         for path, selected in cases.items():
             with self.subTest(path=path):
                 self.git("reset", "--hard", self.base)
@@ -223,7 +228,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                      "infra/image/install.sh"):
             self.write(path)
         actual = self.job_flags(self.base, self.commit())
-        self.assertEqual(actual, {name: "true" for name in ("go", "scripts", "pi", "infra")})
+        self.assertEqual(actual, FULL)
 
     def test_pi_source_still_builds_its_shipped_optional_bundle(self):
         # integrations/pi/index.ts is an input to sandbox_bundles.py's Pi
@@ -232,7 +237,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         head = self.commit()
         self.assert_builds(self.base, head)
         self.assertEqual(self.job_flags(self.base, head),
-                         {"go": "false", "scripts": "false", "pi": "true", "infra": "false"})
+                         {"go": "false", "scripts": "false", "pi": "true", "infra": "false", "tools": "false"})
 
     def test_ci_or_unknown_paths_force_every_job_even_with_docs(self):
         self.write("docs/quickstart.md")
@@ -246,7 +251,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                 self.git("reset", "--hard", docs)
                 self.write(path)
                 actual = self.job_flags(self.base, self.commit())
-                self.assertEqual(actual, {name: "true" for name in ("go", "scripts", "pi", "infra")})
+                self.assertEqual(actual, FULL)
 
     def test_force_or_unreadable_diff_selects_every_job(self):
         self.write("docs/quickstart.md")
@@ -254,7 +259,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
         for base, flags in ((self.base, ("--force-full",)), ("missing-base", ())):
             with self.subTest(base=base, flags=flags):
                 self.assertEqual(self.job_flags(base, head, *flags),
-                                 {name: "true" for name in ("go", "scripts", "pi", "infra")})
+                                 FULL)
 
     def test_unknown_or_shipped_paths_build_even_with_safe_docs(self):
         # Keep the safe companion distinct from readme.md on macOS too.
@@ -346,7 +351,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout,
                                  "images=true\nreason=event-always-builds\ndocs_only=false\n"
-                                 "go=true\nscripts=true\npi=true\ninfra=true\n")
+                                 "go=true\nscripts=true\npi=true\ninfra=true\ntools=false\n")
 
     def test_usage_error_cannot_report_a_safe_skip(self):
         result = self.run_cli("--unexpected-option")
@@ -425,7 +430,7 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout,
                                  "images=true\nreason=forced-full\ndocs_only=false\n"
-                                 "go=true\nscripts=true\npi=true\ninfra=true\n")
+                                 "go=true\nscripts=true\npi=true\ninfra=true\ntools=false\n")
 
     def test_force_full_preserves_non_pr_event_policy(self):
         for event in ("push", "workflow_dispatch", "schedule", "unknown"):
@@ -434,4 +439,4 @@ class ClassifierAcceptanceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout,
                                  "images=true\nreason=event-always-builds\ndocs_only=false\n"
-                                 "go=true\nscripts=true\npi=true\ninfra=true\n")
+                                 "go=true\nscripts=true\npi=true\ninfra=true\ntools=false\n")

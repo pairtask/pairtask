@@ -2,7 +2,7 @@
 """Decide whether a CI run needs the workspace image jobs, and whether it
 needs any code job at all.
 
-Prints exactly seven lines for $GITHUB_OUTPUT:
+Prints exactly eight lines for $GITHUB_OUTPUT:
 
     images=true|false
     reason=<token>
@@ -11,16 +11,24 @@ Prints exactly seven lines for $GITHUB_OUTPUT:
     scripts=true|false
     pi=true|false
     infra=true|false
+    tools=true|false
 
 docs_only is true only for a pull request or main push whose full diff touches nothing
 but safe documentation (the images decision is then "safe-docs-only"). The
-four flags say which test jobs a pull request needs, from the kinds of
+flags say which test jobs a pull request needs, from the kinds of
 paths it changes (see kind): Go changes run the Go suites and, since the
 script suite reads Go test data, the script suite; script or image changes
 run the script suite; Pi changes its tests; image recipe and infrastructure
-changes the mirror check and the OpenTofu checks. Anything outside the known kinds, a change to the
+changes the mirror check and the OpenTofu checks. A change to the tool lock
+confined to the agent clients' versions and checksums (kind "tools", see
+lock_kind) runs the tools lane (scripts/tools-lane.py) and the script
+suite, which reads the lock; any other lock change is an image recipe
+change. Anything outside the known kinds, a change to the
 workflow or to this classifier, non-main pushes, tags, dispatches, --force-full and a diff
-failure set every flag: the run does everything. The chat TUI exception
+failure set every other flag: the run does everything. The tools flag alone
+follows the diff: it is true exactly when a pull request changed the lock,
+since the lane fetches from the publishers and the image proofs cover the
+lock on every full run. The chat TUI exception
 never makes a run docs-only.
 
 The reason is one of a closed set of tokens, never a file name, so nothing
@@ -30,6 +38,10 @@ documentation, or that and the operator chat TUI (internal/chat/): the
 installed-image proofs never run the TUI, it reaches the broker only through
 internal/protocol, which still builds, and the host Go suites test it on
 both architectures. This is a TUI-only exception, not "presentation".
+A pull request that changes only the tool lock, with safe documentation and
+script tests, skips the image builds too ("tools-lane"): the lane checks the
+lock against the publishers and runs the agent clients in minutes, and the
+merge to main builds and proves the images as every release does.
 On main pushes, only a docs-only diff skips all builds; any other diff runs
 every job so code is fully tested and released. Tags and dispatches always
 build. Any unknown or shipped path, --force-full (the pull request's
@@ -38,6 +50,8 @@ error exits non-zero and prints no decision.
 """
 
 import argparse
+import copy
+import json
 import subprocess
 import sys
 
@@ -46,6 +60,7 @@ import sandbox_source
 BUILD = ("true", "shipped-or-unknown-path")
 SKIP = ("false", "safe-docs-only")
 SKIP_CHAT = ("false", "safe-chat-only")
+SKIP_TOOLS = ("false", "tools-lane")
 ALWAYS = ("true", "event-always-builds")
 FORCED = ("true", "forced-full")
 FAILED = ("true", "diff-failed")
@@ -84,25 +99,35 @@ def docs_only(decision):
 # directory, matched by prefix; any other root is one exact file. CI is the
 # workflow, this classifier with its test, and the module that lists what
 # an image is built from: a change there runs everything.
-CI_PATHS = (".github/", "scripts/ci-classify.py", "scripts/tests/test_ci_classify_acceptance.py", "scripts/sandbox_source.py")
+CI_PATHS = (".github/", "scripts/ci-classify.py", "scripts/tests/test_ci_classify_acceptance.py",
+            "scripts/tests/test_ci_classify_tools_acceptance.py", "scripts/sandbox_source.py")
 GO_PATHS = ("go.mod", "go.sum", "cmd/", "internal/", "testdata/")
+LOCK = "infra/image/tools.lock.json"
+# The agent clients: a lock change confined to their versions and checksums
+# is kind "tools", checked by the tools lane; any other lock change is infra.
+LANE_TOOLS = ("claude", "codex", "cs-mcp")
 INFRA_PATHS = ("infra/", "docs/skills/", "scripts/base-image-mirror.py")  # the mirror check is its own test
 PI_PATHS = ("integrations/pi/",)
-FLAGS = ("go", "scripts", "pi", "infra")
+# Script tests ship in no image; with the lock they stay in the tools lane.
+SCRIPT_TESTS = "scripts/tests/"
+FLAGS = ("go", "scripts", "pi", "infra", "tools")
 
 
 def under(path, roots):
     return any(path.startswith(root) if root.endswith("/") else path == root for root in roots)
 
 
-def kind(path):
-    """The kind of one path: docs, ci, go, infra, pi, scripts, or other."""
+def kind(path, lock="infra"):
+    """The kind of one path: docs, ci, go, tools, infra, pi, scripts, or
+    other. The lock's kind is what its change made it (lock_kind)."""
     if safe_doc(path):
         return "docs"
     if under(path, CI_PATHS):
         return "ci"
     if under(path, GO_PATHS):
         return "go"
+    if path == LOCK:
+        return lock
     if under(path, INFRA_PATHS):
         return "infra"
     if under(path, PI_PATHS):
@@ -112,16 +137,57 @@ def kind(path):
     return "other"
 
 
-def kinds(paths):
-    return sorted({kind(path) for path in paths})
+def kinds(paths, lock="infra"):
+    return sorted({kind(path, lock) for path in paths})
+
+
+def lock_kind(repo, base, head):
+    """tools when the lock changed only in the lane tools' versions and
+    checksums; infra for any other difference, and when either side is
+    missing or doesn't parse."""
+    try:
+        before, after = (json.loads(git(repo, "show", "{}:{}".format(commit(repo, ref), LOCK))) for ref in (base, head))
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        return "infra"
+    return "tools" if clients_only(before, after) else "infra"
+
+
+def clients_only(before, after):
+    """The two locks are equal once each lane tool's version and
+    per-architecture checksums are set aside; a lane tool missing or
+    malformed on either side is not a client-only change."""
+    before, after = copy.deepcopy(before), copy.deepcopy(after)
+    for lock in (before, after):
+        for name in LANE_TOOLS:
+            if not blank_client(lock, name):
+                return False
+    return before == after
+
+
+def blank_client(lock, name):
+    """Remove the version and checksums of one lane tool in place; false
+    when the entry isn't shaped as the lock schema has it."""
+    spec = lock.get("artifacts", {}).get(name) if isinstance(lock, dict) else None
+    architectures = spec.get("architectures") if isinstance(spec, dict) else None
+    if not isinstance(architectures, dict) or not all(isinstance(a, dict) for a in architectures.values()):
+        return False
+    spec.pop("version", None)
+    for per_arch in architectures.values():
+        per_arch.pop("sha256", None)
+    return True
 
 
 def flags(decision, found):
-    """Which test jobs run, by the kinds found; a docs-only main push skips all."""
+    """Which test jobs run, by the kinds found; a docs-only main push skips
+    all. The tools lane runs exactly when the lock changed (see the module
+    docstring), so it is decided last and from the diff alone."""
     if runs_everything(decision, found):
-        return {flag: "true" for flag in FLAGS}
-    return {"go": token("go" in found), "scripts": token(bool({"go", "scripts", "infra"} & set(found))),
-            "pi": token("pi" in found), "infra": token("infra" in found)}
+        chosen = {flag: "true" for flag in FLAGS}
+    else:
+        chosen = {"go": token("go" in found), "scripts": token(bool({"go", "scripts", "infra", "tools"} & set(found))),
+                  "pi": token("pi" in found), "infra": token("infra" in found)}
+    chosen["tools"] = token("tools" in found)
+    return chosen
 
 
 def runs_everything(decision, found):
@@ -172,18 +238,19 @@ def decide(run):
     main_push = run.event == "push" and run.ref == "refs/heads/main"
     if run.event != "pull_request" and not main_push:
         return ALWAYS, []
-    if run.force_full:
-        return FORCED, []
     try:
         paths = changed_paths(run.repo, run.base, run.head)
     except (subprocess.CalledProcessError, OSError, ValueError):
-        return FAILED, []
+        return (FORCED if run.force_full else FAILED), []
+    lock = lock_kind(run.repo, run.base, run.head) if LOCK in paths else "infra"
+    if run.force_full:
+        return FORCED, kinds(paths, lock)  # every suite, and the lane as the diff says
     if main_push:
         return (SKIP, kinds(paths)) if all(safe_doc(path) for path in paths) else (ALWAYS, [])
-    return skip_for(paths), kinds(paths)
+    return skip_for(paths, lock), kinds(paths, lock)
 
 
-def skip_for(paths):
+def skip_for(paths, lock="infra"):
     """Docs alone skip as docs; docs and chat, with some chat, skip as chat.
     The Pi extension's source is shipped through the optional tool bundle
     and smoke-tested by the image proofs, so it builds."""
@@ -191,7 +258,21 @@ def skip_for(paths):
         return SKIP
     if all(safe_doc(path) or chat(path) for path in paths):
         return SKIP_CHAT
+    if lane_only(paths, lock):
+        return SKIP_TOOLS
     return BUILD
+
+
+def lane_only(paths, lock):
+    """A client-only lock change, and nothing else but safe docs and script
+    tests; a CI path among them (this classifier's own tests) still runs
+    everything."""
+    return lock == "tools" and all(lane_path(path, lock) for path in paths)
+
+
+def lane_path(path, lock):
+    found = kind(path, lock)
+    return found in ("tools", "docs") or (found == "scripts" and path.startswith(SCRIPT_TESTS))
 
 
 def main(argv=None):
