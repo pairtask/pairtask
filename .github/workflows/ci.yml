@@ -79,7 +79,7 @@ jobs:
     needs: [classify]
     if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,13 +97,15 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      # Each package gets 1800s under -race: internal/store took 820s and
+      # Each package gets 2700s under -race: internal/store took 820s and
       # internal/server 810s on main, and a runner about 30% slower took
-      # store past the earlier 1200s (#276); 1800s restores about a 2x
-      # margin. Tests keep their own deadlines, so a hang still fails within
-      # the budget.
+      # store past the earlier 1200s (#276). On 2026-11-18 store ran past
+      # 1800s twice (main 39397e9, #406), each time inside fixture setup,
+      # while internal/server took about 1580s in the same runs: the suites
+      # grew, so 2700s restores the margin. Tests keep their own deadlines,
+      # so a hang still fails within the budget.
       - if: needs.classify.outputs.go != 'false'
-        run: go test -race ./... -timeout=1800s
+        run: go test -race ./... -timeout=2700s
       - if: needs.classify.outputs.scripts != 'false'
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Test the Pi extension
