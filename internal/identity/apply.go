@@ -429,7 +429,16 @@ func (h Held) advance(p Proof) (Held, Effect, error) {
 	if err != nil {
 		return h, rejected(err.Error()), nil
 	}
-	return next.record(p).redeliver().unpark()
+	next = next.record(p).redeliver()
+	if next.Trust == Frozen {
+		return next, next.frozenEffect(), nil
+	}
+	return next.unpark()
+}
+
+// frozenEffect reports the latest conflict's branches.
+func (h Held) frozenEffect() Effect {
+	return Effect{Kind: FrozenEffect, Branches: h.Conflicts[len(h.Conflicts)-1].Branches}
 }
 
 // record appends an authenticated proof to the chain.

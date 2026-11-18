@@ -36,7 +36,9 @@ type Evidence struct {
 // claims (wire-v0 §4), in this order: the seal must match the frame it
 // arrived in and prove what signing checks (signature, chain, claim, not
 // future), the certificate must also be valid at the clock's effective
-// time, the root must be the current epoch's P of an Active lineage, the
+// time (judged before trust, so an expired certificate is invalid for an
+// unapproved or frozen lineage too), the root must be the current epoch's
+// P of an Active lineage, the
 // device must not be revoked, and the header's workspace must be bound to
 // the lineage (or covered by a legacy per-workspace certificate until the
 // first record is held). The Result is the current one; the Evidence is
@@ -52,11 +54,14 @@ func admit(seal signing.Seal, frame signing.Frame, h Held, now time.Time) signin
 		return invalid(err.Error())
 	}
 	result := signing.Verify(&seal, h.roots(seal.Header.Workspace), now)
-	if result.State != signing.Verified {
+	if result.State == signing.Invalid {
 		return result
 	}
 	if !validAt(seal.Chain[0], now) {
 		return invalid("certificate expired at receipt")
+	}
+	if result.State != signing.Verified {
+		return result
 	}
 	root := KeyID(seal.RootKey)
 	switch {
