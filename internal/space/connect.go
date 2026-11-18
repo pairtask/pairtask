@@ -24,6 +24,7 @@ const (
 	kindRequest  frameKind = 1
 	kindAccepted frameKind = 2
 	kindRefused  frameKind = 3
+	kindEnded    frameKind = 4
 )
 
 // ConnectDomain opens every pairing ID preimage of a space connect.
@@ -65,27 +66,47 @@ func requestFields(fields [][]byte) bool {
 }
 
 // ConnectAnswer is the responder's frame: accepted, or refused and why.
+//
+// Ended answers a retry of an attempt whose pairing the responder
+// installed and has since ended: the dialer may forget that attempt and
+// begin a new one, which no other refusal allows.
 type ConnectAnswer struct {
 	Accepted bool
 	Reason   string
+	Ended    bool
 }
 
-// Encode is the answer's frame, or nil for an answer that is neither a
-// plain acceptance nor a refusal with a valid reason.
+var (
+	accepted = ConnectAnswer{Accepted: true}
+	ended    = ConnectAnswer{Ended: true}
+)
+
+// Encode is the answer's frame, or nil for an answer that is none of a
+// plain acceptance, a plain ending or a refusal with a valid reason.
 func (a ConnectAnswer) Encode() []byte {
 	switch {
-	case a.Accepted && a.Reason == "":
+	case a == accepted:
 		return frame(kindAccepted)
-	case !a.Accepted && reason(a.Reason).valid():
+	case a == ended:
+		return frame(kindEnded)
+	case a.refusal():
 		return frame(kindRefused, []byte(a.Reason))
 	}
 	return nil
 }
 
+// refusal: only a reason, and a valid one.
+func (a ConnectAnswer) refusal() bool { return !a.Accepted && !a.Ended && reason(a.Reason).valid() }
+
 // DecodeConnectAnswer reads an answer frame strictly.
 func DecodeConnectAnswer(b []byte) (ConnectAnswer, error) {
-	if _, err := wire(b).fields(kindAccepted, 0); err == nil {
-		return ConnectAnswer{Accepted: true}, nil
+	for _, plain := range []struct {
+		kind   frameKind
+		answer ConnectAnswer
+	}{{kindAccepted, accepted}, {kindEnded, ended}} {
+		if _, err := wire(b).fields(plain.kind, 0); err == nil {
+			return plain.answer, nil
+		}
 	}
 	fields, err := wire(b).fields(kindRefused, 1)
 	if err != nil || !reason(fields[0]).valid() {

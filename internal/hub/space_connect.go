@@ -71,10 +71,23 @@ func (s spaceDialer) connect(net, local context.Context) (*protocol.SpaceResult,
 		return nil, err
 	}
 	reached, err := s.knock(net, addr.Addrs, req)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		return s.install(local, req, member.Name, reached)
 	}
-	return s.install(local, req, member.Name, reached)
+	return nil, s.forgetEnded(local, err)
+}
+
+// forgetEnded forgets the attempt when err says its pairing definitively
+// ended, so the next connect begins a new one; any other failure keeps it,
+// since its outcome is uncertain and a retry must repeat it.
+func (s spaceDialer) forgetEnded(local context.Context, err error) error {
+	if !errors.Is(err, errRetiredAttempt) {
+		return err
+	}
+	if endErr := s.h.store.EndSpaceAttempt(local, s.pin.Space, s.target); endErr != nil {
+		return endErr
+	}
+	return err
 }
 
 // attempt is this connect's request, its ID kept before any dial so a
@@ -97,7 +110,10 @@ func (s spaceDialer) knock(net context.Context, addrs []string, req space.Connec
 		if answer, err = s.ask(net, addr, req); err != nil {
 			continue
 		}
-		if !answer.Accepted {
+		switch {
+		case answer.Ended:
+			return "", errRetiredAttempt
+		case !answer.Accepted:
 			return "", fmt.Errorf("%s refused: %s", s.target, answer.Reason)
 		}
 		return addr, nil
@@ -133,7 +149,7 @@ func (s spaceDialer) install(local context.Context, req space.ConnectRequest, na
 	now := time.Now()
 	contact := peer.Contact{IdentityKey: s.target, Name: name, Destination: reached, DestinationAt: now, EstablishedAt: now, Joined: true}
 	if err := installSpace(local, s.h, spaceInstall{contact: contact, req: req, own: s.id.Fingerprint(), role: "joiner"}); err != nil {
-		return nil, err
+		return nil, s.forgetEnded(local, err)
 	}
 	if err := s.h.store.EndSpaceAttempt(local, s.pin.Space, s.target); err != nil {
 		return nil, err
@@ -253,10 +269,14 @@ func (r spaceResponder) pins(string) bool { return r.h.spaces != nil }
 // answer accepts a member's connect, or refuses it and why; a refusal
 // writes nothing.
 func (r spaceResponder) answer(ctx context.Context, peerLeaf string, req space.ConnectRequest) space.ConnectAnswer {
-	if err := r.accept(ctx, peerLeaf, req); err != nil {
-		return space.ConnectAnswer{Reason: err.Error()}
+	err := r.accept(ctx, peerLeaf, req)
+	switch {
+	case err == nil:
+		return space.ConnectAnswer{Accepted: true}
+	case errors.Is(err, errRetiredAttempt):
+		return space.ConnectAnswer{Ended: true} // only for this attempt's own retired pairing
 	}
-	return space.ConnectAnswer{Accepted: true}
+	return space.ConnectAnswer{Reason: err.Error()}
 }
 
 // accept checks, under this side's pin and the space's change slot, that
