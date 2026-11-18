@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import textwrap
+import time
 import unittest
 from unittest import mock
 import zipfile
@@ -294,6 +295,19 @@ class CodexHandshake(Workdir):
         with self.assertRaises(tools_lane.LaneError):
             self.handshake("sys.exit(0)")
 
+    def test_a_partial_line_does_not_outlast_the_timeout(self):
+        # Bytes without a newline must not turn the deadline into a blocking read.
+        reply = """
+            sys.stdout.write('{"jsonrpc": "2.0", "id": 1, "res')
+            sys.stdout.flush()
+            import time; time.sleep(15)
+            return []
+            """
+        started = time.monotonic()
+        with self.assertRaises(tools_lane.LaneError):
+            self.handshake(reply, timeout=1)
+        self.assertLess(time.monotonic() - started, 10)
+
     def test_a_notification_before_the_answer_is_skipped(self):
         reply = """
             first = {"jsonrpc": "2.0", "method": "configWarning", "params": {}}
@@ -324,6 +338,35 @@ class ClientFindings(Workdir):
                 mock.patch.dict(tools_lane.CLIENT_CHECKS, {"claude": tools_lane.claude_findings}):
             findings = tools_lane.client_findings(self.LOCK, "aarch64", "claude", self.dir)
         self.assertEqual(findings, ["claude 2.1.327 for aarch64: --version exited 3"])
+
+    CS_MCP = {"architectures": {"aarch64": {}}, "artifacts": {"cs-mcp": {
+        "version": "1.5.6", "kind": "zip", "url": "https://example.invalid/{version}/cs-mcp-{arch}.zip",
+        "entry": "cs-mcp", "architectures": {"aarch64": {"arch": "linux-aarch64", "sha256": "0" * 64}}}}}
+
+    def cs_mcp_findings(self, binary):
+        with mock.patch.object(tools_lane, "download", return_value=self.dir / "d"), \
+                mock.patch.object(tools_lane, "unpack", return_value=binary):
+            return tools_lane.client_findings(self.CS_MCP, "aarch64", "cs-mcp", self.dir)
+
+    def test_cs_mcp_is_run_and_reports_the_locks_version(self):
+        # cs-mcp 1.5.6 prints "1.5.6" for --version.
+        self.assertEqual(self.cs_mcp_findings(script(self.dir, "cs-mcp", 'print("1.5.6")\n')), [])
+
+    def test_a_cs_mcp_of_another_version_is_a_finding(self):
+        findings = self.cs_mcp_findings(script(self.dir, "cs-mcp", 'print("1.5.5")\n'))
+        self.assertEqual(len(findings), 1)
+        self.assertIn("1.5.6", findings[0])
+
+    def test_a_failing_or_unrunnable_cs_mcp_is_a_finding(self):
+        failing = script(self.dir, "cs-mcp", "import sys; sys.exit(4)\n")
+        garbage = self.dir / "garbage"
+        garbage.write_bytes(b"\x00not an executable\x00")
+        garbage.chmod(0o755)
+        for name, binary in (("exits 4", failing), ("not executable", garbage)):
+            with self.subTest(case=name):
+                findings = self.cs_mcp_findings(binary)
+                self.assertEqual(len(findings), 1)
+                self.assertTrue(findings[0].startswith("cs-mcp 1.5.6 for aarch64: "), findings[0])
 
     def test_an_architecture_missing_from_the_lock_is_refused(self):
         lock = self.dir / "lock.json"
