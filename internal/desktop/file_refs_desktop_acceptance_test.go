@@ -72,27 +72,41 @@ func fileRefsDesktopSample() []map[string]any {
 	}
 }
 
-// fileRefsDesktopFind is the first value under any key of v that equals
-// want: the test doesn't pin which request field carries the references.
+// fileRefsDesktopFind reports whether any value under v equals want: the
+// test doesn't pin which request field carries the references.
 func fileRefsDesktopFind(v any, want []map[string]any) bool {
 	plain, _ := json.Marshal(want)
 	var target any
 	_ = json.Unmarshal(plain, &target)
-	switch node := v.(type) {
-	case map[string]any:
-		for _, child := range node {
-			if reflect.DeepEqual(child, target) || fileRefsDesktopFind(child, want) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range node {
-			if fileRefsDesktopFind(child, want) {
-				return true
-			}
+	return fileRefsDesktopHolds(v, target)
+}
+
+// fileRefsDesktopHolds: v is target, or holds it at any depth.
+func fileRefsDesktopHolds(v, target any) bool {
+	if reflect.DeepEqual(v, target) {
+		return true
+	}
+	for _, child := range fileRefsDesktopChildren(v) {
+		if fileRefsDesktopHolds(child, target) {
+			return true
 		}
 	}
 	return false
+}
+
+// fileRefsDesktopChildren are a JSON object's values or a list's items.
+func fileRefsDesktopChildren(v any) []any {
+	switch node := v.(type) {
+	case map[string]any:
+		out := make([]any, 0, len(node))
+		for _, child := range node {
+			out = append(out, child)
+		}
+		return out
+	case []any:
+		return node
+	}
+	return nil
 }
 
 func fileRefsDesktopSend(t *testing.T, n *Node, files []map[string]any) error {

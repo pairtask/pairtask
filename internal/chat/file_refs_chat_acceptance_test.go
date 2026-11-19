@@ -12,6 +12,16 @@ import (
 // one line, with its label, size and the start of its digest; nothing in a
 // label can draw on the terminal.
 
+// fileRefsChatAny: text holds at least one of parts.
+func fileRefsChatAny(text string, parts ...string) bool {
+	for _, part := range parts {
+		if strings.Contains(text, part) {
+			return true
+		}
+	}
+	return false
+}
+
 func fileRefsChatRow(t *testing.T, files string) *chatHarness {
 	t.Helper()
 	row := contactLayoutRow("with-files", 1)
@@ -29,7 +39,7 @@ func TestFileRefsChatAcceptanceShowsLabelSizeAndShortDigest(t *testing.T) {
 	for _, want := range []string{"build/report.pdf", "notes.txt", digest[:12], strings.Repeat("c", 12)} {
 		v3Contains(t, view, want)
 	}
-	if !strings.Contains(view, "1.0 MiB") && !strings.Contains(view, "1 MiB") && !strings.Contains(view, "1048576") {
+	if !fileRefsChatAny(view, "1.0 MiB", "1 MiB", "1048576") {
 		t.Fatalf("size of the first reference isn't shown: %q", view)
 	}
 	if strings.Contains(view, digest) {
@@ -58,7 +68,7 @@ func TestFileRefsChatAcceptanceRowWithoutReferencesIsUnchanged(t *testing.T) {
 		t.Fatalf("fixture row not shown: %q", without)
 	}
 	message, _, _ := strings.Cut(after, "╭")
-	if strings.Contains(message, "MiB") || strings.Contains(message, " B ") || strings.Contains(message, "…") {
+	if fileRefsChatAny(message, "MiB", " B ", "…") {
 		t.Fatalf("a row without references shows one: %q", message)
 	}
 }
