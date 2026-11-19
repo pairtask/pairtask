@@ -70,6 +70,51 @@ func addressContacts() []protocol.PairingContactView {
 	}
 }
 
+func addressDefaults(contacts []protocol.PairingContactView, dirs map[string][]string) *addressBroker {
+	if contacts == nil {
+		contacts = addressContacts()
+	}
+	if dirs == nil {
+		dirs = map[string][]string{"key-z": {"alice"}}
+	}
+	return &addressBroker{contacts: contacts, directories: dirs}
+}
+
+func (b *addressBroker) one(t *testing.T, key string, agents []string) protocol.Message {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.sent) != 1 {
+		t.Fatalf("sends = %d", len(b.sent))
+	}
+	got := b.sent[0]
+	if got.ContactKey != key {
+		t.Fatalf("wrong workspace: %+v", got)
+	}
+	if !reflect.DeepEqual(got.ContactTo, agents) {
+		t.Fatalf("wrong agents: %+v", got)
+	}
+	return got
+}
+
+func addressErrorWords(t *testing.T, err error, words []string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("address was accepted")
+	}
+	last := -1
+	for _, word := range words {
+		at := strings.Index(err.Error(), word)
+		if at < 0 {
+			t.Fatalf("missing %q in %q", word, err)
+		}
+		if at < last {
+			t.Fatalf("expected ordered %q in %q", words, err)
+		}
+		last = at
+	}
+}
+
 func TestSendAddressAcceptanceRoutes(t *testing.T) {
 	for _, tc := range []struct {
 		name, to, key string
@@ -93,15 +138,14 @@ func TestSendAddressAcceptanceRoutes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			b.mu.Lock()
-			defer b.mu.Unlock()
-			if len(b.sent) != 1 {
-				t.Fatalf("sends = %d", len(b.sent))
+			got := b.one(t, tc.key, tc.want)
+			if got.ContactText != "literal $HOME; unchanged" {
+				t.Fatalf("text changed: %q", got.ContactText)
 			}
-			got := b.sent[0]
-			if got.ContactKey != tc.key || !reflect.DeepEqual(got.ContactTo, tc.want) || got.ContactText != "literal $HOME; unchanged" || result.ID != "sent-id" {
-				t.Fatalf("wrong routing/result: %+v %+v", got, result)
+			if result.ID != "sent-id" {
+				t.Fatalf("result changed: %+v", result)
 			}
+
 		})
 	}
 }
@@ -124,28 +168,12 @@ func TestSendAddressAcceptanceRefusesWithoutSending(t *testing.T) {
 		{name: "ambiguous bare duplicate labels", to: "alice", contacts: []protocol.PairingContactView{{IdentityKey: "key-z", Name: "Same", Confirmed: true}, {IdentityKey: "key-a", Name: "Same", Confirmed: true}}, dirs: map[string][]string{"key-z": {"alice"}, "key-a": {"alice"}}, words: []string{"alice@key-a", "alice@key-z"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.contacts == nil {
-				tc.contacts = addressContacts()
-			}
-			if tc.dirs == nil {
-				tc.dirs = map[string][]string{"key-z": {"alice"}}
-			}
-			b := &addressBroker{contacts: tc.contacts, directories: tc.dirs}
+			b := addressDefaults(tc.contacts, tc.dirs)
 			n := addressNode(t, b)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			_, err := n.send(ctx, SendArgs{To: tc.to, Agents: tc.agents, Text: "never send"})
-			if err == nil {
-				t.Fatal("address was accepted")
-			}
-			last := -1
-			for _, word := range tc.words {
-				at := strings.Index(err.Error(), word)
-				if at < 0 || at < last {
-					t.Fatalf("expected ordered %q in %q", tc.words, err)
-				}
-				last = at
-			}
+			addressErrorWords(t, err, tc.words)
 			b.mu.Lock()
 			defer b.mu.Unlock()
 			if len(b.sent) != 0 {
@@ -165,11 +193,7 @@ func TestSendAddressAcceptanceExactWorkspaceWinsIncludingAt(t *testing.T) {
 			if _, err := n.send(ctx, SendArgs{To: name, Text: "operator"}); err != nil {
 				t.Fatal(err)
 			}
-			b.mu.Lock()
-			defer b.mu.Unlock()
-			if len(b.sent) != 1 || b.sent[0].ContactKey != "literal" || len(b.sent[0].ContactTo) != 0 {
-				t.Fatalf("exact workspace lost precedence: %+v", b.sent)
-			}
+			b.one(t, "literal", nil)
 		})
 	}
 }
@@ -185,11 +209,7 @@ func TestSendAddressAcceptanceBareAgentExcludesUnconfirmedAndUnpaired(t *testing
 	if _, err := n.send(ctx, SendArgs{To: "alice", Text: "one eligible"}); err != nil {
 		t.Fatal(err)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.sent) != 1 || b.sent[0].ContactKey != "key-z" {
-		t.Fatalf("ineligible match affected routing: %+v", b.sent)
-	}
+	b.one(t, "key-z", []string{"alice"})
 }
 
 func TestSendAddressAcceptanceEmptyDirectoryDefersAuthorityToBroker(t *testing.T) {
@@ -198,12 +218,38 @@ func TestSendAddressAcceptanceEmptyDirectoryDefersAuthorityToBroker(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, err := n.send(ctx, SendArgs{To: "alice@Work", Text: "broker decides"})
-	if err == nil || !strings.Contains(err.Error(), "not shared with this agent") {
-		t.Fatalf("broker refusal lost: %v", err)
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.sent) != 1 || b.sent[0].ContactKey != "key-z" || !reflect.DeepEqual(b.sent[0].ContactTo, []string{"alice"}) {
-		t.Fatalf("wrong request: %+v", b.sent)
+	addressErrorWords(t, err, []string{"not shared with this agent"})
+	b.one(t, "key-z", []string{"alice"})
+}
+
+func TestSendAddressAcceptanceAmbiguousSuggestionsResolveAgainstEveryWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		contacts []protocol.PairingContactView
+		choices  []string
+	}{
+		{name: "nonsharing duplicate", contacts: []protocol.PairingContactView{
+			{IdentityKey: "key-a", Name: "Same", Confirmed: true},
+			{IdentityKey: "key-b", Name: "Other", Confirmed: true},
+			{IdentityKey: "key-c", Name: "Same", Confirmed: true},
+		}, choices: []string{"alice@Other", "alice@key-a"}},
+		{name: "at in display name", contacts: []protocol.PairingContactView{
+			{IdentityKey: "key-a", Name: "East@Work", Confirmed: true},
+			{IdentityKey: "key-b", Name: "West", Confirmed: true},
+		}, choices: []string{"alice@West", "alice@key-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := addressDefaults(tc.contacts, map[string][]string{"key-a": {"alice"}, "key-b": {"alice"}, "key-c": {"bob"}})
+			n := addressNode(t, b)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_, err := n.send(ctx, SendArgs{To: "alice", Text: "ambiguous"})
+			addressErrorWords(t, err, tc.choices)
+			for _, choice := range tc.choices {
+				if _, err := n.send(ctx, SendArgs{To: choice, Text: "chosen"}); err != nil {
+					t.Fatalf("suggestion %q cannot be used: %v", choice, err)
+				}
+			}
+		})
 	}
 }
