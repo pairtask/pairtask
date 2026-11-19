@@ -13,6 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "infra/image")]
 import test_tool_update_acceptance as fixtures
+import tool_store
 
 
 class RetainedStatusAcceptance(unittest.TestCase):
@@ -52,6 +53,11 @@ class RetainedStatusAcceptance(unittest.TestCase):
         # A generation alias is not another retained generation.
         (self.store.generations / "alias").symlink_to(self.store.generations / self.fixture.old, target_is_directory=True)
         self.assertEqual(self.retained()["generations"], 1)
+
+    def test_unreadable_file_does_not_report_zero_stored_bytes(self):
+        with mock.patch.object(tool_store.os, "lstat", side_effect=PermissionError("unreadable store")):
+            with self.assertRaises(PermissionError):
+                tool_store.stored_bytes(self.store.root)
 
     def test_staging_reports_retained_candidate_without_moving_current(self):
         candidate = self.fixture.staged()

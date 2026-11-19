@@ -26,6 +26,8 @@ if command[:2] == ['python3','-c']:
 elif command[0].endswith('tools-activate') and command[1:] == ['status']:
     if os.environ.get('STATUS_FAILED_ROLE') == role:
         sys.exit('container unavailable')
+    if role == 'secured' and 'STATUS_BAD_REPLY' in os.environ:
+        print(os.environ['STATUS_BAD_REPLY']); sys.exit(0)
     count, size = (3, 3 * 1024 * 1024) if role == 'workspace' else (2, 2 * 1024 * 1024)
     print(json.dumps({'retained':{'generations':count,'stored_bytes':size}, 'complete':[]}))
 elif command[0] == 'cat':
@@ -76,6 +78,15 @@ class UpdateStatusCLIAcceptance(unittest.TestCase):
         self.assertRegex(output, r'(?im)^.*workspace.*3 retained generations')
         self.assertRegex(output, r'(?im)^.*secured.*(?:unavailable|unknown)')
         self.assertNotRegex(output, r'(?im)^.*secured.*0 retained generations')
+
+    def test_malformed_store_reply_is_unavailable_without_losing_other_role(self):
+        replies = ['not JSON', '[]', '{"retained":{"generations":-1,"stored_bytes":-1}}']
+        for reply in replies:
+            with self.subTest(reply=reply):
+                self.env['STATUS_BAD_REPLY'] = reply
+                output = self.invoke('pairtask.py', 'status', '--remote', 'local', '--project', 'status-proof-no-state')
+                self.assertRegex(output, r'(?im)^.*workspace.*3 retained generations')
+                self.assertRegex(output, r'(?im)^.*secured.*(?:unavailable|unknown)')
 
 
 if __name__ == '__main__':
