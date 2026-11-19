@@ -204,12 +204,23 @@ def bad_progress(record):
     restores = record.get("restores")
     if not isinstance(restores, int) or isinstance(restores, bool) or restores < 0:
         return "restores isn't a count"
+    if phase == "failed" and record.get("failure") not in AUTO_RECOVERABLE + EXPLICIT_ONLY:
+        return "failed without a known reason"
     chosen = ("candidate", "predecessor")
-    if record.get("target") not in chosen + (None,) or (phase in DIRECTED and record.get("target") not in chosen):
+    if record.get("target") not in chosen + (None,) or (committed(record) and record.get("target") not in chosen):
         return "no target for phase {}".format(phase)
     if phase == "done" and record.get("outcome") not in chosen:
         return "done without an outcome"
     return None
+
+
+def committed(record):
+    """The record is in, or failed out of, the phases that move pointers:
+    it must name a target, and a candidate for each container. A failure
+    that recovery retries by itself came from there."""
+    if record.get("phase") == "failed":
+        return record.get("failure") in AUTO_RECOVERABLE
+    return record.get("phase") in DIRECTED
 
 
 def bad_deployment(record):
@@ -227,7 +238,7 @@ def bad_containers(record):
     containers = record.get("containers")
     if not isinstance(containers, dict) or set(containers) != set(ROLES):
         return "containers aren't workspace and secured"
-    planned = record["phase"] in PLANNED
+    planned = record["phase"] in PLANNED or committed(record)
     for role in ROLES:
         entry = containers[role]
         if not isinstance(entry, dict) or not text(entry.get("predecessor")):
