@@ -137,11 +137,19 @@ func (h *Hub) contactChange(ctx context.Context, req operatorRequest) protocol.M
 }
 
 // opRefusals say why an operation of their kind was refused, if they know.
-var opRefusals = []func(error) (*routingError, bool){ownRefusal, reviewRefusal, nameRefusal, pauseRefusal, ackRefusal, homeRefusal}
+var opRefusals = []func(error) (*routingError, bool){ownRefusal, reviewRefusal, nameRefusal, pauseRefusal, ackRefusal, homeRefusal, refsRefusal}
 
 // ownRefusal is the operation's own refusal, as it said it.
 func ownRefusal(err error) (*routingError, bool) {
 	return errors.AsType[*routingError](err)
+}
+
+// refsRefusal: the contact's pairtask predates file references (#419).
+func refsRefusal(err error) (*routingError, bool) {
+	if !errors.Is(err, store.ErrRefsUnsupported) {
+		return nil, false
+	}
+	return &routingError{protocol.ErrRefsUnsupported, refsUnsupportedDetail}, true
 }
 
 // contactRefusal is what the operator hears of a failed change; store
