@@ -54,7 +54,7 @@ func claimsDesktopAttribution(t *testing.T, conversations []Conversation) {
 		t.Fatal("inbox lost subject")
 	}
 	v := conversations[0].Messages[0]
-	if v.ClaimPage == nil || len(v.Claims) != 1 {
+	if v.MessageClaims == nil || len(v.Claims) != 1 {
 		t.Fatalf("claims lost: %+v", v)
 	}
 	if v.Claims[0].Remote == nil || v.Claims[0].Remote.Workspace != "peer-key" {

@@ -28,7 +28,7 @@ func TestPairedClaimsChatAcceptanceRemoteClaimsKeepWorkspaceAndState(t *testing.
 func TestPairedClaimsChatAcceptanceRemoteControlBytesCannotReachTerminal(t *testing.T) {
 	v := contactLayoutRow("control-claim", 1)
 	v.Direction = "out"
-	v.ClaimPage = &protocol.ClaimPage{Claims: []protocol.Claim{{Task: "investigate", AgentID: "worker\x1b[2J\a\r\nother", Role: "owner", State: "active", ClaimedAt: contactLayoutAt, Remote: &protocol.ClaimRemote{Workspace: "peer-key"}}}, Total: 1}
+	v.MessageClaims = &protocol.MessageClaims{Claims: []protocol.Claim{{Task: "investigate", AgentID: "worker\x1b[2J\a\r\nother", Role: "owner", State: "active", ClaimedAt: contactLayoutAt, Remote: &protocol.ClaimRemote{Workspace: "peer-key"}}}, Total: 1}
 	h := contactLayoutHarness(t, v)
 	raw := h.m.View().Content
 	if strings.Contains(raw, "\x1b[2J") || strings.Contains(raw, "\a") {
