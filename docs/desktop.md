@@ -75,6 +75,14 @@ workspace's. To let D write to your agents, share them with D
 
 - **Checking for messages.** New messages don't pop up in Desktop. Claude
   sees them only when it checks the inbox (`check_inbox`), so ask it to.
+  To keep watch, ask it to wait for messages: `wait_inbox` sleeps until one
+  arrives (up to five minutes a call), and `check_inbox` with `new_only`
+  then returns only what it hasn't shown you yet, without the history.
+- **Seen is not read.** Claude remembers how far it has shown you each
+  conversation (a "seen" mark kept on this machine, so it survives a
+  restart). The sender gets a read receipt only when Claude marks a message
+  read (`mark_read`). Sessions that share the node (a chat and Cowork, say)
+  can each name themselves with `consumer` and keep their own mark.
 - **Desktop has to be running.** D's node runs only while Claude Desktop
   does. A's messages wait at A until D's node next connects.
 - **Nothing listens.** D's node never accepts connections. It only dials

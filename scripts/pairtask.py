@@ -19,6 +19,8 @@ from pathlib import Path
 from sandbox_host_user import refuse_root
 from sandbox_remote import REMOTE
 import sandbox_operator_shortcuts as shortcuts
+from sandbox_operator_config import existing_deployment
+import sandbox_tools_update
 
 SCRIPTS = Path(__file__).resolve().parent
 PROJECT = "pairtask"
@@ -27,6 +29,7 @@ PROJECT = "pairtask"
 # action word take it first; everything the user adds follows.
 SCRIPTED = {
     "upgrade": ("sandbox-provision.py", ["rollout"], "download the release, replace the containers, keep data; ends sessions"),
+    "update": ("sandbox-tools-update.py", [], "move Claude Code, Codex and CodeScene MCP in the running sandbox to selected versions; --rollback undoes it; sessions continue"),
     "plan": ("sandbox-provision.py", ["plan"], "preview a provisioning change (--replace, --destroy)"),
     "apply": ("sandbox-provision.py", ["apply"], "apply the saved plan; ends sessions when it replaces"),
     "recover": ("sandbox-provision.py", ["recover"], "repair provisioning state without changing data"),
@@ -173,6 +176,7 @@ def status_steps(rest, system, instances):
     opts = composite_options("status", rest, system)
     return [incus(opts.project, "list", opts.remote + ":"),
             script("sandbox-version.py", "--summary", "--project", opts.project, "--remote", opts.remote),
+            script("sandbox-tools-update.py", "--retained", "--project", opts.project, "--remote", opts.remote),
             Step("optional", shortcuts.secured(opts.remote, opts.project, opts.secured, ["agents"]))]
 
 
@@ -282,7 +286,22 @@ def main(argv=None):
             print(step)
         return 0
     preflight(steps)
+    if argv[0] == "start":
+        return start_admitted(argv[1:], steps)
     return execute(steps)
+
+
+def start_admitted(rest, steps):
+    """Start the containers unless a client update holds sessions back;
+    the update's lock is held while they start."""
+    opts = composite_options("start", rest, platform.system())
+    try:
+        directory = existing_deployment(opts.project)
+        with sandbox_tools_update.admission(directory):
+            return execute(steps)
+    except (ValueError, OSError) as error:
+        print("pairtask start: {}".format(error), file=sys.stderr)
+        return 75
 
 
 def execute(steps):

@@ -29,12 +29,16 @@ type pendingSync struct {
 
 // freshInbox requests a session with every contact, then reads each
 // conversation as its session ends or the budget runs out.
-func (n *Node) freshInbox(ctx context.Context, contacts []protocol.PairingContactView, limit int) ([]Conversation, error) {
+func (n *Node) freshInbox(ctx context.Context, contacts []protocol.PairingContactView, sel inboxSelection) ([]Conversation, error) {
+	marks, err := n.marks().of(sel.consumer)
+	if err != nil {
+		return nil, err
+	}
 	syncs := make([]pendingSync, len(contacts))
 	for i, c := range contacts {
 		syncs[i] = n.requestSync(ctx, c.IdentityKey)
 	}
-	r := inboxRead{n: n, limit: limit, deadline: time.Now().Add(syncBudget)}
+	r := inboxRead{n: n, sel: sel, marks: marks, deadline: time.Now().Add(syncBudget)}
 	out := make([]Conversation, 0, len(contacts))
 	for i, c := range contacts {
 		conv, err := r.await(ctx, c, syncs[i])
@@ -43,7 +47,7 @@ func (n *Node) freshInbox(ctx context.Context, contacts []protocol.PairingContac
 		}
 		out = append(out, conv)
 	}
-	return out, nil
+	return n.shown(out, sel, marks)
 }
 
 // requestSync asks for a session with contact; a refusal (a paused or
@@ -61,26 +65,45 @@ func (n *Node) requestSync(ctx context.Context, contact string) pendingSync {
 	return p
 }
 
-// inboxRead reads conversations of at most limit messages, waiting for
-// their sessions until one shared deadline.
+// inboxRead reads conversations as the selection asks, waiting for their
+// sessions until one shared deadline. marks are the consumer's seen marks
+// when the read began.
 type inboxRead struct {
 	n        *Node
-	limit    int
+	sel      inboxSelection
+	marks    map[string]int64
 	deadline time.Time
+}
+
+// settledRead is the conversation to return once its session settled: the
+// newest page already read, or, for an incremental read, what is newer
+// than the selection's cursor (the consumer's seen mark for new_only).
+// That walk can be long, so it is done once, not while waiting.
+func (r inboxRead) settledRead(ctx context.Context, c protocol.PairingContactView, newest Conversation) (Conversation, error) {
+	if !r.sel.incremental() {
+		return newest, nil
+	}
+	after := r.sel.after
+	if r.sel.newOnly {
+		after = r.marks[c.IdentityKey]
+	}
+	conv, _, err := r.n.continued(ctx, c, after, r.sel)
+	return conv, err
 }
 
 // await reads the conversation with c until its session ended or the
 // deadline passed, and says which.
 func (r inboxRead) await(ctx context.Context, c protocol.PairingContactView, p pendingSync) (Conversation, error) {
 	for {
-		conv, sync, err := r.n.conversation(ctx, c, r.limit)
+		conv, sync, err := r.n.conversation(ctx, c, r.sel)
 		if err != nil {
 			return conv, err
 		}
 		done, fresh := p.outcome(sync)
 		if r.settled(done, p) {
+			conv, err = r.settledRead(ctx, c, conv)
 			conv.Fresh, conv.SyncFailure = fresh, p.failure(sync, fresh)
-			return conv, nil
+			return conv, err
 		}
 		if err := sleep(ctx, syncPoll); err != nil {
 			return conv, err
