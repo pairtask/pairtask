@@ -45,6 +45,10 @@ COMMITTING = ("closing", "reopening", "flipping", "verifying", "releasing", "res
 AUTO_RECOVERABLE = ("release", "restore", "reopen")
 EXPLICIT_ONLY = ("deployment-changed", "unexpected-pointer", "foreign-state", "container-unreachable", "abort")
 UNREACHABLE = "container-unreachable"
+# Phases that can only be reached with a candidate planned for each
+# container, and those that also have a target.
+PLANNED = ("staging",) + COMMITTING + ("done",)
+DIRECTED = COMMITTING + ("done",)
 # How often one transaction may turn back before it is left for the operator.
 MAX_RESTORES = 2
 
@@ -165,20 +169,72 @@ class Journal:
 
 
 def malformed(record):
-    """Why record isn't a journal of this schema, or None."""
+    """Why record isn't a journal this code can act on, or None. Checked
+    before any container is touched: recovery never works from a record
+    whose shape, or whose fields for its phase, it would have to guess."""
     if not isinstance(record, dict) or record.get("schema") != SCHEMA:
         return "unknown schema"
-    if not isinstance(record.get("id"), str) or not record["id"]:
+    for check in (bad_identity, bad_progress, bad_deployment, bad_containers):
+        problem = check(record)
+        if problem:
+            return problem
+    return None
+
+
+def text(value):
+    return isinstance(value, str) and value != ""
+
+
+def bad_identity(record):
+    if not text(record.get("id")):
         return "no update ID"
-    if record.get("phase") not in PHASES or record.get("step") not in ("intent", "result"):
+    if record.get("kind") not in ("update", "rollback") or not isinstance(record.get("requested"), dict):
+        return "unknown kind or request"
+    back = record.get("rollback")
+    if not isinstance(back, dict) or not all(text(generation) for generation in back.values()):
+        return "the generations to return to aren't named"
+    return None
+
+
+def bad_progress(record):
+    """Phase, step, target and outcome agree with each other."""
+    phase = record.get("phase")
+    if phase not in PHASES or record.get("step") not in ("intent", "result"):
         return "unknown phase or step"
-    if record.get("target") not in (None, "candidate", "predecessor"):
-        return "unknown target"
+    restores = record.get("restores")
+    if not isinstance(restores, int) or isinstance(restores, bool) or restores < 0:
+        return "restores isn't a count"
+    chosen = ("candidate", "predecessor")
+    if record.get("target") not in chosen + (None,) or (phase in DIRECTED and record.get("target") not in chosen):
+        return "no target for phase {}".format(phase)
+    if phase == "done" and record.get("outcome") not in chosen:
+        return "done without an outcome"
+    return None
+
+
+def bad_deployment(record):
+    deployment = record.get("deployment")
+    instances = deployment.get("instances") if isinstance(deployment, dict) else None
+    if not isinstance(instances, dict) or set(instances) != set(ROLES):
+        return "no deployment identity"
+    if not all(isinstance(instances[role], dict) and text(instances[role].get("name")) and text(instances[role].get("uuid"))
+               for role in ROLES):
+        return "an instance has no name or UUID"
+    return None
+
+
+def bad_containers(record):
     containers = record.get("containers")
     if not isinstance(containers, dict) or set(containers) != set(ROLES):
         return "containers aren't workspace and secured"
-    if not all(isinstance(containers[role], dict) and isinstance(containers[role].get("predecessor"), str) for role in ROLES):
-        return "a container has no predecessor"
+    planned = record["phase"] in PLANNED
+    for role in ROLES:
+        entry = containers[role]
+        if not isinstance(entry, dict) or not text(entry.get("predecessor")):
+            return "{} has no predecessor".format(role)
+        candidate = entry.get("candidate")
+        if not (text(candidate) or (candidate is None and not planned)):
+            return "{} has no candidate".format(role)
     return None
 
 
@@ -285,6 +341,9 @@ class Update:
                 raise UpdateRefused("{}: {}; nothing was changed".format(self.containers[role].name, error)) from error
             if observed[role].get("state") != "ready" or not observed[role].get("current"):
                 raise UpdateRefused("{} isn't released and ready; nothing was changed".format(self.containers[role].name))
+            if observed[role].get("entries_ok") is not True:
+                raise UpdateRefused("{}: the client set it runs doesn't verify, so there would be nothing sound to return to; "
+                                    "nothing was changed (pairtask upgrade replaces it)".format(self.containers[role].name))
         record = {
             "schema": SCHEMA, "id": update_id, "kind": kind, "created": time.time(),
             "deployment": dict(self.deployment, instances=self.instances()),
@@ -541,8 +600,9 @@ def verified(record, role, seen, or_ready=False):
 def return_to(record):
     """Per container, the generation `--rollback` would return to after this
     record, or {}: the predecessors of an update that took effect or failed,
-    else whatever the record before it would have returned to."""
-    if record is None:
+    else whatever the record before it would have returned to. Nothing
+    after an upgrade: those generations belonged to the root it replaced."""
+    if record is None or record["phase"] == "superseded":
         return {}
     took_effect = record["phase"] == "done" and record.get("outcome") == "candidate"
     if took_effect or record["phase"] == "failed":
