@@ -17,6 +17,7 @@ import sandbox_secured_checks
 import sandbox_storage_checks
 import sandbox_workspace_checks
 import sandbox_rollout_checks
+import sandbox_tools_update_checks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +75,7 @@ def parse_args():
     parser.add_argument("--mount-check", action="store_true", help="also test disposable local Linux host mounts")
     parser.add_argument("--network-check", action="store_true", help="also test dev network enable/disable using only the bridge DNS service")
     parser.add_argument("--secured-check", action="store_true", help="also test persistent secured state and read-only status IPC")
+    parser.add_argument("--tools-update-check", action="store_true", help="also prove real installed client update and offline rollback")
     return parser.parse_args()
 
 
@@ -88,6 +90,8 @@ def check_deployment(args, directory, project, manifest):
     if args.network_check:
         sandbox_network_checks.verify(args, directory, project)
     sandbox_rollout_checks.verify(args, directory, project)
+    if args.tools_update_check:
+        sandbox_tools_update_checks.verify(args, directory, project)
 
 
 def main():

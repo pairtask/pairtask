@@ -6,10 +6,13 @@ runtime, where the operator's keys and socket are."""
 import argparse
 from pathlib import Path
 import re
+import subprocess
 import sys
 
+from sandbox_operator_config import existing_deployment
 from sandbox_remote import default_remote
 from sandbox_terminal import run_session
+import sandbox_tools_update
 import sandbox_version
 
 SSH_CONFIG = Path(__file__).resolve().parents[1] / "infra/incus/ssh/config"
@@ -78,11 +81,38 @@ def parser():
     return p
 
 
+def update_refusal(project="pairtask"):
+    """Check the same locked journal the updater uses, without creating a
+    deployment during a session command. Invalid state refuses admission."""
+    directory = existing_deployment(project)
+    with sandbox_tools_update.admission(directory):
+        pass
+    return directory
+
+
+def session_spawn(project):
+    """Keep the admission check and local child creation inside one lock;
+    the existing session releases it before waiting for the child."""
+    def spawn(argv):
+        directory = existing_deployment(project)
+        with sandbox_tools_update.admission(directory):
+            return subprocess.Popen(argv)
+    return spawn
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.session == "chat" and args.secured == "secured":
-        sandbox_version.announce(args.project, args.remote)  # bounded; never waits on GitHub
-    return run_session(args.build(args))
+    project = getattr(args, "project", "pairtask")
+    try:
+        directory = update_refusal(project)
+        if args.session == "chat" and args.secured == "secured":
+            sandbox_version.announce(args.project, args.remote)  # bounded; never waits on GitHub
+        if directory is None:
+            return run_session(args.build(args))
+        return run_session(args.build(args), popen=session_spawn(project))
+    except (ValueError, OSError) as error:
+        print("pairtask {}: {}".format(args.session, error), file=sys.stderr)
+        return 75
 
 
 if __name__ == "__main__":
