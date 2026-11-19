@@ -24,6 +24,8 @@ from sandbox_tools_plan import Instance, Resolver, retained_lines
 import sandbox_tools_update as update
 
 CLIENT_FLAGS = {"claude": "--claude", "codex": "--codex", "cs-mcp": "--cs-mcp"}
+# What each client moves to when its flag is left out.
+DEFAULTS = {"claude": "its publisher's stable channel", "codex": "its latest release", "cs-mcp": "its latest release"}
 
 
 def identifier(value):
@@ -35,7 +37,7 @@ def identifier(value):
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     for name, flag in CLIENT_FLAGS.items():
-        parser.add_argument(flag, dest=name, metavar="VERSION", help="this exact version of {}; the latest if left out".format(name))
+        parser.add_argument(flag, dest=name, metavar="VERSION", help="this exact version of {}; {} if left out".format(name, DEFAULTS[name]))
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--rollback", action="store_true", help="return to the clients from before the last update; no download")
     mode.add_argument("--status", action="store_true", help="what the last update did and whether sessions can start; changes nothing")

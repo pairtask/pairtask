@@ -114,8 +114,8 @@ Each container has its own root-owned (`0755`, `security.shifted=false`,
 newer versions in a running sandbox, without replacing the containers:
 
 ```sh
-pairtask update                    # the publishers' latest of each
-pairtask update --claude 2.1.327   # this exact version; the others: latest
+pairtask update                    # Claude Code's stable channel; the latest Codex and CodeScene MCP
+pairtask update --claude 2.1.327   # this exact version of Claude Code; the others as above
 pairtask update --rollback         # back to the clients from before; no download
 pairtask update --status           # what the last update did; changes nothing
 pairtask update --repair           # finish or revert an interrupted update

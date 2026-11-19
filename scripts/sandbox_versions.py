@@ -102,7 +102,16 @@ def exact(value, source):
 
 
 def claude_latest():
+    """Claude Code's newest release. Not what an update takes by default
+    (claude_stable is); kept for telling the two channels apart."""
     return exact(publisher_text("https://downloads.claude.ai/claude-code-releases/latest"), "Claude Code's latest release")
+
+
+def claude_stable():
+    """The version on Claude Code's stable channel, which trails its newest
+    release. An answer that isn't an exact version is an error: there is no
+    falling back to the newest."""
+    return exact(publisher_text("https://downloads.claude.ai/claude-code-releases/stable"), "Claude Code's stable channel")
 
 
 def tagged_latest(repository, prefix):
@@ -124,9 +133,11 @@ def cs_mcp_latest():
 
 
 def latest(name):
-    """The publisher's latest version of an agent client. Looked up at call
-    time; the checksum for it comes from resolver(name), separately."""
-    return {"claude": claude_latest, "codex": codex_latest, "cs-mcp": cs_mcp_latest}[name]()
+    """The version an update moves an agent client to when none is named:
+    Claude Code's stable channel, and the latest full release of Codex and
+    of the CodeScene MCP server, which publish no stable channel. Looked up
+    at call time; the checksum for it comes from resolver(name), separately."""
+    return {"claude": claude_stable, "codex": codex_latest, "cs-mcp": cs_mcp_latest}[name]()
 
 
 def resolve_lock(path, architecture, args):

@@ -47,7 +47,8 @@ def encoded(lock):
 
 def wanted_versions(requested, clients, latest=versions.latest):
     """An exact version for each client: the one asked for, else the
-    publisher's latest."""
+    publisher's default (Claude Code's stable channel; the latest release
+    of the others)."""
     unknown = sorted(set(requested) - set(LANE_TOOLS))
     if unknown:
         raise ValueError("update changes only {}; not {}".format(", ".join(LANE_TOOLS), ", ".join(unknown)))
