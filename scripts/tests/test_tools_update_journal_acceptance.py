@@ -43,6 +43,25 @@ class JournalRecoveryAcceptance(unittest.TestCase):
         self.assertEqual(rig.events, [])
         self.assertEqual(rig.journal.path.read_bytes(), original)
 
+    def test_failed_reopen_rejects_a_target_its_resumed_phase_cannot_use(self):
+        rig = self.rig()
+        failures = [fixtures.Interrupt(failure=("secured", "close")),
+                    fixtures.Interrupt(failure=("workspace", "release"))]
+        class Both(host.Hooks):
+            def fail(self, role, command):
+                for failure in failures:
+                    failure.fail(role, command)
+        record = rig.update(Both()).run({})
+        self.assertEqual(record["failure"], "reopen")
+        record["target"] = "predecessor"
+        rig.journal.write(record)
+        original = rig.journal.path.read_bytes()
+        rig.events.clear()
+        with self.assertRaises(host.JournalError):
+            rig.update().recover()
+        self.assertEqual(rig.journal.path.read_bytes(), original)
+        self.assertEqual(rig.events, [])
+
 
 if __name__ == "__main__":
     unittest.main()
