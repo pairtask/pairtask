@@ -75,6 +75,10 @@ workspace's. To let D write to your agents, share them with D
 
 - **Checking for messages.** New messages don't pop up in Desktop. Claude
   sees them only when it checks the inbox (`check_inbox`), so ask it to.
+- **Referring to files.** A message can name up to 8 files by a label,
+  size and SHA-256 that Claude states. Nothing is uploaded or read from your
+  disk: the other side compares them with a file it gets another way.
+  Received references show up in `check_inbox` as data.
 - **Desktop has to be running.** D's node runs only while Claude Desktop
   does. A's messages wait at A until D's node next connects.
 - **Nothing listens.** D's node never accepts connections. It only dials

@@ -66,7 +66,7 @@ func (b *brokerKey) stale(workspace string, now time.Time) bool {
 
 // seal signs m as this workspace's agent m.From sent it to contact.
 func (b *brokerKey) seal(contact string, m messaging.Message) []byte {
-	link := protocol.PeerLink{Receiver: contact, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author}
+	link := protocol.PeerLink{Receiver: contact, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author, Files: m.Files}
 	h := signing.Header{MessageID: m.ID, SenderKind: signing.SenderAgent, SenderID: m.From, Workspace: b.cert.Workspace,
 		Recipients: link.Recipients(), InReplyTo: link.ReplyRef(), CreatedAt: m.CreatedAt, TextHash: signing.TextHash(m.Text)}
 	return signing.Sign(b.key, []signing.Cert{b.cert}, b.root, h).Marshal()
@@ -97,7 +97,7 @@ func (h *Hub) contactSealRefused(ctx context.Context, msg protocol.Message) *rou
 
 // contactSealSigns: the seal is the operator's for this very send.
 func contactSealSigns(seal signing.Seal, msg protocol.Message) bool {
-	want := protocol.PeerLink{Receiver: msg.ContactKey, To: peerRecipients(msg)}.Recipients()
+	want := protocol.PeerLink{Receiver: msg.ContactKey, To: peerRecipients(msg), Files: msg.Files}.Recipients()
 	frame := signing.Frame{MessageID: msg.MessageID, SenderKind: signing.SenderOperator, SenderID: protocol.OperatorID,
 		Text: msg.ContactText, Addresses: want}
 	return slices.Equal(seal.Header.Recipients, want) && seal.Header.InReplyTo == "" && seal.Matches(frame) == nil

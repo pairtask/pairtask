@@ -193,6 +193,9 @@ func (h *Hub) remoteAcknowledged(msg protocol.Message, report store.AckReport) {
 // transaction, and leaves at once over a live link.
 func (h *Hub) routeRemote(ctx context.Context, clients map[string]*Client, in Inbound) bool {
 	route, remote, rerr := h.remoteRoute(ctx, in)
+	if !remote && len(in.Msg.Files) > 0 {
+		remote, rerr = true, errLocalFiles
+	}
 	if !remote {
 		return false
 	}
@@ -204,6 +207,9 @@ func (h *Hub) routeRemote(ctx context.Context, clients map[string]*Client, in In
 	}
 	return true
 }
+
+// errLocalFiles refuses file references on a message that stays here.
+var errLocalFiles = &routingError{protocol.ErrMalformedFrame, "files go with a message to a paired workspace: name its workspace, or answer a message from one"}
 
 // remoteRoute is how an agent's message reaches a paired workspace: the
 // contact, and the store call that queues it.
@@ -364,7 +370,8 @@ var remoteReplyErrors = []struct {
 	{messaging.ErrNotShared, protocol.ErrRecipientUnavailable, "this agent is not shared with that workspace"},
 	{messaging.ErrUnknownContact, protocol.ErrRecipientUnavailable, "that workspace is no longer a confirmed contact"},
 	{messaging.ErrOutboxFull, protocol.ErrInboxFull, "too many messages to that workspace are waiting to leave"},
-	{messaging.ErrInvalid, protocol.ErrMalformedFrame, "a message to a paired workspace has a printable ID up to 128 bytes and 1 to 16 KiB of text"},
+	{messaging.ErrInvalid, protocol.ErrMalformedFrame, "a message to a paired workspace has a printable ID up to 128 bytes, 1 to 16 KiB of text and at most 8 valid file references, none on a review request"},
+	{store.ErrRefsUnsupported, protocol.ErrRefsUnsupported, "that workspace's pairtask predates file references; nothing was queued. Send the message without files, or after that workspace updates"},
 	{messaging.ErrConflict, protocol.ErrDuplicateMessage, "message ID already used for another message to that workspace"},
 	{store.ErrDuplicateMessage, protocol.ErrDuplicateMessage, store.ErrDuplicateMessage.Error()},
 	{store.ErrNotSupersedable, protocol.ErrNotSupersedable, store.ErrNotSupersedable.Error()},

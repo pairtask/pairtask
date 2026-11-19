@@ -389,7 +389,10 @@ WHERE contact = ? AND pairing_epoch = ? AND remote_id = ?`, imp.LocalID, msgStam
 // sender, or "operator" for the contact's operator, under origin remote.
 func importedMessage(ctx context.Context, tx *sql.Tx, imp RemoteImport, at importSlot) (protocol.Message, []protocol.Recipient, error) {
 	seq, ts := at.seq, at.ts.UTC()
-	payload, _ := json.Marshal(map[string]string{"text": imp.Text}) // a map of strings always encodes
+	payload, err := importedPayload(ctx, tx, imp)
+	if err != nil {
+		return protocol.Message{}, nil, err
+	}
 	parent, err := localParent(ctx, tx, imp)
 	if err != nil {
 		return protocol.Message{}, nil, err
@@ -635,7 +638,7 @@ func replyOutgoing(ctx context.Context, tx *sql.Tx, r RemoteReply) (outgoing, er
 	if err != nil {
 		return outgoing{}, err
 	}
-	reply := messaging.Message{ID: r.Msg.MessageID, Text: r.Text, From: r.Msg.From, ReplyTo: parent.answeredBy()}
+	reply := messaging.Message{ID: r.Msg.MessageID, Text: r.Text, From: r.Msg.From, ReplyTo: parent.answeredBy(), Files: r.Msg.Files}
 	if parent.Sender != "" {
 		reply.To = []string{parent.Sender}
 	}

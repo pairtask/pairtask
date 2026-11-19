@@ -50,7 +50,7 @@ func DecodeSealed(frame []byte) (inner, seal []byte, err error) {
 // sealable are the frames a seal may wrap, messages and never control,
 // each with its own decoder.
 var sealable = map[byte]func([]byte) (Message, error){
-	FrameMessage: DecodeMessage, FrameRouted: DecodeRouted, FrameReviewAsk: DecodeReviewAsk,
+	FrameMessage: DecodeMessage, FrameRouted: DecodeRouted, FrameReviewAsk: DecodeReviewAsk, FrameRefs: DecodeRefs,
 }
 
 // wellFormedMessage: frame is a message frame that its own decoder reads.
@@ -103,16 +103,20 @@ func (s Session) decodeSealed(frame []byte) (Message, error) {
 }
 
 // sealVersionFor is the highest version a consent-capable store speaks:
-// PairingVersion without a seal store, SealVersion with one, and
-// ClaimVersion when it also keeps claim notices.
+// PairingVersion without a seal store, SealVersion with one, ClaimVersion
+// when it also keeps claim notices, and RefsVersion when it keeps file
+// references too.
 func sealVersionFor(st Store) byte {
 	if _, ok := st.(SealStore); !ok {
 		return PairingVersion
 	}
-	if _, ok := st.(ClaimStore); ok {
-		return ClaimVersion
+	if _, ok := st.(ClaimStore); !ok {
+		return SealVersion
 	}
-	return SealVersion
+	if keepsRefs(st) {
+		return RefsVersion
+	}
+	return ClaimVersion
 }
 
 // sealSessionStore is a session's view of a store that keeps seals: its

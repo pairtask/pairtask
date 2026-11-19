@@ -322,7 +322,7 @@ func contactMessageView(r messaging.Row) protocol.ContactMessageView {
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
 		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
 		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt,
-		PairingEpoch: r.PairingEpoch, SealDowngraded: r.SealDowngraded}
+		PairingEpoch: r.PairingEpoch, SealDowngraded: r.SealDowngraded, Files: r.Files}
 	if len(r.Seal) > 0 {
 		view.Seal = base64.StdEncoding.EncodeToString(r.Seal)
 	}

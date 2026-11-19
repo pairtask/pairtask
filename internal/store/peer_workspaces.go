@@ -101,7 +101,7 @@ func (s *Store) confirmedContacts(ctx context.Context) ([]peer.Contact, error) {
 // WorkspaceSend is a local agent's message to a paired workspace: to one of
 // its agents, or to its operator.
 type WorkspaceSend struct {
-	Msg           protocol.Message // as routed here: its ID, seq, sender and recipient
+	Msg           protocol.Message // as routed here: its ID, seq, sender, recipient and the files it names
 	SenderSession string
 	Contact       string // the workspace's identity key
 	Text          string
@@ -120,7 +120,7 @@ type WorkspaceSend struct {
 // same contact is answered as first queued, and its ID used for anything
 // else is a conflict.
 func (s *Store) QueueWorkspaceSend(ctx context.Context, w WorkspaceSend) (RemoteReplyResult, error) {
-	m := messaging.Message{ID: w.Msg.MessageID, Text: w.Text, From: w.Msg.From, Review: w.Review}
+	m := messaging.Message{ID: w.Msg.MessageID, Text: w.Text, From: w.Msg.From, Review: w.Review, Files: w.Msg.Files}
 	if w.Msg.To != protocol.OperatorID {
 		m.To = []string{w.Msg.To}
 	}

@@ -218,6 +218,10 @@ type SendResult struct {
 
 // SendMessage assigns an ID before writing. Acceptance and receipt events arrive
 // through Receive; neither a successful write nor a timeout implies delivery.
+// errFilesUnsupported refuses file references before anything is written:
+// an older broker would drop them and send the message without.
+var errFilesUnsupported = errors.New("file references require protocol version 31; this broker would send the message without them. Upgrade the broker, or send without files")
+
 func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResult, error) {
 	if err := c.checkPublic(request); err != nil {
 		return SendResult{}, err
@@ -227,6 +231,9 @@ func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResu
 	}
 	if request.Workspace != "" && c.protocolVersion < protocol.WorkspaceVersion {
 		return SendResult{}, errWorkspacesUnsupported
+	}
+	if len(request.Files) > 0 && c.protocolVersion < protocol.FileRefsVersion {
+		return SendResult{}, errFilesUnsupported
 	}
 	if !request.NonDurable && c.protocolVersion < protocol.DurableVersion {
 		return SendResult{}, errors.New("durable delivery requires protocol version 3; upgrade the broker or explicitly set non_durable")

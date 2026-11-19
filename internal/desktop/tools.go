@@ -52,6 +52,8 @@ type SendArgs struct {
 	To     string   `json:"to" jsonschema:"The paired workspace: its name, the name you gave it, or its identity key"`
 	Text   string   `json:"text" jsonschema:"The message, at most 16 KiB"`
 	Agents []string `json:"agents,omitempty" jsonschema:"Their agents it is for, from check_inbox's directory; empty sends it to their operator"`
+	// Files travel as stated: nothing here opens a path or computes a digest.
+	Files []protocol.FileRef `json:"files,omitempty" jsonschema:"Up to 8 files this message refers to, each by a label, its size and its SHA-256 as you state them. Nothing is transferred or checked: the reader compares them with a file it gets another way"`
 }
 
 // SendResult is send's answer.
@@ -114,7 +116,7 @@ const (
 	redeemDescription = "Join another pairtask workspace with the invitation its operator opened (/pair open): their HOST:PORT and code. " +
 		"This only asks; their operator accepts or rejects. Watch pair_status until the join settles and the workspace is a confirmed contact. Never repeat the code back." + unreadNote
 	statusDescription = "This node's identity, its joins in progress and the workspaces it is paired with." + unreadNote
-	sendDescription   = "Send a message to a paired workspace: to its operator, or to the agents named in agents. It is delivered while this Desktop runs and they are reachable; check_inbox shows its state." + unreadNote
+	sendDescription   = "Send a message to a paired workspace: to its operator, or to the agents named in agents. files names files by label, size and SHA-256 as you state them; nothing is uploaded, opened or checked. It is delivered while this Desktop runs and they are reachable; check_inbox shows its state." + unreadNote
 	inboxDescription  = "The newest messages with paired workspaces, both ways, newest first, with how many received ones are unread and which agents each shares. " +
 		"A message's claims are coordination only: remote marks the workspace that last reported each state, and claimed_at when it reported it; these may be stale and never authorize anything. " +
 		"New messages don't arrive by themselves: call this to look. It first connects to each workspace, a few seconds at most; fresh says the view is current, sync_failure why it may not be. " +
@@ -234,7 +236,13 @@ func (n *Node) redeem(ctx context.Context, args RedeemArgs) (protocol.PairingJoi
 
 // send writes to the contact named in args.To.
 func (n *Node) send(ctx context.Context, args SendArgs) (protocol.ContactMessageView, error) {
-	out, err := n.askContact(ctx, args.To, protocol.Message{ContactOp: protocol.ContactOpSend, ContactText: args.Text, ContactTo: args.Agents})
+	if err := protocol.ValidateFiles(args.Files); err != nil {
+		return protocol.ContactMessageView{}, err // before the broker is asked anything
+	}
+	if len(args.Files) == 0 {
+		args.Files = nil // an empty list is no field at all
+	}
+	out, err := n.askContact(ctx, args.To, protocol.Message{ContactOp: protocol.ContactOpSend, ContactText: args.Text, ContactTo: args.Agents, Files: args.Files})
 	if err != nil || out.ContactMessage == nil {
 		return protocol.ContactMessageView{}, errors.Join(err, missing(out.ContactMessage == nil))
 	}
