@@ -103,12 +103,16 @@ func (s Session) decodeSealed(frame []byte) (Message, error) {
 }
 
 // sealVersionFor is the highest version a consent-capable store speaks:
-// SealVersion with a seal store, else PairingVersion.
+// PairingVersion without a seal store, SealVersion with one, and
+// ClaimVersion when it also keeps claim notices.
 func sealVersionFor(st Store) byte {
-	if _, ok := st.(SealStore); ok {
-		return MaxVersion
+	if _, ok := st.(SealStore); !ok {
+		return PairingVersion
 	}
-	return PairingVersion
+	if _, ok := st.(ClaimStore); ok {
+		return ClaimVersion
+	}
+	return SealVersion
 }
 
 // sealSessionStore is a session's view of a store that keeps seals: its

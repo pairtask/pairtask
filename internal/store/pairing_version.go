@@ -51,6 +51,9 @@ func (p *PeerMessages) SawVersion(ctx context.Context, v byte) error {
 		if err := noteSealsSeen(ctx, tx, p.fence.contact, v); err != nil {
 			return err
 		}
+		if err := settleUnshownClaims(ctx, tx, p.fence.contact, v); err != nil {
+			return err
+		}
 		after, err := signingNow(ctx, tx, p.fence.contact)
 		if err != nil {
 			return err

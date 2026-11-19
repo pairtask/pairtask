@@ -41,6 +41,9 @@ func (h *Hub) claim(ctx context.Context, in Inbound) protocol.Message {
 	if refusal := h.claimPreflight(in, now); refusal != nil {
 		return *refusal
 	}
+	if msg.MessageID != "" {
+		return h.pairedClaim(ctx, in, now)
+	}
 	req := store.ClaimRequest{MessageID: msg.OperatorMessageID, Task: msg.Task, Topic: msg.Topic, Role: msg.Role, Agent: in.From.ID, At: now}
 	set, err := h.runClaim(ctx, msg.Type, req)
 	if err != nil {
@@ -68,6 +71,8 @@ func (h *Hub) claimPreflight(in Inbound, now time.Time) *protocol.Message {
 		return refuse(protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
 	case in.From.ProtocolVersion < protocol.ClaimVersion:
 		return refuse(protocol.ErrMalformedFrame, "claims require protocol_version 8")
+	case msg.MessageID != "" && in.From.ProtocolVersion < protocol.PairedClaimVersion:
+		return refuse(protocol.ErrMalformedFrame, "claims on a paired message require protocol_version 30")
 	}
 	if err := validClaimFrame(msg); err != nil {
 		return refuse(protocol.ErrInvalidClaim, err.Error())
@@ -117,7 +122,7 @@ func page(set protocol.ClaimSet) *protocol.ClaimPage {
 
 // validClaimFrame checks the fields each claim frame needs.
 func validClaimFrame(msg protocol.Message) error {
-	if err := protocol.ValidateClaimMessage(msg.OperatorMessageID); err != nil {
+	if err := protocol.ValidateClaimSubject(msg.OperatorMessageID, msg.MessageID); err != nil {
 		return err
 	}
 	if msg.Type == protocol.TypeClaimGet {
@@ -166,4 +171,31 @@ func (m bucketMap) of(agent string, now time.Time) *tokenBucket {
 		m[agent] = b
 	}
 	return b
+}
+
+// pairedClaim serves a claim frame that names a paired message (#419): one
+// this agent received, which it may claim, or one it sent, whose claims
+// the other workspace told of it may read. A change the sender is owed is
+// queued with it, and the link woken; neither side ever refuses anything
+// else because of a claim.
+func (h *Hub) pairedClaim(ctx context.Context, in Inbound, now time.Time) protocol.Message {
+	msg := in.Msg
+	req := store.ClaimRequest{MessageID: msg.MessageID, Task: msg.Task, Topic: msg.Topic, Role: msg.Role, Agent: in.From.ID, At: now}
+	out, err := h.store.PairedClaim(ctx, msg.Type, req)
+	if err != nil {
+		failure := h.claimFailure(msg.RequestID, protocol.ClaimSet{}, err)
+		if failure.Code == protocol.ErrClaimConflict {
+			failure.MessageID, failure.ClaimPage = msg.MessageID, page(out.Set)
+		}
+		return failure
+	}
+	answer := protocol.Message{Type: protocol.TypeClaimResult, RequestID: msg.RequestID, MessageID: msg.MessageID, ClaimPage: page(out.Set)}
+	if !out.Changed {
+		return answer
+	}
+	answer.RemoteVisible, answer.RemoteReason = &out.Visible, out.Reason
+	if out.Visible {
+		h.SyncMessages(out.Contact)
+	}
+	return answer
 }

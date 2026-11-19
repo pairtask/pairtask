@@ -162,10 +162,14 @@ func wrapStore(st Store) Store {
 	if consentCapable(st) {
 		os, cs := st.(OutcomeStore), st.(ConsentStore)
 		wrapped := consentSessionStore{outcomeSessionStore{routingSessionStore{sessionStore{st}, os}, os}, cs}
-		if ss, ok := st.(SealStore); ok {
-			return sealSessionStore{wrapped, ss}
+		ss, ok := st.(SealStore)
+		if !ok {
+			return wrapped
 		}
-		return wrapped
+		if claims, ok := st.(ClaimStore); ok {
+			return claimSessionStore{sealSessionStore{wrapped, ss}, claims}
+		}
+		return sealSessionStore{wrapped, ss}
 	}
 	switch s := st.(type) {
 	case OutcomeStore:

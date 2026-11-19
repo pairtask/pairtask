@@ -41,6 +41,9 @@ type Result struct {
 	// DirectoryAcked: the peer answered a directory other than the one it
 	// last answered (#305).
 	DirectoryChanged, DirectoryAcked bool
+	// Claim notices (#419): those this side sent and had answered, and the
+	// peer's this side kept or dropped for good.
+	ClaimNoticesSent, ClaimNoticesStored, ClaimNoticesDropped int
 }
 
 // Moved reports durable progress: anything stored, refused or confirmed,
@@ -53,7 +56,8 @@ func (r Result) Moved() bool {
 func (r Result) counted() int {
 	messages := r.Sent + r.Received + r.Refused + r.RefusalsRecorded
 	receipts := r.ReadsSent + r.ReadsStored
-	return messages + receipts + r.OutcomesSent + r.OutcomesStored + r.consentCounted()
+	claims := r.ClaimNoticesSent + r.ClaimNoticesStored + r.ClaimNoticesDropped
+	return messages + receipts + r.OutcomesSent + r.OutcomesStored + r.consentCounted() + claims
 }
 
 // consentCounted is the consent outcomes settled either way.
@@ -222,6 +226,9 @@ func (s Session) steps(dialer bool) []phase {
 	}
 	if _, ok := s.consent(); ok {
 		pairs = append(pairs, [2]phase{s.sendConsentOutcomes, s.receiveConsentOutcomes})
+	}
+	if _, ok := s.claims(); ok {
+		pairs = append(pairs, [2]phase{s.sendClaimNotices, s.receiveClaimNotices})
 	}
 	steps := make([]phase, 0, 2*len(pairs))
 	for _, pair := range pairs {
