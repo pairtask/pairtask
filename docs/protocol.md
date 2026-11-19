@@ -351,7 +351,11 @@ lock, or refuse a message, reply, or review.
 Mutations of received-message claims report `remote_visible`: true means a
 notice was queued, not delivered. False carries `remote_reason` (`not_shared`,
 `unsupported`, or `unpaired`); MCP adds explanatory `remote_reason_text`.
-Reads refresh that visibility and can report a terminal peer refusal.
+Reads omit both visibility fields when the caller has no recorded claim
+notice. Otherwise they summarize that caller's claims: true if any was
+queued or answered-kept; false with their common reason if all are hidden,
+or `mixed` if hidden for different reasons. A read can also report a terminal
+peer refusal. An ended pairing always reports `unpaired`.
 Unsharing cancels queued notices atomically and stops further updates; the
 sender keeps the last state already reported. Re-sharing never revives a
 cancelled notice. Unpairing cancels notices and hides remote claims from the
@@ -363,14 +367,18 @@ state, sequence (1 through 2^63-1) and time; the reply repeats the complete key 
 An empty reason means kept; terminal reasons are `unknown_message`,
 `not_recipient`, `stale`, `conflict`, and `full`. Higher sequences replace,
 identical replays are kept, and conflicting equal or older sequences change
-nothing. A receiver retains at most 16 distinct claim keys per message;
-updates to an existing key still work at that limit. Claim records are
-collected with their retained subjects.
+nothing. A receiver keeps at most 16 held (active or done) claims and 64
+lifetime claim keys per message. Released keys free held capacity, but stay
+as sequence tombstones: a delayed older active notice cannot resurrect them.
+Reactivating a released key also requires held capacity. Updates that do not
+newly hold a key still work at the limits. Claim records are collected with
+their retained subjects.
 
 A peer below version 11 receives no claim frames. Pending notices settle as
 `unsupported`; changes while unsupported remain local. Upgrading does not
 replay them automatically: the next change can queue the current state with
-a sequence above the last queued state. Local changes and notice insertion
+a sequence above every earlier recorded state. Hidden changes are recorded
+with their reason and are never pending for transmission. Local changes and notice insertion
 commit together, so a failed notice write rolls back the claim change.
 
 ## Task claims (v8)

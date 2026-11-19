@@ -96,6 +96,13 @@ stale. Claims made while the peer is unsupported stay local after it
 upgrades until their next change. `unpaired` means the pairing this message
 arrived under has ended. See [the protocol contract](protocol.md#claims-on-paired-messages-agent-v30-peer-v11).
 
+A read's visibility fields summarize the caller's claims and are omitted
+when it has no recorded notice. True means at least one claim was queued or
+answered-kept; false carries the shared reason, or `mixed` when hidden for
+different reasons. An ended pairing reports `unpaired`. The receiving
+workspace retains up to 16 held claims and 64 lifetime claim keys per message;
+released keys stay as replay protection until the message is collected.
+
 | Tool | Arguments | Behavior |
 |------|-----------|----------|
 | `send` | `to`, `text`, optional `message_id`, `in_reply_to`, `non_durable`, `workspace` | Writes a direct message or broadcast (`to: "*"`); returns its ID for tracking. With `workspace` (its full key, or a name exactly one paired workspace has: its `local_name` or the name it gives itself), `to` is an agent of that [paired workspace](pairing.md#7-let-agents-talk-across) or `operator` for its operator. A reply in a paired conversation you were tagged into (`to: operator`, `in_reply_to` its message) also goes back to that workspace's audience when you may speak there; the result's `peer_delivery` says `queued` or `not_sent` and why. |
