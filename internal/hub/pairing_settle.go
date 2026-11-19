@@ -556,15 +556,22 @@ func (h *Hub) contactsSnapshot(ctx context.Context, snapshot *protocol.PairingSn
 		own = h.identity.Fingerprint()
 	}
 	for _, c := range contacts {
-		view := protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
-			Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
-			Confirmed: confirmed[c.IdentityKey], LocalName: c.LocalName, Dials: own != "" && dials(c, own), PausedAt: pausedAt(c),
-			Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: counts.awaiting[c.IdentityKey]},
-			Acks:    ackView(counts.acks, c.IdentityKey)}
-		noticeView(&view, counts.notices[c.IdentityKey])
-		snapshot.Contacts = append(snapshot.Contacts, view)
+		snapshot.Contacts = append(snapshot.Contacts, h.contactView(c, confirmed[c.IdentityKey], counts, own))
 	}
 	return nil
+}
+
+// contactView is one contact as the operator sees it, wherever it is
+// shown: its pairing, pause, direction, sync, reviews, acks and notices.
+// own is this workspace's identity key, "" while it isn't loaded.
+func (h *Hub) contactView(c peer.Contact, confirmed bool, counts contactCounts, own string) protocol.PairingContactView {
+	view := protocol.PairingContactView{IdentityKey: c.IdentityKey, Name: c.Name,
+		Destination: c.Destination, EstablishedAt: c.EstablishedAt, Joined: c.Joined, Invited: c.Invited,
+		Confirmed: confirmed, LocalName: c.LocalName, Dials: own != "" && dials(c, own), PausedAt: pausedAt(c),
+		Summary: &protocol.PairingContactSummary{Sync: h.contactSyncView(c.IdentityKey), ReviewsAwaiting: counts.awaiting[c.IdentityKey]},
+		Acks:    ackView(counts.acks, c.IdentityKey)}
+	noticeView(&view, counts.notices[c.IdentityKey])
+	return view
 }
 
 // noticeView adds the contact's notice state to its view (#276): the

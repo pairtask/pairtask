@@ -26,6 +26,7 @@ const operatorSpaceUsage = `usage: pairtask space COMMAND [--socket PATH] [--jso
   revoke FP [--space ID]
   leave    [--space ID]
   delete   [--space ID]
+  connect FP [--space ID]
 --space may be left out when exactly one space is pinned.`
 
 // spaceCommand is how one space command's words map onto its request:
@@ -47,6 +48,7 @@ var spaceCommands = map[string]spaceCommand{
 	"revoke":   {protocol.SpaceOpRevoke, oneWord(func(r *protocol.SpaceRequest, w string) { r.Node = w })},
 	"leave":    {protocol.SpaceOpLeave, noWords},
 	"delete":   {protocol.SpaceOpDelete, noWords},
+	"connect":  {protocol.SpaceOpConnect, oneWord(func(r *protocol.SpaceRequest, w string) { r.Node = w })},
 }
 
 func noWords(_ *protocol.SpaceRequest, words []string) error {

@@ -150,5 +150,5 @@ func (p anyPinned) role() tlsRole {
 
 // pins are the pinned protocols' admission checks, by ALPN.
 func (opts ServerOptions) pins() map[string]func(string) bool {
-	return map[string]func(string) bool{ContactALPN: opts.ContactPins, MessageALPN: opts.MessagePins, ControlALPN: opts.ControlPins}
+	return map[string]func(string) bool{ContactALPN: opts.ContactPins, MessageALPN: opts.MessagePins, ControlALPN: opts.ControlPins, SpaceALPN: opts.SpacePins}
 }

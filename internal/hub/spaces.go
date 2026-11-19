@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
@@ -31,7 +32,34 @@ func (h *Hub) SetSpaces(cfg SpaceConfig) {
 		}
 	}
 	h.spaces = &cfg
-	h.spaceBusy = map[string]bool{}
+}
+
+// spaceBusy holds the spaces with a change in flight, one change per
+// space: operator operations take it on the Run goroutine, and an inbound
+// connect, off it, takes the same slot.
+type spaceBusy struct {
+	mu   sync.Mutex
+	held map[string]bool
+}
+
+// hold takes id's slot; false when a change holds it already.
+func (b *spaceBusy) hold(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.held[id] {
+		return false
+	}
+	if b.held == nil {
+		b.held = map[string]bool{}
+	}
+	b.held[id] = true
+	return true
+}
+
+func (b *spaceBusy) release(id string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.held, id)
 }
 
 // spaceHandler is one space operation: checks on the Run goroutine, then either
@@ -67,6 +95,7 @@ var spaceOps = map[string]spaceHandler{
 	protocol.SpaceOpRevoke:   (*Hub).spaceRevoke,
 	protocol.SpaceOpLeave:    (*Hub).spaceLeave,
 	protocol.SpaceOpDelete:   (*Hub).spaceDelete,
+	protocol.SpaceOpConnect:  (*Hub).spaceConnect,
 }
 
 // operatorSpace serves one space operation. Local checks and the pins are
@@ -86,10 +115,9 @@ func (h *Hub) operatorSpace(ctx context.Context, _ map[string]*Client, req opera
 	}
 	held := ""
 	if !spaceReads[req.msg.SpaceRequest.Op] && step.space != "" {
-		if held = step.space; h.spaceBusy[held] {
+		if held = step.space; !h.spaceBusy.hold(held) {
 			return spaceRefusal("another change to space " + held + " is still running; try again once it answers").frame(req.msg.MessageID)
 		}
-		h.spaceBusy[held] = true
 	}
 	h.startSpaceJob(req, step.job, held)
 	return answerLater
@@ -125,8 +153,11 @@ func (h *Hub) startSpaceJob(req operatorRequest, job spaceJob, held string) {
 		local, cancelLocal := context.WithTimeout(context.WithoutCancel(runCtx), AttemptBudget+PairingGrace)
 		defer cancelLocal()
 		result, err := job(net, local)
-		h.finishOperator(runCtx, req, func(context.Context) protocol.Message {
-			delete(h.spaceBusy, held)
+		h.finishOperator(runCtx, req, func(ctx context.Context) protocol.Message {
+			h.spaceBusy.release(held)
+			if err == nil {
+				err = h.contactAnswer(ctx, result)
+			}
 			if err != nil {
 				return spaceRefusal(err.Error()).frame(req.msg.MessageID)
 			}

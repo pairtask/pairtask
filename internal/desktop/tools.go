@@ -174,6 +174,11 @@ func NewServer(n *Node, version string) *mcp.Server {
 			members, err := n.spaceMembers(ctx, args)
 			return nil, SpaceMembersResult{Members: members}, err
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "space_connect", Description: spaceConnectDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive, OpenWorldHint: &openWorld}},
+		func(ctx context.Context, _ *mcp.CallToolRequest, args SpaceConnectArgs) (*mcp.CallToolResult, SpaceConnectResult, error) {
+			contact, err := n.spaceConnect(ctx, args)
+			return nil, SpaceConnectResult{Contact: contact}, err
+		})
 	mcp.AddTool(s, &mcp.Tool{Name: "mark_read", Description: readDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args ReadArgs) (*mcp.CallToolResult, ReadResult, error) {
 			marked, err := n.markRead(ctx, args)
