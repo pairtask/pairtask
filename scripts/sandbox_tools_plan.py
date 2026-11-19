@@ -114,7 +114,10 @@ class Instance:
             if subcommand == "stage":
                 self.discard(args)
         try:
-            return json.loads(reply)
+            result = json.loads(reply)
+            if not isinstance(result, dict):
+                raise ValueError("expected a JSON object")
+            return result
         except ValueError as error:
             raise ContainerError("refused", "{}: unreadable reply to {}".format(self.name, subcommand)) from error
 
@@ -122,7 +125,10 @@ class Instance:
         """Remove a delivery once it was staged, or failed to be."""
         if "--incoming" in stage_args:
             incoming = stage_args[stage_args.index("--incoming") + 1]
-            self.container.run(self.container.command + ["exec", self.container.target, "-T", "--", "rm", "-rf", incoming], check=False)
+            try:
+                self.container.run(self.container.command + ["exec", self.container.target, "-T", "--", "rm", "-rf", incoming], check=False)
+            except (OSError, subprocess.SubprocessError):
+                pass  # delivery cleanup must not hide an activator result or failure
 
     def read(self, path):
         with transport(self.name):
@@ -130,6 +136,11 @@ class Instance:
 
     def share(self, name):
         return self.read("{}/{}".format(self.container.layout.share_dir, name))
+
+    def provenance(self):
+        """Release and image-lock identity, freshly read on every resume."""
+        return {"release_sha256": digest(self.share("build-source.json").encode()),
+                "base_lock_sha256": digest(self.share("tools.lock.json").encode())}
 
     def manifest(self, generation):
         return json.loads(self.read("{}/generations/{}/manifest.json".format(STORE, generation)))
@@ -157,6 +168,8 @@ class transport:
         if kind is None or not issubclass(kind, (subprocess.SubprocessError, OSError, ValueError)):
             return False
         text = (getattr(error, "stderr", None) or str(error)).strip()
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", "replace")
         last = text.splitlines()[-1] if text else kind.__name__
         code = "refused" if any(mark in text for mark in REFUSAL_MARKS) else UNREACHABLE
         raise ContainerError(code, "{}: {}".format(self.name, last)) from error

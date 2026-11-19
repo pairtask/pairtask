@@ -48,8 +48,10 @@ def managed_projects(state):
             yield from (item["attributes"]["name"] for item in resource.get("instances", []))
 
 
-def deployment_directory(explicit, project, root=ROOT, location=LOCATION):
-    directory = explicit if explicit else discover_directory(project, root, location)
+def deployment_directory(explicit, project, root=ROOT, location=LOCATION, create=True):
+    directory = explicit if explicit else discover_directory(project, root, location, create=create)
+    if directory is None:
+        return None
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("State directory must be an existing, non-symlinked provisioning directory")
     directory = directory.resolve()
@@ -59,7 +61,7 @@ def deployment_directory(explicit, project, root=ROOT, location=LOCATION):
     return directory
 
 
-def discover_directory(project, root, location):
+def discover_directory(project, root, location, create=True):
     saved = read_registry(location)
     if project in saved:
         return Path(saved[project])
@@ -67,7 +69,9 @@ def discover_directory(project, root, location):
     matches = [path for path in candidates if state_project(path) == project]
     if len(matches) > 1:
         raise ValueError("Multiple deployment states found; select one once with --state-dir")
-    return matches[0] if matches else new_deployment(root, location.parent / project)
+    if matches:
+        return matches[0]
+    return new_deployment(root, location.parent / project) if create else None
 
 
 def worktree_directories(root):

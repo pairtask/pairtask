@@ -6,6 +6,7 @@ runtime, where the operator's keys and socket are."""
 import argparse
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 from sandbox_operator_config import deployment_directory
@@ -81,26 +82,37 @@ def parser():
 
 
 def update_refusal(project="pairtask"):
-    """Why no session should start now because of a client update, or None.
-    The tools refuse inside the sandbox anyway (exit 75); this says why
-    before a shell opens. A deployment that can't be found refuses nothing."""
-    try:
-        directory = deployment_directory(None, project)
-    except (ValueError, OSError):
-        return None
-    return sandbox_tools_update.session_refusal(sandbox_tools_update.glance(directory))
+    """Check the same locked journal the updater uses, without creating a
+    deployment during a session command. Invalid state refuses admission."""
+    directory = deployment_directory(None, project, create=False)
+    with sandbox_tools_update.admission(directory):
+        pass
+    return directory
+
+
+def session_spawn(project):
+    """Keep the admission check and local child creation inside one lock;
+    the existing session releases it before waiting for the child."""
+    def spawn(argv):
+        directory = deployment_directory(None, project, create=False)
+        with sandbox_tools_update.admission(directory):
+            return subprocess.Popen(argv)
+    return spawn
 
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.session == "shell":
-        refusal = update_refusal()
-        if refusal:
-            print("pairtask shell: " + refusal, file=sys.stderr)
-            return 75
-    if args.session == "chat" and args.secured == "secured":
-        sandbox_version.announce(args.project, args.remote)  # bounded; never waits on GitHub
-    return run_session(args.build(args))
+    project = getattr(args, "project", "pairtask")
+    try:
+        directory = update_refusal(project)
+        if args.session == "chat" and args.secured == "secured":
+            sandbox_version.announce(args.project, args.remote)  # bounded; never waits on GitHub
+        if directory is None:
+            return run_session(args.build(args))
+        return run_session(args.build(args), popen=session_spawn(project))
+    except (ValueError, OSError) as error:
+        print("pairtask {}: {}".format(args.session, error), file=sys.stderr)
+        return 75
 
 
 if __name__ == "__main__":

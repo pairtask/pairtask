@@ -41,10 +41,10 @@ def parser():
 def updated_clients(project):
     """The line for agent clients moved by `pairtask update`, or None."""
     try:
-        directory = deployment_directory(None, project)
+        directory = deployment_directory(None, project, create=False)
     except (ValueError, OSError):
         return None
-    return sandbox_tools_update.clients_line(sandbox_tools_update.glance(directory))
+    return sandbox_tools_update.clients_line(sandbox_tools_update.glance(directory)) if directory else None
 
 
 def main(argv=None):

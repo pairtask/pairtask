@@ -18,6 +18,8 @@ from pathlib import Path
 
 from sandbox_host_user import refuse_root
 from sandbox_remote import REMOTE
+from sandbox_operator_config import deployment_directory
+import sandbox_tools_update
 
 SCRIPTS = Path(__file__).resolve().parent
 PROJECT = "pairtask"
@@ -257,6 +259,15 @@ def main(argv=None):
             print(step)
         return 0
     preflight(steps)
+    if argv[0] == "start":
+        opts = composite_options("start", argv[1:], platform.system())
+        try:
+            directory = deployment_directory(None, opts.project, create=False)
+            with sandbox_tools_update.admission(directory):
+                return execute(steps)
+        except (ValueError, OSError) as error:
+            print("pairtask start: {}".format(error), file=sys.stderr)
+            return 75
     return execute(steps)
 
 

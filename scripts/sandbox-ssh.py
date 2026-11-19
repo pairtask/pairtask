@@ -13,6 +13,8 @@ import sys
 
 from sandbox_layout import discover
 from sandbox_remote import default_remote
+from sandbox_operator_config import deployment_directory
+import sandbox_tools_update
 
 
 DEFAULT_STATE = Path(__file__).resolve().parents[1] / "infra/incus/ssh"
@@ -146,7 +148,9 @@ def main():
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE)
     args = parser.parse_args()
     os.umask(0o077)
-    setup(args)
+    directory = deployment_directory(None, args.project, create=False)
+    with sandbox_tools_update.admission(directory):
+        setup(args)
 
 
 if __name__ == "__main__":

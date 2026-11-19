@@ -141,8 +141,10 @@ What it does, and what it never does:
 - **Both containers or neither.** No new tool starts in either container
   while they are switched (running ones continue; a tool started in that
   window exits 75), and neither reopens until both verify. If a step fails,
-  both go back to the clients they had. `pairtask shell` says so, and opens
-  no shell, while the two are being switched or after an update failed.
+  both go back to the clients they had. Host sessions, container startup,
+  and SSH setup take the update lock and refuse while an update is active
+  or its journal is invalid. An admitted session releases that lock as soon
+  as its local process starts, so an existing shell never holds up an update.
 - **It survives being interrupted.** The host records each step before and
   after it in `tools-update.json` beside the operator state. The next
   `pairtask update` (or `--repair`) reads back what each container actually
@@ -150,7 +152,9 @@ What it does, and what it never does:
   reached leaves everything where it is until it is back.
 - **An upgrade ends it.** `pairtask upgrade` starts the new root from its
   release's own versions; an update never carries over, and `pairtask
-  version` shows the updated clients until then. To make a version
+  version` shows the updated clients until then. Upgrade holds the update
+  lock through replacement and refuses an unfinished transaction; run
+  `pairtask update --repair` first. To make a version
   permanent, pin it in `tools.lock.json` (the tools lane in CI checks such a
   change in minutes).
 

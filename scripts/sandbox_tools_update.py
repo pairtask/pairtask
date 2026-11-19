@@ -391,9 +391,13 @@ class Update:
             if observed[role].get("entries_ok") is not True:
                 raise UpdateRefused("{}: the client set it runs doesn't verify, so there would be nothing sound to return to; "
                                     "nothing was changed (pairtask upgrade replaces it)".format(self.containers[role].name))
+        try:
+            instances = self.instances()
+        except ContainerError as error:
+            raise UpdateRefused("deployment identity unavailable: {}; nothing was changed".format(error)) from error
         record = {
             "schema": SCHEMA, "id": update_id, "kind": kind, "created": time.time(),
-            "deployment": dict(self.deployment, instances=self.instances()),
+            "deployment": dict(self.deployment, instances=instances),
             "requested": requested, "override": None,
             "phase": "resolving", "step": "intent", "target": None, "outcome": None, "failure": None, "detail": None,
             "restores": 0, "rollback": return_to(previous) or {},
@@ -415,7 +419,15 @@ class Update:
         return self.drive(record)
 
     def instances(self):
-        return {role: {"name": self.containers[role].name, "uuid": self.containers[role].uuid} for role in ROLES}
+        identities = {}
+        for role in ROLES:
+            instance = self.containers[role]
+            identity = {"name": instance.name, "uuid": instance.uuid}
+            provenance = getattr(instance, "provenance", None)
+            if provenance is not None:
+                identity.update(provenance())
+            identities[role] = identity
+        return identities
 
     def same_deployment(self, record):
         """The containers are the ones the journal was written for."""
@@ -684,6 +696,28 @@ def journal_in(directory):
     return Journal(Path(directory) / JOURNAL_NAME, Path(directory) / LOCK_NAME)
 
 
+@contextmanager
+def admission(directory):
+    """Check admission while excluding updates; hold through launching,
+    never through the lifetime of the admitted session."""
+    if directory is None:
+        yield
+        return
+    with journal_in(directory) as journal:
+        reason = session_refusal(journal.load())
+        if reason:
+            raise UpdateRefused(reason)
+        yield
+
+
+def require_finished(journal):
+    """An upgrade cannot discard an interrupted transaction's evidence."""
+    record = journal.load()
+    if record is not None and record["phase"] not in TERMINAL:
+        raise UpdateRefused("a client update is unfinished (phase {}); run pairtask update --repair before upgrading"
+                            .format(record["phase"]))
+
+
 def glance(directory):
     """The last record, read without the lock, for commands that only need
     to know where an update stands: the journal is replaced atomically, so
@@ -703,17 +737,14 @@ def clients_line(record):
     return "clients:   {} (pairtask update; the next upgrade returns to the release's own)".format(versions)
 
 
-def supersede(journal, replaced=False):
-    """An upgrade replaces the root: the journal is marked superseded so it
-    is never applied to the new containers. Before the containers are
-    replaced an unfinished update refuses; once they have been (replaced),
-    there is nothing left for it to finish. An update running right now
-    holds the lock and refuses either way."""
+def supersede(journal):
+    """End a finished update after root replacement. An unfinished record
+    retains its recovery evidence and must be repaired before upgrading."""
     with journal:
         record = journal.load()
         if record is None or record["phase"] == "superseded":
             return record
-        if record["phase"] not in TERMINAL and not replaced:
+        if record["phase"] not in TERMINAL:
             raise UpdateRefused("a client update is unfinished (phase {}); finish it with pairtask update --repair first"
                                 .format(record["phase"]))
         record.update(phase="superseded", step="result")

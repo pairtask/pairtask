@@ -156,10 +156,9 @@ def tools_retry(args, directory, server):
 
 def rollout(args, directory, server):
     # One lock covers download through SSH: no competing plan/apply can change the selection.
-    with deployment_lock(directory):
+    with deployment_lock(directory), sandbox_tools_update.journal_in(directory) as update_journal:
         require_recovered(directory)
-        with sandbox_tools_update.journal_in(directory):
-            pass  # a client update running right now holds this lock: refuse before anything stops
+        sandbox_tools_update.require_finished(update_journal)
         pairing = checked_pairing(args, directory)
         initialize_variables(args, directory)
         names = managed_instances(directory, args.project)
@@ -178,8 +177,8 @@ def rollout(args, directory, server):
         except BaseException:
             print("Rollout incomplete. Inspect the error before restarting containers; host state and data are retained.", flush=True)
             raise
-        # The roots are new: an earlier client update, finished or not, has nothing left to apply to.
-        sandbox_tools_update.supersede(sandbox_tools_update.journal_in(directory), replaced=True)
+        # The roots are new; the finished update cannot apply to them.
+        sandbox_tools_update.supersede(update_journal)
         try:
             install_tools(args, server, selected.image_dir)
         except BaseException:
