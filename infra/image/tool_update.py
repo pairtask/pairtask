@@ -109,12 +109,20 @@ class Updates:
             binaries = {}
             for name in clients_in(manifest):
                 entry = self.entry(generation, manifest, name)
-                (check or smoke_check)(name, manifest["tools"][name], entry)
+                self.check(check, name, manifest["tools"][name], entry)
                 binaries[name] = file_sha256(entry)
             record = {"update": update_id, "generation": generation, "manifest_sha256": staged["manifest_sha256"],
                       "binaries": binaries, "check": CHECK_VERSION}
             write_durable(self.evidence(update_id, generation) / "smoked.json", dump(record))
         return record
+
+    def check(self, injected, name, tool, entry):
+        """An injected check takes the client alone; the default one also
+        reads the Codex config this store derived, not the live root's."""
+        if injected:
+            injected(name, tool, entry)
+        else:
+            smoke_check(name, tool, entry, etc=self.store.etc)
 
     def close(self, update_id):
         """Shut admission: maintenance for this update, current untouched."""
