@@ -222,6 +222,33 @@ type SendResult struct {
 // an older broker would drop them and send the message without.
 var errFilesUnsupported = errors.New("file references require protocol version 31; this broker would send the message without them. Upgrade the broker, or send without files")
 
+// sendNeeds are the broker versions a send needs, by what it uses, in the
+// order they are refused: a workspace, file references, durable delivery,
+// and acknowledgments, which every send needs.
+var sendNeeds = []struct {
+	uses    func(SendRequest) bool
+	version int
+	err     error
+}{
+	{func(r SendRequest) bool { return r.Workspace != "" }, protocol.WorkspaceVersion, errWorkspacesUnsupported},
+	{func(r SendRequest) bool { return len(r.Files) > 0 }, protocol.FileRefsVersion, errFilesUnsupported},
+	{func(r SendRequest) bool { return !r.NonDurable }, protocol.DurableVersion,
+		errors.New("durable delivery requires protocol version 3; upgrade the broker or explicitly set non_durable")},
+	{func(SendRequest) bool { return true }, protocol.AcknowledgmentVersion,
+		errors.New("broker does not support protocol version 2 acknowledgments; upgrade the broker")},
+}
+
+// supports refuses, before anything is written, a send that uses what
+// this broker's version doesn't carry.
+func (c *Client) supports(request SendRequest) error {
+	for _, need := range sendNeeds {
+		if need.uses(request) && c.protocolVersion < need.version {
+			return need.err
+		}
+	}
+	return nil
+}
+
 func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResult, error) {
 	if err := c.checkPublic(request); err != nil {
 		return SendResult{}, err
@@ -229,17 +256,8 @@ func (c *Client) SendMessage(ctx context.Context, request SendRequest) (SendResu
 	if err := c.checkRoom(request); err != nil {
 		return SendResult{}, err
 	}
-	if request.Workspace != "" && c.protocolVersion < protocol.WorkspaceVersion {
-		return SendResult{}, errWorkspacesUnsupported
-	}
-	if len(request.Files) > 0 && c.protocolVersion < protocol.FileRefsVersion {
-		return SendResult{}, errFilesUnsupported
-	}
-	if !request.NonDurable && c.protocolVersion < protocol.DurableVersion {
-		return SendResult{}, errors.New("durable delivery requires protocol version 3; upgrade the broker or explicitly set non_durable")
-	}
-	if c.protocolVersion < protocol.AcknowledgmentVersion {
-		return SendResult{}, errors.New("broker does not support protocol version 2 acknowledgments; upgrade the broker")
+	if err := c.supports(request); err != nil {
+		return SendResult{}, err
 	}
 	msg, err := request.message()
 	if err != nil {

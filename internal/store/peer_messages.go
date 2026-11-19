@@ -224,23 +224,35 @@ func queueRow(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error
 	if err != nil || found {
 		return o.replayedAsk(ctx, tx, row, err)
 	}
-	// A paused contact takes nothing new; a retry above still answers (#276).
-	if err := requireActive(ctx, tx, key.contact); err != nil {
-		return messaging.Row{}, err
-	}
-	if err := refuseUnpairedByThem(ctx, tx, key.contact); err != nil {
-		return messaging.Row{}, err
-	}
-	if err := o.senderMaySpeak(ctx, tx); err != nil {
-		return messaging.Row{}, err
-	}
-	if err := refsCarried(ctx, tx, o); err != nil {
-		return messaging.Row{}, err
-	}
-	if err := outboxRoom(ctx, tx, o); err != nil {
+	if err := o.admitted(ctx, tx); err != nil {
 		return messaging.Row{}, err
 	}
 	return queueNew(ctx, tx, o)
+}
+
+// newChecks are what a new outbound message passes before it is queued,
+// in order: a contact that isn't paused (a retry of a queued one is
+// answered before, #276) and hasn't unpaired, a sender that may speak
+// there, a contact that can carry its file references, and room in the
+// outbox.
+var newChecks = []func(context.Context, *sql.Tx, outgoing) error{
+	func(ctx context.Context, tx *sql.Tx, o outgoing) error { return requireActive(ctx, tx, o.key.contact) },
+	func(ctx context.Context, tx *sql.Tx, o outgoing) error {
+		return refuseUnpairedByThem(ctx, tx, o.key.contact)
+	},
+	func(ctx context.Context, tx *sql.Tx, o outgoing) error { return o.senderMaySpeak(ctx, tx) },
+	refsCarried,
+	outboxRoom,
+}
+
+// admitted is the first refusal of a new message, if any.
+func (o outgoing) admitted(ctx context.Context, tx *sql.Tx) error {
+	for _, check := range newChecks {
+		if err := check(ctx, tx, o); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // queueNew queues a new message with the next sequence, and records the

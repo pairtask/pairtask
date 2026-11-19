@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -52,15 +53,10 @@ func (r FileRef) Valid() bool {
 
 // validRefPath: 1 to FileRefPathBytes of UTF-8 without control characters.
 func validRefPath(path string) bool {
-	if path == "" || len(path) > FileRefPathBytes || !utf8.ValidString(path) {
+	if path == "" || len(path) > FileRefPathBytes {
 		return false
 	}
-	for _, r := range path {
-		if unicode.IsControl(r) {
-			return false
-		}
-	}
-	return true
+	return utf8.ValidString(path) && !strings.ContainsFunc(path, unicode.IsControl)
 }
 
 // validDigest: a SHA-256 as 64 lower-case hex digits.
@@ -69,12 +65,15 @@ func validDigest(digest string) bool {
 		return false
 	}
 	for i := 0; i < len(digest); i++ {
-		if c := digest[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+		if !lowerHex(digest[i]) {
 			return false
 		}
 	}
 	return true
 }
+
+// lowerHex: a digit, or a to f. A byte below the range wraps far above it.
+func lowerHex(c byte) bool { return c-'0' < 10 || c-'a' < 6 }
 
 const sha256Bytes = 32
 
@@ -114,7 +113,7 @@ var refCarriers = map[byte]func([]byte) (Message, error){FrameMessage: DecodeMes
 // without them, then a count byte and, for each, the label with its
 // length, eight bytes of size and the 32-byte digest.
 func EncodeRefs(m Message) ([]byte, error) {
-	if len(m.Files) == 0 || m.Review != nil || !ValidFileRefs(m.Files) {
+	if m.Review != nil || !carriable(m.Files) {
 		return nil, fmt.Errorf("%w: file references", ErrProtocol)
 	}
 	bare := m
@@ -125,6 +124,9 @@ func EncodeRefs(m Message) ([]byte, error) {
 	}
 	return encode(FrameRefs, inner, refList(m.Files))
 }
+
+// carriable: at least one reference, all valid.
+func carriable(refs []FileRef) bool { return len(refs) > 0 && ValidFileRefs(refs) }
 
 // refList is valid references as a frame carries them: a count byte and,
 // for each, the label with its length, the size and the digest.
@@ -150,7 +152,7 @@ const refsDomain = "pairtask-file-refs-v1\x00"
 // Its 128 digits are longer than an agent ID may be (AgentIDBytes), so
 // what names it among a seal's recipients can never be read as one.
 func RefsDigest(refs []FileRef) string {
-	if len(refs) == 0 || !ValidFileRefs(refs) {
+	if !carriable(refs) {
 		return ""
 	}
 	sum := sha512.Sum512(append([]byte(refsDomain), refList(refs)...))
@@ -183,12 +185,13 @@ func DecodeRefs(frame []byte) (Message, error) {
 // decodeRefList reads the references field: 1 to MaxFileRefs of them and
 // nothing after.
 func decodeRefList(b []byte) ([]FileRef, error) {
-	if len(b) == 0 || b[0] == 0 || int(b[0]) > MaxFileRefs {
+	count := refCount(b)
+	if count < 1 || count > MaxFileRefs {
 		return nil, fmt.Errorf("%w: file reference count", ErrProtocol)
 	}
 	rest := b[1:]
-	refs := make([]FileRef, 0, int(b[0]))
-	for range int(b[0]) {
+	refs := make([]FileRef, 0, count)
+	for range count {
 		ref, more, err := nextRef(rest)
 		if err != nil {
 			return nil, err
@@ -199,6 +202,14 @@ func decodeRefList(b []byte) ([]FileRef, error) {
 		return nil, fmt.Errorf("%w: file references trailing bytes", ErrProtocol)
 	}
 	return refs, nil
+}
+
+// refCount is the count byte of a references field, 0 for an empty one.
+func refCount(b []byte) int {
+	if len(b) == 0 {
+		return 0
+	}
+	return int(b[0])
 }
 
 // nextRef is one reference and what follows it.
