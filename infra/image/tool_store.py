@@ -533,6 +533,12 @@ class Store:
     def stage_update(self, manifest, incoming, update_id):
         return self.updates().stage(manifest, incoming, update_id)
 
+    def restage_update(self, generation, update_id):
+        return self.updates().restage(generation, update_id)
+
+    def staged_fresh(self, generation, update_id):
+        return bool(self.updates().staged(update_id, generation).get("fresh"))
+
     def smoke_update(self, generation, update_id, check=None):
         return self.updates().smoke(generation, update_id, check)
 

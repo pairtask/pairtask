@@ -94,6 +94,11 @@ class Updates:
                 {"update": update_id, "generation": generation, "manifest_sha256": digest_of(manifest), "fresh": fresh}))
         return generation
 
+    def restage(self, generation, update_id):
+        """Stage a generation this store already holds, from its own
+        manifest: the way back needs no delivery."""
+        return self.stage(self.manifest_of(generation), self.store.root / "incoming", update_id)
+
     def build(self, generation, manifest, incoming):
         for name, tool in manifest["tools"].items():
             self.store.stage(name, tool, incoming)
