@@ -93,8 +93,8 @@ func TestRemoteOutcomeNoticeAcceptanceWrongWorkspaceKeepsContactReason(t *testin
 	before := f.snapshot()
 	f.agent.write(outcomeNoticeReply(f.notice.MessageID, other.Fingerprint()))
 	response := f.agent.read()
-	operatorEqual(t, "different contact rejected", response.Code, protocol.ErrMalformedFrame)
-	operatorEqual(t, "contact checked before outcome kind", response.Detail, "with workspace, in_reply_to answers a message from that workspace")
+	operatorEqual(t, "different contact rejected", response.Code, protocol.ErrInvalidReply)
+	operatorEqual(t, "contact checked before outcome kind", response.Detail, "with workspace, in_reply_to must be the message_id of a message received from that workspace, as it arrived here")
 	outcomeNoticeUnchanged(f, before)
 }
 

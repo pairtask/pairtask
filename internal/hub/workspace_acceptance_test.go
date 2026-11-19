@@ -135,7 +135,7 @@ func TestWorkspaceAcceptanceExplicitReplyMustMatchContact(t *testing.T) {
 	remoteHubShare(t, h, other, a.ID)
 	msg := remoteHubReply(parent, "reply")
 	msg.Workspace = other
-	messageSyncEqual(t, workspaceRouteResult(t, h, a, msg).Code, protocol.ErrMalformedFrame)
+	messageSyncEqual(t, workspaceRouteResult(t, h, a, msg).Code, protocol.ErrInvalidReply)
 	msg.Workspace = key
 	messageSyncEqual(t, workspaceRouteResult(t, h, a, msg).Stage, protocol.StageAccepted)
 }
