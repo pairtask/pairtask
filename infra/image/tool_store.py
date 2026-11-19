@@ -648,29 +648,39 @@ def release_mismatch(manifest, lock_file, source_file, overrides=None):
 def retained(root, generations):
     """What keeping every generation costs: how many generation directories
     the store holds (the current one included; a link to one is not
-    another), and the bytes stored under the store. Reads only."""
-    kept = [path for path in generations.iterdir() if path.is_dir() and not path.is_symlink()] if generations.is_dir() else []
-    return {"generations": len(kept), "stored_bytes": stored_bytes(root)}
+    another), and the bytes stored under the store. Reads only. None when
+    the store can't be read through: a partial count would look like a
+    small one."""
+    try:
+        kept = [path for path in generations.iterdir() if path.is_dir() and not path.is_symlink()] if generations.is_dir() else []
+        return {"generations": len(kept), "stored_bytes": stored_bytes(root)}
+    except OSError:
+        return None
 
 
 def stored_bytes(root):
     """The content bytes of the regular files under root, each file once
     however many names it has (artifacts are shared between generations),
-    without following links out of the store. Apparent size, not blocks."""
+    without following links out of the store. Apparent size, not blocks.
+    A directory that can't be listed is an OSError, never a smaller sum."""
     seen, total = set(), 0
-    for directory, _, names in os.walk(root, followlinks=False):
+    for directory, _, names in os.walk(root, followlinks=False, onerror=raise_error):
         for name in names:
-            size = file_size(os.path.join(directory, name), seen)
-            total += size
+            total += file_size(os.path.join(directory, name), seen)
     return total
 
 
+def raise_error(error):
+    raise error
+
+
 def file_size(path, seen):
-    """A regular file's size the first time its inode is met, else 0; a
-    file that went away meanwhile counts nothing."""
+    """A regular file's size the first time its inode is met, else 0. A
+    file removed since it was listed counts nothing; any other failure to
+    look at it is an OSError."""
     try:
         info = os.lstat(path)
-    except OSError:
+    except FileNotFoundError:
         return 0
     inode = (info.st_dev, info.st_ino)
     if not stat.S_ISREG(info.st_mode) or inode in seen:

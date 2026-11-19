@@ -162,19 +162,26 @@ def retained_lines(instances):
 
 def retained_line(role, instance):
     try:
-        info = instance.activate_plain("status").get("retained")
+        reply = instance.activate_plain("status")
     except ContainerError as error:
         return "tools:     {}: retained generations unavailable ({})".format(role, error)
+    info = reply.get("retained") if isinstance(reply, dict) else None
     if not counted(info):
-        return "tools:     {}: retained generations unavailable (this image's tool store doesn't report them)".format(role)
+        return "tools:     {}: retained generations unavailable (its tool store didn't report them)".format(role)
     return "tools:     {}: {} retained generations, {:.1f} MiB stored".format(role, info["generations"], info["stored_bytes"] / 2 ** 20)
 
 
 def counted(info):
-    """A retained report with both of its numbers."""
+    """A retained report with both of its numbers, each a count."""
     if not isinstance(info, dict):
         return False
-    return all(isinstance(info.get(key), int) and not isinstance(info.get(key), bool) for key in ("generations", "stored_bytes"))
+    return all(a_count(info.get(key)) for key in ("generations", "stored_bytes"))
+
+
+def a_count(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    return value >= 0
 
 
 class transport:
