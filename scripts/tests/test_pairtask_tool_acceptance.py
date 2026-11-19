@@ -30,11 +30,19 @@ class ToolAliasAcceptance(unittest.TestCase):
         self.entry.chmod(0o755)
         # Preload only the store dependency; runpy executes the unmodified launcher.
         (self.root / "tool_store.py").write_text(
-            "import os\nfrom pathlib import Path\n"
+            "import os\nfrom pathlib import Path\nfrom contextlib import contextmanager\n"
+            "held = False\n"
+            "@contextmanager\ndef launch_lock():\n"
+            " global held\n held = True\n"
+            " try: yield\n"
+            " finally: held = False\n"
             "class StoreError(ValueError): pass\n"
-            "def ready(): return os.environ.get('PAIRTASK_TEST_READY_ERROR') or None\n"
+            "def ready():\n"
+            " assert held, 'readiness must run under launch_lock'\n"
+            " return os.environ.get('PAIRTASK_TEST_READY_ERROR') or None\n"
             "class Store:\n"
             " def resolve_name(self, name):\n"
+            "  assert held, 'entry selection must run under launch_lock'\n"
             "  return Path(os.environ['PAIRTASK_TEST_ENTRY']) if name == 'go' else None\n")
 
     def invoke(self, name, args, blocked=False):
