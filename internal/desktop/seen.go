@@ -52,6 +52,9 @@ func (s seenMarks) of(consumer string) (map[string]int64, error) {
 // together: all are durable before it returns, or none moved.
 func (s seenMarks) advance(consumer string, to map[string]int64) (map[string]int64, error) {
 	at := map[string]int64{}
+	if len(to) == 0 {
+		return at, nil
+	}
 	err := s.locked(func(f *seenFile) bool {
 		if f.Consumers[consumer] == nil {
 			f.Consumers[consumer] = map[string]int64{}

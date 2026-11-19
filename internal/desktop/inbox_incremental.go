@@ -93,39 +93,24 @@ func (n *Node) contactPage(ctx context.Context, contact string, before int64) (*
 	return out.ContactPage, nil
 }
 
-// newerThan is the oldest keep messages with contact that the selection
-// wants and whose cursor is above after, oldest first, with the newest
-// page of the history. The history is paged newest first, so it walks back
-// until a page reaches the cursor or the history ends, however long that
-// is, keeping only the oldest it has met: a backlog is read from its start,
-// never skipped. Ordering is the stored row order, never a timestamp.
-func (n *Node) newerThan(ctx context.Context, contact string, after int64, sel inboxSelection, keep int) ([]protocol.ContactMessageView, *protocol.ContactMessagePage, error) {
-	walk := newerWalk{after: after, sel: sel, keep: keep}
-	return walk.rows, walk.newest, walk.back(ctx, n, contact, func() bool { return false })
-}
-
-// anyNewer reports whether contact has a wanted message above after. It
-// stops at the first page that shows one.
-func (n *Node) anyNewer(ctx context.Context, contact string, after int64, sel inboxSelection) (bool, error) {
-	walk := newerWalk{after: after, sel: sel, keep: 1}
-	err := walk.back(ctx, n, contact, func() bool { return len(walk.rows) > 0 })
-	return len(walk.rows) > 0, err
-}
-
-// newerWalk gathers, page by page from the newest, the wanted messages
-// above a cursor, holding on to the oldest keep of them.
+// newerWalk gathers the messages with a workspace that the selection
+// wants and whose cursor is above after, holding on to the oldest keep of
+// them. The history is paged newest first, so it walks back until a page
+// reaches the cursor or the history ends, however long that is: a backlog
+// is read from its start, never skipped. Ordering is the stored row
+// order, never a timestamp.
 type newerWalk struct {
 	after  int64
 	sel    inboxSelection
 	keep   int
+	first  bool                          // stop at the first page that shows one: is there any?
 	rows   []protocol.ContactMessageView // oldest first
 	newest *protocol.ContactMessagePage
 }
 
-// back walks the history until a page reaches the cursor, the history
-// ends, or enough says so. Each page is older than the one before, so the
-// walk ends.
-func (w *newerWalk) back(ctx context.Context, n *Node, contact string, enough func() bool) error {
+// back walks the history with contact. Each page is older than the one
+// before, so the walk ends.
+func (w *newerWalk) back(ctx context.Context, n *Node, contact string) error {
 	before := int64(0)
 	for {
 		page, err := n.contactPage(ctx, contact, before)
@@ -134,11 +119,20 @@ func (w *newerWalk) back(ctx context.Context, n *Node, contact string, enough fu
 		}
 		reached := w.take(page)
 		next, older := olderThan(page, before)
-		if reached || !older || enough() {
+		if w.finished(reached, older) {
 			return nil
 		}
 		before = next
 	}
+}
+
+// finished: the page reached the cursor, the history ended, or one
+// message was all that was asked about.
+func (w *newerWalk) finished(reached, older bool) bool {
+	if reached || !older {
+		return true
+	}
+	return w.first && len(w.rows) > 0
 }
 
 // take keeps page's wanted messages above the cursor, and says whether
@@ -162,10 +156,11 @@ func (w *newerWalk) take(page *protocol.ContactMessagePage) bool {
 // continued is the conversation with c from a cursor on: the oldest
 // messages above it, at most the limit, and the cursor to continue from.
 func (n *Node) continued(ctx context.Context, c protocol.PairingContactView, after int64, sel inboxSelection) (Conversation, protocol.ContactSyncView, error) {
-	rows, page, err := n.newerThan(ctx, c.IdentityKey, after, sel, sel.limit+1)
-	if err != nil {
+	walk := newerWalk{after: after, sel: sel, keep: sel.limit + 1}
+	if err := walk.back(ctx, n, c.IdentityKey); err != nil {
 		return Conversation{}, protocol.ContactSyncView{}, err
 	}
+	rows, page := walk.rows, walk.newest
 	conv := Conversation{Contact: c.IdentityKey, Name: contactName(c), Directory: page.Directory, Unread: unread(page.Messages),
 		Messages: rows, Next: after}
 	if len(conv.Messages) > sel.limit {
@@ -180,32 +175,36 @@ func (n *Node) continued(ctx context.Context, c protocol.PairingContactView, aft
 // shown finishes a read for its consumer once every conversation was
 // read: a new_only read moves the seen marks to the last message each
 // conversation returns, all of them in one durable step, so a read that
-// failed part-way has shown nothing and consumed nothing. Then seals are
-// left out unless asked for, a sync failure already reported isn't
-// repeated, and a new_only conversation with nothing new and nothing to
-// report is dropped.
+// failed part-way has shown nothing and consumed nothing. Then each
+// conversation is presented, and a new_only one with nothing new and
+// nothing to report is dropped.
 func (n *Node) shown(convs []Conversation, sel inboxSelection, marks map[string]int64) ([]Conversation, error) {
-	if moved := moves(convs, sel); len(moved) > 0 {
-		at, err := n.marks().advance(sel.consumer, moved)
-		if err != nil {
-			return nil, err
-		}
-		for contact, cursor := range at {
-			marks[contact] = cursor
-		}
+	at, err := n.marks().advance(sel.consumer, moves(convs, sel))
+	if err != nil {
+		return nil, err
 	}
 	out := make([]Conversation, 0, len(convs))
 	for _, conv := range convs {
-		conv.Seen = marks[conv.Contact]
-		if !sel.seals {
-			conv.Messages = withoutSeals(conv.Messages)
-		}
-		conv.SyncFailure = n.told.changed(sel.consumer, conv.Contact, conv.SyncFailure)
-		if !sel.newOnly || len(conv.Messages) > 0 || conv.SyncFailure != "" {
+		conv.Seen = max(marks[conv.Contact], at[conv.Contact])
+		if n.present(&conv, sel) {
 			out = append(out, conv)
 		}
 	}
 	return out, nil
+}
+
+// present shapes one conversation for its consumer: seals are left out
+// unless asked for, and a sync failure already reported isn't repeated.
+// It says whether the conversation is worth returning.
+func (n *Node) present(conv *Conversation, sel inboxSelection) bool {
+	if !sel.seals {
+		conv.Messages = withoutSeals(conv.Messages)
+	}
+	conv.SyncFailure = n.told.changed(sel.consumer, conv.Contact, conv.SyncFailure)
+	if !sel.newOnly {
+		return true
+	}
+	return len(conv.Messages) > 0 || conv.SyncFailure != ""
 }
 
 // moves is where a new_only read takes the seen marks: for each
@@ -359,11 +358,11 @@ func (w *inboxWait) unseen(ctx context.Context) ([]string, error) {
 	}
 	found := []string{}
 	for _, c := range w.contacts {
-		any, err := w.n.anyNewer(ctx, c.IdentityKey, marks[c.IdentityKey], inboxSelection{incomingOnly: true})
-		if err != nil {
+		walk := newerWalk{after: marks[c.IdentityKey], sel: inboxSelection{incomingOnly: true}, keep: 1, first: true}
+		if err := walk.back(ctx, w.n, c.IdentityKey); err != nil {
 			return nil, err
 		}
-		if any {
+		if len(walk.rows) > 0 {
 			found = append(found, c.IdentityKey)
 		}
 	}
