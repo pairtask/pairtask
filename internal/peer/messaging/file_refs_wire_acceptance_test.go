@@ -58,29 +58,46 @@ func fileRefsEncode(t *testing.T, m Message) []byte {
 	return wire
 }
 
+func fileRefsCount(count int) []fileRefSample {
+	refs := make([]fileRefSample, count)
+	for i := range refs {
+		refs[i] = fileRefValid()
+		refs[i].Path = fmt.Sprintf("../opaque/%d.bin", i)
+		refs[i].Size = int64(i)
+	}
+	if count == 8 {
+		refs[7].Path = strings.Repeat("é", 256)
+		refs[7].Size = (1 << 53) - 1
+	}
+	return refs
+}
+
+func fileRefsKind(t *testing.T, wire []byte) byte {
+	t.Helper()
+	kind, err := Kind(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kind
+}
+
+func fileRefsDecode(t *testing.T, kind byte, wire []byte) Message {
+	t.Helper()
+	m, err := (Session{Version: 12}).decodeMessage(kind, wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func TestFileRefsWireAcceptanceRoundTripPreservesOrderAndRequiresVersion12(t *testing.T) {
 	for _, count := range []int{1, 8} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			refs := make([]fileRefSample, count)
-			for i := range refs {
-				refs[i] = fileRefValid()
-				refs[i].Path = fmt.Sprintf("../opaque/%d.bin", i)
-				refs[i].Size = int64(i)
-			}
-			if count == 8 {
-				refs[7].Path = strings.Repeat("é", 256)
-				refs[7].Size = (1 << 53) - 1
-			}
+			refs := fileRefsCount(count)
 			m := fileRefsMessage(t, refs)
 			wire := fileRefsEncode(t, m)
-			kind, err := Kind(wire)
-			if err != nil {
-				t.Fatal(err)
-			}
-			decoded, err := (Session{Version: 12}).decodeMessage(kind, wire)
-			if err != nil {
-				t.Fatal(err)
-			}
+			kind := fileRefsKind(t, wire)
+			decoded := fileRefsDecode(t, kind, wire)
 			if !reflect.DeepEqual(fileRefsOf(t, decoded), refs) {
 				t.Fatal("references dropped, reordered or changed")
 			}
@@ -91,10 +108,7 @@ func TestFileRefsWireAcceptanceRoundTripPreservesOrderAndRequiresVersion12(t *te
 			if err != nil {
 				t.Fatal(err)
 			}
-			unsealed, err := (Session{Version: 12}).decodeMessage(FrameSealed, sealed)
-			if err != nil {
-				t.Fatal(err)
-			}
+			unsealed := fileRefsDecode(t, FrameSealed, sealed)
 			if !reflect.DeepEqual(fileRefsOf(t, unsealed), refs) {
 				t.Fatal("sealed envelope lost references")
 			}
@@ -128,32 +142,32 @@ func TestFileRefsWireAcceptanceEveryFieldAndOrderBindHash(t *testing.T) {
 	}
 }
 
+func fileRefsInvalidCases() map[string][]fileRefSample {
+	valid := fileRefValid()
+	single := map[string]fileRefSample{
+		"path-size":     {strings.Repeat("é", 257), valid.Size, valid.SHA256},
+		"path-control":  {"bad\nlabel", valid.Size, valid.SHA256},
+		"negative-size": {valid.Path, -1, valid.SHA256},
+		"unsafe-size":   {valid.Path, 1 << 53, valid.SHA256},
+		"digest-case":   {valid.Path, valid.Size, strings.Repeat("A", 64)},
+		"digest-short":  {valid.Path, valid.Size, "a"},
+		"digest-nonhex": {valid.Path, valid.Size, strings.Repeat("z", 64)},
+	}
+	cases := make(map[string][]fileRefSample, len(single)+1)
+	for name, ref := range single {
+		cases[name] = []fileRefSample{ref}
+	}
+	nine := make([]fileRefSample, 9)
+	for i := range nine {
+		nine[i] = valid
+	}
+	cases["count"] = nine
+	return cases
+}
+
 func TestFileRefsWireAcceptanceRejectsInvalidBounds(t *testing.T) {
-	for _, field := range []string{"count", "path-size", "path-control", "negative-size", "unsafe-size", "digest-case", "digest-short", "digest-nonhex"} {
+	for field, refs := range fileRefsInvalidCases() {
 		t.Run(field, func(t *testing.T) {
-			r := fileRefValid()
-			switch field {
-			case "path-size":
-				r.Path = strings.Repeat("é", 257)
-			case "path-control":
-				r.Path = "bad\nlabel"
-			case "negative-size":
-				r.Size = -1
-			case "unsafe-size":
-				r.Size = 1 << 53
-			case "digest-case":
-				r.SHA256 = strings.Repeat("A", 64)
-			case "digest-short":
-				r.SHA256 = "a"
-			case "digest-nonhex":
-				r.SHA256 = strings.Repeat("z", 64)
-			}
-			refs := []fileRefSample{r}
-			if field == "count" {
-				for len(refs) < 9 {
-					refs = append(refs, r)
-				}
-			}
 			m := fileRefsMessage(t, refs)
 			if _, err := encoderOf(m)(m); err == nil {
 				t.Fatal("invalid references encoded")
