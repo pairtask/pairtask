@@ -32,7 +32,15 @@ func claimsStoredSubject(t *testing.T, db *store.Store, contact string) messagin
 	return messaging.ClaimNotice{MessageID: "claim-subject", Agent: "worker", Role: "owner", Task: "investigate", State: "active", Seq: 1, At: messageAt}
 }
 
-func claimsNoticeApply(t *testing.T, s claimNoticeReceiver, contact string, n messaging.ClaimNotice, stored bool, reason string) {
+type claimNoticeCase struct {
+	contact string
+	notice  messaging.ClaimNotice
+	stored  bool
+	reason  string
+}
+
+func claimsNoticeApply(t *testing.T, s claimNoticeReceiver, want claimNoticeCase) {
+	contact, n, stored, reason := want.contact, want.notice, want.stored, want.reason
 	t.Helper()
 	answer, err := s.AcceptClaimNotice(context.Background(), contact, n, messageAt)
 	pairOK(t, err)
@@ -60,19 +68,19 @@ func TestPairedClaimsStoreAcceptanceSequenceReplayAndConflictNeverRegress(t *tes
 	n := claimsStoredSubject(t, db, contact)
 	s := claimsBoundStore(t, db, contact)
 	n.Seq = 2
-	claimsNoticeApply(t, s, contact, n, true, "")
-	claimsNoticeApply(t, s, contact, n, true, "")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, n, true, ""})
+	claimsNoticeApply(t, s, claimNoticeCase{contact, n, true, ""})
 	conflict := n
 	conflict.State = "done"
-	claimsNoticeApply(t, s, contact, conflict, false, "conflict")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, conflict, false, "conflict"})
 	claimsHeldState(t, db, contact, "active")
 	older := conflict
 	older.Seq = 1
-	claimsNoticeApply(t, s, contact, older, false, "stale")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, older, false, "stale"})
 	claimsHeldState(t, db, contact, "active")
 	n.Seq = 3
 	n.State = "released"
-	claimsNoticeApply(t, s, contact, n, true, "")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, n, true, ""})
 	claimsHeldState(t, db, contact, "released")
 }
 
@@ -82,23 +90,23 @@ func TestPairedClaimsStoreAcceptanceRejectsUnknownContactAndNonRecipient(t *test
 	s := claimsBoundStore(t, db, contact)
 	unknown := n
 	unknown.MessageID = "missing"
-	claimsNoticeApply(t, s, contact, unknown, false, "unknown_message")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, unknown, false, "unknown_message"})
 	stranger := n
 	stranger.Agent = "shared-but-not-addressed"
-	claimsNoticeApply(t, s, contact, stranger, false, "not_recipient")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, stranger, false, "not_recipient"})
 	other := messageContact(t, db, 2)
-	claimsNoticeApply(t, claimsBoundStore(t, db, other), other, n, false, "unknown_message")
+	claimsNoticeApply(t, claimsBoundStore(t, db, other), claimNoticeCase{other, n, false, "unknown_message"})
 	set, err := db.SentMessageClaims(context.Background(), "claim-subject", "")
 	pairOK(t, err)
 	pairEqual(t, len(set.Claims), 0)
-	claimsNoticeApply(t, s, contact, n, true, "")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, n, true, ""})
 	claimsHeldState(t, db, contact, "active")
 }
 
 func TestPairedClaimsStoreAcceptanceOtherLocalAgentCannotRead(t *testing.T) {
 	db, contact := messageFixture(t)
 	n := claimsStoredSubject(t, db, contact)
-	claimsNoticeApply(t, claimsBoundStore(t, db, contact), contact, n, true, "")
+	claimsNoticeApply(t, claimsBoundStore(t, db, contact), claimNoticeCase{contact, n, true, ""})
 	_, err := db.SentMessageClaims(context.Background(), "claim-subject", "unrelated")
 	if !errors.Is(err, store.ErrClaimTarget) {
 		t.Fatalf("unrelated agent read remote claims: %v", err)
@@ -115,5 +123,5 @@ func TestPairedClaimsStoreAcceptanceOldEpochCannotAttachToCurrentPairing(t *test
 		t.Fatal("admitted old session crossed epoch fence")
 	}
 	current := claimsBoundStore(t, db, contact)
-	claimsNoticeApply(t, current, contact, n, false, "unknown_message")
+	claimsNoticeApply(t, current, claimNoticeCase{contact, n, false, "unknown_message"})
 }

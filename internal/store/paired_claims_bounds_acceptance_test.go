@@ -15,12 +15,12 @@ func TestPairedClaimsBoundsAcceptanceFullDropsNewKeysButUpdatesExisting(t *testi
 	s := claimsBoundStore(t, db, contact)
 	for i := 0; i < protocol.ClaimsPerMessage; i++ {
 		n.Task = fmt.Sprintf("task-%d", i)
-		claimsNoticeApply(t, s, contact, n, true, "")
+		claimsNoticeApply(t, s, claimNoticeCase{contact, n, true, ""})
 	}
 	n.Task = "overflow"
-	claimsNoticeApply(t, s, contact, n, false, "full")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, n, false, "full"})
 	n.Task, n.Seq, n.State = "task-0", 2, "done"
-	claimsNoticeApply(t, s, contact, n, true, "")
+	claimsNoticeApply(t, s, claimNoticeCase{contact, n, true, ""})
 	set, err := db.SentMessageClaims(context.Background(), n.MessageID, "")
 	pairOK(t, err)
 	pairEqual(t, set.Total, protocol.ClaimsPerMessage)
@@ -32,7 +32,7 @@ func TestPairedClaimsBoundsAcceptanceCollectionFollowsSubjects(t *testing.T) {
 	_, err := db.PairedClaim(ctx, protocol.TypeClaimSet, req)
 	pairOK(t, err)
 	n := claimsStoredSubject(t, db, contact)
-	claimsNoticeApply(t, claimsBoundStore(t, db, contact), contact, n, true, "")
+	claimsNoticeApply(t, claimsBoundStore(t, db, contact), claimNoticeCase{contact, n, true, ""})
 	// Model the replay floor forgetting both subjects; acknowledged imports
 	// are now collectable, while no operator-authored claim is involved.
 	_, err = raw.Exec(`DELETE FROM peer_messages WHERE contact=?`, contact)

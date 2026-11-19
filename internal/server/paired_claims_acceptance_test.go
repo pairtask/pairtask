@@ -33,7 +33,10 @@ func pairedClaimSetup(t *testing.T) *pairedClaimFixture {
 	return &pairedClaimFixture{pair: pair, sender: sender, receiver: receiver, asker: asker, worker: worker, localID: got.MessageID}
 }
 
-func pairedClaimCall(p *sessionProbe, kind, id, task, role string) sessionWire {
+type pairedClaimAction struct{ kind, id, task, role string }
+
+func pairedClaimCall(p *sessionProbe, action pairedClaimAction) sessionWire {
+	kind, id, task, role := action.kind, action.id, action.task, action.role
 	fields := map[string]any{"message_id": id}
 	if task != "" {
 		fields["task"] = task
@@ -69,7 +72,7 @@ func (f *pairedClaimFixture) awaitState(t *testing.T, task, state string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		r := pairedClaimCall(f.asker, protocol.TypeClaimGet, "claim-subject", "", "")
+		r := pairedClaimCall(f.asker, pairedClaimAction{protocol.TypeClaimGet, "claim-subject", "", ""})
 		for _, claim := range pairedClaimRecords(t, r) {
 			if claim.Task != task || claim.State != state {
 				continue
@@ -89,7 +92,7 @@ func (f *pairedClaimFixture) awaitState(t *testing.T, task, state string) {
 func TestPairedClaimsAcceptanceLifecycleVisibleToSender(t *testing.T) {
 	f := pairedClaimSetup(t)
 	for _, step := range []struct{ kind, state string }{{protocol.TypeClaimSet, "active"}, {protocol.TypeClaimRelease, "released"}, {protocol.TypeClaimSet, "active"}, {protocol.TypeClaimDone, "done"}} {
-		result := pairedClaimCall(f.worker, step.kind, f.localID, "investigate", "owner")
+		result := pairedClaimCall(f.worker, pairedClaimAction{step.kind, f.localID, "investigate", "owner"})
 		operatorEqual(t, "claim mutation accepted", result.text("type"), protocol.TypeClaimResult)
 		operatorEqual(t, "shared claim queued for remote visibility", sessionDecode[bool](t, result, "remote_visible"), true)
 		for _, claim := range pairedClaimRecords(t, result) {
@@ -111,7 +114,7 @@ func TestPairedClaimsAcceptanceUnsharedRecipientKeepsLocalClaim(t *testing.T) {
 	f := pairedClaimSetup(t)
 	r := f.receiver.f.send(protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpUnshare, ContactKey: f.receiver.key, ContactAgents: []string{"worker"}, MessageID: "unshare-worker"})
 	operatorEqual(t, "unshare accepted", r.Type, protocol.TypeOperatorContactResult)
-	result := pairedClaimCall(f.worker, protocol.TypeClaimSet, f.localID, "private-work", "owner")
+	result := pairedClaimCall(f.worker, pairedClaimAction{protocol.TypeClaimSet, f.localID, "private-work", "owner"})
 	claims := pairedClaimRecords(t, result)
 	operatorEqual(t, "recipient still owns one local claim", len(claims), 1)
 	operatorEqual(t, "local-only visibility", sessionDecode[bool](t, result, "remote_visible"), false)
@@ -119,7 +122,7 @@ func TestPairedClaimsAcceptanceUnsharedRecipientKeepsLocalClaim(t *testing.T) {
 	if claims[0].Remote != nil {
 		t.Fatal("local claim carries remote authority label")
 	}
-	remote := pairedClaimCall(f.asker, protocol.TypeClaimGet, "claim-subject", "", "")
+	remote := pairedClaimCall(f.asker, pairedClaimAction{protocol.TypeClaimGet, "claim-subject", "", ""})
 	operatorEqual(t, "private claim not leaked", len(pairedClaimRecords(t, remote)), 0)
 }
 
@@ -127,10 +130,10 @@ func TestPairedClaimsAcceptanceSharedNonRecipientCannotClaimOrRead(t *testing.T)
 	f := pairedClaimSetup(t)
 	bystander := &sessionProbe{operatorPeer: f.receiver.f.peer("bystander", protocol.Version)}
 	for _, kind := range []string{protocol.TypeClaimSet, protocol.TypeClaimGet} {
-		r := pairedClaimCall(bystander, kind, f.localID, "investigate", "owner")
+		r := pairedClaimCall(bystander, pairedClaimAction{kind, f.localID, "investigate", "owner"})
 		operatorEqual(t, "sharing alone is not receipt", r.text("type"), protocol.TypeError)
 	}
-	result := pairedClaimCall(f.worker, protocol.TypeClaimSet, f.localID, "investigate", "owner")
+	result := pairedClaimCall(f.worker, pairedClaimAction{protocol.TypeClaimSet, f.localID, "investigate", "owner"})
 	operatorEqual(t, "actual recipient can claim after refusal", result.text("type"), protocol.TypeClaimResult)
 	f.awaitState(t, "investigate", "active")
 }
@@ -141,6 +144,6 @@ func TestPairedClaimsAcceptanceSelectorsAreExclusive(t *testing.T) {
 		r, _ := f.worker.request(kind, map[string]any{"message_id": f.localID, "operator_message_id": "invented-operator", "task": "investigate"})
 		operatorEqual(t, "mixed selector rejected", r.text("type"), protocol.TypeError)
 	}
-	r := pairedClaimCall(f.worker, protocol.TypeClaimGet, f.localID, "", "")
+	r := pairedClaimCall(f.worker, pairedClaimAction{protocol.TypeClaimGet, f.localID, "", ""})
 	operatorEqual(t, "invalid requests left no claims", len(pairedClaimRecords(t, r)), 0)
 }
