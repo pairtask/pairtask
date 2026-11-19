@@ -35,20 +35,31 @@ def main(argv):
         name, args = argv[1], argv[2:]
     else:
         name, args = program, argv[1:]
+    try:
+        entry, env = selected(name)
+    except FileNotFoundError:
+        maintenance(name, "sandbox tools are in maintenance; run the rollout to activate them")
+    os.execve(entry, [str(entry), *args], env)
+
+
+def maintenance(name, reason):
+    print(f"{name}: {reason}", file=sys.stderr)
+    sys.exit(EXIT_MAINTENANCE)
+
+
+def selected(name):
     # Readiness, the entry and its environment are read together under the
     # store's shared lock, so an update can't flip `current` between them;
     # the exec happens after, on paths no update ever removes.
     with tool_store.launch_lock():
         reason = tool_store.ready()
         if reason:
-            print(f"{name}: {reason}", file=sys.stderr)
-            sys.exit(EXIT_MAINTENANCE)
+            maintenance(name, reason)
         entry = tool_store.Store().resolve_name(name)
         if entry is None or not entry.is_file():
             print(f"{name} is not installed in this sandbox; enable it in the preset and run rollout", file=sys.stderr)
             sys.exit(EXIT_MISSING)
-        env = environment(name, entry)
-    os.execve(entry, [str(entry), *args], env)
+        return entry, environment(name, entry)
 
 
 if __name__ == "__main__":

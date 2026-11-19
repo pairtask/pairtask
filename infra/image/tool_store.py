@@ -427,9 +427,7 @@ class Store:
     def activate(self, manifest, incoming):
         validate_manifest(manifest)
         generation = generation_id(manifest)
-        self.root.mkdir(parents=True, exist_ok=True)
-        with (self.root / "lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with StoreLock(self.root, exclusive=True):
             # Decided under the lock: a concurrent activation that just
             # released this root must not be followed by a second one.
             self.require_unreleased()
@@ -590,9 +588,19 @@ class StoreLock:
         self.path, self.exclusive = Path(root) / "lock", exclusive
 
     def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = self.path.open("a")
-        fcntl.flock(self.handle, fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH)
+        if self.exclusive:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(self.path.parent, 0o755)
+        self.handle = self.path.open("a" if self.exclusive else "r")
+        try:
+            if self.exclusive:
+                # Agent launchers only read the root-managed lock. Keep it
+                # readable even when activation runs with a private umask.
+                os.fchmod(self.handle.fileno(), 0o644)
+            fcntl.flock(self.handle, fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH)
+        except BaseException:
+            self.handle.close()
+            raise
         return self
 
     def __exit__(self, *_):
