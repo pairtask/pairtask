@@ -154,6 +154,29 @@ class Instance:
             return json.loads(self.container.output(self.container.layout.tools_activate, subcommand))
 
 
+def retained_lines(instances):
+    """One line per container on what its kept generations cost; a store
+    that can't be asked says so and is never shown as empty."""
+    return [retained_line(role, instances[role]) for role in instances]
+
+
+def retained_line(role, instance):
+    try:
+        info = instance.activate_plain("status").get("retained")
+    except ContainerError as error:
+        return "tools:     {}: retained generations unavailable ({})".format(role, error)
+    if not counted(info):
+        return "tools:     {}: retained generations unavailable (this image's tool store doesn't report them)".format(role)
+    return "tools:     {}: {} retained generations, {:.1f} MiB stored".format(role, info["generations"], info["stored_bytes"] / 2 ** 20)
+
+
+def counted(info):
+    """A retained report with both of its numbers."""
+    if not isinstance(info, dict):
+        return False
+    return all(isinstance(info.get(key), int) and not isinstance(info.get(key), bool) for key in ("generations", "stored_bytes"))
+
+
 class transport:
     """Failures of the Incus path inside become ContainerError: a refusal
     when the activator said why, else an unreachable container."""

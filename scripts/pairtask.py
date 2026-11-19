@@ -170,7 +170,8 @@ def status_steps(rest, system, instances):
     cached metadata (#78): no network, and never the command's failure."""
     opts = composite_options("status", rest, system)
     return [incus(opts.project, "list", opts.remote + ":"),
-            script("sandbox-version.py", "--summary", "--project", opts.project, "--remote", opts.remote)]
+            script("sandbox-version.py", "--summary", "--project", opts.project, "--remote", opts.remote),
+            script("sandbox-tools-update.py", "--retained", "--project", opts.project, "--remote", opts.remote)]
 
 
 COMPOSITES = {"install": install_steps, "start": start_steps, "stop": stop_steps, "status": status_steps}
@@ -225,9 +226,21 @@ def preflight(steps):
 def run(step):
     if step.kind == "script":
         sys.argv = [str(SCRIPTS / step.argv[0])] + step.argv[1:]
-        runpy.run_path(sys.argv[0], run_name="__main__")
+        try:
+            runpy.run_path(sys.argv[0], run_name="__main__")
+        except SystemExit as stop:  # a script ends with sys.exit; the steps after it still run
+            return exit_code(stop.code)
         return 0
     return subprocess.run(step.argv, check=False).returncode
+
+
+def exit_code(code):
+    """What the interpreter would exit with for sys.exit(code): a message
+    goes to stderr and counts as 1."""
+    if code is None or isinstance(code, int):
+        return code or 0
+    print(code, file=sys.stderr)
+    return 1
 
 
 def usage():

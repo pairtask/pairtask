@@ -20,7 +20,7 @@ from sandbox_host_user import refuse_root
 from sandbox_operator_config import deployment_directory, existing_deployment
 from sandbox_remote import default_remote
 from sandbox_tools_install import Container
-from sandbox_tools_plan import Instance, Resolver
+from sandbox_tools_plan import Instance, Resolver, retained_lines
 import sandbox_tools_update as update
 
 CLIENT_FLAGS = {"claude": "--claude", "codex": "--codex", "cs-mcp": "--cs-mcp"}
@@ -40,20 +40,33 @@ def arguments(argv=None):
     mode.add_argument("--rollback", action="store_true", help="return to the clients from before the last update; no download")
     mode.add_argument("--status", action="store_true", help="what the last update did and whether sessions can start; changes nothing")
     mode.add_argument("--repair", action="store_true", help="finish or revert an interrupted update, a failed cleanup included")
+    mode.add_argument("--retained", action="store_true",
+                      help="only what each container's kept client generations cost; changes nothing (pairtask status)")
     parser.add_argument("--remote", default=default_remote())
     parser.add_argument("--project", default="pairtask", type=identifier)
     parser.add_argument("--state-dir", type=Path, help="the operator checkout; discovered when left out")
     args = parser.parse_args(argv)
     args.requested = {name: getattr(args, name) for name in CLIENT_FLAGS if getattr(args, name)}
-    if args.requested and any((args.rollback, args.status, args.repair)):
-        parser.error("a version goes with a plain update, not with --rollback, --status or --repair")
+    if args.requested and any((args.rollback, args.status, args.repair, args.retained)):
+        parser.error("a version goes with a plain update, not with --rollback, --status, --repair or --retained")
     return args
 
 
+def instances_of(args):
+    return {role: Instance(Container(args.remote, args.project, role)) for role in update.ROLES}
+
+
 def transaction(args, directory):
-    instances = {role: Instance(Container(args.remote, args.project, role)) for role in update.ROLES}
+    instances = instances_of(args)
     work = update.Update(update.journal_in(directory), instances, Resolver(instances))
     return work.of({"project": args.project, "remote": args.remote})
+
+
+def report_retained(args):
+    """Print what each container keeps. Generations are never pruned by an
+    update, so this is how an operator sees when an upgrade is due."""
+    for line in retained_lines(instances_of(args)):
+        print(line)
 
 
 def run(args, directory):
@@ -136,6 +149,9 @@ def main(argv=None):
     if refuse_root("pairtask update"):
         return 1
     args = arguments(argv)
+    if args.retained:  # asks the containers only: no deployment is looked up, none is made
+        report_retained(args)
+        return 0
     directory = located(args)
     try:
         record = run(args, directory) if directory else None
@@ -144,6 +160,8 @@ def main(argv=None):
         return 1
     message, code = describe(record)
     print(message)
+    if args.status:
+        report_retained(args)
     return code
 
 

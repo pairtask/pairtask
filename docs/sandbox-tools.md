@@ -133,7 +133,10 @@ What it does, and what it never does:
 - **Added, never edited.** Each container gets a new generation beside the
   one it runs. Nothing existing is changed and nothing is pruned, so a
   session that started on the earlier clients keeps its files. Earlier
-  generations go when `pairtask upgrade` replaces the root.
+  generations go when `pairtask upgrade` replaces the root. `pairtask
+  status` and `pairtask update --status` show, per container, how many
+  generations are kept and the bytes stored (file sizes, each shared file
+  counted once), so you can see when an upgrade is due.
 - **Checked before it is used.** Each new client is started as an
   unprivileged user in a private home before anything is switched: it must
   report its version, Claude Code must print its help, and Codex must answer
