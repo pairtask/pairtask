@@ -111,7 +111,7 @@ Each container has its own root-owned (`0755`, `security.shifted=false`,
 ### Updating the agent clients
 
 `pairtask update` moves Claude Code, Codex and the CodeScene MCP server to
-newer versions in a running sandbox, without replacing the containers:
+selected versions in a running sandbox, without replacing the containers:
 
 ```sh
 pairtask update                    # Claude Code's stable channel; the latest Codex and CodeScene MCP
@@ -120,6 +120,10 @@ pairtask update --rollback         # back to the clients from before; no downloa
 pairtask update --status           # what the last update did; changes nothing
 pairtask update --repair           # finish or revert an interrupted update
 ```
+
+The stable channel may be older than the Claude Code a release ships or
+that you installed with an exact version: a plain `pairtask update` then
+moves Claude Code back to stable, and says which version it installed.
 
 What it does, and what it never does:
 

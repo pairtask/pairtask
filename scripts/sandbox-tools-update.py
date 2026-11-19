@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """pairtask update: move the agent clients (Claude Code, Codex and the
-CodeScene MCP server) in the running sandbox to newer versions, without
-replacing the containers.
+CodeScene MCP server) in the running sandbox to selected versions, without
+replacing the containers. Claude Code's stable channel can be older than
+the version installed: an update then moves it back to stable.
 
 Both containers change together or neither does; sessions already running
 keep the client they started with, and no new session starts while the two
