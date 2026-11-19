@@ -162,16 +162,19 @@ class UpdateAcceptance(StoreHarness):
             self.updates.flip(generation, "update-a")
         self.assertEqual(self.store.current_generation(), self.old)
 
-    def test_changed_manifest_after_smoke_refuses_flip(self):
-        generation = self.smoked()
-        path = self.store.generations / generation / "manifest.json"
-        manifest = json.loads(path.read_text())
-        manifest["selection"] = {"docker": True}
-        path.write_bytes(encoded(manifest))
+    def assert_changed_record_refuses_flip(self, generation, path, change):
+        record = json.loads(path.read_text())
+        record.update(change)
+        path.write_bytes(encoded(record))
         self.updates.close("update-a")
         with self.assertRaises(tool_store.StoreError):
             self.updates.flip(generation, "update-a")
         self.assertEqual(self.store.current_generation(), self.old)
+
+    def test_changed_manifest_after_smoke_refuses_flip(self):
+        generation = self.smoked()
+        path = self.store.generations / generation / "manifest.json"
+        self.assert_changed_record_refuses_flip(generation, path, {"selection": {"docker": True}})
 
     def test_smoke_record_binds_manifest_and_exact_binary(self):
         generation = self.smoked()
@@ -222,25 +225,11 @@ class UpdateAcceptance(StoreHarness):
 
     def test_incomplete_smoke_evidence_cannot_authorize_flip(self):
         generation = self.smoked()
-        path = self.evidence(generation, "smoked.json")
-        record = json.loads(path.read_text())
-        record["binaries"] = {}
-        path.write_bytes(encoded(record))
-        self.updates.close("update-a")
-        with self.assertRaises(tool_store.StoreError):
-            self.updates.flip(generation, "update-a")
-        self.assertEqual(self.store.current_generation(), self.old)
+        self.assert_changed_record_refuses_flip(generation, self.evidence(generation, "smoked.json"), {"binaries": {}})
 
     def test_unknown_smoke_check_cannot_authorize_flip(self):
         generation = self.smoked()
-        path = self.evidence(generation, "smoked.json")
-        record = json.loads(path.read_text())
-        record["check"] = "obsolete-check"
-        path.write_bytes(encoded(record))
-        self.updates.close("update-a")
-        with self.assertRaises(tool_store.StoreError):
-            self.updates.flip(generation, "update-a")
-        self.assertEqual(self.store.current_generation(), self.old)
+        self.assert_changed_record_refuses_flip(generation, self.evidence(generation, "smoked.json"), {"check": "obsolete-check"})
 
     def test_late_abort_never_deletes_a_previously_released_generation(self):
         first = self.commit()

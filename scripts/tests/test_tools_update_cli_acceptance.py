@@ -27,7 +27,7 @@ class UpdateAdmissionAcceptance(unittest.TestCase):
 
     def session(self, args):
         with patch.dict(self.main.__globals__, {
-            "deployment_directory": lambda *_a, **_k: self.directory,
+            "existing_deployment": lambda *_a, **_k: self.directory,
             "run_session": lambda *_a, **_k: self.fail("a session was admitted"),
         }):
             self.assertEqual(self.main(args), 75)
@@ -55,7 +55,7 @@ class UpdateAdmissionAcceptance(unittest.TestCase):
                     pass
             return SimpleNamespace(wait=wait)
         with patch.dict(self.main.__globals__, {
-            "deployment_directory": lambda *_a, **_k: self.directory,
+            "existing_deployment": lambda *_a, **_k: self.directory,
             "subprocess": SimpleNamespace(Popen=spawn),
         }):
             self.assertEqual(self.main(["shell"]), 23)
@@ -63,7 +63,7 @@ class UpdateAdmissionAcceptance(unittest.TestCase):
     def test_start_refuses_update_before_listing_or_starting_containers(self):
         main = runpy.run_path(str(SCRIPTS / "pairtask.py"))["main"]
         with self.rig.journal, patch.dict(main.__globals__, {
-            "deployment_directory": lambda *_a, **_k: self.directory,
+            "existing_deployment": lambda *_a, **_k: self.directory,
             "refuse_root": lambda *_: False,
             "execute": lambda *_: self.fail("start reached container execution"),
         }):
@@ -72,7 +72,7 @@ class UpdateAdmissionAcceptance(unittest.TestCase):
     def test_ssh_setup_refuses_update_before_key_or_container_changes(self):
         main = runpy.run_path(str(SCRIPTS / "sandbox-ssh.py"))["main"]
         with self.rig.journal, patch.object(sys, "argv", ["sandbox-ssh.py"]), patch.dict(main.__globals__, {
-            "deployment_directory": lambda *_a, **_k: self.directory,
+            "existing_deployment": lambda *_a, **_k: self.directory,
             "setup": lambda *_: self.fail("SSH setup reached key installation"),
         }):
             with self.assertRaises(update.UpdateRefused):

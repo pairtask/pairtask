@@ -5,6 +5,7 @@ each effect, including intermediate effects that a final-state test misses.
 """
 
 import json
+from itertools import product
 from pathlib import Path
 import subprocess
 import sys
@@ -36,26 +37,29 @@ class Container:
         update = args[args.index("--update") + 1]
         self.owner.before_effect(self.role, command, update)
         try:
-            if command == "verify":
-                answer = self.store.verify_update(update)
-            elif command == "stage":
-                if args[0] == "--reuse":
-                    generation = self.store.restage_update(args[1], update)
-                else:
-                    generation = self.store.stage_update(args[0], self.fixture.incoming, update)
-                answer = {"generation": generation, "fresh": self.store.staged_fresh(generation, update)}
-            elif command == "smoke":
-                answer = self.store.smoke_update(args[0], update, check=lambda *_: None)
-            elif command in ("flip", "restore"):
-                answer = getattr(self.store, command + "_update")(args[0], update)
-            elif command in ("close", "release", "abort"):
-                answer = getattr(self.store, command + "_update")(update)
-            else:
-                raise AssertionError(command)
+            answer = self.dispatch(command, args, update)
         except tool_store.StoreError as error:
             raise host.ContainerError(getattr(error, "code", "refused"), str(error)) from error
         self.owner.events.append((self.role, command))
         return answer
+
+    def stage(self, args, update):
+        if args[0] == "--reuse":
+            generation = self.store.restage_update(args[1], update)
+        else:
+            generation = self.store.stage_update(args[0], self.fixture.incoming, update)
+        return {"generation": generation, "fresh": self.store.staged_fresh(generation, update)}
+
+    def dispatch(self, command, args, update):
+        if command == "stage":
+            return self.stage(args, update)
+        if command == "smoke":
+            return self.store.smoke_update(args[0], update, check=lambda *_: None)
+        if command in ("flip", "restore"):
+            return getattr(self.store, command + "_update")(args[0], update)
+        if command in ("verify", "close", "release", "abort"):
+            return getattr(self.store, command + "_update")(update)
+        raise AssertionError(command)
 
 
 class Interrupt(host.Hooks):
@@ -76,7 +80,9 @@ class Interrupt(host.Hooks):
         self.boundary("after", phase, step, role)
 
     def inject(self, role, command, lost):
-        if not self.fired and self.failure == (role, command) and self.lost == lost:
+        if self.fired:
+            return
+        if (self.failure, self.lost) == ((role, command), lost):
             self.fired = True
             raise host.ContainerError("refused", "injected failure or lost reply")
 
@@ -101,7 +107,7 @@ class HostAcceptance(unittest.TestCase):
         self.deployment = {"project": "test", "release": "release-a", "base_lock_sha256": "lock-a"}
 
     def update(self, hooks=None, resolve=None):
-        return host.Update(self.journal, self.boxes, resolve or self.resolve, hooks, self.deployment)
+        return host.Update(self.journal, self.boxes, resolve or self.resolve, hooks).of(self.deployment)
 
     def resolve(self, requested, record):
         plans = {}
@@ -123,16 +129,22 @@ class HostAcceptance(unittest.TestCase):
         record = self.journal.load()
         seen = self.observations(update)
         if command in ("flip", "restore"):
-            for value in seen.values():
-                self.assertEqual((value["state"], value["update"]), ("maintenance", update))
-            self.assertEqual(record["target"], "predecessor" if command == "restore" else "candidate")
-            self.assertEqual(record["phase"], "restoring" if command == "restore" else "flipping")
-            self.assertEqual(record["step"], "intent")
+            self.assert_move_closed(command, update, record, seen)
         else:
-            target = "predecessor" if record["phase"] == "reopening" else record["target"]
-            for key, value in seen.items():
-                self.assertEqual(value["current"], record["containers"][key][target])
-                self.assertTrue(value["entries_ok"], (role, command, key, value))
+            self.assert_release_verified((role, command), record, seen)
+
+    def assert_move_closed(self, command, update, record, seen):
+        for value in seen.values():
+            self.assertEqual((value["state"], value["update"]), ("maintenance", update))
+        self.assertEqual(record["target"], "predecessor" if command == "restore" else "candidate")
+        self.assertEqual(record["phase"], "restoring" if command == "restore" else "flipping")
+        self.assertEqual(record["step"], "intent")
+
+    def assert_release_verified(self, effect, record, seen):
+        target = "predecessor" if record["phase"] == "reopening" else record["target"]
+        for key, value in seen.items():
+            self.assertEqual(value["current"], record["containers"][key][target])
+            self.assertTrue(value["entries_ok"], (effect, key, value))
 
     def stop_at(self, phase, step="intent", role=None, edge="after"):
         with self.assertRaises(host.Crash):
@@ -355,19 +367,21 @@ class HostCrashAcceptance(unittest.TestCase):
         return rig
 
     def test_failures_and_lost_replies(self):
-        for command in ("stage", "smoke", "close", "flip", "release"):
-            for role in host.ROLES:
-                for lost in (False, True):
-                    with self.subTest(command=command, role=role, lost=lost):
-                        rig = self.rig()
-                        try:
-                            record = rig.update(Interrupt(failure=(role, command), lost=lost)).run({})
-                            if record["phase"] == "failed":
-                                self.assertEqual(record["failure"], "release")
-                                record = rig.update().recover()
-                            rig.assert_settled(record)
-                        finally:
-                            rig.doCleanups()
+        commands = ("stage", "smoke", "close", "flip", "release")
+        for command, role, lost in product(commands, host.ROLES, (False, True)):
+            with self.subTest(command=command, role=role, lost=lost):
+                self.check_failure_and_lost_reply(command, role, lost)
+
+    def check_failure_and_lost_reply(self, command, role, lost):
+        rig = self.rig()
+        try:
+            record = rig.update(Interrupt(failure=(role, command), lost=lost)).run({})
+            if record["phase"] == "failed":
+                self.assertEqual(record["failure"], "release")
+                record = rig.update().recover()
+            rig.assert_settled(record)
+        finally:
+            rig.doCleanups()
 
     def test_unreachable_each_mutation_preserves_evidence_and_can_resume(self):
         for command in ("stage", "smoke", "close", "flip", "release"):

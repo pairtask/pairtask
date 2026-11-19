@@ -63,7 +63,7 @@ class HostRoutingTests(unittest.TestCase):
     def setUp(self):
         # These cases exercise routing with no existing deployment; the
         # update-admission packet covers a held or unfinished transaction.
-        discovery = mock.patch.object(cli, "deployment_directory", return_value=None)
+        discovery = mock.patch.object(cli, "existing_deployment", return_value=None)
         discovery.start()
         self.addCleanup(discovery.stop)
 
