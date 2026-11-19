@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = FileRefsVersion
+	Version                 = AttentionVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -166,6 +166,10 @@ const (
 type Recipient struct {
 	AgentID   string `json:"agent_id"`
 	SessionID string `json:"session_id"`
+	// Attention, on an accepted answer to a local sender (v32): this
+	// recipient's DND keeps the message quiet (suppressed), can't
+	// (unsupported), or applies once it connects (offline).
+	Attention string `json:"attention,omitempty"`
 }
 
 // ReceiptState is retained per-recipient progress returned on an idempotent retry.
@@ -205,6 +209,13 @@ type Message struct {
 	Remote              *Remote             `json:"remote,omitempty"`               // msg with origin remote (v12)
 	Workspace           string              `json:"workspace,omitempty"`            // msg (agent -> broker, v13): the paired workspace to is in, by key or name
 	Files               []FileRef           `json:"files,omitempty"`                // msg with workspace, operator_contact send (v31): the files it names, as data (#419)
+	Attention           string              `json:"attention,omitempty"`            // msg (broker -> agent, v32): suppressed or urgent; set by the broker only
+	Urgent              bool                `json:"urgent,omitempty"`               // operator_send (v32): interrupt through DND
+	AttentionOp         string              `json:"attention_op,omitempty"`         // operator_attention: on, off or status
+	AttentionState      *AttentionState     `json:"attention_state,omitempty"`      // operator_attention_result
+	AttentionSummary    *AttentionSummary   `json:"attention_summary,omitempty"`    // attention_summary
+	AttentionGeneration uint64              `json:"attention_generation,omitempty"` // attention_submitted and its result
+	Accepted            *bool               `json:"accepted,omitempty"`             // attention_submitted_result
 	ReviewAsk           *ReviewAsk          `json:"review_ask,omitempty"`           // msg with workspace (agent -> broker, v14): a review request for to (#235)
 	ReviewOutcome       *ReviewOutcomeView  `json:"review_outcome,omitempty"`       // msg with origin remote: where a review request the recipient sent stands (#235)
 	ReviewsAsked        []ReviewOutcomeView `json:"reviews_asked,omitempty"`        // reviews_asked_result (v15)

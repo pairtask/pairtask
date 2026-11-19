@@ -216,6 +216,9 @@ WHERE state = 'pending' AND `+ungranted, msgStamp(now), contact)
 	if err != nil {
 		return err
 	}
+	if err := pruneAttention(ctx, tx); err != nil {
+		return err
+	}
 	return settleConsentOutcomes(ctx, tx, contact) // an allowed hold withheld is told so (#293)
 }
 
