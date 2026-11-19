@@ -45,15 +45,9 @@ func (n *Node) freshInbox(ctx context.Context, contacts []protocol.PairingContac
 		if err != nil {
 			return nil, err
 		}
-		keep, err := n.shown(&conv, sel, marks)
-		if err != nil {
-			return nil, err
-		}
-		if keep {
-			out = append(out, conv)
-		}
+		out = append(out, conv)
 	}
-	return out, nil
+	return n.shown(out, sel, marks)
 }
 
 // requestSync asks for a session with contact; a refusal (a paused or
@@ -81,31 +75,35 @@ type inboxRead struct {
 	deadline time.Time
 }
 
-// read is the conversation with c: the newest page, or what is newer than
-// the selection's cursor (the consumer's seen mark for new_only).
-func (r inboxRead) read(ctx context.Context, c protocol.PairingContactView) (Conversation, protocol.ContactSyncView, error) {
+// settledRead is the conversation to return once its session settled: the
+// newest page already read, or, for an incremental read, what is newer
+// than the selection's cursor (the consumer's seen mark for new_only).
+// That walk can be long, so it is done once, not while waiting.
+func (r inboxRead) settledRead(ctx context.Context, c protocol.PairingContactView, newest Conversation) (Conversation, error) {
 	if !r.sel.incremental() {
-		return r.n.conversation(ctx, c, r.sel)
+		return newest, nil
 	}
 	after := r.sel.after
 	if r.sel.newOnly {
 		after = r.marks[c.IdentityKey]
 	}
-	return r.n.continued(ctx, c, after, r.sel)
+	conv, _, err := r.n.continued(ctx, c, after, r.sel)
+	return conv, err
 }
 
 // await reads the conversation with c until its session ended or the
 // deadline passed, and says which.
 func (r inboxRead) await(ctx context.Context, c protocol.PairingContactView, p pendingSync) (Conversation, error) {
 	for {
-		conv, sync, err := r.read(ctx, c)
+		conv, sync, err := r.n.conversation(ctx, c, r.sel)
 		if err != nil {
 			return conv, err
 		}
 		done, fresh := p.outcome(sync)
 		if r.settled(done, p) {
+			conv, err = r.settledRead(ctx, c, conv)
 			conv.Fresh, conv.SyncFailure = fresh, p.failure(sync, fresh)
-			return conv, nil
+			return conv, err
 		}
 		if err := sleep(ctx, syncPoll); err != nil {
 			return conv, err

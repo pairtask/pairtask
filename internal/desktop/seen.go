@@ -47,20 +47,23 @@ func (s seenMarks) of(consumer string) (map[string]int64, error) {
 	return marks, err
 }
 
-// advance moves a consumer's mark for contact to cursor, never back, and
-// answers where it now stands; the move is durable before it returns.
-func (s seenMarks) advance(consumer, contact string, cursor int64) (int64, error) {
-	at := cursor
+// advance moves a consumer's marks to the cursors given by workspace key,
+// none of them back, and answers where each now stands. They move
+// together: all are durable before it returns, or none moved.
+func (s seenMarks) advance(consumer string, to map[string]int64) (map[string]int64, error) {
+	at := map[string]int64{}
 	err := s.locked(func(f *seenFile) bool {
-		if held := f.Consumers[consumer][contact]; held >= cursor {
-			at = held
-			return false
-		}
 		if f.Consumers[consumer] == nil {
 			f.Consumers[consumer] = map[string]int64{}
 		}
-		f.Consumers[consumer][contact] = cursor
-		return true
+		held, changed := f.Consumers[consumer], false
+		for contact, cursor := range to {
+			if cursor > held[contact] {
+				held[contact], changed = cursor, true
+			}
+			at[contact] = held[contact]
+		}
+		return changed
 	})
 	return at, err
 }
