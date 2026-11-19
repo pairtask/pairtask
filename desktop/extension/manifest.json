@@ -57,7 +57,8 @@
     {"name": "pair_redeem", "description": "Join a workspace with the HOST:PORT and code its operator gave you."},
     {"name": "pair_status", "description": "Joins in progress and the workspaces you are paired with."},
     {"name": "send", "description": "Send a message to a paired workspace's operator or to the agents it shares."},
-    {"name": "check_inbox", "description": "The newest messages with paired workspaces, and which are unread."},
+    {"name": "check_inbox", "description": "The newest messages with paired workspaces, and which are unread; or only the ones not shown yet."},
+    {"name": "wait_inbox", "description": "Wait until a paired workspace has sent a message not shown yet, or until the timeout."},
     {"name": "mark_read", "description": "Mark received messages read; the sender sees the receipt."},
     {"name": "pair_address", "description": "Move a paired workspace to its new HOST:PORT once the same workspace answers there."}
   ],
