@@ -209,6 +209,9 @@ func sentClaims(ctx context.Context, tx *sql.Tx, kind string, req ClaimRequest) 
 // SentMessageClaims is the claims a paired workspace told of a message
 // this side sent it, for the agent that sent it ("" for the operator).
 // Each names the message by message_id and the workspace it came from.
+// Only the current pairing of a workspace still paired is shown: claims
+// told under an earlier pairing, or by a workspace since unpaired, stay in
+// the record and out of the answer.
 func (s *Store) SentMessageClaims(ctx context.Context, messageID, agent string) (protocol.ClaimSet, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -233,6 +236,7 @@ func sentMessageClaims(ctx context.Context, tx *sql.Tx, messageID, agent string)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT rc.contact, rc.agent, rc.role, rc.task, rc.state, rc.at FROM remote_claims rc
 JOIN peer_messages pm ON pm.contact = rc.contact AND pm.pairing_epoch = rc.pairing_epoch AND pm.message_id = rc.message_id
+JOIN peer_contacts c ON c.identity_key = rc.contact AND c.unpaired_at = '' AND c.pairing_epoch = rc.pairing_epoch
 WHERE `+sentByAgent+` ORDER BY rc.state = 'released', rc.at, rc.task, rc.role, rc.agent`, messageID, agent)
 	if err != nil {
 		return set, err
