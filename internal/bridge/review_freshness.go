@@ -43,6 +43,9 @@ func (c *Client) AskFreshness(ctx context.Context, ask protocol.ReviewOutcomeVie
 	if ask.Requested == nil || ask.Forge == "" {
 		return unknownFreshness("the broker didn't report what this request was pinned to; upgrade the broker")
 	}
+	if !bothRevisions(*ask.Requested) {
+		return unknownFreshness("this request wasn't pinned to both a base and a head, so there is nothing to compare")
+	}
 	f, ok := c.forges[ask.Forge]
 	if !ok {
 		return unknownFreshness("no forge " + ask.Forge + " is set up in this session")
@@ -53,12 +56,18 @@ func (c *Client) AskFreshness(ctx context.Context, ask protocol.ReviewOutcomeVie
 	if err != nil {
 		return unknownFreshness("the forge couldn't be read: " + err.Error())
 	}
+	if !bothRevisions(now) {
+		return unknownFreshness("the forge didn't say both where the change's base and head are now")
+	}
 	state := protocol.FreshnessCurrent
 	if now != *ask.Requested {
 		state = protocol.FreshnessMoved
 	}
 	return protocol.ReviewFreshness{State: state, Current: &now, CheckedAt: time.Now().UTC()}
 }
+
+// bothRevisions: a base and a head, the two a comparison needs.
+func bothRevisions(r protocol.Revisions) bool { return r.Base != "" && r.Head != "" }
 
 func unknownFreshness(reason string) protocol.ReviewFreshness {
 	return protocol.ReviewFreshness{State: protocol.FreshnessUnknown, CheckedAt: time.Now().UTC(), Reason: reason}
