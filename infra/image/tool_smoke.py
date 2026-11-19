@@ -35,13 +35,18 @@ def client_environment(home, **extra):
     return environment
 
 
-def codex_handshake(binary, home, config, timeout=RUN_TIMEOUT, prefix=(), client="pairtask-tools-lane"):
+def codex_handshake(binary, home, config, timeout=RUN_TIMEOUT, prefix=(), client="pairtask-tools-lane", owner=None):
     """Start the App Server as pairtask-codex does and complete initialize
     with config in a private CODEX_HOME; the answer's codexHome shows that
-    config was the one read. prefix is a command that drops privileges."""
+    config was the one read. prefix is a command that drops privileges to
+    owner, who is then given the CODEX_HOME."""
     codex_home = Path(home) / "codex-home"
     codex_home.mkdir(exist_ok=True)
     shutil.copyfile(config, codex_home / "config.toml")
+    if owner:
+        # The caller is root and the client runs as owner, which writes here.
+        shutil.chown(codex_home, owner)
+        shutil.chown(codex_home / "config.toml", owner)
     environment = client_environment(home, CODEX_HOME=str(codex_home))
     request = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                "params": {"clientInfo": {"name": client, "version": "1"}, "capabilities": {"experimentalApi": True}}}

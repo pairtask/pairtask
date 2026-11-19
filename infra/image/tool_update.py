@@ -316,33 +316,47 @@ def clients_in(manifest):
 
 def smoke_check(name, tool, entry, etc=tool_store.ETC):
     """Start one updated client as the unprivileged check user, in a home
-    made for this run and removed after it: it must name its version, and
-    Codex must also answer initialize with the config this root derives."""
+    made for this run and removed after it: it must name its version,
+    Claude must also print its help, and Codex must also answer initialize
+    with the config this root derives."""
     home = tempfile.mkdtemp(prefix="pairtask-tools-check-")
     try:
         shutil.chown(home, CHECK_USER)
-        prefix = ("runuser", "-u", CHECK_USER, "--", "env", "-i")
-        check_version(name, tool, entry, home, prefix)
+        check_version(name, tool, entry, home)
+        if name == "claude":
+            run_dropped(entry, "--help", home)
         if name == "codex":
-            check_codex(tool, entry, home, prefix, Path(etc) / "codex/config.toml")
+            check_codex(tool, entry, home, Path(etc) / "codex/config.toml")
     except (OSError, LookupError, subprocess.SubprocessError, tool_smoke.SmokeError, ValueError) as error:
         raise UpdateError("smoke", f"{name} failed its check: {error}") from error
     finally:
         shutil.rmtree(home, ignore_errors=True)
 
 
-def check_version(name, tool, entry, home, prefix):
-    command = [*prefix, f"HOME={home}", "PATH=/usr/bin:/bin", str(entry), "--version"]
+def run_dropped(entry, argument, home):
+    """One short run of entry as the check user with an empty environment
+    but its private home; its output, or a finding when it exits non-zero."""
+    command = ["runuser", "-u", CHECK_USER, "--", "env", "-i", f"HOME={home}", "PATH=/usr/bin:/bin", str(entry), argument]
     result = subprocess.run(command, capture_output=True, text=True, timeout=SMOKE_TIMEOUT, check=False)
-    if result.returncode != 0 or not tool_smoke.reports(tool.get("version", ""), result.stdout):
+    if result.returncode != 0:
+        raise tool_smoke.SmokeError(f"{argument} exited {result.returncode}")
+    return result.stdout
+
+
+def check_version(name, tool, entry, home):
+    if not tool_smoke.reports(tool.get("version", ""), run_dropped(entry, "--version", home)):
         raise tool_smoke.SmokeError(f"{name} didn't report version {tool.get('version')}")
 
 
-def check_codex(tool, entry, home, prefix, config):
+# runuser options end at "--", so the candidate is what it executes; the
+# handshake's own environment (private HOME and CODEX_HOME) is kept.
+CODEX_DROP = ("runuser", "-u", CHECK_USER, "--preserve-environment", "--")
+
+
+def check_codex(tool, entry, home, config):
     """The App Server's initialize answer, started as pairtask-codex starts
-    it; the handshake sets the child's HOME and CODEX_HOME itself."""
-    drop = (*prefix[:-2], "--preserve-environment", "--")
-    result = tool_smoke.codex_handshake(entry, home, config, SMOKE_TIMEOUT, prefix=drop, client="pairtask-update")
+    it, in a CODEX_HOME the check user owns."""
+    result = tool_smoke.codex_handshake(entry, home, config, SMOKE_TIMEOUT, prefix=CODEX_DROP, client="pairtask-update", owner=CHECK_USER)
     if not tool_smoke.reports(tool.get("version", ""), result.get("userAgent", "")):
         raise tool_smoke.SmokeError("codex's App Server reports another version")
 
