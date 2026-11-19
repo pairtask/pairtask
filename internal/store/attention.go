@@ -125,12 +125,9 @@ ON CONFLICT (agent_id) DO UPDATE SET enforced = 0`, agent)
 // each recipient whose DND is on and enforceable: quiet, or urgent for the
 // local operator's urgent message. Others get no mark and are notified.
 func markAttention(ctx context.Context, tx *sql.Tx, msg protocol.Message, recipients []protocol.Recipient) error {
-	disposition := protocol.AttentionSuppressed
-	if localUrgent(msg) {
-		disposition = protocol.AttentionUrgent
-		if _, err := tx.ExecContext(ctx, `INSERT INTO urgent_messages (message_id) VALUES (?) ON CONFLICT DO NOTHING`, msg.MessageID); err != nil {
-			return err
-		}
+	disposition, err := admittedAs(ctx, tx, msg)
+	if err != nil {
+		return err
 	}
 	for _, r := range recipients {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO inbox_attention (message_id, agent_id, disposition, suppressed_at)
@@ -140,6 +137,17 @@ SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM attention_settings WHERE agent
 		}
 	}
 	return nil
+}
+
+// admittedAs is what a message means for a recipient in DND: quiet, or
+// urgent for the local operator's urgent message, which is also recorded
+// as sent urgent so a retry of it must be urgent too.
+func admittedAs(ctx context.Context, tx *sql.Tx, msg protocol.Message) (string, error) {
+	if !localUrgent(msg) {
+		return protocol.AttentionSuppressed, nil
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO urgent_messages (message_id) VALUES (?) ON CONFLICT DO NOTHING`, msg.MessageID)
+	return protocol.AttentionUrgent, err
 }
 
 // pruneAttention drops the decisions whose own inbox row is gone: the
