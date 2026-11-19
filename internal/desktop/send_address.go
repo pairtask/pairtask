@@ -157,7 +157,7 @@ func (b addressBook) sharedBy(ctx context.Context, t target) (recipient, error) 
 		return recipient{contact: sharing[0], agents: []string{t.agent}}, nil
 	}
 	return recipient{}, errors.New("several paired workspaces share an agent " + quoted(t.agent) + "; use one of: " +
-		strings.Join(t.at(sharing), ", "))
+		strings.Join(b.suggestions(t, sharing), ", "))
 }
 
 // paired are the contacts that carry messages: confirmed and not unpaired.
@@ -182,24 +182,31 @@ func (b addressBook) choices() string {
 	return "; paired workspaces: " + strings.Join(names, ", ")
 }
 
-// at is AGENT@NAME for each workspace, sorted; a display name several of
-// them share is replaced by the identity key, so every suggestion names
-// exactly one.
-func (t target) at(contacts []protocol.PairingContactView) []string {
-	uses := map[string]int{}
-	for _, c := range contacts {
-		uses[contactName(c)]++
-	}
+// suggestions is AGENT@NAME for each of the workspaces, sorted. Every one
+// can be passed back as to and reach exactly that workspace: a display
+// name that wouldn't (see label) is replaced by the identity key.
+func (b addressBook) suggestions(t target, contacts []protocol.PairingContactView) []string {
 	out := make([]string, 0, len(contacts))
 	for _, c := range contacts {
-		label := contactName(c)
-		if uses[label] > 1 {
-			label = c.IdentityKey
-		}
-		out = append(out, t.agent+"@"+label)
+		out = append(out, t.agent+"@"+b.label(t, c))
 	}
 	slices.Sort(out)
 	return out
+}
+
+// label is c's display name when AGENT@name resolves back to c alone, else
+// its identity key. A name doesn't when it holds an @ (the address is
+// split at the last one), when any other contact answers to it too, or
+// when the whole address happens to be a workspace's name.
+func (b addressBook) label(t target, c protocol.PairingContactView) string {
+	name := contactName(c)
+	if strings.Contains(name, "@") || len(b.named(name).contacts) != 1 {
+		return c.IdentityKey
+	}
+	if len(b.named(t.agent+"@"+name).contacts) > 0 {
+		return c.IdentityKey
+	}
+	return name
 }
 
 // only refuses agents given beside an address that already names one,
