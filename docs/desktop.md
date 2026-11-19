@@ -75,6 +75,14 @@ workspace's. To let D write to your agents, share them with D
 
 - **Checking for messages.** New messages don't pop up in Desktop. Claude
   sees them only when it checks the inbox (`check_inbox`), so ask it to.
+  To keep watch, ask it to wait for messages: `wait_inbox` sleeps until one
+  arrives (up to five minutes a call), and `check_inbox` with `new_only`
+  then returns only what it hasn't shown you yet, without the history.
+- **Seen is not read.** Claude remembers how far it has shown you each
+  conversation (a "seen" mark kept on this machine, so it survives a
+  restart). The sender gets a read receipt only when Claude marks a message
+  read (`mark_read`). Sessions that share the node (a chat and Cowork, say)
+  can each name themselves with `consumer` and keep their own mark.
 - **Referring to files.** A message can name up to 8 files by a label,
   size and SHA-256 that Claude states. Nothing is uploaded or read from your
   disk: the other side compares them with a file it gets another way.

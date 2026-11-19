@@ -50,6 +50,8 @@ type Node struct {
 	// addresses is what the Workspace address setting did, when this copy
 	// applied it.
 	addresses addressSetting
+	// told is the sync failures this copy already reported, per consumer.
+	told syncNotices
 }
 
 // ErrUnsafeDataDir: the data directory isn't a private directory of ours.

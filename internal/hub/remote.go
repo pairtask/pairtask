@@ -298,16 +298,23 @@ func (h *Hub) noticeParent(ctx context.Context, contact, reviewID string) (store
 // fromWorkspace refuses a parent that was not found, or came from another
 // workspace.
 func fromWorkspace(parent store.RemoteImport, contact string, found bool, err error) *routingError {
-	if err != nil || !found {
-		return errOtherWorkspace
+	if err != nil {
+		return errReplyLookup
 	}
-	if parent.Contact != contact {
+	if !found || parent.Contact != contact {
 		return errOtherWorkspace
 	}
 	return nil
 }
 
-var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
+// errReplyLookup: the parent couldn't be looked up, which says nothing
+// about the caller's message_id.
+var errReplyLookup = &routingError{protocol.ErrInternal, "paired reply target unavailable"}
+
+// errOtherWorkspace: the reply's parent isn't a message received from the
+// workspace it is addressed to. The frame is well formed; its target isn't.
+var errOtherWorkspace = &routingError{protocol.ErrInvalidReply,
+	"with workspace, in_reply_to must be the message_id of a message received from that workspace, as it arrived here"}
 
 // errReviewNotice answers a reply to a review notice that stands for no
 // request of that workspace: the review is answered through its
