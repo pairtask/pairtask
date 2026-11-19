@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -52,17 +51,11 @@ func TestOperatorAgentsAcceptanceShowsWorkAndEachAgentsLastMessageWithoutConsumi
 	if code != 0 {
 		t.Fatalf("agents exit%d: %s", code, stderr)
 	}
-	for _, word := range []string{"alice", "active", "building", "text-2", "bob", "blocked", "reviewing", "text-3"} {
-		if !strings.Contains(out, word) {
-			t.Fatalf("missing %q: %q", word, out)
-		}
-	}
+	shortcutContains(t, out, []string{"alice", "active", "building", "text-2", "bob", "blocked", "reviewing", "text-3"})
 	if strings.Contains(out, "text-1") || strings.Contains(out, "outgoing-not-agent-text") {
 		t.Fatalf("wrong last message: %q", out)
 	}
-	if strings.ContainsAny(out, "\x1b\r\x00") || strings.Contains(out, "second-line") {
-		t.Fatalf("unsafe last-message preview: %q", out)
-	}
+	shortcutSafeText(t, out)
 	if before != offlineReceipts(t, f) {
 		t.Fatal("agents changed inbox receipt state")
 	}
@@ -72,9 +65,7 @@ func TestOperatorAgentsAcceptanceJSONContainsCurrentAndDisconnectedRecords(t *te
 	f, w := agentsFixture(t)
 	before := offlineReceipts(t, f)
 	code, out, stderr := agentsCall(t, w.operator, "--json")
-	if code != 0 || !json.Valid([]byte(out)) {
-		t.Fatalf("bad agents JSON exit%d: %q %s", code, out, stderr)
-	}
+	shortcutJSON(t, code, out, stderr)
 	for _, word := range []string{"alice", "bob", "building", "reviewing", "text-2", "text-3"} {
 		if !strings.Contains(out, word) {
 			t.Fatalf("missing %q: %s", word, out)

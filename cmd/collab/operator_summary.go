@@ -31,17 +31,7 @@ type inboxSummary struct {
 }
 
 func runInboxSummary(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	var call operatorCall
-	var limit int
-	flags := flag.NewFlagSet("operator inbox summary", flag.ContinueOnError)
-	call.register(flags)
-	flags.IntVar(&limit, "limit", 10, "newest messages to display, 1 to 50")
-	code := parseFlags(flags, args, summaryUsage, stderr, func(rest []string) error {
-		if len(rest) != 0 || limit < 1 || limit > 50 {
-			return errors.New("summary takes no positional arguments; limit must be 1 to 50")
-		}
-		return call.validate()
-	})
+	call, limit, code := parseSummary(args, stderr)
 	if code != -1 {
 		return code
 	}
@@ -62,6 +52,24 @@ func runInboxSummary(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintf(stdout, "#%d %s %s %s\n", m.Seq, preview(m.From, 128), messageAge(m.TS), m.Text)
 	}
 	return 0
+}
+
+func parseSummary(args []string, stderr io.Writer) (operatorCall, int, int) {
+	var call operatorCall
+	var limit int
+	flags := flag.NewFlagSet("operator inbox summary", flag.ContinueOnError)
+	call.register(flags)
+	flags.IntVar(&limit, "limit", 10, "newest messages to display, 1 to 50")
+	code := parseFlags(flags, args, summaryUsage, stderr, func(rest []string) error {
+		if len(rest) != 0 {
+			return errors.New("summary takes no positional arguments")
+		}
+		if limit < 1 || limit > 50 {
+			return errors.New("summary takes no positional arguments; limit must be 1 to 50")
+		}
+		return call.validate()
+	})
+	return call, limit, code
 }
 
 // Read the bounded unacknowledged inbox without sending operator_received or ack.

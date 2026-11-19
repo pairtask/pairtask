@@ -128,9 +128,7 @@ func TestOperatorSummaryAcceptancePreviewsAreBoundedSingleLineAndValidUTF8(t *te
 	if code != 0 {
 		t.Fatalf("summary exit%d: %s", code, stderr)
 	}
-	if !utf8.ValidString(out) || strings.ContainsAny(out, "\x1b\r\x00") || strings.Contains(out, "second-line") {
-		t.Fatalf("unsafe preview: %q", out)
-	}
+	shortcutSafeText(t, out)
 	rows := summaryRows(t, out)
 	if len(rows) != 1 {
 		t.Fatalf("preview introduced extra rows: %q", out)
@@ -154,10 +152,9 @@ func TestOperatorSummaryAcceptanceJSONAndLimit50RemainReadOnly(t *testing.T) {
 		t.Fatalf("limit50 ignored: %q", out)
 	}
 	code, out, stderr = summaryCall(t, w.operator, "--limit", "2", "--json")
-	if code != 0 || !json.Valid([]byte(out)) {
-		t.Fatalf("bad JSON exit%d: %q %s", code, out, stderr)
-	}
-	if !strings.Contains(out, "text-65") || !strings.Contains(out, "text-64") || strings.Contains(out, "text-63") {
+	shortcutJSON(t, code, out, stderr)
+	shortcutContains(t, out, []string{"text-65", "text-64"})
+	if strings.Contains(out, "text-63") {
 		t.Fatalf("JSON selection wrong: %s", out)
 	}
 	if before != offlineReceipts(t, f) {
@@ -185,5 +182,37 @@ func TestOperatorSummaryAcceptanceEmptyInboxHasNoPhantomRows(t *testing.T) {
 	}
 	if len(summaryRows(t, out)) != 0 {
 		t.Fatal("empty inbox has messages")
+	}
+}
+
+func shortcutJSON(t *testing.T, code int, out, stderr string) {
+	t.Helper()
+	if code != 0 {
+		t.Fatalf("JSON exit%d: %s", code, stderr)
+	}
+	if !json.Valid([]byte(out)) {
+		t.Fatalf("invalid JSON: %q", out)
+	}
+}
+
+func shortcutSafeText(t *testing.T, out string) {
+	t.Helper()
+	if !utf8.ValidString(out) {
+		t.Fatalf("invalid UTF8: %q", out)
+	}
+	if strings.ContainsAny(out, "\x1b\r\x00") {
+		t.Fatalf("unsafe controls: %q", out)
+	}
+	if strings.Contains(out, "second-line") {
+		t.Fatalf("multiple lines: %q", out)
+	}
+}
+
+func shortcutContains(t *testing.T, out string, words []string) {
+	t.Helper()
+	for _, word := range words {
+		if !strings.Contains(out, word) {
+			t.Fatalf("missing %q: %q", word, out)
+		}
 	}
 }

@@ -34,15 +34,7 @@ type operatorAgents struct {
 }
 
 func runOperatorAgents(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	var call operatorCall
-	flags := flag.NewFlagSet("operator agents", flag.ContinueOnError)
-	call.register(flags)
-	code := parseFlags(flags, args, "usage: pairtask operator agents [--json] [--socket PATH]", stderr, func(rest []string) error {
-		if len(rest) != 0 {
-			return errors.New("agents takes no positional arguments")
-		}
-		return call.validate()
-	})
+	call, code := parseAgents(args, stderr)
 	if code != -1 {
 		return code
 	}
@@ -58,6 +50,10 @@ func runOperatorAgents(ctx context.Context, args []string, stdout, stderr io.Wri
 	if call.asJSON {
 		return encodeJSON(stdout, stderr, result)
 	}
+	return writeOperatorAgents(stdout, result)
+}
+
+func writeOperatorAgents(stdout io.Writer, result operatorAgents) int {
 	if result.RosterTruncated {
 		fmt.Fprintf(stdout, "Agent roster truncated: showing %d agents; broker has %d declarations.\n", len(result.Agents), result.DeclarationTotal)
 	}
@@ -73,6 +69,19 @@ func runOperatorAgents(ctx context.Context, args []string, stdout, stderr io.Wri
 	return 0
 }
 
+func parseAgents(args []string, stderr io.Writer) (operatorCall, int) {
+	var call operatorCall
+	flags := flag.NewFlagSet("operator agents", flag.ContinueOnError)
+	call.register(flags)
+	code := parseFlags(flags, args, "usage: pairtask operator agents [--json] [--socket PATH]", stderr, func(rest []string) error {
+		if len(rest) != 0 {
+			return errors.New("agents takes no positional arguments")
+		}
+		return call.validate()
+	})
+	return call, code
+}
+
 func readOperatorAgents(ctx context.Context, call operatorCall, stderr io.Writer) (operatorAgents, error) {
 	out := operatorAgents{Agents: []*operatorAgent{}}
 	resp, err := call.expect(ctx, protocol.Message{Type: protocol.TypeStatus}, expectation{protocol.TypeStatus, "operator agents"}, stderr)
@@ -80,7 +89,7 @@ func readOperatorAgents(ctx context.Context, call operatorCall, stderr io.Writer
 		return out, err
 	}
 	snapshot := resp.Status
-	if snapshot == nil || !snapshot.AgentStatusAvailable || !snapshot.HistoryAvailable {
+	if !rosterAvailable(snapshot) {
 		return out, errors.New("agent status or session history unavailable")
 	}
 	out.RosterTruncated = snapshot.AgentStatusTruncated || snapshot.SessionsTruncated
@@ -91,15 +100,28 @@ func readOperatorAgents(ctx context.Context, call operatorCall, stderr io.Writer
 	if err != nil {
 		return out, err
 	}
+	out.Agents = sortedAgents(agents)
+	return out, nil
+}
+
+func rosterAvailable(snapshot *protocol.StatusSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	return snapshot.AgentStatusAvailable && snapshot.HistoryAvailable
+}
+
+func sortedAgents(agents map[string]*operatorAgent) []*operatorAgent {
 	ids := make([]string, 0, len(agents))
 	for id := range agents {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+	out := make([]*operatorAgent, 0, len(ids))
 	for _, id := range ids {
-		out.Agents = append(out.Agents, agents[id])
+		out = append(out, agents[id])
 	}
-	return out, nil
+	return out
 }
 
 func agentRoster(snapshot *protocol.StatusSnapshot) map[string]*operatorAgent {
@@ -142,24 +164,40 @@ func lastAgentMessages(ctx context.Context, call operatorCall, agents map[string
 		if err := validateHistory(page, resp.History); err != nil {
 			return false, err
 		}
-		for _, entry := range resp.History.Entries {
-			agent := agents[entry.Message.From]
-			if entry.Direction != "received" || agent == nil || agent.LastMessage != nil {
-				continue
-			}
-			message := summarizeMessage(entry.Message)
-			if entry.BodyOmitted {
-				message.Text = "[message text unavailable]"
-			}
-			agent.LastMessage = &agentMessage{Text: message.Text, TS: message.TS}
-			remaining--
-		}
+		remaining -= recordLastMessages(agents, resp.History.Entries)
 		if !resp.History.More {
 			break
 		}
 		page.BeforeSeq, page.UpperSeq = resp.History.NextBeforeSeq, resp.History.UpperSeq
 	}
 	return false, nil
+}
+
+func recordLastMessages(agents map[string]*operatorAgent, entries []protocol.HistoryEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if entry.Direction != "received" {
+			continue
+		}
+		agent := agents[entry.Message.From]
+		if agent == nil {
+			continue
+		}
+		if agent.LastMessage != nil {
+			continue
+		}
+		agent.LastMessage = historyMessage(entry)
+		count++
+	}
+	return count
+}
+
+func historyMessage(entry protocol.HistoryEntry) *agentMessage {
+	message := summarizeMessage(entry.Message)
+	if entry.BodyOmitted {
+		message.Text = "[message text unavailable]"
+	}
+	return &agentMessage{Text: message.Text, TS: message.TS}
 }
 
 func writeOperatorAgent(w io.Writer, agent *operatorAgent) {

@@ -22,27 +22,33 @@ def limit(value):
 
 def command(name, rest, identifier, remote):
     flags = parser(name, identifier, remote)
-    if name == "send":
-        flags.add_argument("target")
-        flags.add_argument("text", nargs=argparse.REMAINDER)
-        opts = flags.parse_args(rest)
-        if not valid_target(opts.target):
-            flags.error("use one @AGENT target or @all")
-        text = " ".join(opts.text)
-        if not text.strip():
-            flags.error("message text is required")
-        target = ["--all"] if opts.target == "@all" else ["--to", opts.target[1:]]
-        words = ["send", *target, "--", text]
-    else:
-        flags.add_argument("--limit", type=limit)
-        flags.add_argument("--json", action="store_true")
-        opts = flags.parse_args(rest)
-        words = ["inbox", "summary"]
-        if opts.limit is not None:
-            words += ["--limit", str(opts.limit)]
-        if opts.json:
-            words.append("--json")
+    opts, words = {"send": send, "inbox": inbox}[name](flags, rest)
     return secured(opts.remote, opts.project, opts.secured, words)
+
+
+def send(flags, rest):
+    flags.add_argument("target")
+    flags.add_argument("text", nargs=argparse.REMAINDER)
+    opts = flags.parse_args(rest)
+    if not valid_target(opts.target):
+        flags.error("use one @AGENT target or @all")
+    text = " ".join(opts.text)
+    if not text.strip():
+        flags.error("message text is required")
+    target = ["--all"] if opts.target == "@all" else ["--to", opts.target[1:]]
+    return opts, ["send", *target, "--", text]
+
+
+def inbox(flags, rest):
+    flags.add_argument("--limit", type=limit)
+    flags.add_argument("--json", action="store_true")
+    opts = flags.parse_args(rest)
+    words = ["inbox", "summary"]
+    if opts.limit is not None:
+        words += ["--limit", str(opts.limit)]
+    if opts.json:
+        words.append("--json")
+    return opts, words
 
 
 def secured(remote, project, instance, words):
