@@ -78,8 +78,14 @@ func TestOperatorAgentsAcceptanceJSONContainsCurrentAndDisconnectedRecords(t *te
 
 func TestOperatorAgentsAcceptanceUnavailableBrokerIsNotReportedAsAnEmptyRoster(t *testing.T) {
 	code, out, stderr := agentsCall(t, "/does/not/exist")
-	if code == 0 || out != "" || stderr == "" {
-		t.Fatalf("unavailable broker hidden: exit%d %q %q", code, out, stderr)
+	if code == 0 {
+		t.Fatal("unavailable broker returned success")
+	}
+	if out != "" {
+		t.Fatalf("unavailable broker printed a roster: %q", out)
+	}
+	if stderr == "" {
+		t.Fatal("unavailable broker omitted its error")
 	}
 }
 
