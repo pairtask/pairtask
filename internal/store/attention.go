@@ -121,6 +121,15 @@ ON CONFLICT (agent_id) DO UPDATE SET enforced = 0`, agent)
 	return err
 }
 
+// resetAttentionEnforcement runs as the store opens: no adapter is
+// connected to a broker that is just starting, so none can make an agent's
+// DND unenforceable until one connects and says so. Without it, an old
+// adapter's mark would outlive a broker that stopped without a disconnect.
+func resetAttentionEnforcement(db *sql.DB) error {
+	_, err := db.Exec(`UPDATE attention_settings SET enforced = 1 WHERE enforced = 0`)
+	return err
+}
+
 // markAttention decides, with a durable message's admit, what it means for
 // each recipient whose DND is on and enforceable: quiet, or urgent for the
 // local operator's urgent message. Others get no mark and are notified.
