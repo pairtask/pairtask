@@ -156,6 +156,8 @@ var commands = []command{
 	{name: "copy", usage: "#n | ref AGENT", help: "ask the terminal to copy a message's text, or an agent's status ref", check: copyArg, run: (*Model).copyCommand},
 	{name: "diagram", usage: "#n [K]", help: "save a message's mermaid or plantuml source to a file (nothing is rendered or run)", check: diagramArg, run: (*Model).diagramCommand},
 	{name: "clear", help: "hide everything above this point (nothing is deleted)", check: noArgs, run: (*Model).clearCommand},
+	{name: "dnd", usage: "@a [on|off]", help: "do-not-disturb for one agent", check: dndArg, run: (*Model).dndCommand},
+	{name: "urgent", usage: "@a TEXT", help: "interrupts even in /dnd", check: urgentArg, run: (*Model).urgentCommand},
 	{name: "version", help: "the app and host releases the host last reported, and how to update them on the host", check: noArgs, run: (*Model).versionCommand},
 	{name: "help", help: "keys, commands and addressing", check: noArgs, run: func(m *Model, _ argument) tea.Cmd { m.toggleHelp(); return nil }},
 	{name: "quit", aliases: []string{"exit"}, help: "quit", check: noArgs, run: func(m *Model, _ argument) tea.Cmd { return m.quit() }},

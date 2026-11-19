@@ -21,12 +21,13 @@ import (
 // The operator endpoint exists only in secured and serves only the operator UID.
 const defaultOperatorSocket = "/run/collab-ai-operator/operator.sock"
 
-const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--message-id ID] [--in-reply-to ID] [--json] [--unsigned] [--timeout 5s] TEXT\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s] [--unsigned]\n       pairtask operator identity (init | status) [--socket PATH] [--json]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]\n       pairtask operator inbox (export PATH | archive PATH (--confirm | --dry-run) [--upper SEQ]) --database DB [--json] (offline: stop the broker first)\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask operator pair [list | open | status | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] (experimental)\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] [--socket PATH] (experimental; the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [--socket PATH] [OPERATION_ID] (experimental)\n       pairtask operator review (request --reviewer AGENT TARGET | list | status REVIEW_ID | cancel REVIEW_ID) [--socket PATH] [--json]\n       pairtask operator peer (send CONTACT TEXT | messages CONTACT [--before CURSOR] | sync CONTACT) [--socket PATH] [--json] (experimental)\n       pairtask operator update-notice set --state STATE --action ACTION [--app-release TAG] [--app-commit SHA] [--host-release TAG] [--available-release TAG] [--available-state STATE] [--scope default|custom] [--checked-at TIME] --observed-at TIME [--socket PATH] [--json] (the host's pairtask version sends it)"
+const operatorUsage = "usage: pairtask operator send [--socket PATH] (--to ID | --group ID,ID | --all [--room ROOM]) [--urgent] [--message-id ID] [--in-reply-to ID] [--json] [--unsigned] [--timeout 5s] TEXT\n       pairtask operator dnd --agent ID [on | off] [--socket PATH] [--json] (no action: show the setting)\n       pairtask operator receive [--socket PATH] [--after SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator ack [--socket PATH] [--json] MESSAGE_ID\n       pairtask operator history [--socket PATH] [--before SEQ] [--upper SEQ] [--limit N] [--json]\n       pairtask operator chat [--socket PATH] [--timeout 5s] [--unsigned]\n       pairtask operator identity (init | status) [--socket PATH] [--json]\n       pairtask operator inbox status [--socket PATH] [--json]\n       pairtask operator inbox ack [--socket PATH] [--from AGENT] [--after SEQ] [--upper SEQ] [--limit N] [--all] [--json]\n       pairtask operator inbox (export PATH | archive PATH (--confirm | --dry-run) [--upper SEQ]) --database DB [--json] (offline: stop the broker first)\n       pairtask operator room (list | create ROOM | add ROOM AGENT | remove ROOM AGENT) [--socket PATH] [--json]\n       pairtask operator pair [list | open | status | cancel [INVITATION_ID] | accept KEY | reject KEY] [--socket PATH] [--json] (experimental)\n       pairtask operator pair redeem DESTINATION [--name NAME] [--wait 45s] [--socket PATH] (experimental; the code is read from stdin)\n       pairtask operator pair settle [--wait 45s] [--socket PATH] [OPERATION_ID] (experimental)\n       pairtask operator review (request --reviewer AGENT TARGET | list | status REVIEW_ID | cancel REVIEW_ID) [--socket PATH] [--json]\n       pairtask operator peer (send CONTACT TEXT | messages CONTACT [--before CURSOR] | sync CONTACT) [--socket PATH] [--json] (experimental)\n       pairtask operator update-notice set --state STATE --action ACTION [--app-release TAG] [--app-commit SHA] [--host-release TAG] [--available-release TAG] [--available-state STATE] [--scope default|custom] [--checked-at TIME] --observed-at TIME [--socket PATH] [--json] (the host's pairtask version sends it)"
 
 type operatorSend struct {
 	socket, to, group, messageID string
 	inReplyTo, room              string
 	all, asJSON, unsigned        bool
+	urgent                       bool // interrupt through the recipient's do-not-disturb (#422)
 	timeout                      time.Duration
 	text                         string
 }
@@ -35,6 +36,7 @@ type operatorCommand func(ctx context.Context, args []string, stdout, stderr io.
 
 var operatorCommands = map[string]operatorCommand{
 	"send":          runOperatorSend,
+	"dnd":           runOperatorDND,
 	"receive":       runOperatorReceive,
 	"ack":           runOperatorAck,
 	"history":       runOperatorHistory,
@@ -116,6 +118,7 @@ func parseOperatorSend(args []string, stderr io.Writer) (operatorSend, int) {
 	flags.StringVar(&cfg.inReplyTo, "in-reply-to", "", "message ID this answers (a correlation claim)")
 	flags.BoolVar(&cfg.asJSON, "json", false, "emit the broker response as JSON")
 	flags.BoolVar(&cfg.unsigned, "unsigned", false, "send without your signature even though you have keys")
+	flags.BoolVar(&cfg.urgent, "urgent", false, "interrupt the recipient even while its do-not-disturb is on")
 	flags.DurationVar(&cfg.timeout, "timeout", 5*time.Second, "overall timeout, greater than zero and at most 30s")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -207,7 +210,7 @@ func (cfg operatorSend) validateOptions() error {
 
 func (cfg operatorSend) request() protocol.Message {
 	payload, _ := json.Marshal(map[string]string{"text": cfg.text})
-	msg := protocol.Message{Type: protocol.TypeOperatorSend, MessageID: cfg.messageID, InReplyTo: cfg.inReplyTo, Payload: payload}
+	msg := protocol.Message{Type: protocol.TypeOperatorSend, MessageID: cfg.messageID, InReplyTo: cfg.inReplyTo, Payload: payload, Urgent: cfg.urgent}
 	switch {
 	case cfg.all:
 		msg.To, msg.Room = protocol.Broadcast, cfg.room
