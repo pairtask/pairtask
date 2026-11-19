@@ -436,21 +436,14 @@ const remoteClaimKeys = 4 * protocol.ClaimsPerMessage
 // same sequence number with another content is a conflict. A state that
 // would take the message past its bounds is refused as full.
 func holdClaim(ctx context.Context, tx *sql.Tx, t toldClaim) (string, error) {
-	var seq uint64
-	var state, held string
-	err := tx.QueryRowContext(ctx, `SELECT seq, state, at FROM remote_claims WHERE contact = ? AND pairing_epoch = ? AND message_id = ? AND agent = ? AND role = ? AND task = ?`,
-		t.k.contact, t.k.epoch, t.n.MessageID, t.n.Agent, t.n.Role, t.n.Task).Scan(&seq, &state, &held)
-	known := err == nil
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-	case err != nil:
+	row, err := heldClaim(ctx, tx, t)
+	if err != nil {
 		return "", err
-	case t.n.Seq < seq:
-		return messaging.ClaimStale, nil
-	case t.n.Seq == seq:
-		return sameClaim(t.n, state, held), nil
 	}
-	full, err := remoteClaimsFull(ctx, tx, t, heldBefore{known, known && state != messaging.ClaimReleased})
+	if reason, settled := row.settles(t.n); settled {
+		return reason, nil
+	}
+	full, err := remoteClaimsFull(ctx, tx, t, heldBefore{row.known, row.known && row.state != messaging.ClaimReleased})
 	if err != nil || full {
 		return fullReason(full), err
 	}
@@ -460,6 +453,36 @@ ON CONFLICT (contact, pairing_epoch, message_id, agent, role, task)
 DO UPDATE SET state = excluded.state, seq = excluded.seq, at = excluded.at, received_at = excluded.received_at`,
 		t.k.contact, t.k.epoch, t.n.MessageID, t.n.Agent, t.n.Role, t.n.Task, t.n.State, t.n.Seq, stamp(t.n.At), stamp(t.at))
 	return "", err
+}
+
+// keptClaim is what this side keeps for a notice's key, if anything.
+type keptClaim struct {
+	known     bool
+	seq       uint64
+	state, at string
+}
+
+func heldClaim(ctx context.Context, tx *sql.Tx, t toldClaim) (keptClaim, error) {
+	row := keptClaim{known: true}
+	err := tx.QueryRowContext(ctx, `SELECT seq, state, at FROM remote_claims WHERE contact = ? AND pairing_epoch = ? AND message_id = ? AND agent = ? AND role = ? AND task = ?`,
+		t.k.contact, t.k.epoch, t.n.MessageID, t.n.Agent, t.n.Role, t.n.Task).Scan(&row.seq, &row.state, &row.at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return keptClaim{}, nil
+	}
+	return row, err
+}
+
+// settles says the notice changes nothing, and how it is answered: an
+// older state is stale; the held sequence number again is kept as it is
+// when it repeats the held state, else a conflict.
+func (r keptClaim) settles(n messaging.ClaimNotice) (string, bool) {
+	if !r.known || n.Seq > r.seq {
+		return "", false
+	}
+	if n.Seq < r.seq {
+		return messaging.ClaimStale, true
+	}
+	return sameClaim(n, r.state, r.at), true
 }
 
 func fullReason(full bool) string {
