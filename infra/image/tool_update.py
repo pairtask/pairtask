@@ -177,7 +177,7 @@ class Updates:
         with self._locked():
             state = self.state()
             current = self.store.current_generation()
-            if state.get("state") == "ready" and state.get("update") == update_id and state.get("generation") == current:
+            if (state.get("state"), state.get("update"), state.get("generation")) == ("ready", update_id, current):
                 return state
             self.closed_for(update_id)
             if not self.entries_ok(current):
@@ -234,7 +234,7 @@ class Updates:
 
     def evidence_file(self, update_id, generation, name):
         record = read_json(self.evidence(update_id, generation) / name)
-        if not record or record.get("update") != update_id or record.get("generation") != generation:
+        if not record or (record.get("update"), record.get("generation")) != (update_id, generation):
             raise UpdateError("no-evidence", f"This update has no {name} for generation {generation}")
         return record
 
@@ -245,9 +245,13 @@ class Updates:
         manifest = self.manifest_of(generation)
         if not digest_of(manifest) == staged["manifest_sha256"] == smoked.get("manifest_sha256"):
             raise UpdateError("evidence-mismatch", "The generation's manifest changed since it was prepared")
-        if smoked.get("check") != CHECK_VERSION or set(smoked.get("binaries", {})) != set(clients_in(manifest)):
+        if not smoke_covers(smoked, manifest):
             raise UpdateError("evidence-mismatch", "The smoke check doesn't cover this generation's clients")
-        for name, sha in smoked["binaries"].items():
+        self.same_binaries(generation, manifest, smoked["binaries"])
+
+    def same_binaries(self, generation, manifest, binaries):
+        """Each client on disk is still the file that was smoke-checked."""
+        for name, sha in binaries.items():
             if file_sha256(self.entry(generation, manifest, name)) != sha:
                 raise UpdateError("evidence-mismatch", f"{name} changed since it was smoke-checked")
 
@@ -257,17 +261,10 @@ class Updates:
         current = self.store.current_manifest()
         if current is None:
             raise UpdateError("not-released", "This root has no current generation")
-        for field in ("release", "architecture", "selection"):
-            if manifest.get(field) != current.get(field):
-                raise UpdateError("override", f"An update can't change the {field}")
-        if set(manifest["tools"]) != set(current["tools"]):
-            raise UpdateError("override", "An update can't add or remove a tool")
+        require_same_root(manifest, current)
         lock = self.manifest_lock(manifest)
         for name, tool in manifest["tools"].items():
-            expected = current["tools"][name]
-            if name in tool_lock.LANE_TOOLS:
-                expected = tool_store.tool_entry(tool_lock.artifact(lock, name, manifest["architecture"]))
-            if tool != expected:
+            if tool != expected_tool(name, current, lock):
                 raise UpdateError("override", f"An update can't change {name} beyond its pinned client version")
 
     def manifest_lock(self, manifest):
@@ -307,20 +304,55 @@ class Updates:
     def accept_override(self, manifest, incoming):
         """Keep the host's override lock under the store, once it is the
         image's lock with nothing changed but the clients."""
-        override = manifest.get("override")
-        if override is None:
-            if manifest["lock_sha256"] != file_sha256(self.lock_file):
-                raise UpdateError("override", "The manifest names another lock and carries no override")
-            return
-        source = incoming / OVERRIDE_FILE
-        target = self.overrides / (manifest["lock_sha256"] + ".json")
-        if not target.exists():
-            if not source.is_file() or file_sha256(source) != manifest["lock_sha256"]:
-                raise UpdateError("override", "The override lock wasn't delivered or doesn't match its digest")
-            write_durable(target, source.read_text())
+        if manifest.get("override") is None:
+            return self.require_image_lock(manifest)
+        self.keep_override(manifest["lock_sha256"], incoming / OVERRIDE_FILE)
         reason = tool_store.override_reason(manifest, self.lock_file, self.overrides)
         if reason:
             raise UpdateError("override", reason)
+        return None
+
+    def require_image_lock(self, manifest):
+        if manifest["lock_sha256"] != file_sha256(self.lock_file):
+            raise UpdateError("override", "The manifest names another lock and carries no override")
+
+    def keep_override(self, digest, source):
+        """Store a delivered override lock under its digest, once."""
+        target = self.overrides / (digest + ".json")
+        if target.exists():
+            return
+        if not delivered(source, digest):
+            raise UpdateError("override", "The override lock wasn't delivered or doesn't match its digest")
+        write_durable(target, source.read_text())
+
+
+def delivered(source, digest):
+    return source.is_file() and file_sha256(source) == digest
+
+
+def smoke_covers(smoked, manifest):
+    """The recorded check is this version's and names exactly the clients."""
+    if smoked.get("check") != CHECK_VERSION:
+        return False
+    return set(smoked.get("binaries", {})) == set(clients_in(manifest))
+
+
+def require_same_root(manifest, current):
+    """An update keeps the release, the architecture, the selection and
+    the set of tools."""
+    for field in ("release", "architecture", "selection"):
+        if manifest.get(field) != current.get(field):
+            raise UpdateError("override", f"An update can't change the {field}")
+    if set(manifest["tools"]) != set(current["tools"]):
+        raise UpdateError("override", "An update can't add or remove a tool")
+
+
+def expected_tool(name, current, lock):
+    """What a tool's entry must be: unchanged, or for an agent client the
+    lock's artifact for this machine."""
+    if name not in tool_lock.LANE_TOOLS:
+        return current["tools"][name]
+    return tool_store.tool_entry(tool_lock.artifact(lock, name, current["architecture"]))
 
 
 def clients_in(manifest):
@@ -369,7 +401,8 @@ CODEX_DROP = ("runuser", "-u", CHECK_USER, "--preserve-environment", "--")
 def check_codex(tool, entry, home, config):
     """The App Server's initialize answer, started as pairtask-codex starts
     it, in a CODEX_HOME the check user owns."""
-    result = tool_smoke.codex_handshake(entry, home, config, SMOKE_TIMEOUT, prefix=CODEX_DROP, client="pairtask-update", owner=CHECK_USER)
+    how = tool_smoke.Handshake(SMOKE_TIMEOUT, client="pairtask-update", prefix=CODEX_DROP, owner=CHECK_USER)
+    result = tool_smoke.codex_handshake(entry, home, config, how)
     if not tool_smoke.reports(tool.get("version", ""), result.get("userAgent", "")):
         raise tool_smoke.SmokeError("codex's App Server reports another version")
 
@@ -382,9 +415,13 @@ def dump(value):
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
 
 
+def plain(character):
+    return character.isalnum() or character in "-_"
+
+
 def safe_id(value):
     """An ID used as one path component."""
-    if not value or not all(c.isalnum() or c in "-_" for c in value):
+    if not value or not all(map(plain, value)):
         raise UpdateError("bad-id", "An update or generation ID must be letters, digits, - or _")
     return value
 

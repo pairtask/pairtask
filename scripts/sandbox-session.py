@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 
-from sandbox_operator_config import deployment_directory
+from sandbox_operator_config import existing_deployment
 from sandbox_remote import default_remote
 from sandbox_terminal import run_session
 import sandbox_tools_update
@@ -84,7 +84,7 @@ def parser():
 def update_refusal(project="pairtask"):
     """Check the same locked journal the updater uses, without creating a
     deployment during a session command. Invalid state refuses admission."""
-    directory = deployment_directory(None, project, create=False)
+    directory = existing_deployment(project)
     with sandbox_tools_update.admission(directory):
         pass
     return directory
@@ -94,7 +94,7 @@ def session_spawn(project):
     """Keep the admission check and local child creation inside one lock;
     the existing session releases it before waiting for the child."""
     def spawn(argv):
-        directory = deployment_directory(None, project, create=False)
+        directory = existing_deployment(project)
         with sandbox_tools_update.admission(directory):
             return subprocess.Popen(argv)
     return spawn

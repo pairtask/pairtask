@@ -180,7 +180,7 @@ def codex_findings(item, binary, home):
 def codex_handshake(binary, home, config=CODEX_CONFIG, timeout=RUN_TIMEOUT):
     """The App Server's initialize answer with the image's config; see
     tool_smoke.codex_handshake."""
-    return tool_smoke.codex_handshake(binary, home, config, timeout)
+    return tool_smoke.codex_handshake(binary, home, config, tool_smoke.Handshake(timeout=timeout))
 
 
 def cs_mcp_findings(item, binary, home):

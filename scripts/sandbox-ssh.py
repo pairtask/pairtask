@@ -13,7 +13,7 @@ import sys
 
 from sandbox_layout import discover
 from sandbox_remote import default_remote
-from sandbox_operator_config import deployment_directory
+from sandbox_operator_config import existing_deployment
 import sandbox_tools_update
 
 
@@ -148,7 +148,7 @@ def main():
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE)
     args = parser.parse_args()
     os.umask(0o077)
-    directory = deployment_directory(None, args.project, create=False)
+    directory = existing_deployment(args.project)
     with sandbox_tools_update.admission(directory):
         setup(args)
 

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from sandbox_host_user import refuse_root
 from sandbox_remote import REMOTE
-from sandbox_operator_config import deployment_directory
+from sandbox_operator_config import existing_deployment
 import sandbox_tools_update
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -260,15 +260,21 @@ def main(argv=None):
         return 0
     preflight(steps)
     if argv[0] == "start":
-        opts = composite_options("start", argv[1:], platform.system())
-        try:
-            directory = deployment_directory(None, opts.project, create=False)
-            with sandbox_tools_update.admission(directory):
-                return execute(steps)
-        except (ValueError, OSError) as error:
-            print("pairtask start: {}".format(error), file=sys.stderr)
-            return 75
+        return start_admitted(argv[1:], steps)
     return execute(steps)
+
+
+def start_admitted(rest, steps):
+    """Start the containers unless a client update holds sessions back;
+    the update's lock is held while they start."""
+    opts = composite_options("start", rest, platform.system())
+    try:
+        directory = existing_deployment(opts.project)
+        with sandbox_tools_update.admission(directory):
+            return execute(steps)
+    except (ValueError, OSError) as error:
+        print("pairtask start: {}".format(error), file=sys.stderr)
+        return 75
 
 
 def execute(steps):

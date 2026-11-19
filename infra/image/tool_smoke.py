@@ -35,11 +35,21 @@ def client_environment(home, **extra):
     return environment
 
 
-def codex_handshake(binary, home, config, timeout=RUN_TIMEOUT, prefix=(), client="pairtask-tools-lane", owner=None):
+class Handshake:
+    """How a handshake is run: its time limit, the client name it gives,
+    and, when the caller is root, a command prefix that drops privileges
+    to owner, who is then given the CODEX_HOME."""
+
+    def __init__(self, timeout=RUN_TIMEOUT, client="pairtask-tools-lane", prefix=(), owner=None):
+        self.timeout, self.client, self.prefix, self.owner = timeout, client, tuple(prefix), owner
+
+
+def codex_handshake(binary, home, config, how=None):
     """Start the App Server as pairtask-codex does and complete initialize
     with config in a private CODEX_HOME; the answer's codexHome shows that
-    config was the one read. prefix is a command that drops privileges to
-    owner, who is then given the CODEX_HOME."""
+    config was the one read."""
+    how = how or Handshake()
+    timeout, client, prefix, owner = how.timeout, how.client, how.prefix, how.owner
     codex_home = Path(home) / "codex-home"
     codex_home.mkdir(exist_ok=True)
     shutil.copyfile(config, codex_home / "config.toml")

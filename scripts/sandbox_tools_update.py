@@ -176,11 +176,7 @@ def malformed(record):
     whose shape, or whose fields for its phase, it would have to guess."""
     if not isinstance(record, dict) or record.get("schema") != SCHEMA:
         return "unknown schema"
-    for check in (bad_identity, bad_progress, bad_deployment, bad_containers):
-        problem = check(record)
-        if problem:
-            return problem
-    return None
+    return first_problem(record, (bad_identity, bad_progress, bad_deployment, bad_containers))
 
 
 def text(value):
@@ -190,25 +186,57 @@ def text(value):
 def bad_identity(record):
     if not text(record.get("id")):
         return "no update ID"
-    if record.get("kind") not in ("update", "rollback") or not isinstance(record.get("requested"), dict):
+    if not known_kind(record):
         return "unknown kind or request"
-    back = record.get("rollback")
-    if not isinstance(back, dict) or (back and set(back) != set(ROLES)) or not all(text(generation) for generation in back.values()):
+    if not return_generations(record.get("rollback")):
         return "the generations to return to aren't one for each container"
     return None
 
 
+def known_kind(record):
+    if record.get("kind") not in ("update", "rollback"):
+        return False
+    return isinstance(record.get("requested"), dict)
+
+
+def return_generations(back):
+    """Empty, or one named generation for each container."""
+    if not isinstance(back, dict):
+        return False
+    if back and set(back) != set(ROLES):
+        return False
+    return all(text(generation) for generation in back.values())
+
+
 def bad_progress(record):
     """Phase, step, target, outcome and failure agree with each other."""
-    phase = record.get("phase")
-    if phase not in PHASES or record.get("step") not in ("intent", "result"):
+    if not known_step(record):
         return "unknown phase or step"
-    restores = record.get("restores")
-    if not isinstance(restores, int) or isinstance(restores, bool) or restores < 0:
+    if not count(record.get("restores")):
         return "restores isn't a count"
-    if phase == "superseded":  # inert: it keeps what it was when the root was replaced
+    if record["phase"] == "superseded":  # inert: it keeps what it was when the root was replaced
         return None
-    return bad_failure(record) or bad_target(record) or bad_outcome(record)
+    return first_problem(record, (bad_failure, bad_target, bad_outcome))
+
+
+def first_problem(record, checks):
+    for check in checks:
+        problem = check(record)
+        if problem:
+            return problem
+    return None
+
+
+def known_step(record):
+    if record.get("phase") not in PHASES:
+        return False
+    return record.get("step") in ("intent", "result")
+
+
+def count(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    return value >= 0
 
 
 def bad_failure(record):
@@ -225,7 +253,8 @@ def bad_target(record):
     while both containers are only being closed, the predecessor on the
     way back."""
     target, chosen = record.get("target"), ("candidate", "predecessor")
-    if target not in chosen + (None,) or (committed(record) and target not in chosen):
+    allowed = chosen if committed(record) else chosen + (None,)
+    if target not in allowed:
         return "no target for phase {}".format(record["phase"])
     acting = acting_phase(record)
     if acting in ("closing", "reopening") and target != "candidate":
@@ -260,14 +289,28 @@ def committed(record):
 
 
 def bad_deployment(record):
-    deployment = record.get("deployment")
-    instances = deployment.get("instances") if isinstance(deployment, dict) else None
-    if not isinstance(instances, dict) or set(instances) != set(ROLES):
+    instances = instances_of(record.get("deployment"))
+    if instances is None:
         return "no deployment identity"
-    if not all(isinstance(instances[role], dict) and text(instances[role].get("name")) and text(instances[role].get("uuid"))
-               for role in ROLES):
+    if not all(named_instance(instances[role]) for role in ROLES):
         return "an instance has no name or UUID"
     return None
+
+
+def instances_of(deployment):
+    """The deployment's instance table when it has one for each role."""
+    if not isinstance(deployment, dict):
+        return None
+    instances = deployment.get("instances")
+    if not isinstance(instances, dict) or set(instances) != set(ROLES):
+        return None
+    return instances
+
+
+def named_instance(instance):
+    if not isinstance(instance, dict):
+        return False
+    return text(instance.get("name")) and text(instance.get("uuid"))
 
 
 def bad_containers(record):
@@ -275,14 +318,23 @@ def bad_containers(record):
     if not isinstance(containers, dict) or set(containers) != set(ROLES):
         return "containers aren't workspace and secured"
     planned = record["phase"] in PLANNED or committed(record)
-    for role in ROLES:
-        entry = containers[role]
-        if not isinstance(entry, dict) or not text(entry.get("predecessor")):
-            return "{} has no predecessor".format(role)
-        candidate = entry.get("candidate")
-        if not (text(candidate) or (candidate is None and not planned)):
-            return "{} has no candidate".format(role)
+    problems = (bad_entry(role, containers[role], planned) for role in ROLES)
+    return next((problem for problem in problems if problem), None)
+
+
+def bad_entry(role, entry, planned):
+    if not isinstance(entry, dict) or not text(entry.get("predecessor")):
+        return "{} has no predecessor".format(role)
+    if not candidate_named(entry.get("candidate"), planned):
+        return "{} has no candidate".format(role)
     return None
+
+
+def candidate_named(candidate, planned):
+    """A named candidate, or none yet while nothing is planned."""
+    if candidate is None:
+        return not planned
+    return text(candidate)
 
 
 @contextmanager
@@ -305,14 +357,19 @@ class Update:
     resolve(requested, record) returns {"requested": {client: version},
     "override": {...} or None, "containers": {role: {"candidate": ID,
     "deliver": callable(container, update_id) -> the stage arguments}}}; it
-    touches no container. deployment is what else identifies the deployment
-    (project, release and image lock digests)."""
+    touches no container. of(deployment) adds what else identifies the
+    deployment (project, release and image lock digests)."""
 
-    def __init__(self, journal, containers, resolve=None, hooks=None, deployment=None):
+    def __init__(self, journal, containers, resolve=None, hooks=None):
         self.journal, self.containers, self.resolve = journal, containers, resolve
         self.hooks = hooks or Hooks()
-        self.deployment = dict(deployment or {})
+        self.deployment = {}
         self.plan = None
+
+    def of(self, deployment):
+        """This transaction, for the deployment these facts identify."""
+        self.deployment = dict(deployment or {})
+        return self
 
     # Commands
 
@@ -369,9 +426,11 @@ class Update:
     def settled(self, repair=False):
         """The last record after recovery; refuses while it isn't over."""
         previous = self.recover(repair)
-        if previous is not None and previous["phase"] not in TERMINAL:
+        if previous is None:
+            return None
+        if previous["phase"] not in TERMINAL:
             raise UpdateRefused("the last update stopped in phase {}".format(previous["phase"]))
-        if previous is not None and previous["phase"] == "failed" and not repair:
+        if previous["phase"] == "failed" and not repair:
             raise UpdateRefused("the last update failed ({}); run pairtask update --rollback, or pairtask upgrade"
                                 .format(previous.get("failure")))
         return previous
@@ -380,17 +439,7 @@ class Update:
         """A new record in phase resolving, once both containers answer and
         are released. Nothing has changed if this refuses."""
         update_id = str(uuid.uuid4())
-        observed = {}
-        for role in ROLES:
-            try:
-                observed[role] = self.containers[role].activate("verify", "--update", update_id)
-            except ContainerError as error:
-                raise UpdateRefused("{}: {}; nothing was changed".format(self.containers[role].name, error)) from error
-            if observed[role].get("state") != "ready" or not observed[role].get("current"):
-                raise UpdateRefused("{} isn't released and ready; nothing was changed".format(self.containers[role].name))
-            if observed[role].get("entries_ok") is not True:
-                raise UpdateRefused("{}: the client set it runs doesn't verify, so there would be nothing sound to return to; "
-                                    "nothing was changed (pairtask upgrade replaces it)".format(self.containers[role].name))
+        observed = {role: self.preflight(role, update_id) for role in ROLES}
         try:
             instances = self.instances()
         except ContainerError as error:
@@ -406,6 +455,19 @@ class Update:
         }
         self.intent(record, "resolving")
         return record
+
+    def preflight(self, role, update_id):
+        """What a container reports before anything starts; refuses unless
+        it answers, is released, and runs a client set that verifies."""
+        name = self.containers[role].name
+        try:
+            seen = self.containers[role].activate("verify", "--update", update_id)
+        except ContainerError as error:
+            raise UpdateRefused("{}: {}; nothing was changed".format(name, error)) from error
+        problem = unsound(name, seen)
+        if problem:
+            raise UpdateRefused(problem)
+        return seen
 
     def planned(self, record):
         """Record the plan and run it; a plan that changes nothing ends here."""
@@ -478,14 +540,8 @@ class Update:
             seen = self.containers[role].activate("verify", "--update", record["id"])
         except ContainerError as error:
             raise Blocked(record, error) from error
-        entry = record["containers"][role]
-        entry["observed"] = seen
-        expected = {entry["predecessor"], entry["candidate"]} - {None}
-        if seen.get("current") not in expected:
-            raise Mismatch("unexpected-pointer", "{} runs generation {}, which this update doesn't know".format(role, seen.get("current")))
-        ours = seen.get("state") == "maintenance" and seen.get("update") == record["id"]
-        if not ours and seen.get("state") != "ready":
-            raise Mismatch("foreign-state", "{} is in state {} for another update".format(role, seen.get("state")))
+        record["containers"][role]["observed"] = seen
+        classify(record, role, seen)
         return seen
 
     # Phases. Each starts with the journal at (phase, intent) and ends by
@@ -563,16 +619,20 @@ class Update:
         if not all(verified(record, role, seen[role], or_ready=True) for role in ROLES):
             return self.turn_back(record, "a container no longer verifies on its {} generation".format(record["target"]))
         try:
-            for role in ROLES:
-                if seen[role]["state"] == "maintenance":
-                    self.call(record, role, "release")
+            self.release_closed(record, seen)
         except ContainerError as error:
             return self.fail(record, "release", error)
         seen = {role: self.observe(record, role) for role in ROLES}
-        if not all(seen[role]["state"] == "ready" and verified(record, role, seen[role], or_ready=True) for role in ROLES):
+        if not all(released(record, role, seen[role]) for role in ROLES):
             return self.fail(record, "release")
         self.result(record)
         return self.finish(record, "done", outcome=record["target"])
+
+    def release_closed(self, record, seen):
+        """Reopen each container that is still closed for this update."""
+        for role in ROLES:
+            if seen[role]["state"] == "maintenance":
+                self.call(record, role, "release")
 
     def phase_restoring(self, record):
         """Both closed first, always; then back to each predecessor."""
@@ -646,6 +706,38 @@ def resumable(record, repair):
         return True
     retried = AUTO_RECOVERABLE + (("abort",) if repair else ())
     return record["phase"] == "failed" and record.get("failure") in retried
+
+
+def unsound(name, seen):
+    """Why an update can't start from what a container reports, or None."""
+    if seen.get("state") != "ready" or not seen.get("current"):
+        return "{} isn't released and ready; nothing was changed".format(name)
+    if seen.get("entries_ok") is not True:
+        return ("{}: the client set it runs doesn't verify, so there would be nothing sound to return to; "
+                "nothing was changed (pairtask upgrade replaces it)".format(name))
+    return None
+
+
+def classify(record, role, seen):
+    """A container's pointer is one of the two the journal names, and its
+    state is this update's or an open one; else Mismatch."""
+    entry = record["containers"][role]
+    expected = {entry["predecessor"], entry["candidate"]} - {None}
+    if seen.get("current") not in expected:
+        raise Mismatch("unexpected-pointer", "{} runs generation {}, which this update doesn't know".format(role, seen.get("current")))
+    if seen.get("state") != "ready" and not closed_for(record, seen):
+        raise Mismatch("foreign-state", "{} is in state {} for another update".format(role, seen.get("state")))
+
+
+def closed_for(record, seen):
+    return seen.get("state") == "maintenance" and seen.get("update") == record["id"]
+
+
+def released(record, role, seen):
+    """Open again, on the generation the target names."""
+    if seen["state"] != "ready":
+        return False
+    return verified(record, role, seen, or_ready=True)
 
 
 def verified(record, role, seen, or_ready=False):
@@ -729,9 +821,16 @@ def glance(directory):
         return None
 
 
+def in_effect(record):
+    """An update that took effect and named the versions it moved to."""
+    if record is None or record["phase"] != "done":
+        return False
+    return record.get("outcome") == "candidate" and bool(record.get("requested"))
+
+
 def clients_line(record):
     """What `pairtask version` says about an update in effect, or None."""
-    if record is None or record["phase"] != "done" or record.get("outcome") != "candidate" or not record.get("requested"):
+    if not in_effect(record):
         return None
     versions = ", ".join("{} {}".format(name, record["requested"][name]) for name in sorted(record["requested"]))
     return "clients:   {} (pairtask update; the next upgrade returns to the release's own)".format(versions)

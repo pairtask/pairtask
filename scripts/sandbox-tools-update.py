@@ -45,15 +45,15 @@ def arguments(argv=None):
     parser.add_argument("--state-dir", type=Path, help="the operator checkout; discovered when left out")
     args = parser.parse_args(argv)
     args.requested = {name: getattr(args, name) for name in CLIENT_FLAGS if getattr(args, name)}
-    if args.requested and (args.rollback or args.status or args.repair):
+    if args.requested and any((args.rollback, args.status, args.repair)):
         parser.error("a version goes with a plain update, not with --rollback, --status or --repair")
     return args
 
 
 def transaction(args, directory):
     instances = {role: Instance(Container(args.remote, args.project, role)) for role in update.ROLES}
-    return update.Update(update.journal_in(directory), instances, Resolver(instances),
-                         deployment={"project": args.project, "remote": args.remote})
+    work = update.Update(update.journal_in(directory), instances, Resolver(instances))
+    return work.of({"project": args.project, "remote": args.remote})
 
 
 def run(args, directory):
@@ -73,20 +73,36 @@ def describe(record):
     """One paragraph a person can act on, and the exit code."""
     if record is None:
         return "No client update has been run in this sandbox.", 0
-    phase, detail = record["phase"], record.get("detail")
-    if phase == "done" and record["outcome"] == "candidate":
+    tell = DESCRIPTIONS.get(record["phase"], unfinished)
+    return tell(record)
+
+
+def done(record):
+    if record["outcome"] == "candidate":
         return "{}: both containers now run {}.".format(kind_of(record), versions_of(record)), 0
-    if phase == "done":
-        return ("The update was undone: both containers are back on the clients they had. Reason: {}."
-                .format(detail or "a container didn't verify")), 1
-    if phase == "aborted":
-        return "Nothing was changed: {}.".format(detail or "the update stopped before any container was switched"), aborted_code(detail)
-    if phase == "superseded":
-        return "The last client update ended with an upgrade; the sandbox runs its release's own clients.", 0
-    if phase == "failed":
-        return ("The update failed ({}): {}. New sessions are held back. Run `pairtask update --rollback`, "
-                "or `pairtask upgrade` to replace the sandbox.".format(record.get("failure"), detail or "no detail")), 1
-    return "A client update is unfinished (phase {}). Run `pairtask update --repair`.".format(phase), 1
+    return ("The update was undone: both containers are back on the clients they had. Reason: {}."
+            .format(record.get("detail") or "a container didn't verify")), 1
+
+
+def aborted(record):
+    detail = record.get("detail")
+    return "Nothing was changed: {}.".format(detail or "the update stopped before any container was switched"), aborted_code(detail)
+
+
+def superseded(_):
+    return "The last client update ended with an upgrade; the sandbox runs its release's own clients.", 0
+
+
+def failed(record):
+    return ("The update failed ({}): {}. New sessions are held back. Run `pairtask update --rollback`, "
+            "or `pairtask upgrade` to replace the sandbox.".format(record.get("failure"), record.get("detail") or "no detail")), 1
+
+
+def unfinished(record):
+    return "A client update is unfinished (phase {}). Run `pairtask update --repair`.".format(record["phase"]), 1
+
+
+DESCRIPTIONS = {"done": done, "aborted": aborted, "superseded": superseded, "failed": failed}
 
 
 def aborted_code(detail):
