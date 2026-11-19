@@ -34,6 +34,9 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "infra/image"))
 from tool_lock import artifact  # noqa: E402
+import tool_smoke  # noqa: E402
+from tool_smoke import (AnswerReader, MAX_PREAMBLE, NO_ANSWER_IN_TIME, TOO_MUCH_PREAMBLE,  # noqa: E402,F401
+                        SmokeError as LaneError, accepted, first_answer, reports)
 from sandbox_https import urlopen  # noqa: E402
 import sandbox_versions as versions  # noqa: E402
 
@@ -45,10 +48,6 @@ CODEX_CONFIG = ROOT / "infra/image/codex-config.toml"
 CLIENTS = ("claude", "codex", "cs-mcp")
 DOWNLOAD_TIMEOUT = 300
 RUN_TIMEOUT = 60
-
-
-class LaneError(ValueError):
-    """One finding about one tool."""
 
 
 def checksum_findings(lock, resolve=versions.resolver):
@@ -137,11 +136,6 @@ def ends_section(line):
     return bool(line) and not line.startswith(" ")
 
 
-def reports(version, text):
-    """text names version as a whole token, not as the start of a longer one."""
-    return re.search(r"(?<![\w.])" + re.escape(version) + r"(?![\w.])", text) is not None
-
-
 def alias_subcommands(path=ALIASES):
     """The launcher's pass-through list: the case pattern under which the
     alias runs claude as typed."""
@@ -184,87 +178,9 @@ def codex_findings(item, binary, home):
 
 
 def codex_handshake(binary, home, config=CODEX_CONFIG, timeout=RUN_TIMEOUT):
-    """Start the App Server as pairtask-codex does and complete initialize
-    with the image's config in a private CODEX_HOME; the answer's codexHome
-    shows that config was the one read."""
-    codex_home = Path(home) / "codex-home"
-    codex_home.mkdir(exist_ok=True)
-    shutil.copyfile(config, codex_home / "config.toml")
-    environment = {"HOME": str(home), "PATH": os.environ.get("PATH", ""), "CODEX_HOME": str(codex_home)}
-    request = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-               "params": {"clientInfo": {"name": "pairtask-tools-lane", "version": "1"}, "capabilities": {"experimentalApi": True}}}
-    with subprocess.Popen([str(binary), "app-server", "--listen", "stdio://"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL, env=environment) as process:
-        try:
-            process.stdin.write((json.dumps(request) + "\n").encode())
-            process.stdin.flush()
-            answer = first_answer(process, timeout)
-            process.stdin.write((json.dumps({"jsonrpc": "2.0", "method": "initialized"}) + "\n").encode())
-            process.stdin.flush()
-        finally:
-            process.terminate()
-            try:
-                process.wait(5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-    if not accepted(answer):
-        raise LaneError("the App Server didn't accept initialize")
-    if answer["result"].get("codexHome") != str(codex_home):
-        raise LaneError("the App Server didn't read the image's config")
-    return answer["result"]
-
-
-def accepted(answer):
-    """The answer to request 1 carries a result and no error."""
-    return "error" not in answer and isinstance(answer.get("result"), dict)
-
-
-def first_answer(process, timeout):
-    """The App Server's answer to request 1, skipping notifications it sends
-    first. Reads never block past the deadline, a partial line included, and
-    everything read until the answer is bounded by MAX_PREAMBLE."""
-    reader = AnswerReader(process.stdout, time.monotonic() + timeout)
-    while True:
-        frame = json.loads(reader.line())
-        if frame.get("id") == 1:
-            return frame
-        if time.monotonic() >= reader.deadline:
-            raise LaneError(NO_ANSWER_IN_TIME)
-
-
-# How many bytes the App Server may send, in total, up to and including its
-# answer to initialize.
-MAX_PREAMBLE = 1 << 20
-TOO_MUCH_PREAMBLE = "the App Server sent over {} bytes before answering initialize".format(MAX_PREAMBLE)
-NO_ANSWER_IN_TIME = "the App Server didn't answer initialize in time"
-
-
-class AnswerReader:
-    """Lines from the App Server, bounded in time by a deadline and in size
-    by MAX_PREAMBLE over every byte read."""
-
-    def __init__(self, stream, deadline):
-        self.stream, self.deadline = stream, deadline
-        self.buffered, self.read = b"", 0
-
-    def line(self):
-        while b"\n" not in self.buffered:
-            self.fill()
-        line, _, self.buffered = self.buffered.partition(b"\n")
-        return line.decode("utf-8", "replace")
-
-    def fill(self):
-        """One read, once the stream is ready before the deadline."""
-        ready, _, _ = select.select([self.stream], [], [], max(self.deadline - time.monotonic(), 0))
-        if not ready or time.monotonic() >= self.deadline:
-            raise LaneError(NO_ANSWER_IN_TIME)
-        chunk = os.read(self.stream.fileno(), 1 << 16)
-        if not chunk:
-            raise LaneError("the App Server closed without answering initialize")
-        self.read += len(chunk)
-        if self.read > MAX_PREAMBLE:
-            raise LaneError(TOO_MUCH_PREAMBLE)
-        self.buffered += chunk
+    """The App Server's initialize answer with the image's config; see
+    tool_smoke.codex_handshake."""
+    return tool_smoke.codex_handshake(binary, home, config, timeout)
 
 
 def cs_mcp_findings(item, binary, home):

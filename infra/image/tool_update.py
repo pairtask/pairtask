@@ -25,16 +25,17 @@ next upgrade replaces the root.
 import json
 import os
 from pathlib import Path
-import re
 import hashlib
 import shutil
 import subprocess
+import tempfile
 
 import tool_lock
+import tool_smoke
 import tool_store
 from tool_store import StoreError, file_sha256, generation_id, read_json, write_durable, write_state
 
-CHECK_USER = "pairtask-tools-check"
+CHECK_USER = "nobody"  # unprivileged in every image; owns nothing but its run's home
 CHECK_VERSION = "v1"
 OVERRIDE_FILE = "override-lock.json"
 SMOKE_TIMEOUT = 60
@@ -313,22 +314,37 @@ def clients_in(manifest):
     return [name for name in tool_lock.LANE_TOOLS if name in manifest["tools"]]
 
 
-def smoke_check(name, tool, entry):
-    """Run one client's --version as the unprivileged check user, with a
-    private home and no inherited environment; it must name its version."""
-    command = ["runuser", "-u", CHECK_USER, "--", "env", "-i", "HOME=/tmp/pairtask-tools-check", "PATH=/usr/bin:/bin",
-               str(entry), "--version"]
+def smoke_check(name, tool, entry, etc=tool_store.ETC):
+    """Start one updated client as the unprivileged check user, in a home
+    made for this run and removed after it: it must name its version, and
+    Codex must also answer initialize with the config this root derives."""
+    home = tempfile.mkdtemp(prefix="pairtask-tools-check-")
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=SMOKE_TIMEOUT, check=False)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise UpdateError("smoke", f"{name} didn't run: {error}") from error
-    if result.returncode != 0 or not reports(tool.get("version", ""), result.stdout):
-        raise UpdateError("smoke", f"{name} didn't report version {tool.get('version')}")
+        shutil.chown(home, CHECK_USER)
+        prefix = ("runuser", "-u", CHECK_USER, "--", "env", "-i")
+        check_version(name, tool, entry, home, prefix)
+        if name == "codex":
+            check_codex(tool, entry, home, prefix, Path(etc) / "codex/config.toml")
+    except (OSError, LookupError, subprocess.SubprocessError, tool_smoke.SmokeError, ValueError) as error:
+        raise UpdateError("smoke", f"{name} failed its check: {error}") from error
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
 
 
-def reports(version, text):
-    """text names version as a whole token, not as part of a longer one."""
-    return bool(version) and re.search(r"(?<![\w.])" + re.escape(version) + r"(?![\w.])", text) is not None
+def check_version(name, tool, entry, home, prefix):
+    command = [*prefix, f"HOME={home}", "PATH=/usr/bin:/bin", str(entry), "--version"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=SMOKE_TIMEOUT, check=False)
+    if result.returncode != 0 or not tool_smoke.reports(tool.get("version", ""), result.stdout):
+        raise tool_smoke.SmokeError(f"{name} didn't report version {tool.get('version')}")
+
+
+def check_codex(tool, entry, home, prefix, config):
+    """The App Server's initialize answer, started as pairtask-codex starts
+    it; the handshake sets the child's HOME and CODEX_HOME itself."""
+    drop = (*prefix[:-2], "--preserve-environment", "--")
+    result = tool_smoke.codex_handshake(entry, home, config, SMOKE_TIMEOUT, prefix=drop, client="pairtask-update")
+    if not tool_smoke.reports(tool.get("version", ""), result.get("userAgent", "")):
+        raise tool_smoke.SmokeError("codex's App Server reports another version")
 
 
 def digest_of(manifest):
