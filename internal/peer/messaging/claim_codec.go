@@ -16,6 +16,9 @@ import (
 // ClaimVersion is the first version that carries claim notices.
 const ClaimVersion byte = 11
 
+// Sequences fit the durable store's signed integer representation.
+const maxClaimSequence uint64 = 1<<63 - 1
+
 // Version 11 only.
 const (
 	FrameClaimNotice byte = 31 // where a claim on one of the receiver's messages stands
@@ -36,6 +39,7 @@ const (
 	ClaimNotRecipient   = "not_recipient"   // the agent wasn't one of that message's recipients
 	ClaimStale          = "stale"           // a newer state of the same claim is already held
 	ClaimConflict       = "conflict"        // the same sequence number with another content
+	ClaimFull           = "full"            // the message already holds the bounded number of claim keys
 )
 
 // ClaimNotice is the state of one claim: on the message MessageID (its ID
@@ -60,7 +64,7 @@ var (
 	claimTask    = regexp.MustCompile(`^[a-z0-9-]{1,64}$`)
 	claimRoles   = map[string]bool{"owner": true, "reviewer": true}
 	claimStates  = map[string]bool{ClaimActive: true, ClaimReleased: true, ClaimDone: true}
-	claimReasons = map[string]bool{"": true, ClaimUnknownMessage: true, ClaimNotRecipient: true, ClaimStale: true, ClaimConflict: true}
+	claimReasons = map[string]bool{"": true, ClaimUnknownMessage: true, ClaimNotRecipient: true, ClaimStale: true, ClaimConflict: true, ClaimFull: true}
 )
 
 // claimSubject: the message, agent, role and task a notice or reply names.
@@ -75,14 +79,14 @@ func validClaimNotice(n ClaimNotice) bool {
 	if !claimSubject(n.MessageID, n.Agent, n.Role, n.Task) {
 		return false
 	}
-	return claimStates[n.State] && n.Seq > 0
+	return claimStates[n.State] && n.Seq > 0 && n.Seq <= maxClaimSequence
 }
 
 func validClaimReply(r ClaimReply) bool {
 	if !claimSubject(r.MessageID, r.Agent, r.Role, r.Task) {
 		return false
 	}
-	return r.Seq > 0 && claimReasons[r.Reason]
+	return r.Seq > 0 && r.Seq <= maxClaimSequence && claimReasons[r.Reason]
 }
 
 // claimSeq reads a sequence number as sent; 0 for anything else, which

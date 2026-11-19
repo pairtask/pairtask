@@ -190,10 +190,13 @@ func (h *Hub) pairedClaim(ctx context.Context, in Inbound, now time.Time) protoc
 		return failure
 	}
 	answer := protocol.Message{Type: protocol.TypeClaimResult, RequestID: msg.RequestID, MessageID: msg.MessageID, ClaimPage: page(out.Set)}
+	if out.Received {
+		answer.RemoteVisible, answer.RemoteReason = &out.Visible, out.Reason
+	}
 	if !out.Changed {
 		return answer
 	}
-	answer.RemoteVisible, answer.RemoteReason = &out.Visible, out.Reason
+	h.MessagesChanged(out.Contact)
 	if out.Visible {
 		h.SyncMessages(out.Contact)
 	}

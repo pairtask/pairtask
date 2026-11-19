@@ -128,6 +128,9 @@ const (
 // side knows: queued means no confirmed delivery yet, expired means it is
 // no longer offered, never that it wasn't delivered.
 type ContactMessageView struct {
+	// Claims coordinate work on this message. Remote claims always carry
+	// their workspace; they never authorize an action (#419, v30).
+	*ClaimPage
 	ID            string     `json:"id"`
 	Contact       string     `json:"contact"`
 	Direction     string     `json:"direction"` // out or in

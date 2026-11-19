@@ -333,6 +333,46 @@ All conversation, with the author and `origin: "agent"`.
 - **The operator's own `@all`** is unchanged: it reaches the agents, never the
   operator's own inbox.
 
+## Claims on paired messages (agent v30, peer v11)
+
+The four claim frames also accept `message_id` instead of
+`operator_message_id`. Exactly one selector is required. Only an actual
+recipient of the imported message may claim it; sharing alone grants no
+claim access. Local first-claim and role rules still apply. Only the sending
+agent may read claims on its sent message. The operator reads them in the
+paired conversation, including Desktop `check_inbox`.
+
+A result names `message_id`. Local claims have no `remote`; claims learned
+from the other workspace always carry `remote: {workspace}` with its canonical
+identity key. `claimed_at` is the peer's reported time, not an independently
+verified timestamp. These are last-reported states and never authorize,
+lock, or refuse a message, reply, or review.
+
+Mutations of received-message claims report `remote_visible`: true means a
+notice was queued, not delivered. False carries `remote_reason` (`not_shared`,
+`unsupported`, or `unpaired`); MCP adds explanatory `remote_reason_text`.
+Reads refresh that visibility and can report a terminal peer refusal.
+Unsharing cancels queued notices atomically and stops further updates; the
+sender keeps the last state already reported. Re-sharing never revives a
+cancelled notice. Unpairing cancels notices and hides remote claims from the
+ended pairing, even if a later pairing reuses the message ID.
+
+Peer version 11 exchanges `ClaimNotice` (frame 31) and `ClaimReply` (32),
+after consent outcomes. The notice carries message ID, agent, role, task,
+state, sequence (1 through 2^63-1) and time; the reply repeats the complete key and sequence.
+An empty reason means kept; terminal reasons are `unknown_message`,
+`not_recipient`, `stale`, `conflict`, and `full`. Higher sequences replace,
+identical replays are kept, and conflicting equal or older sequences change
+nothing. A receiver retains at most 16 distinct claim keys per message;
+updates to an existing key still work at that limit. Claim records are
+collected with their retained subjects.
+
+A peer below version 11 receives no claim frames. Pending notices settle as
+`unsupported`; changes while unsupported remain local. Upgrading does not
+replay them automatically: the next change can queue the current state with
+a sequence above the last queued state. Local changes and notice insertion
+commit together, so a failed notice write rolls back the claim change.
+
 ## Task claims (v8)
 
 When the operator addresses several agents at once, each of them starts on

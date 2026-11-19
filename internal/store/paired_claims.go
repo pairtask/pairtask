@@ -62,11 +62,12 @@ var _ messaging.ClaimStore = (*PeerMessages)(nil)
 // change whether it was queued to be shown to the message's sender, with
 // the reason code when it wasn't.
 type PairedClaim struct {
-	Set     protocol.ClaimSet
-	Changed bool // a change, so Visible and Reason mean something
-	Visible bool
-	Reason  string
-	Contact string // the workspace owed a notice, when Visible
+	Set      protocol.ClaimSet
+	Received bool // this side received the subject, so visibility describes its own claims
+	Changed  bool // a change, so Visible and Reason mean something
+	Visible  bool
+	Reason   string
+	Contact  string // the workspace owed a notice, when Visible
 }
 
 // PairedClaim serves a claim frame that names a paired message. A message
@@ -88,6 +89,7 @@ func (s *Store) PairedClaim(ctx context.Context, kind string, req ClaimRequest) 
 		return sentClaims(ctx, tx, kind, req)
 	}
 	out, changeErr := claimReceived(ctx, tx, kind, req, imp)
+	out.Received = true
 	set, err := messageClaims(ctx, tx, req.MessageID)
 	if err != nil {
 		return PairedClaim{}, err
@@ -116,12 +118,18 @@ func receivedBy(ctx context.Context, tx *sql.Tx, localID, agent string) (RemoteI
 // change, and in the same transaction the notice it owes the sender.
 func claimReceived(ctx context.Context, tx *sql.Tx, kind string, req ClaimRequest, imp RemoteImport) (PairedClaim, error) {
 	state, err := changeClaim(ctx, tx, kind, req)
-	if err != nil || state == "" {
+	if err != nil {
 		return PairedClaim{}, err
 	}
-	out := PairedClaim{Changed: true}
+	out := PairedClaim{Changed: state != "", Contact: imp.Contact}
 	out.Reason, err = hiddenFrom(ctx, tx, imp, req.Agent)
 	if err != nil || out.Reason != "" {
+		return out, err
+	}
+	if state == "" {
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(dropped=''),0),COALESCE(MIN(dropped),'') FROM claim_notices_out
+WHERE contact=? AND pairing_epoch=? AND remote_id=? AND agent=?`,
+			imp.Contact, imp.source().epoch, imp.RemoteID, req.Agent).Scan(&out.Visible, &out.Reason)
 		return out, err
 	}
 	out.Visible, out.Contact = true, imp.Contact
@@ -242,22 +250,30 @@ WHERE `+sentByAgent+` ORDER BY rc.state = 'released', rc.at, rc.task, rc.role, r
 		return set, err
 	}
 	defer rows.Close()
+	set.ClaimPage, err = remoteClaimPage(rows, messageID)
+	return set, err
+}
+
+func remoteClaimPage(rows *sql.Rows, messageID string) (protocol.ClaimPage, error) {
+	page := protocol.ClaimPage{Claims: []protocol.Claim{}}
 	for rows.Next() {
 		c := protocol.Claim{MessageID: messageID, Remote: &protocol.ClaimRemote{}}
 		var at string
 		if err := rows.Scan(&c.Remote.Workspace, &c.AgentID, &c.Role, &c.Task, &c.State, &at); err != nil {
-			return set, err
+			return page, err
 		}
-		if c.ClaimedAt, err = time.Parse(time.RFC3339Nano, at); err != nil {
-			return set, err
+		claimedAt, err := time.Parse(time.RFC3339Nano, at)
+		if err != nil {
+			return page, err
 		}
-		set.Total++
-		if len(set.Claims) < protocol.ClaimsPerMessage {
-			set.Claims = append(set.Claims, c)
+		c.ClaimedAt = claimedAt
+		page.Total++
+		if len(page.Claims) < protocol.ClaimsPerMessage {
+			page.Claims = append(page.Claims, c)
 		}
 	}
-	set.Truncated = set.Total > len(set.Claims)
-	return set, rows.Err()
+	page.Truncated = page.Total > len(page.Claims)
+	return page, rows.Err()
 }
 
 // PendingClaimNotices is up to max claim states still owed to contact in
@@ -295,6 +311,16 @@ func (p *PeerMessages) ClaimNoticeAnswered(ctx context.Context, contact string, 
 	return p.exec(ctx, contact, `UPDATE claim_notices_out SET pending = 0, dropped = ?7
 WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND remote_id = ?2 AND agent = ?3 AND role = ?4 AND task = ?5 AND seq = ?6 AND pending = 1`,
 		contact, r.MessageID, r.Agent, r.Role, r.Task, r.Seq, r.Reason)
+}
+
+// settleUnsharedClaims cancels pending notices from revoked agents in the
+// same transaction as Unshare. A later share must not revive those notices.
+func settleUnsharedClaims(ctx context.Context, tx *sql.Tx, contact string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE claim_notices_out SET pending = 0, dropped = ?2
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND pending = 1
+AND agent NOT IN (SELECT agent FROM peer_grants WHERE contact = ?1 AND pairing_epoch = claim_notices_out.pairing_epoch)`,
+		contact, protocol.ClaimNotShared)
+	return err
 }
 
 // settleUnshownClaims, when a session with contact agreed a version that
@@ -361,6 +387,9 @@ func holdClaim(ctx context.Context, tx *sql.Tx, k pairingKey, n messaging.ClaimN
 		k.contact, k.epoch, n.MessageID, n.Agent, n.Role, n.Task).Scan(&seq, &state, &held)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		if full, err := remoteClaimsFull(ctx, tx, k, n.MessageID); err != nil || full {
+			return messaging.ClaimFull, err
+		}
 	case err != nil:
 		return "", err
 	case n.Seq < seq:
@@ -374,6 +403,13 @@ ON CONFLICT (contact, pairing_epoch, message_id, agent, role, task)
 DO UPDATE SET state = excluded.state, seq = excluded.seq, at = excluded.at, received_at = excluded.received_at`,
 		k.contact, k.epoch, n.MessageID, n.Agent, n.Role, n.Task, n.State, n.Seq, stamp(n.At), stamp(at))
 	return "", err
+}
+
+func remoteClaimsFull(ctx context.Context, tx *sql.Tx, k pairingKey, id string) (bool, error) {
+	var count int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM remote_claims WHERE contact=? AND pairing_epoch=? AND message_id=?`,
+		k.contact, k.epoch, id).Scan(&count)
+	return count >= protocol.ClaimsPerMessage, err
 }
 
 // sameClaim: the notice repeats the state held under its sequence number.

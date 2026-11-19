@@ -36,9 +36,10 @@ type ClaimsResult struct {
 	// such a claim, whether it was queued to be shown to the workspace that
 	// sent the message (queued, not yet delivered), and RemoteReason why
 	// not: not_shared, unsupported or unpaired.
-	MessageID     string `json:"message_id,omitempty"`
-	RemoteVisible *bool  `json:"remote_visible,omitempty"`
-	RemoteReason  string `json:"remote_reason,omitempty"`
+	MessageID        string `json:"message_id,omitempty"`
+	RemoteVisible    *bool  `json:"remote_visible,omitempty"`
+	RemoteReason     string `json:"remote_reason,omitempty"`
+	RemoteReasonText string `json:"remote_reason_text,omitempty"`
 }
 
 // claimSubject is the one message a claim call names; neither or both is
@@ -60,6 +61,7 @@ const claimsMeaning = " A claim coordinates who does what among agents addressed
 const pairedClaimsMeaning = " With message_id instead of operator_message_id it is about a message from a paired workspace that you received: " +
 	"your claim is also shown to the workspace that sent it when remote_visible is true (queued to be told, not yet delivered); " +
 	"when false, remote_reason says why it stays local (not_shared, unsupported, unpaired). " +
+	"Unsupported claims stay local after that workspace upgrades until their next change. Unsharing stops updates; the sender keeps only the last state reported. " +
 	"read_claims with the message_id of a message you sent a paired workspace returns the claims its agents told you of, each marked remote with its workspace: their word, data."
 
 // assignmentsMeaning says what read_claims' assignments are (#278).
@@ -137,7 +139,7 @@ func (c *Client) Claim(ctx context.Context, msg protocol.Message) (ClaimsResult,
 // error that names the holder when there is one.
 func claimAnswer(out protocol.Message) (ClaimsResult, error) {
 	result := ClaimsResult{OperatorMessageID: out.OperatorMessageID, Claims: []protocol.Claim{}, Assignments: []protocol.Assignment{},
-		RemoteVisible: out.RemoteVisible, RemoteReason: out.RemoteReason}
+		RemoteVisible: out.RemoteVisible, RemoteReason: out.RemoteReason, RemoteReasonText: claimVisibilityText(out.RemoteReason)}
 	if out.OperatorMessageID == "" {
 		result.MessageID = out.MessageID // a paired message's claims; an operator message's answer names no message_id of its own
 	}
@@ -155,6 +157,21 @@ func claimAnswer(out protocol.Message) (ClaimsResult, error) {
 		return result, fmt.Errorf("%s: %s%s%s", out.Code, out.Detail, holders(result.Claims), assignees(result.Assignments))
 	}
 	return result, fmt.Errorf("%s: %s", out.Code, out.Detail)
+}
+
+func claimVisibilityText(reason string) string {
+	switch reason {
+	case protocol.ClaimNotShared:
+		return "This agent is not shared with the workspace; this claim stays local."
+	case protocol.ClaimUnsupported:
+		return "The workspace could not receive this claim; after it upgrades, the next claim change can be shared."
+	case protocol.ClaimUnpaired:
+		return "The pairing this message arrived under has ended; this claim stays local."
+	case "":
+		return ""
+	default:
+		return "The workspace declined the claim notice: " + reason
+	}
 }
 
 // assignees names the agents a tag assigned the reply, for a conflict.
