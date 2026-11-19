@@ -50,12 +50,15 @@ error exits non-zero and prints no decision.
 """
 
 import argparse
-import copy
+from pathlib import Path
 import json
 import subprocess
 import sys
 
 import sandbox_source
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra/image"))
+from tool_lock import clients_only  # noqa: E402
 
 BUILD = ("true", "shipped-or-unknown-path")
 SKIP = ("false", "safe-docs-only")
@@ -103,9 +106,9 @@ CI_PATHS = (".github/", "scripts/ci-classify.py", "scripts/tests/test_ci_classif
             "scripts/tests/test_ci_classify_tools_acceptance.py", "scripts/sandbox_source.py")
 GO_PATHS = ("go.mod", "go.sum", "cmd/", "internal/", "testdata/")
 LOCK = "infra/image/tools.lock.json"
-# The agent clients: a lock change confined to their versions and checksums
-# is kind "tools", checked by the tools lane; any other lock change is infra.
-LANE_TOOLS = ("claude", "codex", "cs-mcp")
+# A lock change confined to the agent clients' versions and checksums
+# (tool_lock.clients_only) is kind "tools", checked by the tools lane; any
+# other lock change is infra.
 INFRA_PATHS = ("infra/", "docs/skills/", "scripts/base-image-mirror.py")  # the mirror check is its own test
 PI_PATHS = ("integrations/pi/",)
 # Script tests ship in no image; with the lock they stay in the tools lane.
@@ -150,31 +153,6 @@ def lock_kind(repo, base, head):
     except (subprocess.CalledProcessError, OSError, ValueError):
         return "infra"
     return "tools" if clients_only(before, after) else "infra"
-
-
-def clients_only(before, after):
-    """The two locks are equal once each lane tool's version and
-    per-architecture checksums are set aside; a lane tool missing or
-    malformed on either side is not a client-only change."""
-    before, after = copy.deepcopy(before), copy.deepcopy(after)
-    for lock in (before, after):
-        for name in LANE_TOOLS:
-            if not blank_client(lock, name):
-                return False
-    return before == after
-
-
-def blank_client(lock, name):
-    """Remove the version and checksums of one lane tool in place; false
-    when the entry isn't shaped as the lock schema has it."""
-    spec = lock.get("artifacts", {}).get(name) if isinstance(lock, dict) else None
-    architectures = spec.get("architectures") if isinstance(spec, dict) else None
-    if not isinstance(architectures, dict) or not all(isinstance(a, dict) for a in architectures.values()):
-        return False
-    spec.pop("version", None)
-    for per_arch in architectures.values():
-        per_arch.pop("sha256", None)
-    return True
 
 
 def flags(decision, found):

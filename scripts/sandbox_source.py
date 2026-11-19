@@ -26,7 +26,7 @@ RECIPE_PATHS = ["infra/image/" + name for name in (
     "pairtask-rtk-setup", "pairtask-rtk-setup.service", "codex-config.toml",
     "docker-packages.txt", "pairtask-docker-setup",
     "pairtask-docker-session.service", "pairtask-docker-setup.service", "pairtask-user-workspace.conf",
-    "tool_download.py", "tool_lock.py", "tool_store.py", "build-playwright-bundle.py",
+    "tool_download.py", "tool_lock.py", "tool_store.py", "tool_update.py", "build-playwright-bundle.py",
     "pairtask-tools-activate", "pairtask-tools-ready", "pairtask-tool", "pairtask-tools-ready.service",
     "pairtask-tools-setup.service", "pairtask-playwright", "pairtask-codescene-login",
     "pairtask-chromium.apparmor", "mcp/package.json", "mcp/package-lock.json", "mcp/servers.json",

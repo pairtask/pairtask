@@ -18,16 +18,46 @@ def main():
     activate = commands.add_parser("activate", help="verify, stage and activate a generation")
     activate.add_argument("manifest", type=Path)
     activate.add_argument("--incoming", type=Path, default=tool_store.STORE / "incoming")
+    add_update_commands(commands)
     args = parser.parse_args()
     store = tool_store.Store()
     if args.command == "status":
         print(json.dumps(store.status(), indent=2))
         return
+    if args.command == "verify":
+        print(json.dumps(store.verify_update(args.update)))
+        return
     if os.geteuid() != 0:
         raise tool_store.StoreError("activation runs as root")
+    if args.command in UPDATE_STEPS:
+        print(json.dumps(UPDATE_STEPS[args.command](store, args)))
+        return
     manifest = json.loads(args.manifest.read_text())
     generation = store.activate(manifest, args.incoming)
     print(f"Activated tool generation {generation}")
+
+
+# The steps of an in-place client update (pairtask update); see tool_update.
+UPDATE_STEPS = {
+    "stage": lambda store, a: {"generation": store.stage_update(json.loads(a.manifest.read_text()), a.incoming, a.update)},
+    "smoke": lambda store, a: store.smoke_update(a.generation, a.update),
+    "close": lambda store, a: store.close_update(a.update),
+    "flip": lambda store, a: store.flip_update(a.generation, a.update),
+    "restore": lambda store, a: store.restore_update(a.generation, a.update),
+    "release": lambda store, a: store.release_update(a.update),
+    "abort": lambda store, a: store.abort_update(a.update) or {},
+}
+
+
+def add_update_commands(commands):
+    for name in (*UPDATE_STEPS, "verify"):
+        step = commands.add_parser(name, help=f"pairtask update: {name}")
+        step.add_argument("--update", required=True, help="the host's update ID")
+        if name == "stage":
+            step.add_argument("manifest", type=Path)
+            step.add_argument("--incoming", type=Path, default=tool_store.STORE / "incoming")
+        if name in ("smoke", "flip", "restore"):
+            step.add_argument("generation")
 
 
 if __name__ == "__main__":

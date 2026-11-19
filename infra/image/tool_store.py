@@ -524,6 +524,36 @@ class Store:
             return None
         return Path(os.readlink(self.current)).name
 
+    # In-place client updates on a released root; the steps are tool_update's.
+
+    def updates(self):
+        import tool_update
+        return tool_update.Updates(self)
+
+    def stage_update(self, manifest, incoming, update_id):
+        return self.updates().stage(manifest, incoming, update_id)
+
+    def smoke_update(self, generation, update_id, check=None):
+        return self.updates().smoke(generation, update_id, check)
+
+    def close_update(self, update_id):
+        return self.updates().close(update_id)
+
+    def flip_update(self, generation, update_id):
+        return self.updates().flip(generation, update_id)
+
+    def restore_update(self, generation, update_id):
+        return self.updates().restore(generation, update_id)
+
+    def verify_update(self, update_id):
+        return self.updates().verify(update_id)
+
+    def release_update(self, update_id):
+        return self.updates().release(update_id)
+
+    def abort_update(self, update_id):
+        return self.updates().abort(update_id)
+
     def prune(self, previous=None):
         """Keep the current generation, the one it replaced, and the
         artifacts they reference; this only ever runs inside an activation,
@@ -545,6 +575,29 @@ class Store:
                 shutil.rmtree(path)
 
 
+class StoreLock:
+    """The store's lock: exclusive for anything that changes it, shared for
+    a launcher reading what is current."""
+
+    def __init__(self, root, exclusive):
+        self.path, self.exclusive = Path(root) / "lock", exclusive
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.path.open("a")
+        fcntl.flock(self.handle, fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH)
+        return self
+
+    def __exit__(self, *_):
+        self.handle.close()
+        return False
+
+
+def launch_lock(store=None):
+    """What a launcher holds while it checks readiness and resolves a tool."""
+    return StoreLock((store or Store()).root, exclusive=False)
+
+
 def remove_unless_marked(directory, marker):
     """Entries without their completion marker are garbage from a crash."""
     for path in directory.iterdir():
@@ -559,7 +612,7 @@ def ready(store=None, lock_file=LOCK_FILE, source_file=SOURCE_FILE, mode_file=MO
     manifest, reason = active_generation(store or Store())
     if reason:
         return reason
-    return release_mismatch(manifest, lock_file, source_file)
+    return release_mismatch(manifest, lock_file, source_file, (store or Store()).root / "overrides")
 
 
 def active_generation(store):
@@ -573,7 +626,28 @@ def active_generation(store):
     return manifest, None
 
 
-def release_mismatch(manifest, lock_file, source_file):
-    if manifest["lock_sha256"] != file_sha256(lock_file) or manifest["release"] != file_sha256(source_file):
+def release_mismatch(manifest, lock_file, source_file, overrides=None):
+    """Tools must be this release's: its build source, and its lock or an
+    override of it that changes the agent clients only."""
+    if manifest["release"] != file_sha256(source_file):
         return "tools were activated for a different release; run the rollout"
+    if manifest.get("override") is not None:
+        return override_reason(manifest, lock_file, STORE / "overrides" if overrides is None else overrides)
+    if manifest["lock_sha256"] != file_sha256(lock_file):
+        return "tools were activated for a different release; run the rollout"
+    return None
+
+
+def override_reason(manifest, lock_file, overrides):
+    """Why a manifest's override can't be trusted, or None: its lock must be
+    stored under the root-owned store with the digest the manifest names, be
+    made from the image's lock, and differ from it in the clients only."""
+    from tool_lock import clients_only
+    path = Path(overrides) / (manifest["lock_sha256"] + ".json")
+    if not path.is_file() or file_sha256(path) != manifest["lock_sha256"]:
+        return "the tools override is missing or doesn't match its manifest"
+    if manifest["override"].get("base_lock_sha256") != file_sha256(lock_file):
+        return "the tools override was made from another release's lock"
+    if not clients_only(json.loads(Path(lock_file).read_text()), json.loads(path.read_text())):
+        return "the tools override changes more than the agent clients"
     return None
