@@ -191,27 +191,56 @@ def bad_identity(record):
     if record.get("kind") not in ("update", "rollback") or not isinstance(record.get("requested"), dict):
         return "unknown kind or request"
     back = record.get("rollback")
-    if not isinstance(back, dict) or not all(text(generation) for generation in back.values()):
-        return "the generations to return to aren't named"
+    if not isinstance(back, dict) or (back and set(back) != set(ROLES)) or not all(text(generation) for generation in back.values()):
+        return "the generations to return to aren't one for each container"
     return None
 
 
 def bad_progress(record):
-    """Phase, step, target and outcome agree with each other."""
+    """Phase, step, target, outcome and failure agree with each other."""
     phase = record.get("phase")
     if phase not in PHASES or record.get("step") not in ("intent", "result"):
         return "unknown phase or step"
     restores = record.get("restores")
     if not isinstance(restores, int) or isinstance(restores, bool) or restores < 0:
         return "restores isn't a count"
-    if phase == "failed" and record.get("failure") not in AUTO_RECOVERABLE + EXPLICIT_ONLY:
+    if phase == "superseded":  # inert: it keeps what it was when the root was replaced
+        return None
+    return bad_failure(record) or bad_target(record) or bad_outcome(record)
+
+
+def bad_failure(record):
+    """A reason exactly when the record failed, and a known one."""
+    if record["phase"] != "failed":
+        return None if record.get("failure") is None else "a failure reason without a failed phase"
+    if record.get("failure") not in AUTO_RECOVERABLE + EXPLICIT_ONLY:
         return "failed without a known reason"
-    chosen = ("candidate", "predecessor")
-    if record.get("target") not in chosen + (None,) or (committed(record) and record.get("target") not in chosen):
-        return "no target for phase {}".format(phase)
-    if phase == "done" and record.get("outcome") not in chosen:
-        return "done without an outcome"
     return None
+
+
+def bad_target(record):
+    """The target a phase needs: any once pointers may move, the candidate
+    while both containers are only being closed, the predecessor on the
+    way back."""
+    target, chosen = record.get("target"), ("candidate", "predecessor")
+    if target not in chosen + (None,) or (committed(record) and target not in chosen):
+        return "no target for phase {}".format(record["phase"])
+    if record["phase"] in ("closing", "reopening") and target != "candidate":
+        return "closing towards the predecessor"
+    if heading_back(record) and target != "predecessor":
+        return "restoring without the predecessor as target"
+    return None
+
+
+def heading_back(record):
+    return record["phase"] == "restoring" or (record["phase"] == "failed" and record.get("failure") == "restore")
+
+
+def bad_outcome(record):
+    """An outcome exactly when the record is done, and then its target."""
+    if record["phase"] != "done":
+        return None if record.get("outcome") is None else "an outcome before the update is done"
+    return None if record.get("outcome") == record.get("target") else "done with an outcome that isn't its target"
 
 
 def committed(record):
