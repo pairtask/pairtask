@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/pairtask/pairtask/internal/peer/messaging"
 	"github.com/pairtask/pairtask/internal/signing"
@@ -46,6 +47,24 @@ func (l PeerLink) Address() string { return "workspace:" + l.Receiver }
 // FilesRecipientPrefix starts the entry that names a message's files
 // among its seal's recipients: the prefix, then 128 hex digits.
 const FilesRecipientPrefix = "files-sha512:"
+
+// SealNamesFiles: a header's recipients name exactly these files: no
+// files entry for a message without any, else the one entry for them in
+// this order. A recipient that only starts like the entry and is short
+// enough to be an agent ID is an agent, never the entry.
+func SealNamesFiles(recipients []string, files []FileRef) bool {
+	var named []string
+	for _, r := range recipients {
+		if len(r) > messaging.AgentIDBytes && strings.HasPrefix(r, FilesRecipientPrefix) {
+			named = append(named, r)
+		}
+	}
+	if len(files) == 0 {
+		return len(named) == 0
+	}
+	digest := messaging.RefsDigest(files)
+	return digest != "" && len(named) == 1 && named[0] == FilesRecipientPrefix+digest
+}
 
 // Recipients are the message's recipients as its seal names them, sorted;
 // with them, for a message naming files, one entry that names exactly
