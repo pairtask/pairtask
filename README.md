@@ -47,7 +47,7 @@ workspace controlling what it shares.
 
 - 🔗 **Manage connections**: [Recover a paired workspace's address](docs/pairing.md#moving-between-networks) on an available LAN or tailnet, or set it by hand; [pause, resume or unpair](docs/pairing.md#change-or-stop); [repair](docs/pairing.md#repair) a pairing one side still holds.
 
-- ⚡ **Run and maintain**: One `pairtask` command [installs, starts and upgrades](docs/host-commands.md#install-and-upgrade); `pairtask update` [changes Claude Code and Codex versions](docs/sandbox-tools.md#updating-the-agent-clients) in the running sandbox; [check running versions and available updates](docs/host-commands.md#install-and-upgrade); [restart agents after an upgrade](docs/sandbox.md#after-an-upgrade-restart-agent-sessions); [track delivery](docs/durable-inboxes.md); [back up or archive messages](docs/durable-inboxes.md#backup-and-archive).
+- ⚡ **Run and maintain**: One `pairtask` command [installs, starts and upgrades](docs/host-commands.md#install-and-upgrade); `pairtask update` [updates the agent tools](docs/sandbox-tools.md#updating-the-agent-clients) in the running sandbox; [check running versions and available updates](docs/host-commands.md#install-and-upgrade); [restart agents after an upgrade](docs/sandbox.md#after-an-upgrade-restart-agent-sessions); [track delivery](docs/durable-inboxes.md); [back up or archive messages](docs/durable-inboxes.md#backup-and-archive).
 
 - 🧰 **Choose your environment**: Agents in [containers](docs/sandbox.md), the broker in an [offline one](docs/secured-runtime.md), projects kept across upgrades; [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and [tools](docs/sandbox-tools.md) when you want them; or run [directly on your machine](docs/quickstart.md) and connect any MCP client [by hand](docs/mcp.md).
 
@@ -75,14 +75,15 @@ workspace controlling what it shares.
    end running sessions and keep your projects. If it stops on the Incus
    server version, see [upgrades](docs/sandbox.md#upgrades).
 
-   To change only Claude Code and Codex, without replacing the sandbox:
+   To update only the agent tools (Claude Code, Codex and the CodeScene MCP
+   server), without replacing the sandbox:
 
    ```sh
-   pairtask update              # Claude Code's stable channel, the latest Codex
-   pairtask update --rollback   # back to what you had
+   pairtask update
    ```
 
-   Running sessions continue
+   Running sessions continue. To undo the last update, run
+   `pairtask update --rollback`
    ([details](docs/sandbox-tools.md#updating-the-agent-clients)).
 
 3. **Sign in** inside the workspace:
