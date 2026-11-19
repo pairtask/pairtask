@@ -165,6 +165,8 @@ func claimVisibilityText(reason string) string {
 		return "This agent is not shared with the workspace; this claim stays local."
 	case protocol.ClaimUnsupported:
 		return "The workspace could not receive this claim; after it upgrades, the next claim change can be shared."
+	case protocol.ClaimMixed:
+		return "Your claims on this message stay local, for different reasons; change one to see its own reason."
 	case protocol.ClaimUnpaired:
 		return "The pairing this message arrived under has ended; this claim stays local."
 	case "":

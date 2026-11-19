@@ -63,11 +63,14 @@ var _ messaging.ClaimStore = (*PeerMessages)(nil)
 // the reason code when it wasn't.
 type PairedClaim struct {
 	Set      protocol.ClaimSet
-	Received bool // this side received the subject, so visibility describes its own claims
-	Changed  bool // a change, so Visible and Reason mean something
-	Visible  bool
-	Reason   string
-	Contact  string // the workspace owed a notice, when Visible
+	Received bool // this side received the subject: the claims are its own agents'
+	Changed  bool // the request changed a claim
+	// Known says Visible and Reason describe something: always after a
+	// change; on a read only when the caller has a claim on the message.
+	Known   bool
+	Visible bool
+	Reason  string
+	Contact string // the workspace the message came from
 }
 
 // PairedClaim serves a claim frame that names a paired message. A message
@@ -88,7 +91,7 @@ func (s *Store) PairedClaim(ctx context.Context, kind string, req ClaimRequest) 
 	if !received {
 		return sentClaims(ctx, tx, kind, req)
 	}
-	out, changeErr := claimReceived(ctx, tx, kind, req, imp)
+	out, changeErr := claimReceived(ctx, tx, claimChange{kind, req, imp})
 	out.Received = true
 	set, err := messageClaims(ctx, tx, req.MessageID)
 	if err != nil {
@@ -114,26 +117,57 @@ func receivedBy(ctx context.Context, tx *sql.Tx, localID, agent string) (RemoteI
 	return imp, state == ImportImported && slices.Contains(imp.Recipients, agent), nil
 }
 
-// claimReceived applies a claim frame to a received message: the local
-// change, and in the same transaction the notice it owes the sender.
-func claimReceived(ctx context.Context, tx *sql.Tx, kind string, req ClaimRequest, imp RemoteImport) (PairedClaim, error) {
-	state, err := changeClaim(ctx, tx, kind, req)
+// claimChange is one claim frame about a message received from a paired
+// workspace: what it asks, by whom, of which import.
+type claimChange struct {
+	kind string
+	req  ClaimRequest
+	imp  RemoteImport
+}
+
+// claimReceived applies a claim frame to a received message. A change is
+// made locally and, in the same transaction, its state is recorded as owed
+// to the sender, or as hidden from it with the reason: both commit or
+// neither does. A read reports what the caller's claims there were told.
+func claimReceived(ctx context.Context, tx *sql.Tx, c claimChange) (PairedClaim, error) {
+	state, err := changeClaim(ctx, tx, c.kind, c.req)
 	if err != nil {
 		return PairedClaim{}, err
 	}
-	out := PairedClaim{Changed: state != "", Contact: imp.Contact}
-	out.Reason, err = hiddenFrom(ctx, tx, imp, req.Agent)
-	if err != nil || out.Reason != "" {
+	out := PairedClaim{Changed: state != "", Contact: c.imp.Contact}
+	if !out.Changed {
+		return out, toldOf(ctx, tx, c, &out)
+	}
+	out.Known = true
+	out.Reason, err = hiddenFrom(ctx, tx, c.imp, c.req.Agent)
+	if err != nil {
 		return out, err
 	}
-	if state == "" {
-		err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(dropped=''),0),COALESCE(MIN(dropped),'') FROM claim_notices_out
-WHERE contact=? AND pairing_epoch=? AND remote_id=? AND agent=?`,
-			imp.Contact, imp.source().epoch, imp.RemoteID, req.Agent).Scan(&out.Visible, &out.Reason)
-		return out, err
+	out.Visible = out.Reason == ""
+	return out, recordClaimNotice(ctx, tx, c, claimTold{state, out.Reason})
+}
+
+// toldOf fills in, for a read, what the sender was told of the caller's
+// claims on the message: shown when any of them is; else the one reason
+// they are all hidden for, or mixed when the reasons differ. A caller
+// with no claim there is told nothing about visibility.
+func toldOf(ctx context.Context, tx *sql.Tx, c claimChange, out *PairedClaim) error {
+	reasons, err := queryStrings(ctx, tx, `SELECT DISTINCT dropped FROM claim_notices_out
+WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND agent = ? ORDER BY dropped`,
+		c.imp.Contact, c.imp.source().epoch, c.imp.RemoteID, c.req.Agent)
+	if err != nil || len(reasons) == 0 {
+		return err
 	}
-	out.Visible, out.Contact = true, imp.Contact
-	return out, queueClaimNotice(ctx, tx, imp, req, state)
+	out.Known = true
+	switch {
+	case reasons[0] == "":
+		out.Visible = true
+	case len(reasons) == 1:
+		out.Reason = reasons[0]
+	default:
+		out.Reason = protocol.ClaimMixed
+	}
+	return nil
 }
 
 // changeClaim runs the frame's change and names the state it left the
@@ -177,18 +211,24 @@ func hiddenFrom(ctx context.Context, tx *sql.Tx, imp RemoteImport, agent string)
 	return "", nil
 }
 
-// queueClaimNotice records the claim's new state as owed to the sender:
-// the next sequence number of that claim, pending again.
-func queueClaimNotice(ctx context.Context, tx *sql.Tx, imp RemoteImport, req ClaimRequest, state string) error {
-	role := req.Role
+// claimTold is a claim's new state and why the sender isn't shown it
+// ("" when it is).
+type claimTold struct{ state, hidden string }
+
+// recordClaimNotice records the claim's new state under its next sequence
+// number: owed to the sender, or kept from it with the reason. A hidden
+// state is recorded too, never sent, so a read can say why and the next
+// state the sender is shown has a sequence number above every earlier one.
+func recordClaimNotice(ctx context.Context, tx *sql.Tx, c claimChange, t claimTold) error {
+	role := c.req.Role
 	if role == "" {
 		role = protocol.RoleOwner
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO claim_notices_out (contact, pairing_epoch, remote_id, agent, role, task, state, seq, at)
-VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+	_, err := tx.ExecContext(ctx, `INSERT INTO claim_notices_out (contact, pairing_epoch, remote_id, agent, role, task, state, seq, at, pending, dropped)
+VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
 ON CONFLICT (contact, pairing_epoch, remote_id, agent, role, task)
-DO UPDATE SET state = excluded.state, seq = seq + 1, at = excluded.at, pending = 1, dropped = ''`,
-		imp.Contact, imp.source().epoch, imp.RemoteID, req.Agent, role, req.Task, state, stamp(req.At))
+DO UPDATE SET state = excluded.state, seq = seq + 1, at = excluded.at, pending = excluded.pending, dropped = excluded.dropped`,
+		c.imp.Contact, c.imp.source().epoch, c.imp.RemoteID, c.req.Agent, role, c.req.Task, t.state, stamp(c.req.At), t.hidden == "", t.hidden)
 	return err
 }
 
@@ -350,7 +390,7 @@ func (p *PeerMessages) AcceptClaimNotice(ctx context.Context, contact string, n 
 		if answer.Reason, err = unclaimable(ctx, tx, k, n); err != nil || answer.Reason != "" {
 			return err
 		}
-		answer.Reason, err = holdClaim(ctx, tx, k, n, at)
+		answer.Reason, err = holdClaim(ctx, tx, toldClaim{k, n, at})
 		answer.Stored = err == nil && answer.Reason == ""
 		return err
 	})
@@ -377,39 +417,77 @@ func unclaimable(ctx context.Context, tx *sql.Tx, k pairingKey, n messaging.Clai
 	return messaging.ClaimNotRecipient, nil
 }
 
+// toldClaim is a notice taken under a pairing, and when.
+type toldClaim struct {
+	k  pairingKey
+	n  messaging.ClaimNotice
+	at time.Time
+}
+
+// Bounds on what a paired workspace can make this side keep for one
+// message: as many held claims as a message has locally, and a lifetime
+// number of claim keys. A released key is kept, never evicted: its
+// sequence number is what stops a delayed older notice from bringing the
+// claim back.
+const remoteClaimKeys = 4 * protocol.ClaimsPerMessage
+
 // holdClaim keeps the notice's state unless one at least as new is held:
 // the same state again is kept as it is, an older one is stale, and the
-// same sequence number with another content is a conflict.
-func holdClaim(ctx context.Context, tx *sql.Tx, k pairingKey, n messaging.ClaimNotice, at time.Time) (string, error) {
+// same sequence number with another content is a conflict. A state that
+// would take the message past its bounds is refused as full.
+func holdClaim(ctx context.Context, tx *sql.Tx, t toldClaim) (string, error) {
 	var seq uint64
 	var state, held string
 	err := tx.QueryRowContext(ctx, `SELECT seq, state, at FROM remote_claims WHERE contact = ? AND pairing_epoch = ? AND message_id = ? AND agent = ? AND role = ? AND task = ?`,
-		k.contact, k.epoch, n.MessageID, n.Agent, n.Role, n.Task).Scan(&seq, &state, &held)
+		t.k.contact, t.k.epoch, t.n.MessageID, t.n.Agent, t.n.Role, t.n.Task).Scan(&seq, &state, &held)
+	known := err == nil
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		if full, err := remoteClaimsFull(ctx, tx, k, n.MessageID); err != nil || full {
-			return messaging.ClaimFull, err
-		}
 	case err != nil:
 		return "", err
-	case n.Seq < seq:
+	case t.n.Seq < seq:
 		return messaging.ClaimStale, nil
-	case n.Seq == seq:
-		return sameClaim(n, state, held), nil
+	case t.n.Seq == seq:
+		return sameClaim(t.n, state, held), nil
+	}
+	full, err := remoteClaimsFull(ctx, tx, t, heldBefore{known, known && state != messaging.ClaimReleased})
+	if err != nil || full {
+		return fullReason(full), err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO remote_claims (contact, pairing_epoch, message_id, agent, role, task, state, seq, at, received_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (contact, pairing_epoch, message_id, agent, role, task)
 DO UPDATE SET state = excluded.state, seq = excluded.seq, at = excluded.at, received_at = excluded.received_at`,
-		k.contact, k.epoch, n.MessageID, n.Agent, n.Role, n.Task, n.State, n.Seq, stamp(n.At), stamp(at))
+		t.k.contact, t.k.epoch, t.n.MessageID, t.n.Agent, t.n.Role, t.n.Task, t.n.State, t.n.Seq, stamp(t.n.At), stamp(t.at))
 	return "", err
 }
 
-func remoteClaimsFull(ctx context.Context, tx *sql.Tx, k pairingKey, id string) (bool, error) {
-	var count int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM remote_claims WHERE contact=? AND pairing_epoch=? AND message_id=?`,
-		k.contact, k.epoch, id).Scan(&count)
-	return count >= protocol.ClaimsPerMessage, err
+func fullReason(full bool) string {
+	if full {
+		return messaging.ClaimFull
+	}
+	return ""
+}
+
+// heldBefore says what this side already keeps for the notice's key: any
+// row, and whether that row counts as held (not released).
+type heldBefore struct{ known, held bool }
+
+// remoteClaimsFull: taking the notice would put the message past a bound.
+// A new key needs room among the lifetime keys; a state that newly holds
+// (a new key, or a released one claimed again) needs room among the held.
+func remoteClaimsFull(ctx context.Context, tx *sql.Tx, t toldClaim, before heldBefore) (bool, error) {
+	var keys, held int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(state != 'released'), 0) FROM remote_claims WHERE contact = ? AND pairing_epoch = ? AND message_id = ?`,
+		t.k.contact, t.k.epoch, t.n.MessageID).Scan(&keys, &held)
+	if err != nil {
+		return false, err
+	}
+	if !before.known && keys >= remoteClaimKeys {
+		return true, nil
+	}
+	holds := t.n.State != messaging.ClaimReleased && !before.held
+	return holds && held >= protocol.ClaimsPerMessage, nil
 }
 
 // sameClaim: the notice repeats the state held under its sequence number.

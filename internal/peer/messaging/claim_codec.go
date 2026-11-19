@@ -67,26 +67,39 @@ var (
 	claimReasons = map[string]bool{"": true, ClaimUnknownMessage: true, ClaimNotRecipient: true, ClaimStale: true, ClaimConflict: true, ClaimFull: true}
 )
 
-// claimSubject: the message, agent, role and task a notice or reply names.
-func claimSubject(id, agent, role, task string) bool {
-	if !ValidID(id) || agent == "" || len(agent) > AgentIDBytes {
+// claimKey is what a notice or a reply is about: the message, and the
+// agent, role and task of one claim on it.
+type claimKey struct{ message, agent, role, task string }
+
+func (n ClaimNotice) key() claimKey { return claimKey{n.MessageID, n.Agent, n.Role, n.Task} }
+
+func (r ClaimReply) key() claimKey { return claimKey{r.MessageID, r.Agent, r.Role, r.Task} }
+
+func (k claimKey) valid() bool {
+	if !ValidID(k.message) || !claimRoles[k.role] {
 		return false
 	}
-	return claimRoles[role] && claimTask.MatchString(task)
+	if k.agent == "" || len(k.agent) > AgentIDBytes {
+		return false
+	}
+	return claimTask.MatchString(k.task)
 }
 
+// claimSequence: a sequence number a notice may carry and a store can keep.
+func claimSequence(seq uint64) bool { return seq > 0 && seq <= maxClaimSequence }
+
 func validClaimNotice(n ClaimNotice) bool {
-	if !claimSubject(n.MessageID, n.Agent, n.Role, n.Task) {
+	if !n.key().valid() || !claimSequence(n.Seq) {
 		return false
 	}
-	return claimStates[n.State] && n.Seq > 0 && n.Seq <= maxClaimSequence
+	return claimStates[n.State]
 }
 
 func validClaimReply(r ClaimReply) bool {
-	if !claimSubject(r.MessageID, r.Agent, r.Role, r.Task) {
+	if !r.key().valid() || !claimSequence(r.Seq) {
 		return false
 	}
-	return r.Seq > 0 && r.Seq <= maxClaimSequence && claimReasons[r.Reason]
+	return claimReasons[r.Reason]
 }
 
 // claimSeq reads a sequence number as sent; 0 for anything else, which

@@ -66,13 +66,8 @@ func (h *Hub) claimPreflight(in Inbound, now time.Time) *protocol.Message {
 		frame := statusError(msg.RequestID, code, detail)
 		return &frame
 	}
-	switch {
-	case msg.RequestID == "" || len(msg.RequestID) > 128:
-		return refuse(protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
-	case in.From.ProtocolVersion < protocol.ClaimVersion:
-		return refuse(protocol.ErrMalformedFrame, "claims require protocol_version 8")
-	case msg.MessageID != "" && in.From.ProtocolVersion < protocol.PairedClaimVersion:
-		return refuse(protocol.ErrMalformedFrame, "claims on a paired message require protocol_version 30")
+	if detail := malformedClaim(in); detail != "" {
+		return refuse(protocol.ErrMalformedFrame, detail)
 	}
 	if err := validClaimFrame(msg); err != nil {
 		return refuse(protocol.ErrInvalidClaim, err.Error())
@@ -81,6 +76,23 @@ func (h *Hub) claimPreflight(in Inbound, now time.Time) *protocol.Message {
 		return refuse(protocol.ErrClaimRateLimited, "too many claim changes; retry shortly")
 	}
 	return nil
+}
+
+// malformedClaim is why a claim frame can't be served at all: its
+// request_id, or a protocol version without claims, or without claims on
+// a paired message when it names one. "" when it can.
+func malformedClaim(in Inbound) string {
+	version := in.From.ProtocolVersion
+	if in.Msg.RequestID == "" || len(in.Msg.RequestID) > 128 {
+		return "request_id is required, at most 128 bytes"
+	}
+	if version < protocol.ClaimVersion {
+		return "claims require protocol_version 8"
+	}
+	if in.Msg.MessageID != "" && version < protocol.PairedClaimVersion {
+		return "claims on a paired message require protocol_version 30"
+	}
+	return ""
 }
 
 func (h *Hub) runClaim(ctx context.Context, kind string, req store.ClaimRequest) (protocol.ClaimSet, error) {
@@ -190,7 +202,7 @@ func (h *Hub) pairedClaim(ctx context.Context, in Inbound, now time.Time) protoc
 		return failure
 	}
 	answer := protocol.Message{Type: protocol.TypeClaimResult, RequestID: msg.RequestID, MessageID: msg.MessageID, ClaimPage: page(out.Set)}
-	if out.Received {
+	if out.Known {
 		answer.RemoteVisible, answer.RemoteReason = &out.Visible, out.Reason
 	}
 	if !out.Changed {

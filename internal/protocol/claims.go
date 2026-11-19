@@ -83,6 +83,10 @@ const (
 	ClaimNotShared   = "not_shared"  // the claiming agent isn't shared with that workspace
 	ClaimUnsupported = "unsupported" // that workspace runs a version without claim notices
 	ClaimUnpaired    = "unpaired"    // there is no current pairing with that workspace
+	// ClaimMixed answers a read when the caller's claims on the message
+	// are hidden for different reasons: none is shown, and no one reason
+	// says why.
+	ClaimMixed = "mixed"
 )
 
 // ClaimPage is a bounded list of claims with the total. Embedded in a frame,
