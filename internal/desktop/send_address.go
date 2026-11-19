@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -182,31 +183,70 @@ func (b addressBook) choices() string {
 	return "; paired workspaces: " + strings.Join(names, ", ")
 }
 
-// suggestions is AGENT@NAME for each of the workspaces, sorted. Every one
-// can be passed back as to and reach exactly that workspace: a display
-// name that wouldn't (see label) is replaced by the identity key.
+// suggestions are the ways to reach the agent in each of the workspaces,
+// sorted, and ready to join into a refusal. Every one, passed back to
+// send as given, reaches exactly that workspace and agent: each is checked
+// against the whole book, since a workspace's name always wins over an
+// AGENT@WORKSPACE reading. Workspaces that can't be named at all are told
+// last, with what to do about it.
 func (b addressBook) suggestions(t target, contacts []protocol.PairingContactView) []string {
-	out := make([]string, 0, len(contacts))
+	var routes, unnamed []string
 	for _, c := range contacts {
-		out = append(out, t.agent+"@"+b.label(t, c))
+		if route := b.route(t, c); route != "" {
+			routes = append(routes, route)
+		} else {
+			unnamed = append(unnamed, quoted(contactName(c)))
+		}
 	}
-	slices.Sort(out)
-	return out
+	slices.Sort(routes)
+	if len(unnamed) > 0 {
+		slices.Sort(unnamed)
+		routes = append(routes, "(no unambiguous way to name "+strings.Join(unnamed, ", ")+
+			": another workspace answers to its name and to its identity key; rename one of them)")
+	}
+	return routes
 }
 
-// label is c's display name when AGENT@name resolves back to c alone, else
-// its identity key. A name doesn't when it holds an @ (the address is
-// split at the last one), when any other contact answers to it too, or
-// when the whole address happens to be a workspace's name.
-func (b addressBook) label(t target, c protocol.PairingContactView) string {
-	name := contactName(c)
-	if strings.Contains(name, "@") || len(b.named(name).contacts) != 1 {
-		return c.IdentityKey
+// route is how to address the agent in c: AGENT@name, else AGENT@key,
+// each only when that string resolves back to c alone; else the explicit
+// send parameters with c's key as the workspace, when the key alone names
+// c; else "".
+func (b addressBook) route(t target, c protocol.PairingContactView) string {
+	for _, workspace := range []string{contactName(c), c.IdentityKey} {
+		if b.qualifies(t, workspace, c) {
+			return t.agent + "@" + workspace
+		}
 	}
-	if len(b.named(t.agent+"@"+name).contacts) > 0 {
-		return c.IdentityKey
+	if !b.only(c.IdentityKey, c) {
+		return ""
 	}
-	return name
+	explicit, _ := json.Marshal(SendArgs{To: c.IdentityKey, Agents: []string{t.agent}}.addressOnly()) // strings always encode
+	return string(explicit)
+}
+
+// qualifies: AGENT@workspace, as a to, means c and nothing else. It
+// doesn't when workspace holds an @ (the address is split at the last
+// one), when another contact answers to workspace too, or when the whole
+// address is some workspace's name.
+func (b addressBook) qualifies(t target, workspace string, c protocol.PairingContactView) bool {
+	if strings.Contains(workspace, "@") || !b.only(workspace, c) {
+		return false
+	}
+	return len(b.named(t.agent+"@"+workspace).contacts) == 0
+}
+
+// only: name picks out c and no other contact.
+func (b addressBook) only(name string, c protocol.PairingContactView) bool {
+	found := b.named(name).contacts
+	return len(found) == 1 && found[0].IdentityKey == c.IdentityKey
+}
+
+// addressOnly is the to and agents of a send, for showing as a choice.
+func (a SendArgs) addressOnly() any {
+	return struct {
+		To     string   `json:"to"`
+		Agents []string `json:"agents"`
+	}{a.To, a.Agents}
 }
 
 // only refuses agents given beside an address that already names one,
