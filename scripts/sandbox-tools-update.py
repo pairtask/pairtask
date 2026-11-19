@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 from sandbox_host_user import refuse_root
-from sandbox_operator_config import deployment_directory
+from sandbox_operator_config import deployment_directory, existing_deployment
 from sandbox_remote import default_remote
 from sandbox_tools_install import Container
 from sandbox_tools_plan import Instance, Resolver
@@ -120,13 +120,25 @@ def versions_of(record):
     return ", ".join("{} {}".format(name, requested[name]) for name in sorted(requested))
 
 
+def located(args):
+    """The deployment's state directory. Nothing is ever created here: an
+    update is for a sandbox that exists. Without one, --status has nothing
+    to report and every other action refuses."""
+    if args.state_dir:
+        return deployment_directory(args.state_dir, args.project)
+    directory = existing_deployment(args.project)
+    if directory is None and not args.status:
+        raise ValueError("no sandbox is installed for project {}; run pairtask install first".format(args.project))
+    return directory
+
+
 def main(argv=None):
     if refuse_root("pairtask update"):
         return 1
     args = arguments(argv)
-    directory = deployment_directory(args.state_dir, args.project)
+    directory = located(args)
     try:
-        record = run(args, directory)
+        record = run(args, directory) if directory else None
     except update.Blocked as blocked:
         print("{}. Nothing more was changed; run `pairtask update --repair` when the container is back.".format(blocked))
         return 1

@@ -395,7 +395,8 @@ class Store:
         manifest = self.current_manifest()
         return {"mode": mode(), "state": state,
                 "current": generation_id(manifest) if manifest else None,
-                "manifest": manifest, "complete": sorted(self.complete_artifacts())}
+                "manifest": manifest, "complete": sorted(self.complete_artifacts()),
+                "retained": retained(self.root, self.generations)}
 
     def complete_artifacts(self):
         if not self.artifacts.is_dir():
@@ -642,6 +643,40 @@ def release_mismatch(manifest, lock_file, source_file, overrides=None):
     if manifest["lock_sha256"] != file_sha256(lock_file):
         return "tools were activated for a different release; run the rollout"
     return None
+
+
+def retained(root, generations):
+    """What keeping every generation costs: how many generation directories
+    the store holds (the current one included; a link to one is not
+    another), and the bytes stored under the store. Reads only."""
+    kept = [path for path in generations.iterdir() if path.is_dir() and not path.is_symlink()] if generations.is_dir() else []
+    return {"generations": len(kept), "stored_bytes": stored_bytes(root)}
+
+
+def stored_bytes(root):
+    """The content bytes of the regular files under root, each file once
+    however many names it has (artifacts are shared between generations),
+    without following links out of the store. Apparent size, not blocks."""
+    seen, total = set(), 0
+    for directory, _, names in os.walk(root, followlinks=False):
+        for name in names:
+            size = file_size(os.path.join(directory, name), seen)
+            total += size
+    return total
+
+
+def file_size(path, seen):
+    """A regular file's size the first time its inode is met, else 0; a
+    file that went away meanwhile counts nothing."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return 0
+    inode = (info.st_dev, info.st_ino)
+    if not stat.S_ISREG(info.st_mode) or inode in seen:
+        return 0
+    seen.add(inode)
+    return info.st_size
 
 
 def override_reason(manifest, lock_file, overrides):
