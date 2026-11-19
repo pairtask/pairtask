@@ -31,8 +31,17 @@ func TestPairedClaimsDesktopMCPAcceptanceRemoteClaimSurvivesToolSchema(t *testin
 		claim, found = desktopClaimFor(t, f.inbox(t).Conversations[0].Messages, sent.ID)
 		return found
 	})
-	if claim.AgentID != "b-worker" || claim.Task != "investigate" || claim.Role != "owner" || claim.State != "active" {
-		t.Fatalf("claim changed through MCP: %+v", claim)
+	if claim.AgentID != "b-worker" {
+		t.Fatalf("claim holder changed through MCP: %+v", claim)
+	}
+	if claim.Task != "investigate" {
+		t.Fatalf("claim task changed through MCP: %+v", claim)
+	}
+	if claim.Role != "owner" {
+		t.Fatalf("claim role changed through MCP: %+v", claim)
+	}
+	if claim.State != "active" {
+		t.Fatalf("claim state changed through MCP: %+v", claim)
 	}
 	if claim.Remote == nil || claim.Remote.Workspace != f.bIdentity {
 		t.Fatalf("remote claim lost canonical workspace attribution: %+v", claim)
