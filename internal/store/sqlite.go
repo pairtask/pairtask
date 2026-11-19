@@ -75,7 +75,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("read schema: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + operatorContactSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + refusalNoticesSchema + pairedSchema + consentSchema + consentOwnerSchema + schemaStepsSchema + pairedClaimsSchema); err != nil {
+	if _, err := db.Exec("PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;" + schema + durableSchema + operatorSchema + agentStatusSchema + claimsSchema + roomsSchema + peerPairingSchema + peerIdentitySchema + peerJoinsSchema + peerContactsSchema + reviewsSchema + operatorContactSchema + contactAddressSchema + contactPauseSchema + assignmentsSchema + refusalNoticesSchema + pairedSchema + consentSchema + consentOwnerSchema + schemaStepsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -86,7 +86,7 @@ func Open(path string) (*Store, error) {
 	// Tables added since the epoch transition's released shape are created
 	// once it has succeeded, so a failed or refused transition leaves no new
 	// schema object behind.
-	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema); err != nil {
+	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply classifier schema: %w", err)
 	}

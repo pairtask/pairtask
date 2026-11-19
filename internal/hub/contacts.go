@@ -425,7 +425,7 @@ func (h *Hub) messageView(ctx context.Context, r messaging.Row) (protocol.Contac
 		}
 	}
 	claims, err := h.store.ContactClaims(ctx, r)
-	view.ClaimPage = claims
+	view.MessageClaims = protocol.ClaimsOf(claims)
 	return view, err
 }
 

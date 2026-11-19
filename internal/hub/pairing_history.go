@@ -71,7 +71,7 @@ func untaggedMessage(view *protocol.ContactMessageView) {
 // versionedView is a message view as a client at version reads it.
 func versionedView(view protocol.ContactMessageView, version int) protocol.ContactMessageView {
 	if version < protocol.PairedClaimVersion {
-		view.ClaimPage = nil
+		view.MessageClaims = nil
 	}
 	view.ReviewOutcome = protocol.OutcomeFor(view.ReviewOutcome, version)
 	if !historyCapable(version) {

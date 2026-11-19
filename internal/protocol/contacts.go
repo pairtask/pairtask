@@ -123,14 +123,34 @@ const (
 	ContactIDBytes = 128
 )
 
+// MessageClaims is the claims on one paired message as its conversation
+// shows them (#419): the same three fields a claim answer carries, each
+// left out when empty, and never an operator message's assignments. A
+// message without claims carries none of them, so a reader's schema treats
+// them as optional.
+type MessageClaims struct {
+	Claims    []Claim `json:"claims,omitempty"`
+	Total     int     `json:"claims_total,omitempty"`
+	Truncated bool    `json:"claims_truncated,omitempty"`
+}
+
+// ClaimsOf is a page of claims as a message carries them: nil for none.
+func ClaimsOf(page *ClaimPage) *MessageClaims {
+	if page == nil || page.Total == 0 {
+		return nil
+	}
+	return &MessageClaims{Claims: page.Claims, Total: page.Total, Truncated: page.Truncated}
+}
+
 // ContactMessageView is one message with a contact, as the operator sees
 // it. Text is empty once collected. Delivery states are only what this
 // side knows: queued means no confirmed delivery yet, expired means it is
 // no longer offered, never that it wasn't delivered.
 type ContactMessageView struct {
 	// Claims coordinate work on this message. Remote claims always carry
-	// their workspace; they never authorize an action (#419, v30).
-	*ClaimPage
+	// their workspace; they never authorize an action (#419, v30). Absent
+	// for a message without claims.
+	*MessageClaims
 	ID            string     `json:"id"`
 	Contact       string     `json:"contact"`
 	Direction     string     `json:"direction"` // out or in

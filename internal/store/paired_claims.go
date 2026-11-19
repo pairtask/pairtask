@@ -136,7 +136,8 @@ func claimReceived(ctx context.Context, tx *sql.Tx, c claimChange) (PairedClaim,
 	}
 	out := PairedClaim{Changed: state != "", Contact: c.imp.Contact}
 	if !out.Changed {
-		return out, toldOf(ctx, tx, c, &out)
+		err = toldOf(ctx, tx, c, &out)
+		return out, err
 	}
 	out.Known = true
 	out.Reason, err = hiddenFrom(ctx, tx, c.imp, c.req.Agent)
@@ -147,10 +148,12 @@ func claimReceived(ctx context.Context, tx *sql.Tx, c claimChange) (PairedClaim,
 	return out, recordClaimNotice(ctx, tx, c, claimTold{state, out.Reason})
 }
 
-// toldOf fills in, for a read, what the sender was told of the caller's
-// claims on the message: shown when any of them is; else the one reason
-// they are all hidden for, or mixed when the reasons differ. A caller
-// with no claim there is told nothing about visibility.
+// toldOf fills in, for a read, what the sender is shown of the caller's
+// claims on the message: nothing once the pairing the message arrived
+// under has ended, whatever it was told before; else shown when any of
+// them is; else the one reason they are all hidden for, or mixed when the
+// reasons differ. A caller with no claim there is told nothing about
+// visibility.
 func toldOf(ctx context.Context, tx *sql.Tx, c claimChange, out *PairedClaim) error {
 	reasons, err := queryStrings(ctx, tx, `SELECT DISTINCT dropped FROM claim_notices_out
 WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND agent = ? ORDER BY dropped`,
@@ -159,7 +162,13 @@ WHERE contact = ? AND pairing_epoch = ? AND remote_id = ? AND agent = ? ORDER BY
 		return err
 	}
 	out.Known = true
+	current, err := pairingCurrent(ctx, tx, c.imp)
+	if err != nil {
+		return err
+	}
 	switch {
+	case !current:
+		out.Reason = protocol.ClaimUnpaired // whatever it was told, that pairing has ended
 	case reasons[0] == "":
 		out.Visible = true
 	case len(reasons) == 1:
@@ -185,6 +194,15 @@ func changeClaim(ctx context.Context, tx *sql.Tx, kind string, req ClaimRequest)
 		return protocol.ClaimDone, finishClaim(ctx, tx, req, protocol.ClaimDone)
 	}
 	return "", nil
+}
+
+// pairingCurrent: the pairing imp arrived under is the contact's current
+// one, and it hasn't been unpaired.
+func pairingCurrent(ctx context.Context, tx *sql.Tx, imp RemoteImport) (bool, error) {
+	var current bool
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT c.unpaired_at = '' AND c.pairing_epoch = ?2 FROM peer_contacts c WHERE c.identity_key = ?1), 0)`,
+		imp.Contact, imp.source().epoch).Scan(&current)
+	return current, err
 }
 
 // hiddenFrom is why a claim on imp by agent isn't shown to its sender, or

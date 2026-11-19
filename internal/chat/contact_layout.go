@@ -150,7 +150,7 @@ func (m *Model) messageStatusRows(s contactSides, v protocol.ContactMessageView)
 }
 
 func contactClaimRows(s contactSides, v protocol.ContactMessageView) []string {
-	if v.ClaimPage == nil {
+	if v.MessageClaims == nil {
 		return nil
 	}
 	var rows []string
