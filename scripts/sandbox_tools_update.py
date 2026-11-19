@@ -49,6 +49,8 @@ UNREACHABLE = "container-unreachable"
 # container, and those that also have a target.
 PLANNED = ("staging",) + COMMITTING + ("done",)
 DIRECTED = COMMITTING + ("done",)
+# The phase each retried failure is retried in.
+RETRIED_IN = {"release": "releasing", "restore": "restoring", "reopen": "reopening", "abort": "aborting"}
 # How often one transaction may turn back before it is left for the operator.
 MAX_RESTORES = 2
 
@@ -225,15 +227,20 @@ def bad_target(record):
     target, chosen = record.get("target"), ("candidate", "predecessor")
     if target not in chosen + (None,) or (committed(record) and target not in chosen):
         return "no target for phase {}".format(record["phase"])
-    if record["phase"] in ("closing", "reopening") and target != "candidate":
+    acting = acting_phase(record)
+    if acting in ("closing", "reopening") and target != "candidate":
         return "closing towards the predecessor"
-    if heading_back(record) and target != "predecessor":
+    if acting == "restoring" and target != "predecessor":
         return "restoring without the predecessor as target"
     return None
 
 
-def heading_back(record):
-    return record["phase"] == "restoring" or (record["phase"] == "failed" and record.get("failure") == "restore")
+def acting_phase(record):
+    """The phase a record stands for: its own, or for a failure that
+    recovery retries, the phase it will be retried in."""
+    if record["phase"] != "failed":
+        return record["phase"]
+    return RETRIED_IN.get(record.get("failure"))
 
 
 def bad_outcome(record):
@@ -593,7 +600,7 @@ class Update:
         """The phase to re-enter, and the journal changes that go with it."""
         phase = record["phase"]
         if phase == "failed":
-            phase = {"release": "releasing", "restore": "restoring", "reopen": "reopening", "abort": "aborting"}[record["failure"]]
+            phase = RETRIED_IN[record["failure"]]
             if phase == "restoring":
                 return "restoring", {"target": "predecessor", "failure": None, "restores": 0}
             return phase, {"failure": None}
