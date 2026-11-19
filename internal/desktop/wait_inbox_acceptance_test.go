@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -32,6 +33,16 @@ func inboxWaitParams(contact string, seconds int) *mcp.CallToolParams {
 		"from": contact, "consumer": "waiter", "timeout_seconds": seconds}}
 }
 
+func inboxWaitReady(t *testing.T, answer inboxWaitView, contact string) {
+	t.Helper()
+	if !answer.Ready {
+		t.Fatalf("incoming message not ready: %+v", answer)
+	}
+	if !reflect.DeepEqual(answer.Contacts, []string{contact}) {
+		t.Fatalf("ready contacts = %v, want only %s", answer.Contacts, contact)
+	}
+}
+
 func TestWaitInboxAcceptanceExistingMessageDoesNotAdvanceSeen(t *testing.T) {
 	f := newIncrementalFixture(t)
 	f.incoming(t, 1)
@@ -41,9 +52,7 @@ func TestWaitInboxAcceptanceExistingMessageDoesNotAdvanceSeen(t *testing.T) {
 		result, err := client.CallTool(ctx, inboxWaitParams(f.contact, 1))
 		cancel()
 		answer := inboxWaitAnswer(t, result, err)
-		if !answer.Ready || len(answer.Contacts) != 1 || answer.Contacts[0] != f.contact {
-			t.Fatalf("existing unseen message not ready: %+v", answer)
-		}
+		inboxWaitReady(t, answer, f.contact)
 	}
 	reads, err := f.node.own.st.PeerMessages().PendingReads(context.Background(), f.contact, 50)
 	incrementalOK(t, err)
@@ -96,9 +105,7 @@ func TestWaitInboxAcceptanceForwarderObservesMessageArrivingWhileWaiting(t *test
 	select {
 	case got := <-answers:
 		answer := inboxWaitAnswer(t, got.result, got.err)
-		if !answer.Ready || len(answer.Contacts) != 1 || answer.Contacts[0] != f.contact {
-			t.Fatalf("forwarder missed incoming message: %+v", answer)
-		}
+		inboxWaitReady(t, answer, f.contact)
 	case <-ctx.Done():
 		t.Fatal("forwarder wait did not wake within its timeout")
 	}

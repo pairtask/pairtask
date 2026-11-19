@@ -111,6 +111,21 @@ func incrementalPosition(t *testing.T, row Conversation) (int64, int64) {
 	return positions.Next, positions.Seen
 }
 
+func incrementalPageEnd(t *testing.T, row Conversation) {
+	t.Helper()
+	next, seen := incrementalPosition(t, row)
+	if next == 0 {
+		t.Fatal("page has no continuation cursor")
+	}
+	if seen != next {
+		t.Fatalf("seen = %d, want next %d", seen, next)
+	}
+	last := row.Messages[len(row.Messages)-1].Cursor
+	if next != last {
+		t.Fatalf("next = %d, want last returned cursor %d", next, last)
+	}
+}
+
 func TestIncrementalInboxAcceptancePagesOldestIncomingWithoutSkipping(t *testing.T) {
 	f := newIncrementalFixture(t)
 	for i := 1; i <= 4; i++ {
@@ -123,10 +138,7 @@ func TestIncrementalInboxAcceptancePagesOldestIncomingWithoutSkipping(t *testing
 	if len(first) != 1 || !first[0].More {
 		t.Fatalf("first page must report more: %+v", first)
 	}
-	next, seen := incrementalPosition(t, first[0])
-	if next == 0 || seen != next || next != first[0].Messages[1].Cursor {
-		t.Fatalf("next/seen = %d/%d, want last returned cursor", next, seen)
-	}
+	incrementalPageEnd(t, first[0])
 	second := incrementalRead(t, f.node, args)
 	incrementalIDs(t, second, "in-3", "in-4")
 	if len(second) != 1 || second[0].More {
