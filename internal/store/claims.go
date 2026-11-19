@@ -58,10 +58,13 @@ func (s *Store) ReleaseClaim(ctx context.Context, req ClaimRequest) (protocol.Cl
 	})
 }
 
-// FinishClaim marks the agent's active owner claim done: terminal, and the
-// task never becomes free again.
+// FinishClaim marks the agent's active claim done, in the role it names
+// (owner when it names none): terminal, and that role's slot for the task
+// never becomes free again.
 func (s *Store) FinishClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
-	req.Role = protocol.RoleOwner
+	if req.Role == "" {
+		req.Role = protocol.RoleOwner
+	}
 	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
 		return assignFinish.orClaim(ctx, tx, req, func() error { return finishClaim(ctx, tx, req, protocol.ClaimDone) })
 	})
