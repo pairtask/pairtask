@@ -292,3 +292,22 @@ settings for a standalone broker: [Jev classifier guide](classifier.md).
 Off by default. Tells you in Slack when an agent needs your decision; you
 answer in the chat. Slack setup, options, what leaves the host and the
 settings for a standalone broker: [Slack notifications guide](slack-notifications.md).
+
+`pairtask send @AGENT TEXT...` sends a message through the secured runtime;
+`pairtask send @all TEXT...` broadcasts. Text is joined with spaces and passed
+literally, including words beginning with `--`. Put `--remote`, `--project` and
+`--secured` before the target to select another runtime. `pk` accepts the same commands.
+
+`pairtask inbox [--limit N] [--json]` shows the newest unacknowledged messages
+(default 10, maximum 50), their senders and ages. Reading this summary neither
+receives nor acknowledges messages. The same target flags select its runtime.
+
+`pairtask status` also shows agents' declared work and each agent's last message
+to the operator, including acknowledged messages. If secured or its broker is
+unavailable, the other status information remains available.
+
+The agent roster uses the broker's bounded snapshot and explicitly reports any
+truncation. Last-message lookup scans at most 512 newest history entries; if
+that limit leaves agents unresolved, their last message is unknown. JSON adds
+`roster_truncated`, `declaration_total` and `last_messages_truncated` to make
+these limits visible. Older brokers report an unsupported request.
