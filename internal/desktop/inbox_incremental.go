@@ -104,33 +104,50 @@ var errTooFarBack = errors.New("too many messages are newer than this cursor to 
 // the cursor or the history ends: ordering is the stored row order, never
 // a timestamp.
 func (n *Node) newerThan(ctx context.Context, contact string, after int64, sel inboxSelection) ([]protocol.ContactMessageView, *protocol.ContactMessagePage, error) {
-	var rows []protocol.ContactMessageView
-	var newest *protocol.ContactMessagePage
+	walk := newerWalk{after: after, sel: sel}
 	before := int64(0)
 	for range newerPages {
 		page, err := n.contactPage(ctx, contact, before)
 		if err != nil {
 			return nil, nil, err
 		}
-		if newest == nil {
-			newest = page
-		}
-		reached := false
-		for _, m := range page.Messages {
-			if m.Cursor <= after {
-				reached = true
-			} else if sel.wants(m) {
-				rows = append(rows, m)
-			}
-		}
+		reached := walk.take(page)
 		next, older := olderThan(page, before)
 		if reached || !older {
-			slices.SortFunc(rows, func(a, b protocol.ContactMessageView) int { return cmp.Compare(a.Cursor, b.Cursor) })
-			return rows, newest, nil
+			return walk.oldestFirst(), walk.newest, nil
 		}
 		before = next
 	}
 	return nil, nil, errTooFarBack
+}
+
+// newerWalk gathers, page by page, the wanted messages above a cursor.
+type newerWalk struct {
+	after  int64
+	sel    inboxSelection
+	rows   []protocol.ContactMessageView
+	newest *protocol.ContactMessagePage
+}
+
+// take keeps page's wanted messages above the cursor, and says whether
+// the page reached the cursor: nothing older is above it.
+func (w *newerWalk) take(page *protocol.ContactMessagePage) bool {
+	if w.newest == nil {
+		w.newest = page
+	}
+	reached := false
+	for _, m := range page.Messages {
+		reached = reached || m.Cursor <= w.after
+		if m.Cursor > w.after && w.sel.wants(m) {
+			w.rows = append(w.rows, m)
+		}
+	}
+	return reached
+}
+
+func (w *newerWalk) oldestFirst() []protocol.ContactMessageView {
+	slices.SortFunc(w.rows, func(a, b protocol.ContactMessageView) int { return cmp.Compare(a.Cursor, b.Cursor) })
+	return w.rows
 }
 
 // continued is the conversation with c from a cursor on: the oldest
