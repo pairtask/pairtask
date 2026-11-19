@@ -29,6 +29,21 @@ type recipient struct {
 	agents  []string
 }
 
+// target is a to that names no workspace outright, taken apart: the
+// agent, and the workspace after the last @ ("" for an agent on its own).
+type target struct {
+	to, agent, workspace string
+	qualified            bool
+}
+
+func targetOf(to string) target {
+	at := strings.LastIndex(to, "@")
+	if at < 0 {
+		return target{to: to, agent: to}
+	}
+	return target{to: to, agent: strings.TrimSpace(to[:at]), workspace: strings.TrimSpace(to[at+1:]), qualified: true}
+}
+
 // address resolves args.To; nothing is sent while it is refused.
 func (n *Node) address(ctx context.Context, args SendArgs) (recipient, error) {
 	to := strings.TrimSpace(args.To)
@@ -40,15 +55,16 @@ func (n *Node) address(ctx context.Context, args SendArgs) (recipient, error) {
 		return recipient{}, err
 	}
 	book := addressBook{n: n, contacts: snap.Contacts}
-	if found := book.named(to); len(found) > 0 {
-		c, err := oneWorkspace(to, found)
+	if found := book.named(to); len(found.contacts) > 0 {
+		c, err := found.one()
 		return recipient{contact: c, agents: args.Agents}, err
 	}
-	target, err := book.agentAt(ctx, to)
+	t := targetOf(to)
+	resolved, err := book.agentAt(ctx, t)
 	if err != nil {
 		return recipient{}, err
 	}
-	return target, onlyAgent(target.agents[0], args.Agents)
+	return resolved, t.only(args.Agents)
 }
 
 // addressBook is the pairing snapshot one address is resolved against.
@@ -57,85 +73,91 @@ type addressBook struct {
 	contacts []protocol.PairingContactView
 }
 
+// workspaces are the contacts a workspace name or key picked out.
+type workspaces struct {
+	name     string
+	contacts []protocol.PairingContactView
+}
+
 // named is every contact a workspace name or key picks out.
-func (b addressBook) named(name string) []protocol.PairingContactView {
-	var found []protocol.PairingContactView
+func (b addressBook) named(name string) workspaces {
+	found := workspaces{name: name}
 	for _, c := range b.contacts {
 		if slices.Contains([]string{c.LocalName, c.Name, c.IdentityKey}, name) {
-			found = append(found, c)
+			found.contacts = append(found.contacts, c)
 		}
 	}
 	return found
 }
 
-// oneWorkspace is the single contact found for name, or the refusal that
-// lists the keys of those that share it.
-func oneWorkspace(name string, found []protocol.PairingContactView) (protocol.PairingContactView, error) {
-	if len(found) == 1 {
-		return found[0], nil
+// one is the single contact found, or the refusal that lists the keys of
+// those that share the name.
+func (w workspaces) one() (protocol.PairingContactView, error) {
+	if len(w.contacts) == 1 {
+		return w.contacts[0], nil
 	}
-	keys := make([]string, 0, len(found))
-	for _, c := range found {
+	keys := make([]string, 0, len(w.contacts))
+	for _, c := range w.contacts {
 		keys = append(keys, c.IdentityKey)
 	}
 	slices.Sort(keys)
-	return protocol.PairingContactView{}, errors.New(quoted(name) + " names several paired workspaces; use an identity key: " + strings.Join(keys, ", "))
+	return protocol.PairingContactView{}, errors.New(quoted(w.name) + " names several paired workspaces; use an identity key: " + strings.Join(keys, ", "))
 }
 
-// agentAt resolves an address that is no workspace: AGENT@WORKSPACE, or
-// an agent on its own.
-func (b addressBook) agentAt(ctx context.Context, to string) (recipient, error) {
-	at := strings.LastIndex(to, "@")
-	if at < 0 {
-		return b.sharedBy(ctx, to)
+// agentAt resolves a target: AGENT@WORKSPACE, or an agent on its own.
+func (b addressBook) agentAt(ctx context.Context, t target) (recipient, error) {
+	if !t.qualified {
+		return b.sharedBy(ctx, t)
 	}
-	agent, workspace := strings.TrimSpace(to[:at]), strings.TrimSpace(to[at+1:])
-	if agent == "" || workspace == "" {
-		return recipient{}, errors.New(quoted(to) + " is not AGENT@WORKSPACE: both an agent and a workspace are needed")
+	if t.agent == "" || t.workspace == "" {
+		return recipient{}, errors.New(quoted(t.to) + " is not AGENT@WORKSPACE: both an agent and a workspace are needed")
 	}
-	found := b.named(workspace)
-	if len(found) == 0 {
-		return recipient{}, b.unknown(workspace, "no paired workspace ")
+	found := b.named(t.workspace)
+	if len(found.contacts) == 0 {
+		return recipient{}, errors.New("no paired workspace " + quoted(t.workspace) + b.choices())
 	}
-	c, err := oneWorkspace(workspace, found)
+	c, err := found.one()
 	if err != nil {
 		return recipient{}, err
 	}
-	return recipient{contact: c, agents: []string{agent}}, b.shares(ctx, c, agent)
+	return recipient{contact: c, agents: []string{t.agent}}, b.shares(ctx, c, t)
 }
 
 // shares refuses an agent the workspace's directory doesn't list. An
 // empty directory is unknown, not a refusal: the other side decides.
-func (b addressBook) shares(ctx context.Context, c protocol.PairingContactView, agent string) error {
-	directory, err := b.n.directory(ctx, c.IdentityKey)
-	if err != nil || len(directory) == 0 || slices.Contains(directory, agent) {
+func (b addressBook) shares(ctx context.Context, c protocol.PairingContactView, t target) error {
+	directory, err := b.n.directory(ctx, c)
+	if err != nil || len(directory) == 0 {
 		return err
+	}
+	if slices.Contains(directory, t.agent) {
+		return nil
 	}
 	listed := slices.Clone(directory)
 	slices.Sort(listed)
-	return errors.New(quoted(contactName(c)) + " doesn't share an agent " + quoted(agent) + "; it shares: " + strings.Join(listed, ", "))
+	return errors.New(quoted(contactName(c)) + " doesn't share an agent " + quoted(t.agent) + "; it shares: " + strings.Join(listed, ", "))
 }
 
-// sharedBy is the one paired workspace that says it shares agent.
-func (b addressBook) sharedBy(ctx context.Context, agent string) (recipient, error) {
+// sharedBy is the one paired workspace that says it shares the agent.
+func (b addressBook) sharedBy(ctx context.Context, t target) (recipient, error) {
 	var sharing []protocol.PairingContactView
 	for _, c := range b.paired() {
-		directory, err := b.n.directory(ctx, c.IdentityKey)
+		directory, err := b.n.directory(ctx, c)
 		if err != nil {
 			return recipient{}, err
 		}
-		if slices.Contains(directory, agent) {
+		if slices.Contains(directory, t.agent) {
 			sharing = append(sharing, c)
 		}
 	}
 	switch len(sharing) {
 	case 0:
-		return recipient{}, b.unknown(agent, "no paired workspace or shared agent ")
+		return recipient{}, errors.New("no paired workspace or shared agent " + quoted(t.agent) + b.choices())
 	case 1:
-		return recipient{contact: sharing[0], agents: []string{agent}}, nil
+		return recipient{contact: sharing[0], agents: []string{t.agent}}, nil
 	}
-	return recipient{}, errors.New("several paired workspaces share an agent " + quoted(agent) + "; use one of: " +
-		strings.Join(qualified(agent, sharing), ", "))
+	return recipient{}, errors.New("several paired workspaces share an agent " + quoted(t.agent) + "; use one of: " +
+		strings.Join(t.at(sharing), ", "))
 }
 
 // paired are the contacts that carry messages: confirmed and not unpaired.
@@ -149,21 +171,21 @@ func (b addressBook) paired() []protocol.PairingContactView {
 	return out
 }
 
-// unknown is the refusal for a name nothing answers to, with the paired
+// choices ends a refusal for a name nothing answers to: the paired
 // workspaces by display name.
-func (b addressBook) unknown(name, what string) error {
+func (b addressBook) choices() string {
 	var names []string
 	for _, c := range b.paired() {
 		names = append(names, contactName(c))
 	}
 	slices.Sort(names)
-	return errors.New(what + quoted(name) + "; paired workspaces: " + strings.Join(names, ", "))
+	return "; paired workspaces: " + strings.Join(names, ", ")
 }
 
-// qualified is AGENT@NAME for each workspace, sorted; a display name
-// several of them share is replaced by the identity key, so every
-// suggestion names exactly one.
-func qualified(agent string, contacts []protocol.PairingContactView) []string {
+// at is AGENT@NAME for each workspace, sorted; a display name several of
+// them share is replaced by the identity key, so every suggestion names
+// exactly one.
+func (t target) at(contacts []protocol.PairingContactView) []string {
 	uses := map[string]int{}
 	for _, c := range contacts {
 		uses[contactName(c)]++
@@ -174,24 +196,24 @@ func qualified(agent string, contacts []protocol.PairingContactView) []string {
 		if uses[label] > 1 {
 			label = c.IdentityKey
 		}
-		out = append(out, agent+"@"+label)
+		out = append(out, t.agent+"@"+label)
 	}
 	slices.Sort(out)
 	return out
 }
 
-// onlyAgent refuses agents given beside an address that already names
-// one, unless they are exactly that agent.
-func onlyAgent(agent string, agents []string) error {
-	if len(agents) == 0 || slices.Equal(agents, []string{agent}) {
+// only refuses agents given beside an address that already names one,
+// unless they are exactly that agent.
+func (t target) only(agents []string) error {
+	if len(agents) == 0 || slices.Equal(agents, []string{t.agent}) {
 		return nil
 	}
-	return errors.New("to names the agent " + quoted(agent) + "; leave agents empty")
+	return errors.New("to names the agent " + quoted(t.agent) + "; leave agents empty")
 }
 
-// directory is the agents the workspace with key last said it shares.
-func (n *Node) directory(ctx context.Context, key string) ([]string, error) {
-	out, err := n.ask(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: key},
+// directory is the agents the workspace last said it shares.
+func (n *Node) directory(ctx context.Context, c protocol.PairingContactView) ([]string, error) {
+	out, err := n.ask(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: c.IdentityKey},
 		protocol.TypeOperatorContactResult)
 	if err != nil || out.ContactPage == nil {
 		return nil, errors.Join(err, missing(out.ContactPage == nil))
