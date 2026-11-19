@@ -157,6 +157,16 @@ func refsCarried(ctx context.Context, tx *sql.Tx, o outgoing) error {
 	return nil
 }
 
+// pruneFiles drops the references of messages no longer kept: a row whose
+// own message, in the same pairing and direction, is gone. A message still
+// held, unread or retained, keeps its references.
+func pruneFiles(ctx context.Context, tx *sql.Tx, contact string, _ time.Time) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM peer_message_files WHERE contact = ?1 AND NOT EXISTS (SELECT 1 FROM peer_messages m
+    WHERE m.contact = peer_message_files.contact AND COALESCE(NULLIF(m.pairing_epoch, 0), 1) = peer_message_files.pairing_epoch
+        AND m.direction = peer_message_files.direction AND m.message_id = peer_message_files.message_id)`, contact)
+	return err
+}
+
 // refsSession is a session's offer to a contact: its version and when.
 type refsSession struct {
 	contact string

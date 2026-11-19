@@ -13,7 +13,8 @@ import (
 // beyond the retention bounds is collected (never an unread message's, a
 // queued one's or one staged for agents), settled held requests lose their
 // payload, the replay floor rises past old tombstones (held requests' too),
-// and what routing kept for forgotten messages goes.
+// what routing kept for forgotten messages goes, and so do forgotten
+// messages' file references.
 func (p *PeerMessages) Collect(ctx context.Context, now time.Time) error {
 	if err := p.localOnly(); err != nil {
 		return err
@@ -37,7 +38,8 @@ func messageContacts(ctx context.Context, db *sql.DB) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `SELECT contact FROM peer_messages UNION SELECT contact FROM remote_imports
 UNION SELECT contact FROM peer_agent_reads UNION SELECT contact FROM review_asks_out
 UNION SELECT contact FROM consent_requests UNION SELECT contact FROM consent_rate
-UNION SELECT contact FROM remote_claims UNION SELECT contact FROM claim_notices_out ORDER BY contact`)
+UNION SELECT contact FROM remote_claims UNION SELECT contact FROM claim_notices_out
+UNION SELECT contact FROM peer_message_files ORDER BY contact`)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +63,7 @@ func (p *PeerMessages) collectContact(ctx context.Context, contact string, now t
 	defer tx.Rollback()
 	for _, step := range []func(context.Context, *sql.Tx, string, time.Time) error{
 		expireQueued, expireReceipts, expireAsks, expireConsentFor, collectText, pruneConsentPayloads, raiseFloor, pruneRouting,
-		collectAsks, pruneOutcomes, reclaimConsentRate, pruneClaims,
+		collectAsks, pruneOutcomes, reclaimConsentRate, pruneClaims, pruneFiles,
 	} {
 		if err := step(ctx, tx, contact, now); err != nil {
 			return err
