@@ -25,9 +25,7 @@ func TestAttentionAcceptanceEnforcementFollowsCurrentAdapter(t *testing.T) {
 		state := attentionSetting(f, "worker", "status")
 		operatorEqual(t, "stored preference survives", state.State.DND, true)
 		operatorEqual(t, "past capability is not current enforcement", state.State.Enforced, false)
-		if state.State.Reason == "" {
-			t.Fatal("offline uncertainty needs a reason")
-		}
+		attentionCapabilityReason(t, state.State.Reason, "offline uncertainty needs a reason")
 	}) {
 		return
 	}
@@ -37,9 +35,7 @@ func TestAttentionAcceptanceEnforcementFollowsCurrentAdapter(t *testing.T) {
 		state := attentionSetting(f, "worker", "status")
 		operatorEqual(t, "DND setting kept through downgrade", state.State.DND, true)
 		operatorEqual(t, "legacy adapter cannot enforce saved preference", state.State.Enforced, false)
-		if state.State.Reason == "" {
-			t.Fatal("unsupported adapter needs a reason")
-		}
+		attentionCapabilityReason(t, state.State.Reason, "unsupported adapter needs a reason")
 		requireOperatorAccepted(t, f.send(operatorRequest("legacy-after-restart", "worker")), "worker")
 		message := attentionRead(t, receiver)
 		operatorEqual(t, "legacy delivery does notify", message.Attention, "")
@@ -57,4 +53,11 @@ func TestAttentionAcceptanceEnforcementFollowsCurrentAdapter(t *testing.T) {
 		operatorEqual(t, "current capability used", state.State.Enforced, true)
 		attentionQuiet(f, receiver, "quiet-after-upgrade")
 	})
+}
+
+func attentionCapabilityReason(t *testing.T, reason, label string) {
+	t.Helper()
+	if reason == "" {
+		t.Fatal(label)
+	}
 }

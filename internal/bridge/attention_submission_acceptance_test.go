@@ -61,17 +61,7 @@ func TestAttentionAcceptanceListenerReportsOnlySuccessfulSummarySubmission(t *te
 			}
 			requireNoError(t, err)
 			assertEqual(t, "one summary submitted", len(publisher.messages), 1)
-			var receipt map[string]any
-			if err := json.Unmarshal(bytes.TrimSpace(connection.written.Bytes()), &receipt); err != nil {
-				t.Fatalf("one summary receipt required: %q (%v)", connection.written.String(), err)
-			}
-			assertEqual(t, "receipt type", receipt["type"], "attention_submitted")
-			generation, ok := receipt["attention_generation"].(float64)
-			assertEqual(t, "receipt generation is numeric", ok, true)
-			assertEqual(t, "receipt names submitted generation", generation, float64(73))
-			if receipt["agent_id"] != nil || receipt["message_id"] != nil || receipt["stage"] != nil {
-				t.Fatalf("summary receipt must not claim an agent or acknowledge a message: %v", receipt)
-			}
+			attentionCheckSubmissionReceipt(t, connection)
 		})
 	}
 }
@@ -82,4 +72,21 @@ func TestAttentionAcceptanceSubmissionResultDoesNotInterruptHost(t *testing.T) {
 	requireNoError(t, listener.deliver([]protocol.Message{message}))
 	assertEqual(t, "control result is not another host interruption", len(publisher.messages), 0)
 	assertEqual(t, "control result does not trigger another receipt", connection.written.Len(), 0)
+}
+
+func attentionCheckSubmissionReceipt(t *testing.T, connection *attentionRecordingConn) {
+	t.Helper()
+	var receipt map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(connection.written.Bytes()), &receipt); err != nil {
+		t.Fatalf("one summary receipt required: %q (%v)", connection.written.String(), err)
+	}
+	assertEqual(t, "receipt type", receipt["type"], "attention_submitted")
+	generation, ok := receipt["attention_generation"].(float64)
+	assertEqual(t, "receipt generation is numeric", ok, true)
+	assertEqual(t, "receipt names submitted generation", generation, float64(73))
+	for _, field := range []string{"agent_id", "message_id", "stage"} {
+		if receipt[field] != nil {
+			t.Fatalf("summary receipt must not contain %s: %v", field, receipt)
+		}
+	}
 }

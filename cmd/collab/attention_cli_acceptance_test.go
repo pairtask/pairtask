@@ -49,6 +49,15 @@ func attentionCLIRequest(t *testing.T, requests <-chan map[string]any) map[strin
 	}
 }
 
+func attentionCLIFields(t *testing.T, request, expected map[string]any) {
+	t.Helper()
+	for key, want := range expected {
+		if request[key] != want {
+			t.Fatalf("request %s=%v want %v: %v", key, request[key], want, request)
+		}
+	}
+}
+
 func TestAttentionAcceptanceCLIControlsUseOperatorEndpoint(t *testing.T) {
 	for _, operation := range []string{"on", "off", "status"} {
 		t.Run(operation, func(t *testing.T) {
@@ -63,21 +72,19 @@ func TestAttentionAcceptanceCLIControlsUseOperatorEndpoint(t *testing.T) {
 				t.Fatalf("invalid JSON output: %s", out)
 			}
 			request := attentionCLIRequest(t, requests)
-			if request["type"] != "operator_attention" || request["agent_id"] != "quiet" || request["attention_op"] != operation {
-				t.Fatalf("control request: %v", request)
-			}
+			attentionCLIFields(t, request, map[string]any{"type": "operator_attention", "agent_id": "quiet", "attention_op": operation})
 		})
 	}
 }
 
 func TestAttentionAcceptanceCLIUrgencyAndLiteralText(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	for _, urgent := range []bool{false, true} {
-		name := "ordinary"
-		if urgent {
-			name = "urgent"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		urgent bool
+	}{{"ordinary", false}, {"urgent", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			urgent := test.urgent
 			socket, requests := attentionCLISocket(t, `{"type":"ack","stage":"accepted","message_id":"cli-attention","seq":42,"recipients":[{"agent_id":"quiet"}]}`)
 			args := []string{"operator", "send", "--socket", socket, "--unsigned", "--json", "--message-id", "cli-attention", "--to", "quiet"}
 			if urgent {
@@ -91,13 +98,12 @@ func TestAttentionAcceptanceCLIUrgencyAndLiteralText(t *testing.T) {
 			if gotUrgent != urgent {
 				t.Fatalf("urgent=%v want%v", gotUrgent, urgent)
 			}
-			if request["type"] != "operator_send" || request["to"] != "quiet" || request["message_id"] != "cli-attention" {
-				t.Fatalf("send identity: %v", request)
-			}
+			attentionCLIFields(t, request, map[string]any{"type": "operator_send", "to": "quiet", "message_id": "cli-attention"})
 			payload, ok := request["payload"].(map[string]any)
-			if !ok || payload["text"] != text {
-				t.Fatalf("literal text changed: %v", request["payload"])
+			if !ok {
+				t.Fatalf("payload is not an object: %v", request["payload"])
 			}
+			attentionCLIFields(t, payload, map[string]any{"text": text})
 		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/pairtask/pairtask/internal/chat"
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
@@ -68,7 +69,7 @@ func TestAttentionAcceptanceChatUrgencyIsOneExplicitLocalSend(t *testing.T) {
 	}
 	chatEqual(t, "urgent text", payload.Text, "one urgent message")
 	h.reply(request, protocol.Message{Type: "ack", Stage: "accepted", MessageID: request.MessageID, Seq: 20, Recipients: []protocol.Recipient{{AgentID: "alice"}}})
-	h.await(func() bool { return h.m.State().InFlight == 0 })
+	h.await(func() bool { return h.m.State().Intent.State == chat.IntentAccepted })
 	h.draft("alice", "ordinary follow-up")
 	h.input(chatKey(tea.KeyEnter, 0))
 	next := h.take(protocol.TypeOperatorSend)

@@ -33,10 +33,15 @@ AND EXISTS (SELECT 1 FROM pragma_table_info(s.name) WHERE name='suppressed_at')`
 	return `"` + strings.ReplaceAll(names[0], `"`, `""`) + `"`
 }
 
-func attentionStoredCount(t *testing.T, db *sql.DB, table, message, agent string) int {
+type attentionStoredRows struct {
+	db    *sql.DB
+	table string
+}
+
+func (rows attentionStoredRows) count(t *testing.T, message, agent string) int {
 	t.Helper()
 	var count int
-	messageWorkerOK(t, db.QueryRow("SELECT count(*) FROM "+table+" WHERE message_id=? AND agent_id=?", message, agent).Scan(&count))
+	messageWorkerOK(t, rows.db.QueryRow("SELECT count(*) FROM "+rows.table+" WHERE message_id=? AND agent_id=?", message, agent).Scan(&count))
 	return count
 }
 
@@ -63,15 +68,16 @@ func TestAttentionAcceptanceCollectionFollowsExactParent(t *testing.T) {
 	raw, err := sql.Open("sqlite", strings.TrimSuffix(h.store.PeerDir(), ".peer"))
 	messageWorkerOK(t, err)
 	defer raw.Close()
-	table := attentionMarkTable(t, raw)
+	marks := attentionStoredRows{raw, attentionMarkTable(t, raw)}
+	inbox := attentionStoredRows{raw, "durable_inbox"}
 	for _, id := range parents {
-		messageSyncEqual(t, attentionStoredCount(t, raw, table, id, receiver.ID), 1)
+		messageSyncEqual(t, marks.count(t, id, receiver.ID), 1)
 	}
 	_, err = h.store.PeerMessages().Unshare(ctx, removedContact, []string{receiver.ID}, time.Now())
 	messageWorkerOK(t, err)
-	messageSyncEqual(t, attentionStoredCount(t, raw, "durable_inbox", parents[removedContact], receiver.ID), 0)
+	messageSyncEqual(t, inbox.count(t, parents[removedContact], receiver.ID), 0)
 	messageWorkerOK(t, h.store.PeerMessages().Collect(ctx, time.Now().Add(25*time.Hour)))
-	messageSyncEqual(t, attentionStoredCount(t, raw, table, parents[removedContact], receiver.ID), 0)
-	messageSyncEqual(t, attentionStoredCount(t, raw, "durable_inbox", parents[keptContact], receiver.ID), 1)
-	messageSyncEqual(t, attentionStoredCount(t, raw, table, parents[keptContact], receiver.ID), 1)
+	messageSyncEqual(t, marks.count(t, parents[removedContact], receiver.ID), 0)
+	messageSyncEqual(t, inbox.count(t, parents[keptContact], receiver.ID), 1)
+	messageSyncEqual(t, marks.count(t, parents[keptContact], receiver.ID), 1)
 }
