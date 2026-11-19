@@ -26,6 +26,7 @@ PROJECT = "pairtask"
 # action word take it first; everything the user adds follows.
 SCRIPTED = {
     "upgrade": ("sandbox-provision.py", ["rollout"], "download the release, replace the containers, keep data; ends sessions"),
+    "update": ("sandbox-tools-update.py", [], "newer Claude Code, Codex and CodeScene MCP in the running sandbox; --rollback undoes it; sessions continue"),
     "plan": ("sandbox-provision.py", ["plan"], "preview a provisioning change (--replace, --destroy)"),
     "apply": ("sandbox-provision.py", ["apply"], "apply the saved plan; ends sessions when it replaces"),
     "recover": ("sandbox-provision.py", ["recover"], "repair provisioning state without changing data"),

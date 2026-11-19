@@ -674,15 +674,47 @@ def session_refusal(record):
     return None
 
 
-def supersede(journal):
-    """An upgrade replaces the root: a finished journal is marked superseded
-    so it is never applied to the new containers; an unfinished one refuses."""
+JOURNAL_NAME = "tools-update.json"
+LOCK_NAME = "tools-update.lock"
+
+
+def journal_in(directory):
+    """The update journal of the deployment whose operator state is in
+    directory."""
+    return Journal(Path(directory) / JOURNAL_NAME, Path(directory) / LOCK_NAME)
+
+
+def glance(directory):
+    """The last record, read without the lock, for commands that only need
+    to know where an update stands: the journal is replaced atomically, so
+    a read sees one whole record. None when there is none or it can't be
+    read; those commands never fail on it."""
+    try:
+        return journal_in(directory).load()
+    except (UpdateRefused, OSError):
+        return None
+
+
+def clients_line(record):
+    """What `pairtask version` says about an update in effect, or None."""
+    if record is None or record["phase"] != "done" or record.get("outcome") != "candidate" or not record.get("requested"):
+        return None
+    versions = ", ".join("{} {}".format(name, record["requested"][name]) for name in sorted(record["requested"]))
+    return "clients:   {} (pairtask update; the next upgrade returns to the release's own)".format(versions)
+
+
+def supersede(journal, replaced=False):
+    """An upgrade replaces the root: the journal is marked superseded so it
+    is never applied to the new containers. Before the containers are
+    replaced an unfinished update refuses; once they have been (replaced),
+    there is nothing left for it to finish. An update running right now
+    holds the lock and refuses either way."""
     with journal:
         record = journal.load()
         if record is None or record["phase"] == "superseded":
             return record
-        if record["phase"] not in TERMINAL:
-            raise UpdateRefused("a client update is unfinished (phase {}); finish it with pairtask update --rollback first"
+        if record["phase"] not in TERMINAL and not replaced:
+            raise UpdateRefused("a client update is unfinished (phase {}); finish it with pairtask update --repair first"
                                 .format(record["phase"]))
         record.update(phase="superseded", step="result")
         journal.write(record)

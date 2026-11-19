@@ -89,10 +89,12 @@ Each container has its own root-owned (`0755`, `security.shifted=false`,
 2. The host queries `pairtask-tools-activate status`, pushes missing archives
    to `/var/lib/collab-ai-tools/incoming/`, and runs
    `pairtask-tools-activate <manifest>`.
-3. **Mutation only on a fresh root:** a root already released to agents is
-   never mutated in place. Changing `--tools` or `tools.lock.json` requires a
-   rollout (`plan_identity` hashes the tool selection, lock digest, and
-   activator).
+3. **A released root is only ever added to:** a root already released to
+   agents is never edited in place. Changing `--tools` or `tools.lock.json`
+   requires a rollout (`plan_identity` hashes the tool selection, lock
+   digest, and activator). The one exception is the agent clients, which
+   `pairtask update` moves to another version by adding a generation beside
+   the running one ([updating the agent clients](#updating-the-agent-clients)).
 4. **No agent execution before release:** the activator writes
    `/var/lib/collab-ai/tools-state.json` (`maintenance` before mutation,
    `ready` after flip and prune). Until `ready`:
@@ -105,6 +107,55 @@ Each container has its own root-owned (`0755`, `security.shifted=false`,
      refuse unreleased roots.
 5. **Recovery:** `pairtask tools` (`tools-retry`) reruns activation only on a
    root that was never released; otherwise `pairtask upgrade` replaces the root.
+
+### Updating the agent clients
+
+`pairtask update` moves Claude Code, Codex and the CodeScene MCP server to
+newer versions in a running sandbox, without replacing the containers:
+
+```sh
+pairtask update                    # the publishers' latest of each
+pairtask update --claude 2.1.327   # this exact version; the others: latest
+pairtask update --rollback         # back to the clients from before; no download
+pairtask update --status           # what the last update did; changes nothing
+pairtask update --repair           # finish or revert an interrupted update
+```
+
+What it does, and what it never does:
+
+- **Only the clients.** The release's own `tools.lock.json` isn't changed.
+  The host writes an *override lock*: the image's lock with nothing
+  different but the versions and checksums of `claude`, `codex` and
+  `cs-mcp`, each checksum taken from its publisher. The container stores it
+  under the root-owned `/var/lib/collab-ai-tools/overrides/` and accepts it
+  only after comparing it with the image's lock field by field; any other
+  difference leaves the root not ready.
+- **Added, never edited.** Each container gets a new generation beside the
+  one it runs. Nothing existing is changed and nothing is pruned, so a
+  session that started on the earlier clients keeps its files. Earlier
+  generations go when `pairtask upgrade` replaces the root.
+- **Checked before it is used.** Each new client is started as an
+  unprivileged user in a private home before anything is switched: it must
+  report its version, Claude Code must print its help, and Codex must answer
+  an `initialize` request with the configuration this root runs it with.
+- **Both containers or neither.** No new tool starts in either container
+  while they are switched (running ones continue; a tool started in that
+  window exits 75), and neither reopens until both verify. If a step fails,
+  both go back to the clients they had. `pairtask shell` says so, and opens
+  no shell, while the two are being switched or after an update failed.
+- **It survives being interrupted.** The host records each step before and
+  after it in `tools-update.json` beside the operator state. The next
+  `pairtask update` (or `--repair`) reads back what each container actually
+  runs and finishes or reverts; it never assumes. A container that can't be
+  reached leaves everything where it is until it is back.
+- **An upgrade ends it.** `pairtask upgrade` starts the new root from its
+  release's own versions; an update never carries over, and `pairtask
+  version` shows the updated clients until then. To make a version
+  permanent, pin it in `tools.lock.json` (the tools lane in CI checks such a
+  change in minutes).
+
+Agents see the new client when they next start one: restart agent sessions
+after an update, as [after an upgrade](sandbox.md#after-an-upgrade-restart-agent-sessions).
 
 ### Image layout
 

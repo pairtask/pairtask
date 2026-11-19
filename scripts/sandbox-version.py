@@ -12,8 +12,10 @@ import json
 import re
 import sys
 
+from sandbox_operator_config import deployment_directory
 from sandbox_releases import repository
 from sandbox_remote import default_remote
+import sandbox_tools_update
 import sandbox_version
 
 
@@ -36,6 +38,15 @@ def parser():
     return p
 
 
+def updated_clients(project):
+    """The line for agent clients moved by `pairtask update`, or None."""
+    try:
+        directory = deployment_directory(None, project)
+    except (ValueError, OSError):
+        return None
+    return sandbox_tools_update.clients_line(sandbox_tools_update.glance(directory))
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     scope = sandbox_version.Scope(args.project, args.remote, args.repo)
@@ -53,6 +64,9 @@ def main(argv=None):
         return 0
     for line in sandbox_version.lines(data):
         print(line)
+    clients = updated_clients(args.project)
+    if clients:
+        print(clients)
     if not notified:
         print("chat:      update notice not delivered (the broker may predate it)")
     if data["scope"] == "custom":
