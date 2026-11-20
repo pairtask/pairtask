@@ -235,6 +235,7 @@ func (s *Store) RecentClaims(ctx context.Context, limit int) ([]protocol.ClaimSe
 // (#278), each once, with its newest claim or assignment.
 const claimedMessages = `SELECT operator_message_id, MAX(at) AS latest FROM (
     SELECT operator_message_id, claimed_at AS at FROM claims
+    WHERE operator_message_id NOT IN (SELECT local_id FROM remote_imports)
     UNION ALL SELECT operator_message_id, assigned_at AS at FROM assignments
 ) GROUP BY operator_message_id`
 

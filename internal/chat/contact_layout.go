@@ -145,7 +145,30 @@ func (m *Model) messageStatusRows(s contactSides, v protocol.ContactMessageView)
 	for _, a := range v.AgentAcks {
 		rows = append(rows, "· "+theirAgents([]string{a}, s.ws)+": acknowledged")
 	}
+	rows = append(rows, contactClaimRows(s, v)...)
 	return m.mutedRows(append(rows, reviewIDRows(v)...))
+}
+
+func contactClaimRows(s contactSides, v protocol.ContactMessageView) []string {
+	if v.MessageClaims == nil {
+		return nil
+	}
+	var rows []string
+	for _, claim := range v.Claims {
+		name := safe(claim.AgentID)
+		if claim.Remote != nil {
+			name = theirAgents([]string{claim.AgentID}, s.ws)
+		}
+		line := "◇ " + safe(claim.Task) + ": " + name + " (" + safe(claim.Role) + ", " + safe(claim.State) + ")"
+		if claim.Remote != nil {
+			line += " · last reported " + claim.ClaimedAt.UTC().Format("2006-01-02 15:04Z")
+		}
+		rows = append(rows, line)
+	}
+	if v.Truncated {
+		rows = append(rows, "claims truncated: more recorded")
+	}
+	return rows
 }
 
 // mutedRows indents texts as a body, each wrapped at the tab's width.

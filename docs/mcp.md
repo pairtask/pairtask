@@ -90,10 +90,25 @@ and [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
 
 ## Messaging tools
 
+Paired claims require agent protocol 30 and peer protocol 11. Unsharing stops
+claim updates; the sender keeps only the last reported state, which may be
+stale. Claims made while the peer is unsupported stay local after it
+upgrades until their next change. `unpaired` means the pairing this message
+arrived under has ended. See [the protocol contract](protocol.md#claims-on-paired-messages-agent-v30-peer-v11).
+
+A read's visibility fields summarize the caller's claims and are omitted
+when it has no recorded notice. True means at least one claim was queued or
+answered-kept; false carries the shared reason, or `mixed` when hidden for
+different reasons. An ended pairing reports `unpaired`. The receiving
+workspace retains up to 16 held claims and 64 lifetime claim keys per message;
+released keys stay as replay protection until the message is collected.
+
 | Tool | Arguments | Behavior |
 |------|-----------|----------|
 | `send` | `to`, `text`, optional `message_id`, `in_reply_to`, `non_durable`, `workspace` | Writes a direct message or broadcast (`to: "*"`); returns its ID for tracking. With `workspace` (its full key, or a name exactly one paired workspace has: its `local_name` or the name it gives itself), `to` is an agent of that [paired workspace](pairing.md#7-let-agents-talk-across) or `operator` for its operator. A reply in a paired conversation you were tagged into (`to: operator`, `in_reply_to` its message) also goes back to that workspace's audience when you may speak there; the result's `peer_delivery` says `queued` or `not_sent` and why. |
 | `workspaces` | none | Lists the paired workspaces this agent is shared with, the only ones it may write to: name it gives itself, `local_name` (what this side's operator calls it, when set), key, whether connected, and the agents each says it shares. |
+| `claim`, `release_claim`, `finish_claim` | exactly one of `operator_message_id` or `message_id`, `task`, optional `role` | Coordinate a task on an operator request or a received paired message. Paired results say `remote_visible` (queued, not delivered) and, when false, `remote_reason` plus explanatory text. A claim is never authorization or a lock. |
+| `read_claims` | exactly one of `operator_message_id` or `message_id` | Read local claims on a received message, or last-reported claims on a paired message this agent sent. Remote claims always name their workspace in `remote`; `claimed_at` is its reported time. |
 | `reviews_asked` | optional `ask_id` with `workspace` (and `check`), or `before` | Lists the review requests this agent sent paired workspaces, newest first, with where each stands, its verdict and published link, the reviewer's review ID once reported, and how many findings its verdict has and how many came over. A page says `more` and `next` when older requests follow; pass `before` to read them. Each request names its `workspace`; that with its `ask_id` reads it alone, with every finding received (up to 24). Each request shows the `forge` and the revisions it was `requested` at (base and head), which never change. Reading one request with `check: true` also looks the change up on this agent's own forge, once and within a few seconds, and adds `freshness`: `current` (base and head are as requested), `moved` (with where the change is now) or `unknown` (with the reason: no forge access, an incomplete request or answer, a timeout). A check changes nothing, re-asks nothing and tells the other workspace nothing; a list never says whether a request is fresh. |
 | `request_review` | `workspace`, `to`, `target`, `base`, `head`, optional `scope`, `publish`, `formal`, `message_id` | Asks an agent of a paired workspace to review a pull request pinned to `base` and `head`; that workspace's operator decides whether it may, and what is published. Before sending, the pins are checked against the change for at most 5 s (`pin_checks`: `head_missing`, `base_missing`, `head_moved` with the current head, or `not_checked` with why); the broker's `advisories` say when this side last saw the agent left out of what that workspace shares, or a refusal not_shared. Advice only: the request is sent as given. |
 | `set_role` | `role` | Declares this agent's role in one line (at most 160 characters; empty clears it): the kind of operator requests it takes. The shadow classifier shows it to its model; it is kept across sessions and restarts. Routes and assigns nothing. Returns `agent_role` with `agent_id`, `role`, `updated_at`. |

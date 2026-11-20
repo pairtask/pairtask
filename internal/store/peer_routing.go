@@ -124,6 +124,9 @@ func (p *PeerMessages) Unshare(ctx context.Context, contact string, agents []str
 			}
 		}
 		// A revoke is an explicit decision: it never reads as undecided (#293).
+		if err := settleUnsharedClaims(ctx, tx, contact); err != nil {
+			return err
+		}
 		if err := denyScopes(ctx, tx, denial{contact, named, []string{protocol.ConsentMessage}, now}); err != nil {
 			return err
 		}

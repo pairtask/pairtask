@@ -424,7 +424,9 @@ func (h *Hub) messageView(ctx context.Context, r messaging.Row) (protocol.Contac
 			return view, err
 		}
 	}
-	return view, nil
+	claims, err := h.store.ContactClaims(ctx, r)
+	view.MessageClaims = protocol.ClaimsOf(claims)
+	return view, err
 }
 
 // agentAcks adds to a message sent to the contact's agents those that

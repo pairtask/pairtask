@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = SealVersion
+	Version                 = PairedClaimVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -179,70 +179,75 @@ type ReceiptState struct {
 // Message is the single frame type used in both directions.
 // Fields are populated depending on Type.
 type Message struct {
-	Status              *StatusSnapshot          `json:"status,omitempty"` // status response only
-	Type                string                   `json:"type"`
-	ProtocolVersion     int                      `json:"protocol_version,omitempty"` // hello/welcome capability negotiation
-	MessageID           string                   `json:"message_id,omitempty"`
-	InReplyTo           string                   `json:"in_reply_to,omitempty"`
-	AckRequested        bool                     `json:"ack_requested,omitempty"`        // msg: request staged acknowledgments
-	Durable             bool                     `json:"durable,omitempty"`              // v3: retained until explicit agent acknowledgment
-	Replayed            bool                     `json:"replayed,omitempty"`             // delivery on a replacement connection
-	Repeated            bool                     `json:"repeated,omitempty"`             // accepted: idempotent send retry; no new delivery
-	Stage               string                   `json:"stage,omitempty"`                // ack
-	Recipients          []Recipient              `json:"recipients,omitempty"`           // accepted: fixed membership
-	Receipts            []ReceiptState           `json:"receipts,omitempty"`             // repeated acceptance: latest retained progress
-	Seq                 uint64                   `json:"seq,omitempty"`                  // broker-assigned global order (msg, welcome)
-	AgentID             string                   `json:"agent_id,omitempty"`             // hello, welcome
-	SessionID           string                   `json:"session_id,omitempty"`           // broker-assigned connection identity
-	OwnerSessionID      string                   `json:"owner_session_id,omitempty"`     // duplicate_id: current inbox owner
-	Harness             string                   `json:"harness,omitempty"`              // hello: e.g. "claude-code 1.5"
-	AgentStatus         *AgentStatus             `json:"agent_status,omitempty"`         // agent_status_set request and agent_status_result
-	Source              string                   `json:"source,omitempty"`               // agent_activity: who observed it
-	Model               string                   `json:"model,omitempty"`                // hello: e.g. "claude-sonnet-4"
-	From                string                   `json:"from,omitempty"`                 // msg (broker -> client)
-	To                  string                   `json:"to,omitempty"`                   // msg: agent id or "*"
-	Origin              string                   `json:"origin,omitempty"`               // msg (broker -> client): operator, agent, remote (v12) or unknown
-	Remote              *Remote                  `json:"remote,omitempty"`               // msg with origin remote (v12)
-	Workspace           string                   `json:"workspace,omitempty"`            // msg (agent -> broker, v13): the paired workspace to is in, by key or name
-	ReviewAsk           *ReviewAsk               `json:"review_ask,omitempty"`           // msg with workspace (agent -> broker, v14): a review request for to (#235)
-	ReviewOutcome       *ReviewOutcomeView       `json:"review_outcome,omitempty"`       // msg with origin remote: where a review request the recipient sent stands (#235)
-	ReviewsAsked        []ReviewOutcomeView      `json:"reviews_asked,omitempty"`        // reviews_asked_result (v15)
-	ReviewsAskedMore    bool                     `json:"reviews_asked_more,omitempty"`   // reviews_asked_result: older requests follow (#303)
-	ReviewsAskedNext    string                   `json:"reviews_asked_next,omitempty"`   // reviews_asked_result: the review_before that reads them
-	Workspaces          []WorkspaceView          `json:"workspaces,omitempty"`           // workspaces_result (v13)
-	Group               []string                 `json:"group,omitempty"`                // operator_send: explicit recipient set
-	Excluded            []string                 `json:"excluded,omitempty"`             // operator accepted: connected agents left out of "*"
-	Room                string                   `json:"room,omitempty"`                 // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
-	Mentions            []string                 `json:"mentions,omitempty"`             // operator msg to a room or group: the members it addresses (#164); attention, not routing
-	Assignment          *AssignmentView          `json:"assignment,omitempty"`           // operator msg to an agent its tag assigned (#278); set by the broker only
-	Rooms               []string                 `json:"rooms,omitempty"`                // v9 hello: rooms to join; welcome, room_result: the agent's rooms
-	RoomOp              string                   `json:"room_op,omitempty"`              // operator_room: what to do
-	RoomList            *RoomList                `json:"room_list,omitempty"`            // operator_room_result
-	UpdateNotice        *UpdateNotice            `json:"update_notice,omitempty"`        // operator_update_notice and its result
-	PairingOp           string                   `json:"pairing_op,omitempty"`           // operator_pairing: what to do (#178)
-	PairingTarget       string                   `json:"pairing_target,omitempty"`       // operator_pairing: full invitation ID or identity key
-	PairingResult       *PairingSnapshot         `json:"pairing_result,omitempty"`       // operator_pairing_result
-	SpaceRequest        *SpaceRequest            `json:"space_request,omitempty"`        // operator_space: what to do (Pairbook)
-	SpaceResult         *SpaceResult             `json:"space_result,omitempty"`         // operator_space_result
-	PairingDestination  string                   `json:"pairing_destination,omitempty"`  // operator_pairing redeem: host:port of the inviter
-	PairingCode         string                   `json:"pairing_code,omitempty"`         // operator_pairing redeem: never stored, logged or echoed
-	PairingName         string                   `json:"pairing_name,omitempty"`         // operator_pairing redeem: the name to pair under
-	PairingRepair       string                   `json:"pairing_repair,omitempty"`       // operator_pairing open, redeem: the identity key the pairing repairs (#276)
-	PairingDiscoverable bool                     `json:"pairing_discoverable,omitempty"` // operator_pairing open: announce the invitation by name on the local network (#284)
-	PairingJoin         *PairingJoinView         `json:"pairing_join,omitempty"`         // operator_pairing_result for redeem
-	PairingSettle       *PairingSettleView       `json:"pairing_settle,omitempty"`       // operator_pairing_result for settle
-	PageRequest         *PageRequest             `json:"page_request,omitempty"`         // operator_receive
-	Page                *OperatorPage            `json:"page,omitempty"`                 // operator_page
-	MessageIDs          []string                 `json:"message_ids,omitempty"`          // operator_received
-	AckSelection        *AckSelection            `json:"ack_selection,omitempty"`        // operator_ack_many
-	AckMany             *AckManyResult           `json:"ack_many,omitempty"`             // operator_ack_many response
-	Inbox               *InboxStatus             `json:"inbox,omitempty"`                // operator_inbox_status response
-	RequestID           string                   `json:"request_id,omitempty"`           // operator session requests and their responses
-	OperatorMessageID   string                   `json:"operator_message_id,omitempty"`  // claim frames: the operator message claimed
-	Task                string                   `json:"task,omitempty"`                 // claim frames: stable task key
-	Topic               string                   `json:"topic,omitempty"`                // claim_set: display label
-	Role                string                   `json:"role,omitempty"`                 // claim_set, claim_release: owner or reviewer
-	*ClaimPage                                   // claim_result, claim_conflict: claims, claims_total, claims_truncated
+	Status              *StatusSnapshot     `json:"status,omitempty"` // status response only
+	Type                string              `json:"type"`
+	ProtocolVersion     int                 `json:"protocol_version,omitempty"` // hello/welcome capability negotiation
+	MessageID           string              `json:"message_id,omitempty"`
+	InReplyTo           string              `json:"in_reply_to,omitempty"`
+	AckRequested        bool                `json:"ack_requested,omitempty"`        // msg: request staged acknowledgments
+	Durable             bool                `json:"durable,omitempty"`              // v3: retained until explicit agent acknowledgment
+	Replayed            bool                `json:"replayed,omitempty"`             // delivery on a replacement connection
+	Repeated            bool                `json:"repeated,omitempty"`             // accepted: idempotent send retry; no new delivery
+	Stage               string              `json:"stage,omitempty"`                // ack
+	Recipients          []Recipient         `json:"recipients,omitempty"`           // accepted: fixed membership
+	Receipts            []ReceiptState      `json:"receipts,omitempty"`             // repeated acceptance: latest retained progress
+	Seq                 uint64              `json:"seq,omitempty"`                  // broker-assigned global order (msg, welcome)
+	AgentID             string              `json:"agent_id,omitempty"`             // hello, welcome
+	SessionID           string              `json:"session_id,omitempty"`           // broker-assigned connection identity
+	OwnerSessionID      string              `json:"owner_session_id,omitempty"`     // duplicate_id: current inbox owner
+	Harness             string              `json:"harness,omitempty"`              // hello: e.g. "claude-code 1.5"
+	AgentStatus         *AgentStatus        `json:"agent_status,omitempty"`         // agent_status_set request and agent_status_result
+	Source              string              `json:"source,omitempty"`               // agent_activity: who observed it
+	Model               string              `json:"model,omitempty"`                // hello: e.g. "claude-sonnet-4"
+	From                string              `json:"from,omitempty"`                 // msg (broker -> client)
+	To                  string              `json:"to,omitempty"`                   // msg: agent id or "*"
+	Origin              string              `json:"origin,omitempty"`               // msg (broker -> client): operator, agent, remote (v12) or unknown
+	Remote              *Remote             `json:"remote,omitempty"`               // msg with origin remote (v12)
+	Workspace           string              `json:"workspace,omitempty"`            // msg (agent -> broker, v13): the paired workspace to is in, by key or name
+	ReviewAsk           *ReviewAsk          `json:"review_ask,omitempty"`           // msg with workspace (agent -> broker, v14): a review request for to (#235)
+	ReviewOutcome       *ReviewOutcomeView  `json:"review_outcome,omitempty"`       // msg with origin remote: where a review request the recipient sent stands (#235)
+	ReviewsAsked        []ReviewOutcomeView `json:"reviews_asked,omitempty"`        // reviews_asked_result (v15)
+	ReviewsAskedMore    bool                `json:"reviews_asked_more,omitempty"`   // reviews_asked_result: older requests follow (#303)
+	ReviewsAskedNext    string              `json:"reviews_asked_next,omitempty"`   // reviews_asked_result: the review_before that reads them
+	Workspaces          []WorkspaceView     `json:"workspaces,omitempty"`           // workspaces_result (v13)
+	Group               []string            `json:"group,omitempty"`                // operator_send: explicit recipient set
+	Excluded            []string            `json:"excluded,omitempty"`             // operator accepted: connected agents left out of "*"
+	Room                string              `json:"room,omitempty"`                 // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
+	Mentions            []string            `json:"mentions,omitempty"`             // operator msg to a room or group: the members it addresses (#164); attention, not routing
+	Assignment          *AssignmentView     `json:"assignment,omitempty"`           // operator msg to an agent its tag assigned (#278); set by the broker only
+	Rooms               []string            `json:"rooms,omitempty"`                // v9 hello: rooms to join; welcome, room_result: the agent's rooms
+	RoomOp              string              `json:"room_op,omitempty"`              // operator_room: what to do
+	RoomList            *RoomList           `json:"room_list,omitempty"`            // operator_room_result
+	UpdateNotice        *UpdateNotice       `json:"update_notice,omitempty"`        // operator_update_notice and its result
+	PairingOp           string              `json:"pairing_op,omitempty"`           // operator_pairing: what to do (#178)
+	PairingTarget       string              `json:"pairing_target,omitempty"`       // operator_pairing: full invitation ID or identity key
+	PairingResult       *PairingSnapshot    `json:"pairing_result,omitempty"`       // operator_pairing_result
+	SpaceRequest        *SpaceRequest       `json:"space_request,omitempty"`        // operator_space: what to do (Pairbook)
+	SpaceResult         *SpaceResult        `json:"space_result,omitempty"`         // operator_space_result
+	PairingDestination  string              `json:"pairing_destination,omitempty"`  // operator_pairing redeem: host:port of the inviter
+	PairingCode         string              `json:"pairing_code,omitempty"`         // operator_pairing redeem: never stored, logged or echoed
+	PairingName         string              `json:"pairing_name,omitempty"`         // operator_pairing redeem: the name to pair under
+	PairingRepair       string              `json:"pairing_repair,omitempty"`       // operator_pairing open, redeem: the identity key the pairing repairs (#276)
+	PairingDiscoverable bool                `json:"pairing_discoverable,omitempty"` // operator_pairing open: announce the invitation by name on the local network (#284)
+	PairingJoin         *PairingJoinView    `json:"pairing_join,omitempty"`         // operator_pairing_result for redeem
+	PairingSettle       *PairingSettleView  `json:"pairing_settle,omitempty"`       // operator_pairing_result for settle
+	PageRequest         *PageRequest        `json:"page_request,omitempty"`         // operator_receive
+	Page                *OperatorPage       `json:"page,omitempty"`                 // operator_page
+	MessageIDs          []string            `json:"message_ids,omitempty"`          // operator_received
+	AckSelection        *AckSelection       `json:"ack_selection,omitempty"`        // operator_ack_many
+	AckMany             *AckManyResult      `json:"ack_many,omitempty"`             // operator_ack_many response
+	Inbox               *InboxStatus        `json:"inbox,omitempty"`                // operator_inbox_status response
+	RequestID           string              `json:"request_id,omitempty"`           // operator session requests and their responses
+	OperatorMessageID   string              `json:"operator_message_id,omitempty"`  // claim frames: the operator message claimed
+	Task                string              `json:"task,omitempty"`                 // claim frames: stable task key
+	Topic               string              `json:"topic,omitempty"`                // claim_set: display label
+	Role                string              `json:"role,omitempty"`                 // claim_set, claim_release: owner or reviewer
+	*ClaimPage                              // claim_result, claim_conflict: claims, claims_total, claims_truncated
+	// RemoteVisible and RemoteReason answer a claim change on a message
+	// from a paired workspace (#419): whether the change was queued to be
+	// shown there, and the reason code when it wasn't. Absent otherwise.
+	RemoteVisible       *bool                    `json:"remote_visible,omitempty"`
+	RemoteReason        string                   `json:"remote_reason,omitempty"`
 	DecisionSummary     string                   `json:"decision_summary,omitempty"`      // decision_request: one line for the operator
 	DecisionKey         string                   `json:"decision_key,omitempty"`          // decision_request: the agent's stable key, for replay
 	AnchorMessageID     string                   `json:"anchor_message_id,omitempty"`     // decision_request: the chat message the operator answers; empty asks the broker to post one

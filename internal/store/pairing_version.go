@@ -31,6 +31,16 @@ func (p *PeerMessages) MinVersion() byte {
 	return messaging.PairingVersion
 }
 
+// noteVersion applies what a newly agreed version means for the contact:
+// whether seals were ever seen, and that claim states still owed are
+// settled as unshown when the version carries none.
+func noteVersion(ctx context.Context, tx *sql.Tx, contact string, v byte) error {
+	if err := noteSealsSeen(ctx, tx, contact, v); err != nil {
+		return err
+	}
+	return settleUnshownClaims(ctx, tx, contact, v)
+}
+
 // SawVersion records the version a session with the contact agreed, under
 // the fence, and whether it ever agreed one with seals (#115); the root
 // store records nothing.
@@ -48,7 +58,7 @@ func (p *PeerMessages) SawVersion(ctx context.Context, v byte) error {
 			int(v), p.fence.contact, int(v)); err != nil {
 			return err
 		}
-		if err := noteSealsSeen(ctx, tx, p.fence.contact, v); err != nil {
+		if err := noteVersion(ctx, tx, p.fence.contact, v); err != nil {
 			return err
 		}
 		after, err := signingNow(ctx, tx, p.fence.contact)
