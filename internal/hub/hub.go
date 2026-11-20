@@ -564,7 +564,7 @@ func (h *Hub) enqueue(clients map[string]*Client, c *Client, msg protocol.Messag
 		return false
 	}
 	select {
-	case c.Send <- msg:
+	case c.Send <- h.stamped(c, msg):
 		return true
 	default:
 		h.log.Warn("disconnecting slow reader", "agent_id", c.ID)
@@ -583,6 +583,7 @@ func (h *Hub) disconnect(clients map[string]*Client, c *Client) {
 	}
 	close(c.Send)
 	h.statuses.forget(c)
+	h.noteEnforcement(c, false)
 	h.recordDisconnect(c)
 	h.notePresence(c, "disconnected")
 	h.notifyDisconnect(clients, c)
@@ -672,7 +673,7 @@ var controlFamilies = []struct {
 	handle func(*Hub, context.Context, map[string]*Client, Inbound)
 }{
 	{claimFrames, (*Hub).handleClaim}, {decisionFrames, (*Hub).handleDecision}, {roleFrames, (*Hub).handleRole},
-	{roomFrames, (*Hub).handleRoom}, {reviewFrames, (*Hub).handleReview},
+	{roomFrames, (*Hub).handleRoom}, {reviewFrames, (*Hub).handleReview}, {attentionFrames, (*Hub).handleAttention},
 }
 
 // controlFamily is the handler for a frame type, nil for none.
@@ -690,10 +691,11 @@ func controlFamily(kind string) func(*Hub, context.Context, map[string]*Client, 
 // about what it names. Reviews (#201), pairing (#178) and contact messages
 // (#210) are operator-socket only.
 var operatorOnly = map[string]string{
-	protocol.TypeOperatorReview:  "review requests are operator-only",
-	protocol.TypeOperatorPairing: "pairing is operator-only",
-	protocol.TypeOperatorContact: "contact messages are operator-only",
-	protocol.TypeOperatorSpace:   "spaces are operator-only",
+	protocol.TypeOperatorReview:    "review requests are operator-only",
+	protocol.TypeOperatorPairing:   "pairing is operator-only",
+	protocol.TypeOperatorContact:   "contact messages are operator-only",
+	protocol.TypeOperatorSpace:     "spaces are operator-only",
+	protocol.TypeOperatorAttention: "do-not-disturb is set by the operator",
 }
 
 func operatorOnlyRefusal(msg protocol.Message) protocol.Message {

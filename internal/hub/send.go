@@ -27,7 +27,7 @@ func (h *Hub) sendAsAgent(ctx context.Context, clients map[string]*Client, in In
 	}
 	h.noteRouted(ctx, out, recipients)
 	if out.AckRequested {
-		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: publicRecipients(recipients), Durable: out.Durable})
+		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: h.advised(ctx, clients, out, publicRecipients(recipients)), Durable: out.Durable})
 	}
 	h.deliver(clients, in.From, out, recipients)
 	return nil

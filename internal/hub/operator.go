@@ -112,6 +112,7 @@ var operatorHandlers = map[string]operatorHandler{
 		return protocol.Message{Type: protocol.TypeStatus, RequestID: req.msg.RequestID, Status: &snapshot}
 	},
 	protocol.TypeOperatorSend:         (*Hub).routeOperatorSend,
+	protocol.TypeOperatorAttention:    (*Hub).operatorAttention,
 	protocol.TypeOperatorRoom:         (*Hub).operatorRoom,
 	protocol.TypeOperatorPairing:      (*Hub).operatorPairing,
 	protocol.TypeOperatorSpace:        (*Hub).operatorSpace,
@@ -201,7 +202,7 @@ func (h *Hub) repeatOperator(ctx context.Context, send operatorSend, retry *stor
 		return protocol.Message{}, &routingError{protocol.ErrInternal, "operator audit unavailable"}
 	}
 	return protocol.Message{Type: protocol.TypeAck, MessageID: send.msg.MessageID, Stage: protocol.StageAccepted, Seq: retry.Seq,
-		Durable: true, Repeated: true, Recipients: retry.Recipients, Receipts: retry.Receipts, Excluded: retry.Excluded}, nil
+		Durable: true, Repeated: true, Recipients: retry.Recipients, Receipts: retry.Receipts, Excluded: retry.Excluded}, nil // a retry repeats the outcome, not today's DND
 }
 
 // commitOperator freezes recipients, persists with the audit result, then delivers.
@@ -233,7 +234,7 @@ func (h *Hub) commitOperator(ctx context.Context, clients map[string]*Client, se
 	h.classifyLater(ctx, out, recipients, send) // shadow only; never waits (#339)
 	h.answerDecision(ctx, out)                  // a reply to a decision's anchor answers it (#352)
 	return protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq,
-		Durable: true, Recipients: recipients, Excluded: excluded}, nil
+		Durable: true, Recipients: h.advised(ctx, clients, out, recipients), Excluded: excluded}, nil
 }
 
 // admittedRecipients are the send's frozen recipients once its tags can all
@@ -260,7 +261,7 @@ func operatorFrame(send operatorSend, seq uint64) protocol.Message {
 		Type: protocol.TypeMsg, Seq: seq, TS: &ts, From: protocol.OperatorID, To: operatorTo(send.msg, send.scope),
 		Origin: protocol.OriginOperator, Payload: send.msg.Payload, MessageID: send.msg.MessageID, InReplyTo: send.msg.InReplyTo,
 		AckRequested: true, Durable: true, Group: groupMembers(send.scope), Room: send.msg.Room, Mentions: send.msg.Mentions,
-		Seal: send.msg.Seal,
+		Seal: send.msg.Seal, Urgent: send.msg.Urgent,
 	}
 }
 

@@ -75,6 +75,7 @@ Step by step: [pair two machines](pairing.md).
 | `pairtask identity init` / `pairtask identity status` | host → secured | Make your signing keys, once, or show them and the folder they are in (`pairtask operator identity …` in secured). The keys stay on secured's state volume and survive upgrades; `init` refuses while keys exist. [Signed messages](operator-chat.md#trust-model). | no |
 | `pairtask secured` | host → secured | A root shell in the secured runtime, where operator commands such as `pairtask operator send` run; terminal restored afterwards. With a command (`pairtask secured pairtask operator receive`) it runs that one command, with a terminal when `--tty` is given. | no |
 | `incus --project pairtask exec colima-pairtask:secured -- pairtask operator send --to codex-1 "text"` | secured | One-shot operator message, receive or ack without the chat; refused while a chat is open. [Secured runtime](secured-runtime.md#operator-messages). | no |
+| `pairtask dnd @codex-1 on` (also `off`, or nothing to show it) | host → secured | Do-not-disturb for one agent: messages still reach it without interrupting it; `pairtask send --urgent @codex-1 text` interrupts anyway. In the chat: `/dnd` and `/urgent`. Inside secured: `pairtask operator dnd --agent codex-1 on`. Like other one-shot operator commands, refused while a chat is open. | no |
 | `reset` | host | Repairs a terminal left in mouse-reporting mode by a dropped session. | no |
 
 ## Mounts and sharing
@@ -302,6 +303,15 @@ literally, including words beginning with `--`. Put `--remote`, `--project` and
 `pairtask inbox [--limit N] [--json]` shows the newest unacknowledged messages
 (default 10, maximum 50), their senders and ages. Reading this summary neither
 receives nor acknowledges messages. The same target flags select its runtime.
+
+`pairtask dnd @AGENT on` turns do-not-disturb on for one of your agents:
+messages still reach it and stay in its inbox, but they don't interrupt it.
+`pairtask dnd @AGENT off` ends it, and the agent gets one summary of what
+stayed quiet. `pairtask dnd @AGENT` shows the setting, whether it is enforced
+now and how many quiet messages wait; add `--json` for the full answer.
+`pairtask send --urgent @AGENT TEXT...` sends one message that interrupts the
+agent anyway; put `--urgent` before the target, since anything after it is
+text. Both name exactly one agent of this workspace.
 
 `pairtask status` also shows agents' declared work and each agent's last message
 to the operator, including acknowledged messages. If secured or its broker is

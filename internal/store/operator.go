@@ -209,6 +209,11 @@ func (s *Store) LookupOperatorRetry(ctx context.Context, request protocol.Messag
 	if archived || !stored.matches(request) {
 		return nil, ErrDuplicateMessage
 	}
+	// Urgency is part of the request (#422): the same ID sent the other
+	// way is another message.
+	if urgent, err := s.MessageUrgent(ctx, request.MessageID); err != nil || urgent != request.Urgent {
+		return nil, errors.Join(err, ErrDuplicateMessage)
+	}
 	return s.operatorRetry(ctx, request.MessageID, stored.seq, scope)
 }
 

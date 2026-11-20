@@ -31,6 +31,7 @@ type intent struct {
 	Ack        *ackBinding  // the reply's automatic acknowledgment, consumed once
 	AckBatch   []ackBinding // a direct or group send's audience acknowledgments, consumed once
 	Seal       string       // signed once at dispatch, so a retry repeats it exactly (#115)
+	Urgent     bool         // /urgent: this one send interrupts through do-not-disturb (#422)
 }
 
 // ackBinding ties an automatic acknowledgment to a message as it was when
@@ -156,7 +157,7 @@ func (m *Model) sendIntent() tea.Cmd {
 // message is the intent's operator_send, unsigned.
 func (in *intent) message() protocol.Message {
 	return protocol.Message{Type: protocol.TypeOperatorSend, MessageID: in.ID, To: in.Scope.To, Group: in.Scope.Group, Room: in.Scope.Room,
-		Mentions: in.Scope.Mentions, Payload: in.Payload, InReplyTo: in.InReplyTo}
+		Mentions: in.Scope.Mentions, Payload: in.Payload, InReplyTo: in.InReplyTo, Urgent: in.Urgent}
 }
 
 // seal signs the intent once, when this chat has the operator's key.

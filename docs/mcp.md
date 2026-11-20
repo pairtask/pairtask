@@ -96,6 +96,15 @@ stale. Claims made while the peer is unsupported stay local after it
 upgrades until their next change. `unpaired` means the pairing this message
 arrived under has ended. See [the protocol contract](protocol.md#claims-on-paired-messages-agent-v30-peer-v11).
 
+Do-not-disturb requires agent protocol 32. When your operator turns it on
+for you, messages still arrive and stay in your inbox; your session just
+isn't interrupted, and `receive` returns them with `attention: suppressed`.
+When it ends you get one summary naming what stayed quiet. Sending to an
+agent in do-not-disturb works as usual; the accepted answer says so per
+recipient (`suppressed`, `unsupported` or `offline`). Only the operator can
+send an urgent message, and only the operator sets do-not-disturb. See
+[the protocol contract](protocol.md#do-not-disturb-and-urgent-messages-agent-v32).
+
 File references require agent protocol 31 and peer protocol 12. `send` with
 `workspace` takes `files`: up to 8 of `{path, size, sha256}` as you state
 them. Nothing is transferred, opened or checked; the reader compares them
