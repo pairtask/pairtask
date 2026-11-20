@@ -177,9 +177,12 @@ type ContactMessageView struct {
 	// outbound one couldn't travel because the contact predates seals, and
 	// the operator client's own verdict on an inbound one (never the
 	// broker's).
-	Seal           string        `json:"seal,omitempty"`
-	SealDowngraded bool          `json:"seal_downgraded,omitempty"`
-	Verification   *Verification `json:"verification,omitempty"`
+	Seal           string `json:"seal,omitempty"`
+	SealDowngraded bool   `json:"seal_downgraded,omitempty"`
+	// Files are the files the message names (#419, v31): data as its
+	// sender stated it, never opened or checked here.
+	Files        []FileRef     `json:"files,omitempty"`
+	Verification *Verification `json:"verification,omitempty"`
 	// A review request (#235): what it asks, and for one the contact sent
 	// here, where it is: awaiting this side's operator, pending dispatch,
 	// imported as ReviewID, or withheld with ReviewReason.
@@ -357,7 +360,7 @@ type ContactSyncView struct {
 // contactFields are the contact request fields each operation takes;
 // message_id is checked separately.
 var contactFields = map[string]contactFieldSet{
-	ContactOpSend:    {key: true, text: true, id: true, to: true},
+	ContactOpSend:    {key: true, text: true, id: true, to: true, files: true},
 	ContactOpList:    {key: true, before: true},
 	ContactOpRead:    {key: true, read: true, id: true, epoch: true},
 	ContactOpSync:    {key: true},
@@ -391,7 +394,7 @@ var contactFields = map[string]contactFieldSet{
 type contactFieldSet struct {
 	key, text, note, read, before, id, to, agents, grant, ask, approve, ack bool
 	anyKey, consentBefore, decide, consentOn, scope, epoch, confirm         bool
-	noKey, candidates, report                                               bool
+	noKey, candidates, report, files                                        bool
 }
 
 // ValidateContactRequest checks an operator_contact frame before anything
@@ -409,7 +412,7 @@ func ValidateContactRequest(msg Message) error {
 	return errors.Join(validKeyFor(msg, allowed), validContactID(msg, allowed), validContactText(msg, allowed),
 		validContactRead(msg, allowed), validContactBefore(msg), validContactTo(msg.ContactTo), validContactAgents(msg, allowed),
 		validContactReview(msg, allowed), validContactAddress(msg), validContactAck(msg, allowed), validConsent(msg, allowed),
-		validContactEpoch(msg), validContactUnpair(msg, allowed), validContactCandidates(msg, allowed), validContactReport(msg, allowed))
+		validContactEpoch(msg), validContactUnpair(msg, allowed), validContactCandidates(msg, allowed), validContactReport(msg, allowed), ValidateFiles(msg.Files))
 }
 
 // validContactEpoch refuses a pairing epoch below 0; 0 is the current
@@ -444,6 +447,7 @@ func contactFieldsPresent(msg Message, allowed contactFieldSet) error {
 		{"contact_read", msg.ContactRead != nil, allowed.read},
 		{"contact_before", msg.ContactBefore != 0, allowed.before},
 		{"contact_to", msg.ContactTo != nil, allowed.to},
+		{"files", msg.Files != nil, allowed.files},
 		{"contact_agents", msg.ContactAgents != nil, allowed.agents},
 		{"contact_text", msg.ContactText != "", allowed.text || allowed.note},
 		{"contact_review_grant", msg.ContactReviewGrant != nil, allowed.grant},

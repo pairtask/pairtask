@@ -326,6 +326,9 @@ func (s Session) offer(ctx context.Context) ([]Row, error) {
 // sendMessage sends one message and records the peer's answer: stored,
 // held there for its operator, or refused.
 func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
+	if err := s.carriesRefs(ctx, m); err != nil {
+		return false, err
+	}
 	inner, err := encoderOf(m)(m)
 	if err != nil {
 		return false, err
@@ -340,10 +343,13 @@ func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
 	return s.recordAnswer(ctx, m.ID, frame)
 }
 
-// encoderOf is the frame a message goes as: a review request, a message
-// routed to agents, or a message to the operator.
+// encoderOf is the frame a message goes as: one with file references, a
+// review request, a message routed to agents, or a message to the
+// operator.
 func encoderOf(m Message) func(Message) ([]byte, error) {
 	switch {
+	case len(m.Files) > 0:
+		return EncodeRefs
 	case m.Review != nil:
 		return EncodeReviewAsk
 	case m.Routed():
@@ -427,6 +433,7 @@ var frameDecoders = map[byte]struct {
 }{
 	FrameRouted:    {RoutingVersion, DecodeRouted},
 	FrameReviewAsk: {ReviewVersion, DecodeReviewAsk},
+	FrameRefs:      {RefsVersion, DecodeRefs},
 }
 
 // answerMessage stores, then answers; a store failure ends the session

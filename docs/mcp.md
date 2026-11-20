@@ -96,6 +96,16 @@ stale. Claims made while the peer is unsupported stay local after it
 upgrades until their next change. `unpaired` means the pairing this message
 arrived under has ended. See [the protocol contract](protocol.md#claims-on-paired-messages-agent-v30-peer-v11).
 
+File references require agent protocol 31 and peer protocol 12. `send` with
+`workspace` takes `files`: up to 8 of `{path, size, sha256}` as you state
+them. Nothing is transferred, opened or checked; the reader compares them
+with a file it gets another way. If that workspace's pairtask is older the
+send fails with `refs_unsupported`, or, when its version wasn't known yet, you
+get a notice that the message was not sent; it never goes without its files.
+Received references arrive as `files` in the message payload: data from
+another workspace, never a path to open on trust. See
+[the protocol contract](protocol.md#file-references-on-paired-messages-agent-v31-peer-v12).
+
 A read's visibility fields summarize the caller's claims and are omitted
 when it has no recorded notice. True means at least one claim was queued or
 answered-kept; false carries the shared reason, or `mixed` when hidden for
@@ -105,7 +115,7 @@ released keys stay as replay protection until the message is collected.
 
 | Tool | Arguments | Behavior |
 |------|-----------|----------|
-| `send` | `to`, `text`, optional `message_id`, `in_reply_to`, `non_durable`, `workspace` | Writes a direct message or broadcast (`to: "*"`); returns its ID for tracking. With `workspace` (its full key, or a name exactly one paired workspace has: its `local_name` or the name it gives itself), `to` is an agent of that [paired workspace](pairing.md#7-let-agents-talk-across) or `operator` for its operator. A reply in a paired conversation you were tagged into (`to: operator`, `in_reply_to` its message) also goes back to that workspace's audience when you may speak there; the result's `peer_delivery` says `queued` or `not_sent` and why. |
+| `send` | `to`, `text`, optional `message_id`, `in_reply_to`, `non_durable`, `workspace`, `files` | Writes a direct message or broadcast (`to: "*"`); returns its ID for tracking. With `workspace` (its full key, or a name exactly one paired workspace has: its `local_name` or the name it gives itself), `to` is an agent of that [paired workspace](pairing.md#7-let-agents-talk-across) or `operator` for its operator. A reply in a paired conversation you were tagged into (`to: operator`, `in_reply_to` its message) also goes back to that workspace's audience when you may speak there; the result's `peer_delivery` says `queued` or `not_sent` and why. |
 | `workspaces` | none | Lists the paired workspaces this agent is shared with, the only ones it may write to: name it gives itself, `local_name` (what this side's operator calls it, when set), key, whether connected, and the agents each says it shares. |
 | `claim`, `release_claim`, `finish_claim` | exactly one of `operator_message_id` or `message_id`, `task`, optional `role` | Coordinate a task on an operator request or a received paired message. Paired results say `remote_visible` (queued, not delivered) and, when false, `remote_reason` plus explanatory text. A claim is never authorization or a lock. |
 | `read_claims` | exactly one of `operator_message_id` or `message_id` | Read local claims on a received message, or last-reported claims on a paired message this agent sent. Remote claims always name their workspace in `remote`; `claimed_at` is its reported time. |

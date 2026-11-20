@@ -66,7 +66,28 @@ func verifyFrame(msg protocol.Message, roots []protocol.SigningRoot, self string
 	if err := seal.Matches(frameOf(msg, self)); err != nil {
 		return &protocol.Verification{State: signing.Invalid, Reason: err.Error()}
 	}
+	if !signedFiles(seal.Header, msg.Payload) {
+		return &protocol.Verification{State: signing.Invalid, Reason: "the file references are not the ones signed"}
+	}
 	return &result
+}
+
+// signedFiles: the files the payload names are exactly the ones the header
+// signed (#419): none when it signed none, and the same ones in the same
+// order otherwise. A files field that isn't a list of references is never
+// what was signed.
+func signedFiles(h signing.Header, payload json.RawMessage) bool {
+	var body struct {
+		Files *[]protocol.FileRef `json:"files"`
+	}
+	var files []protocol.FileRef
+	switch err := json.Unmarshal(payload, &body); {
+	case err != nil && json.Valid(payload):
+		return false // a files field of another shape
+	case body.Files != nil:
+		files = *body.Files
+	}
+	return protocol.SealNamesFiles(h.Recipients, files)
 }
 
 // frameOf is what the seal must have signed for msg to be what it says.

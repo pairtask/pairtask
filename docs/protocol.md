@@ -382,6 +382,56 @@ a sequence above every earlier recorded state. Hidden changes are recorded
 with their reason and are never pending for transmission. Local changes and notice insertion
 commit together, so a failed notice write rolls back the claim change.
 
+## File references on paired messages (agent v31, peer v12)
+
+A message to a paired workspace may name up to 8 files. Each reference is
+`{path, size, sha256}`, exactly as the sender states it:
+
+- `path`: a label of 1 to 512 bytes of UTF-8 without control characters,
+  such as the file's path in a shared repository. It is shown to the reader
+  and never opened, resolved or created by pairtask on either side.
+- `size`: bytes, 0 to 2^53-1.
+- `sha256`: 64 lower-case hex digits.
+
+Nothing is transferred, fetched or verified. The reader gets a statement to
+compare with a file it obtains another way: the same size and the same
+digest. A reference grants nothing and says nothing about where the file is.
+
+An agent sends them as `files` on a `msg` with `workspace`, new or a reply;
+the operator on an `operator_contact` `send`. A local message with `files`,
+a review request with `files`, more than 8, or one outside the bounds above
+is refused before anything is stored. The receiving agents get `files` in the
+message's payload beside `text`; a contact message carries `files` in the
+conversation, including Desktop `check_inbox`. A client refuses to send
+`files` to a broker below agent protocol 31, which would drop them.
+
+Peer version 12 adds one frame, `Refs` (33): the frame the message would
+otherwise go as (plain or routed), then a count byte and, for each reference
+in order, the label with a two-byte length, eight bytes of size and the 32
+digest bytes. Only a message with references uses it, so every other message
+is byte for byte what it was, at every version. The message's identity (its
+hash, and so the receiver's replay check) covers the references in order.
+
+A signed message's seal covers them too. Its recipients gain one entry,
+`files-sha512:` and 128 hex digits: the SHA-512 of `pairtask-file-refs-v1`,
+a zero byte, and the references as the frame carries them. The entry is
+longer than any agent ID can be, and a recipient that long never binds, so
+no recipient list can stand for a file list. A message without references
+has no such entry and its seal is unchanged. Adding, removing, reordering or
+changing a reference under a seal is refused as `invalid_seal`.
+
+A message with references is never sent without them:
+
+- If the contact's last session agreed a version below 12, the send is
+  refused at once with `refs_unsupported` and nothing is queued.
+- If its version isn't known yet (it hasn't connected since pairing or
+  since this release), the message is queued. If the session then agrees a
+  version below 12, the message ends as `refused` with reason
+  `refs_unsupported`, visible on the message with its references kept, and
+  the agent that sent it gets one notice from `pairtask` saying so. It is
+  never offered again; send it again without files, or after that workspace
+  updates.
+
 ## Task claims (v8)
 
 When the operator addresses several agents at once, each of them starts on

@@ -146,6 +146,7 @@ func (m *Model) messageStatusRows(s contactSides, v protocol.ContactMessageView)
 		rows = append(rows, "· "+theirAgents([]string{a}, s.ws)+": acknowledged")
 	}
 	rows = append(rows, contactClaimRows(s, v)...)
+	rows = append(rows, fileRefRows(v.Files)...)
 	return m.mutedRows(append(rows, reviewIDRows(v)...))
 }
 

@@ -172,7 +172,7 @@ func sealBinds(seal signing.Seal, contact, own string, m messaging.Message) bool
 	if m.From == "" {
 		kind, id = signing.SenderOperator, protocol.OperatorID
 	}
-	link := protocol.PeerLink{Contact: contact, Receiver: own, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author}
+	link := protocol.PeerLink{Contact: contact, Receiver: own, To: m.To, ReplyID: m.ReplyTo.ID, ReplyAuthor: m.ReplyTo.Author, Files: m.Files}
 	frame := signing.Frame{MessageID: m.ID, SenderKind: kind, SenderID: id, Text: m.Text, Addresses: []string{link.Address()}}
 	return link.Binds(h) && seal.Matches(frame) == nil
 }

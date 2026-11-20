@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = PairedClaimVersion
+	Version                 = FileRefsVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4
@@ -204,6 +204,7 @@ type Message struct {
 	Origin              string              `json:"origin,omitempty"`               // msg (broker -> client): operator, agent, remote (v12) or unknown
 	Remote              *Remote             `json:"remote,omitempty"`               // msg with origin remote (v12)
 	Workspace           string              `json:"workspace,omitempty"`            // msg (agent -> broker, v13): the paired workspace to is in, by key or name
+	Files               []FileRef           `json:"files,omitempty"`                // msg with workspace, operator_contact send (v31): the files it names, as data (#419)
 	ReviewAsk           *ReviewAsk          `json:"review_ask,omitempty"`           // msg with workspace (agent -> broker, v14): a review request for to (#235)
 	ReviewOutcome       *ReviewOutcomeView  `json:"review_outcome,omitempty"`       // msg with origin remote: where a review request the recipient sent stands (#235)
 	ReviewsAsked        []ReviewOutcomeView `json:"reviews_asked,omitempty"`        // reviews_asked_result (v15)

@@ -22,6 +22,8 @@ type Outgoing struct {
 	Review *ReviewAsk
 	// Seal, sent only at SealVersion: the sender's signed header (#115).
 	Seal []byte
+	// Files, sent only at RefsVersion: the files the sender names (#419).
+	Files []FileRef `json:"files,omitempty"`
 }
 
 // Limit is how many messages, and how many bytes of their text, one call

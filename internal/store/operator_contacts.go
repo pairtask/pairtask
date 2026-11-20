@@ -36,6 +36,7 @@ type ContactSend struct {
 	To                         []string             // the contact's agents, none for its operator (#222)
 	Review                     *messaging.ReviewAsk // a review request for the one agent in To (#235)
 	Supersedes                 string               // the operator's earlier request it replaces (#259), "" for none
+	Files                      []messaging.FileRef  // the files it names (#419), none on a review request
 	AuditID                    int64
 	Now                        time.Time
 	// Here are this side's agents the send tags, and OperatorHere whether it
@@ -146,13 +147,13 @@ func (s *Store) contactSend(ctx context.Context, c ContactSend) (ContactSent, er
 				return err
 			}
 			rows := []messaging.Row{held.Row}
-			err = withSeals(ctx, tx, rows)
+			err = withKept(ctx, tx, rows)
 			sent.Row = rows[0]
 			return err
 		}
-		m := messaging.Message{ID: c.OperationID, Text: c.Text, To: c.To, Review: c.Review, Seal: c.Seal}
+		m := messaging.Message{ID: c.OperationID, Text: c.Text, To: c.To, Review: c.Review, Seal: c.Seal, Files: c.Files}
 		if !validOutgoing(m) {
-			return fmt.Errorf("%w: ID, text, routing or review request", messaging.ErrInvalid)
+			return fmt.Errorf("%w: ID, text, routing, review request or file references", messaging.ErrInvalid)
 		}
 		if sent.Advice, err = askAdvice(ctx, tx, c.Contact, m); err != nil {
 			return err
@@ -187,9 +188,11 @@ func (c ContactSend) fingerprint() []byte {
 	return operationFingerprint("send here", c.Contact, c.withSupersedes(parts)...)
 }
 
-// withSupersedes ends a fingerprint's parts with the request a replacement
-// replaces; any other send's parts stay as they were.
+// withSupersedes ends a fingerprint's parts with the files the send names
+// and the request a replacement replaces; any other send's parts stay as
+// they were.
 func (c ContactSend) withSupersedes(parts []string) []string {
+	parts = append(parts, fileParts(c.Files)...)
 	if c.Supersedes == "" {
 		return parts
 	}
