@@ -431,6 +431,54 @@ A message with references is never sent without them:
   never offered again; send it again without files, or after that workspace
   updates.
 
+## Do-not-disturb and urgent messages (agent v32)
+
+The operator can turn do-not-disturb (DND) on for one local agent. Nothing
+is delayed, dropped or acknowledged by it: every message is stored and
+delivered as before. DND only changes whether the delivered frame
+interrupts the agent.
+
+- **Setting.** `operator_attention` with `agent_id` and `attention_op` (`on`,
+  `off` or `status`) answers `operator_attention_result` with
+  `attention_state`: `dnd`, `since`, `enforced`, `reason`, `pending` (kept
+  quiet and not yet acknowledged), `inbox_used` (every unacknowledged
+  message) and `inbox_limit`. Only the operator sets it; an agent's request
+  is refused. The setting is stored and survives restarts.
+- **What a recipient gets.** The broker decides for each recipient when the
+  message is admitted and stamps the delivered `msg` with `attention`:
+  `suppressed` (keep it, don't interrupt), `urgent` (the operator's urgent
+  message, through DND), or nothing (notify, as always). The decision is
+  kept with the message, so a replay carries the same one, whatever DND is
+  by then. `attention` and `urgent` written by a sender are discarded.
+- **Urgent.** `operator_send` takes `urgent: true`. Only the local operator's
+  own send can be urgent: never an agent's and never anything from a paired
+  workspace, its operator included. Urgency is part of the request, so a
+  retry with the same ID must say the same. It changes notification only: no
+  permission, no authority. An adapter ignores `urgent` on a message whose
+  seal doesn't hold.
+- **Adapters.** An adapter at v32 keeps a `suppressed` message for `receive`
+  and doesn't submit it to its host. An older adapter can't: `enforced` is
+  then false with `reason: adapter_too_old`, its frames carry no `attention`,
+  and it is interrupted as before. `reason: offline` means the agent isn't
+  connected; the setting applies when it connects.
+- **What the sender is told.** A local sender's accepted answer carries
+  `recipients[].attention` for each recipient whose DND is on: `suppressed`,
+  `unsupported` (it will be interrupted) or `offline`. Nothing for a
+  recipient whose DND is off or whom an urgent message reaches anyway. A
+  paired workspace is told nothing about DND.
+- **When DND ends.** If messages kept quiet are still unacknowledged, the
+  agent is owed one `attention_summary` (`generation`, `count`,
+  `message_ids`, oldest first), sent when DND is off and the agent is
+  connected. It is not sent while DND is on, and turning DND off again
+  repeats nothing. The adapter answers `attention_submitted` with
+  `attention_generation` once its host was shown the summary, and gets
+  `attention_submitted_result` with `accepted`; only the generation owed to
+  that agent is accepted. A summary acknowledges no message.
+- **Bounds.** A quiet message still occupies the agent's inbox (32
+  unacknowledged messages); once it is full, senders get `inbox_full` as
+  always. A message that isn't durable is quiet while DND is on, is not in
+  any summary, and is lost on restart as before.
+
 ## Task claims (v8)
 
 When the operator addresses several agents at once, each of them starts on

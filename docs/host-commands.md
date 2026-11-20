@@ -74,6 +74,7 @@ Step by step: [pair two machines](pairing.md).
 | `pairtask identity init` / `pairtask identity status` | host → secured | Make your signing keys, once, or show them and the folder they are in (`pairtask operator identity …` in secured). The keys stay on secured's state volume and survive upgrades; `init` refuses while keys exist. [Signed messages](operator-chat.md#trust-model). | no |
 | `pairtask secured` | host → secured | A root shell in the secured runtime, where operator commands such as `pairtask operator send` run; terminal restored afterwards. With a command (`pairtask secured pairtask operator receive`) it runs that one command, with a terminal when `--tty` is given. | no |
 | `incus --project pairtask exec colima-pairtask:secured -- pairtask operator send --to codex-1 "text"` | secured | One-shot operator message, receive or ack without the chat; refused while a chat is open. [Secured runtime](secured-runtime.md#operator-messages). | no |
+| `pairtask secured pairtask operator dnd --agent codex-1 on` | host → secured | Do-not-disturb for one agent: `on`, `off`, or nothing to show the setting. Messages still reach the agent without interrupting it; `pairtask operator send --urgent --to codex-1 "text"` interrupts anyway. In the chat: `/dnd` and `/urgent`. Like other one-shot operator commands, refused while a chat is open. | no |
 | `reset` | host | Repairs a terminal left in mouse-reporting mode by a dropped session. | no |
 
 ## Mounts and sharing
