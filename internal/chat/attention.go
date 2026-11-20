@@ -28,11 +28,14 @@ var (
 // never an agent of another workspace.
 func localAgent(tag string) (string, bool) {
 	id, tagged := strings.CutPrefix(tag, "@")
-	if !tagged || id == "all" || strings.Contains(id, "@") {
+	if !tagged || notOneLocal(id) {
 		return "", false
 	}
 	return id, protocol.ValidateAgentID(id) == nil
 }
+
+// notOneLocal: everyone, or an agent named with its workspace.
+func notOneLocal(id string) bool { return id == "all" || strings.Contains(id, "@") }
 
 // dndParts are /dnd's agent and operation; status when none is given.
 func dndParts(a argument) (agent, op string, ok bool) {
