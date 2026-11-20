@@ -1,0 +1,34 @@
+{
+  "config": {},
+  "networks": [
+    {
+      "name": "incusbr0",
+      "type": "bridge",
+      "config": {
+        "ipv4.address": "10.77.0.1/24",
+        "ipv4.nat": "true",
+        "ipv6.address": "none"
+      }
+    }
+  ],
+  "storage_pools": [
+    {
+      "name": "default",
+      "driver": "dir",
+      "config": {}
+    }
+  ],
+  "profiles": [
+    {
+      "name": "default",
+      "config": {},
+      "devices": {
+        "root": {
+          "type": "disk",
+          "path": "/",
+          "pool": "default"
+        }
+      }
+    }
+  ]
+}
