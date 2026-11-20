@@ -252,7 +252,11 @@ func (l askLinks) replacesWords() string {
 func reviewIDRows(v protocol.ContactMessageView) []string {
 	switch {
 	case v.ReviewOutcome != nil:
-		return []string{theirReviewID(v.ReviewOutcome.ReviewID)}
+		rows := []string{theirReviewID(v.ReviewOutcome.ReviewID)}
+		if requested := requestedWords(v.ReviewOutcome.Forge, v.ReviewOutcome.Requested, true); requested != "" {
+			rows = append(rows, requested)
+		}
+		return rows
 	case v.ReviewAsk == nil || v.Direction != "in":
 		return nil
 	}

@@ -275,6 +275,23 @@ func pinsShort(p protocol.Revisions) string {
 	return short(p.Head) + " (base " + short(p.Base) + ")"
 }
 
+// requestedWords say what a request was pinned to when it was sent, as its
+// record holds it (#419): "" for a record without both revisions. short
+// cuts the revisions for a list; a detail shows them whole, with the forge.
+func requestedWords(forge string, r *protocol.Revisions, short bool) string {
+	if r == nil || r.Head == "" {
+		return ""
+	}
+	if short {
+		return "requested at " + safe(pinsShort(*r))
+	}
+	words := "requested at head " + safe(r.Head) + ", base " + safe(r.Base)
+	if forge != "" {
+		words += " (" + safe(forge) + ")"
+	}
+	return words
+}
+
 // remoteStateSteps are where a paired request stands, as last read.
 func (m *Model) remoteStateSteps(c *actionCard) []string {
 	r := c.review

@@ -12,6 +12,7 @@ from sandbox_operator_state import deployment_lock
 from sandbox_operator_recipe import refresh_recipe
 from sandbox_operator_workflow import initialize_variables, require_recovered, run_locked_operation
 import sandbox_pairing
+import sandbox_tools_update
 from sandbox_pairing import configured, pairing_change, pairing_connector, report, saved_name, write_change
 from sandbox_releases import download_release
 from sandbox_tools_install import (Container, Release, shipped_tools, RETRY_COMMAND, has_tool_store, install,
@@ -155,8 +156,9 @@ def tools_retry(args, directory, server):
 
 def rollout(args, directory, server):
     # One lock covers download through SSH: no competing plan/apply can change the selection.
-    with deployment_lock(directory):
+    with deployment_lock(directory), sandbox_tools_update.journal_in(directory) as update_journal:
         require_recovered(directory)
+        sandbox_tools_update.require_finished(update_journal)
         pairing = checked_pairing(args, directory)
         initialize_variables(args, directory)
         names = managed_instances(directory, args.project)
@@ -175,6 +177,8 @@ def rollout(args, directory, server):
         except BaseException:
             print("Rollout incomplete. Inspect the error before restarting containers; host state and data are retained.", flush=True)
             raise
+        # The roots are new; the finished update cannot apply to them.
+        sandbox_tools_update.supersede(update_journal)
         try:
             install_tools(args, server, selected.image_dir)
         except BaseException:
