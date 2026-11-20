@@ -60,6 +60,13 @@ def routed_actions():
 
 
 class HostRoutingTests(unittest.TestCase):
+    def setUp(self):
+        # These cases exercise routing with no existing deployment; the
+        # update-admission packet covers a held or unfinished transaction.
+        discovery = mock.patch.object(cli, "existing_deployment", return_value=None)
+        discovery.start()
+        self.addCleanup(discovery.stop)
+
     def test_identity_and_secured_commands_are_discoverable_and_routed(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(["--help"]), 0)

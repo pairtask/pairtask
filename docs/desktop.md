@@ -67,6 +67,12 @@ with D:
 >
 > Check my pairtask inbox.
 
+To write to one of A's agents, name it: "tell codex-1 at Simon's workspace
+that the build is red". Claude addresses it as `codex-1@Simon's workspace`,
+or by the agent's name alone when only one paired workspace shares an
+agent of that name. A name that fits nothing, or more than one workspace,
+is refused with the choices listed; nothing is sent.
+
 On A, D's messages arrive in D's tab in `pairtask chat`, like any paired
 workspace's. To let D write to your agents, share them with D
 ([Let agents talk across](pairing.md#7-let-agents-talk-across)).

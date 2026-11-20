@@ -395,7 +395,8 @@ class Store:
         manifest = self.current_manifest()
         return {"mode": mode(), "state": state,
                 "current": generation_id(manifest) if manifest else None,
-                "manifest": manifest, "complete": sorted(self.complete_artifacts())}
+                "manifest": manifest, "complete": sorted(self.complete_artifacts()),
+                "retained": retained(self.root, self.generations)}
 
     def complete_artifacts(self):
         if not self.artifacts.is_dir():
@@ -426,9 +427,7 @@ class Store:
     def activate(self, manifest, incoming):
         validate_manifest(manifest)
         generation = generation_id(manifest)
-        self.root.mkdir(parents=True, exist_ok=True)
-        with (self.root / "lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with StoreLock(self.root, exclusive=True):
             # Decided under the lock: a concurrent activation that just
             # released this root must not be followed by a second one.
             self.require_unreleased()
@@ -524,6 +523,42 @@ class Store:
             return None
         return Path(os.readlink(self.current)).name
 
+    # In-place client updates on a released root; the steps are tool_update's.
+
+    def updates(self):
+        import tool_update
+        return tool_update.Updates(self)
+
+    def stage_update(self, manifest, incoming, update_id):
+        return self.updates().stage(manifest, incoming, update_id)
+
+    def restage_update(self, generation, update_id):
+        return self.updates().restage(generation, update_id)
+
+    def staged_fresh(self, generation, update_id):
+        return bool(self.updates().staged(update_id, generation).get("fresh"))
+
+    def smoke_update(self, generation, update_id, check=None):
+        return self.updates().smoke(generation, update_id, check)
+
+    def close_update(self, update_id):
+        return self.updates().close(update_id)
+
+    def flip_update(self, generation, update_id):
+        return self.updates().flip(generation, update_id)
+
+    def restore_update(self, generation, update_id):
+        return self.updates().restore(generation, update_id)
+
+    def verify_update(self, update_id):
+        return self.updates().verify(update_id)
+
+    def release_update(self, update_id):
+        return self.updates().release(update_id)
+
+    def abort_update(self, update_id):
+        return self.updates().abort(update_id)
+
     def prune(self, previous=None):
         """Keep the current generation, the one it replaced, and the
         artifacts they reference; this only ever runs inside an activation,
@@ -545,6 +580,39 @@ class Store:
                 shutil.rmtree(path)
 
 
+class StoreLock:
+    """The store's lock: exclusive for anything that changes it, shared for
+    a launcher reading what is current."""
+
+    def __init__(self, root, exclusive):
+        self.path, self.exclusive = Path(root) / "lock", exclusive
+
+    def __enter__(self):
+        if self.exclusive:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(self.path.parent, 0o755)
+        self.handle = self.path.open("a" if self.exclusive else "r")
+        try:
+            if self.exclusive:
+                # Agent launchers only read the root-managed lock. Keep it
+                # readable even when activation runs with a private umask.
+                os.fchmod(self.handle.fileno(), 0o644)
+            fcntl.flock(self.handle, fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH)
+        except BaseException:
+            self.handle.close()
+            raise
+        return self
+
+    def __exit__(self, *_):
+        self.handle.close()
+        return False
+
+
+def launch_lock(store=None):
+    """What a launcher holds while it checks readiness and resolves a tool."""
+    return StoreLock((store or Store()).root, exclusive=False)
+
+
 def remove_unless_marked(directory, marker):
     """Entries without their completion marker are garbage from a crash."""
     for path in directory.iterdir():
@@ -559,7 +627,7 @@ def ready(store=None, lock_file=LOCK_FILE, source_file=SOURCE_FILE, mode_file=MO
     manifest, reason = active_generation(store or Store())
     if reason:
         return reason
-    return release_mismatch(manifest, lock_file, source_file)
+    return release_mismatch(manifest, lock_file, source_file, (store or Store()).root / "overrides")
 
 
 def active_generation(store):
@@ -573,7 +641,72 @@ def active_generation(store):
     return manifest, None
 
 
-def release_mismatch(manifest, lock_file, source_file):
-    if manifest["lock_sha256"] != file_sha256(lock_file) or manifest["release"] != file_sha256(source_file):
+def release_mismatch(manifest, lock_file, source_file, overrides=None):
+    """Tools must be this release's: its build source, and its lock or an
+    override of it that changes the agent clients only."""
+    if manifest["release"] != file_sha256(source_file):
         return "tools were activated for a different release; run the rollout"
+    if manifest.get("override") is not None:
+        return override_reason(manifest, lock_file, STORE / "overrides" if overrides is None else overrides)
+    if manifest["lock_sha256"] != file_sha256(lock_file):
+        return "tools were activated for a different release; run the rollout"
+    return None
+
+
+def retained(root, generations):
+    """What keeping every generation costs: how many generation directories
+    the store holds (the current one included; a link to one is not
+    another), and the bytes stored under the store. Reads only. None when
+    the store can't be read through: a partial count would look like a
+    small one."""
+    try:
+        kept = [path for path in generations.iterdir() if path.is_dir() and not path.is_symlink()] if generations.is_dir() else []
+        return {"generations": len(kept), "stored_bytes": stored_bytes(root)}
+    except OSError:
+        return None
+
+
+def stored_bytes(root):
+    """The content bytes of the regular files under root, each file once
+    however many names it has (artifacts are shared between generations),
+    without following links out of the store. Apparent size, not blocks.
+    A directory that can't be listed is an OSError, never a smaller sum."""
+    seen, total = set(), 0
+    for directory, _, names in os.walk(root, followlinks=False, onerror=raise_error):
+        for name in names:
+            total += file_size(os.path.join(directory, name), seen)
+    return total
+
+
+def raise_error(error):
+    raise error
+
+
+def file_size(path, seen):
+    """A regular file's size the first time its inode is met, else 0. A
+    file removed since it was listed counts nothing; any other failure to
+    look at it is an OSError."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return 0
+    inode = (info.st_dev, info.st_ino)
+    if not stat.S_ISREG(info.st_mode) or inode in seen:
+        return 0
+    seen.add(inode)
+    return info.st_size
+
+
+def override_reason(manifest, lock_file, overrides):
+    """Why a manifest's override can't be trusted, or None: its lock must be
+    stored under the root-owned store with the digest the manifest names, be
+    made from the image's lock, and differ from it in the clients only."""
+    from tool_lock import clients_only
+    path = Path(overrides) / (manifest["lock_sha256"] + ".json")
+    if not path.is_file() or file_sha256(path) != manifest["lock_sha256"]:
+        return "the tools override is missing or doesn't match its manifest"
+    if manifest["override"].get("base_lock_sha256") != file_sha256(lock_file):
+        return "the tools override was made from another release's lock"
+    if not clients_only(json.loads(Path(lock_file).read_text()), json.loads(path.read_text())):
+        return "the tools override changes more than the agent clients"
     return None

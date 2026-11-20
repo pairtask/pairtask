@@ -349,7 +349,7 @@ jobs:
         run: |
           sudo env PAIRTASK_ALLOW_ROOT=1 python3 scripts/sandbox-download.py --remote local --from-dir dist/workspace/release --output dist/installed
           set -o pipefail
-          sudo env "PATH=$PATH" "PAIRTASK_OPERATOR_PREPARED=$PAIRTASK_OPERATOR_PREPARED" PAIRTASK_ALLOW_ROOT=1 python3 scripts/sandbox-smoke.py --remote local --image-dir dist/installed --mount-check --secured-check --network-check | tee -a operator-prepared.log
+          sudo env "PATH=$PATH" "PAIRTASK_OPERATOR_PREPARED=$PAIRTASK_OPERATOR_PREPARED" PAIRTASK_ALLOW_ROOT=1 python3 scripts/sandbox-smoke.py --remote local --image-dir dist/installed --mount-check --secured-check --network-check --tools-update-check | tee -a operator-prepared.log
       - name: Prove offline controller and dev boundaries
         if: needs.classify.outputs.images != 'false'
         run: sudo env "PATH=$PATH" python3 scripts/sandbox-boundary.py --remote local --image-dir dist/installed
