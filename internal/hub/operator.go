@@ -104,8 +104,13 @@ type operatorSend struct {
 type operatorHandler func(h *Hub, ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message
 
 // operatorHandlers route a request by its type; session-only types are
-// refused here, since they need an open operator session.
+// refused here, since they need an open operator session. TypeStatus deliberately
+// uses the authenticated one-shot path too: it never acquires the chat lease.
 var operatorHandlers = map[string]operatorHandler{
+	protocol.TypeStatus: func(h *Hub, ctx context.Context, clients map[string]*Client, req operatorRequest) protocol.Message {
+		snapshot := h.snapshot(ctx, clients)
+		return protocol.Message{Type: protocol.TypeStatus, RequestID: req.msg.RequestID, Status: &snapshot}
+	},
 	protocol.TypeOperatorSend:         (*Hub).routeOperatorSend,
 	protocol.TypeOperatorAttention:    (*Hub).operatorAttention,
 	protocol.TypeOperatorRoom:         (*Hub).operatorRoom,

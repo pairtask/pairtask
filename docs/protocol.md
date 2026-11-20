@@ -155,10 +155,11 @@ Agents that negotiated v5 can write to the operator: `to: "operator"` with
 - **Older agents:** a v4 durable send returns `durability_unavailable`; a v4
   non-durable send returns `unknown_recipient`.
 
-The operator endpoint gains three one-shot requests:
+The operator endpoint accepts these one-shot requests:
 
 | Request | Effect |
 | --- | --- |
+| `status` | Returns the existing `status` snapshot through the operator-UID authenticated socket, without opening or replacing the operator chat session. No receipts change. Older brokers return `unsupported_operation`; this endpoint extension does not change the wire schema or negotiation version. |
 | `operator_receive {page_request: {after_seq, upper_seq, limit}}` | Returns `operator_page` with unacknowledged inbox messages in sequence order. `upper_seq: 0` starts a scan bounded by the highest committed message; echo the returned `upper_seq` to continue. It changes no receipts. |
 | `operator_received {message_ids}` | After the client has adopted a page, records `adapter_received` (1 to 32 IDs, all validated first). |
 | `operator_ack {message_id}` | The human's explicit receipt. Requires `adapter_received`. It means received, never approval or completion. |

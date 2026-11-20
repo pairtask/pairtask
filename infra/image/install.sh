@@ -54,7 +54,7 @@ cp build-source.json /usr/local/share/pairtask/
 # names below launch from it.
 printf 'store\n' >/usr/local/share/pairtask/tools-mode
 install -d -m 0755 /var/lib/collab-ai-tools
-install -m 0644 infra/image/tool_lock.py infra/image/tool_store.py /usr/local/lib/pairtask/
+install -m 0644 infra/image/tool_lock.py infra/image/tool_smoke.py infra/image/tool_store.py infra/image/tool_update.py /usr/local/lib/pairtask/
 for name in tools-activate tools-ready tool; do
     install -m 0755 "infra/image/pairtask-$name" "/usr/local/lib/pairtask/pairtask-$name"
 done

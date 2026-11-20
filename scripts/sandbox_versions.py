@@ -86,6 +86,60 @@ def resolver(name):
     return {"go": go_checksum, "codex": codex_checksum, "claude": claude_checksum, "cs-mcp": cs_mcp_checksum}.get(name)
 
 
+def publisher_text(url):
+    """A short plain-text answer from a publisher, such as a version."""
+    request = urllib.request.Request(url, headers={"User-Agent": "collab-ai-image-builder"})
+    with urlopen(request, timeout=60) as response:
+        return response.read(128).decode("ascii", "replace").strip()
+
+
+def exact(value, source):
+    """value as an exact version, or ValueError naming where it came from."""
+    try:
+        return version(value)
+    except argparse.ArgumentTypeError as error:
+        raise ValueError(f"{source} names no exact version ({value!r})") from error
+
+
+def claude_latest():
+    """Claude Code's newest release. Not what an update takes by default
+    (claude_stable is); kept for telling the two channels apart."""
+    return exact(publisher_text("https://downloads.claude.ai/claude-code-releases/latest"), "Claude Code's latest release")
+
+
+def claude_stable():
+    """The version on Claude Code's stable channel, which trails its newest
+    release. An answer that isn't an exact version is an error: there is no
+    falling back to the newest."""
+    return exact(publisher_text("https://downloads.claude.ai/claude-code-releases/stable"), "Claude Code's stable channel")
+
+
+def tagged_latest(repository, prefix):
+    """The version of a GitHub repository's latest full release, from its
+    tag; GitHub's "latest" is never a draft or a prerelease."""
+    release = publisher_json(f"https://api.github.com/repos/{repository}/releases/latest")
+    tag = str(release.get("tag_name", ""))
+    if not tag.startswith(prefix):
+        raise ValueError(f"The latest release of {repository} has an unexpected tag ({tag!r})")
+    return exact(tag[len(prefix):], f"The latest release of {repository}")
+
+
+def codex_latest():
+    return tagged_latest("openai/codex", "rust-v")
+
+
+def cs_mcp_latest():
+    return tagged_latest("codescene-oss/codescene-mcp-server", "MCP-")
+
+
+def latest(name):
+    """The version an update moves an agent client to when none is named:
+    Claude Code's stable channel, and the latest full release of Codex and
+    of the CodeScene MCP server, which publish no stable channel. Looked up
+    at call time; the checksum for it comes from resolver(name), separately."""
+    return {"claude": claude_stable, "codex": codex_latest, "cs-mcp": cs_mcp_latest}[name]()
+
+
 def resolve_lock(path, architecture, args):
     """Return the lock for one architecture, with version overrides resolved to
     publisher checksums. Overrides never leave another architecture paired with

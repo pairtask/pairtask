@@ -18,6 +18,9 @@ from pathlib import Path
 
 from sandbox_host_user import refuse_root
 from sandbox_remote import REMOTE
+import sandbox_operator_shortcuts as shortcuts
+from sandbox_operator_config import existing_deployment
+import sandbox_tools_update
 
 SCRIPTS = Path(__file__).resolve().parent
 PROJECT = "pairtask"
@@ -26,6 +29,7 @@ PROJECT = "pairtask"
 # action word take it first; everything the user adds follows.
 SCRIPTED = {
     "upgrade": ("sandbox-provision.py", ["rollout"], "download the release, replace the containers, keep data; ends sessions"),
+    "update": ("sandbox-tools-update.py", [], "move Claude Code, Codex and CodeScene MCP in the running sandbox to selected versions; --rollback undoes it; sessions continue"),
     "plan": ("sandbox-provision.py", ["plan"], "preview a provisioning change (--replace, --destroy)"),
     "apply": ("sandbox-provision.py", ["apply"], "apply the saved plan; ends sessions when it replaces"),
     "recover": ("sandbox-provision.py", ["recover"], "repair provisioning state without changing data"),
@@ -62,7 +66,9 @@ COMPOSITE = {
     "install": "first install: start the VM on macOS, roll the release out, show status",
     "start": "start the containers (and the VM on macOS)",
     "stop": "stop the containers; --vm also stops the macOS VM; ends sessions",
-    "status": "list the containers and their state",
+    "status": "show containers, releases and agents with their latest message",
+    "send": "send literal text: @AGENT TEXT… or @all TEXT…",
+    "inbox": "summarize unacknowledged messages without consuming them [--limit 1..50] [--json]",
 }
 
 
@@ -102,6 +108,8 @@ def composite_parser(name):
     parser = argparse.ArgumentParser(prog="pairtask " + name, description=COMPOSITE[name], add_help=(name != "install"))
     parser.add_argument("--remote", default=None, type=identifier)
     parser.add_argument("--project", default=PROJECT, type=identifier)
+    if name == "status":
+        parser.add_argument("--secured", default="secured", type=identifier)
     if name == "stop":
         parser.add_argument("--vm", action="store_true", help="also stop the macOS VM")
     return parser
@@ -167,10 +175,18 @@ def status_steps(rest, system, instances):
     cached metadata (#78): no network, and never the command's failure."""
     opts = composite_options("status", rest, system)
     return [incus(opts.project, "list", opts.remote + ":"),
-            script("sandbox-version.py", "--summary", "--project", opts.project, "--remote", opts.remote)]
+            script("sandbox-version.py", "--summary", "--project", opts.project, "--remote", opts.remote),
+            script("sandbox-tools-update.py", "--retained", "--project", opts.project, "--remote", opts.remote),
+            Step("optional", shortcuts.secured(opts.remote, opts.project, opts.secured, ["agents"]))]
 
 
-COMPOSITES = {"install": install_steps, "start": start_steps, "stop": stop_steps, "status": status_steps}
+def shortcut_steps(name, rest, system):
+    remote = REMOTE if system == "Darwin" else "local"
+    return [Step("command", shortcuts.command(name, rest, identifier, remote))]
+
+
+COMPOSITES = {"send": lambda rest, system, instances: shortcut_steps("send", rest, system),
+              "inbox": lambda rest, system, instances: shortcut_steps("inbox", rest, system), "install": install_steps, "start": start_steps, "stop": stop_steps, "status": status_steps}
 
 
 def containers(action, remote, project, instances):
@@ -222,9 +238,23 @@ def preflight(steps):
 def run(step):
     if step.kind == "script":
         sys.argv = [str(SCRIPTS / step.argv[0])] + step.argv[1:]
-        runpy.run_path(sys.argv[0], run_name="__main__")
+        try:
+            runpy.run_path(sys.argv[0], run_name="__main__")
+        except SystemExit as stop:  # a script ends with sys.exit; the steps after it still run
+            return exit_code(stop.code)
         return 0
+    if step.kind == "optional":
+        return shortcuts.optional(step.argv)
     return subprocess.run(step.argv, check=False).returncode
+
+
+def exit_code(code):
+    """What the interpreter would exit with for sys.exit(code): a message
+    goes to stderr and counts as 1."""
+    if code is None or isinstance(code, int):
+        return code or 0
+    print(code, file=sys.stderr)
+    return 1
 
 
 def usage():
@@ -256,7 +286,22 @@ def main(argv=None):
             print(step)
         return 0
     preflight(steps)
+    if argv[0] == "start":
+        return start_admitted(argv[1:], steps)
     return execute(steps)
+
+
+def start_admitted(rest, steps):
+    """Start the containers unless a client update holds sessions back;
+    the update's lock is held while they start."""
+    opts = composite_options("start", rest, platform.system())
+    try:
+        directory = existing_deployment(opts.project)
+        with sandbox_tools_update.admission(directory):
+            return execute(steps)
+    except (ValueError, OSError) as error:
+        print("pairtask start: {}".format(error), file=sys.stderr)
+        return 75
 
 
 def execute(steps):
