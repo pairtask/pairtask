@@ -434,8 +434,8 @@ A message with references is never sent without them:
 ## Do-not-disturb and urgent messages (agent v32)
 
 The operator can turn do-not-disturb (DND) on for one local agent. Nothing
-is delayed, dropped or acknowledged by it: every message is stored and
-delivered as before. DND only changes whether the delivered frame
+is delayed, dropped or acknowledged by it: delivery and retention are what
+they were, durable or not. DND only changes whether the delivered frame
 interrupts the agent.
 
 - **Setting.** `operator_attention` with `agent_id` and `attention_op` (`on`,
@@ -449,7 +449,8 @@ interrupts the agent.
   `suppressed` (keep it, don't interrupt), `urgent` (the operator's urgent
   message, through DND), or nothing (notify, as always). The decision is
   kept with the message, so a replay carries the same one, whatever DND is
-  by then. `attention` and `urgent` written by a sender are discarded.
+  by then. An `attention` written by a sender is discarded, and only the
+  authenticated local operator's request can make a message urgent.
 - **Urgent.** `operator_send` takes `urgent: true`. Only the local operator's
   own send can be urgent: never an agent's and never anything from a paired
   workspace, its operator included. Urgency is part of the request, so a
@@ -464,8 +465,9 @@ interrupts the agent.
 - **What the sender is told.** A local sender's accepted answer carries
   `recipients[].attention` for each recipient whose DND is on: `suppressed`,
   `unsupported` (it will be interrupted) or `offline`. Nothing for a
-  recipient whose DND is off or whom an urgent message reaches anyway. A
-  paired workspace is told nothing about DND.
+  recipient whose DND is off or whom an urgent message reaches anyway.
+  Repeated operator sends return the retained delivery outcome without
+  attention advisories. A paired workspace is told nothing about DND.
 - **When DND ends.** If messages kept quiet are still unacknowledged, the
   agent is owed one `attention_summary` (`generation`, `count`,
   `message_ids`, oldest first), sent when DND is off and the agent is
