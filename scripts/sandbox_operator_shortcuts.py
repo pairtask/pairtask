@@ -22,21 +22,42 @@ def limit(value):
 
 def command(name, rest, identifier, remote):
     flags = parser(name, identifier, remote)
-    opts, words = {"send": send, "inbox": inbox}[name](flags, rest)
+    opts, words = {"send": send, "inbox": inbox, "dnd": dnd}[name](flags, rest)
     return secured(opts.remote, opts.project, opts.secured, words)
 
 
 def send(flags, rest):
+    flags.add_argument("--urgent", action="store_true",
+                       help="interrupt one agent even in do-not-disturb; goes before the target")
     flags.add_argument("target")
     flags.add_argument("text", nargs=argparse.REMAINDER)
     opts = flags.parse_args(rest)
     if not valid_target(opts.target):
         flags.error("use one @AGENT target or @all")
+    if opts.urgent and opts.target == "@all":
+        flags.error("--urgent goes to one @AGENT, not @all")
     text = " ".join(opts.text)
     if not text.strip():
         flags.error("message text is required")
     target = ["--all"] if opts.target == "@all" else ["--to", opts.target[1:]]
-    return opts, ["send", *target, "--", text]
+    urgent = ["--urgent"] if opts.urgent else []
+    return opts, ["send", *urgent, *target, "--", text]
+
+
+def dnd(flags, rest):
+    """Do-not-disturb for one local agent: on, off, or nothing to show it."""
+    flags.add_argument("--json", action="store_true")
+    flags.add_argument("target")
+    flags.add_argument("action", nargs="?", choices=("on", "off"))
+    opts = flags.parse_args(rest)
+    if opts.target == "@all" or not valid_target(opts.target):
+        flags.error("use one @AGENT of this workspace")
+    words = ["dnd", "--agent", opts.target[1:]]
+    if opts.json:
+        words.append("--json")
+    if opts.action:
+        words.append(opts.action)
+    return opts, words
 
 
 def inbox(flags, rest):

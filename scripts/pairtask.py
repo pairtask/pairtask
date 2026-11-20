@@ -67,7 +67,8 @@ COMPOSITE = {
     "start": "start the containers (and the VM on macOS)",
     "stop": "stop the containers; --vm also stops the macOS VM; ends sessions",
     "status": "show containers, releases and agents with their latest message",
-    "send": "send literal text: @AGENT TEXT… or @all TEXT…",
+    "send": "send literal text: @AGENT TEXT… or @all TEXT…; --urgent @AGENT TEXT… interrupts even in do-not-disturb",
+    "dnd": "do-not-disturb for one agent: @AGENT [on|off]; nothing after the agent shows the setting [--json]",
     "inbox": "summarize unacknowledged messages without consuming them [--limit 1..50] [--json]",
 }
 
@@ -185,8 +186,12 @@ def shortcut_steps(name, rest, system):
     return [Step("command", shortcuts.command(name, rest, identifier, remote))]
 
 
-COMPOSITES = {"send": lambda rest, system, instances: shortcut_steps("send", rest, system),
-              "inbox": lambda rest, system, instances: shortcut_steps("inbox", rest, system), "install": install_steps, "start": start_steps, "stop": stop_steps, "status": status_steps}
+def shortcut(name):
+    return lambda rest, system, instances: shortcut_steps(name, rest, system)
+
+
+COMPOSITES = {"send": shortcut("send"), "inbox": shortcut("inbox"), "dnd": shortcut("dnd"),
+              "install": install_steps, "start": start_steps, "stop": stop_steps, "status": status_steps}
 
 
 def containers(action, remote, project, instances):
