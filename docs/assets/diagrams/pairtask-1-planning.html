@@ -1,0 +1,228 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: one 16:9 slide, left-to-right flow with a rework loop below and a guardrail band at the foot */
+  :root {
+    --bg: #F6F6F4;
+    --slide: #FFFFFF;
+    --surface: #FFFFFF;
+    --ink: #2E353B;
+    --muted: #6B747D;
+    --line: #C9CED2;
+    --accent: #0E9F6E;
+    --accent-soft: #E3F4EC;
+    --warn: #B4620A;
+    --warn-soft: #FBEEDD;
+    --op-bg: #2E353B;
+    --op-fg: #F6F6F4;
+    --op-muted: #B9BFC4;
+    --band: #F1F3F2;
+    --lane: #F6F8F7;
+    --font-sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161A1D; --slide: #1E2327; --surface: #262C31; --ink: #F3F4F1; --muted: #9AA2AA;
+      --line: #3B4349; --accent: #34C08F; --accent-soft: #173A2E; --warn: #E3A046; --warn-soft: #3A2C17;
+      --op-bg: #F3F4F1; --op-fg: #1E2327; --op-muted: #5B646D; --band: #232A2F; --lane: #222A2E; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161A1D; --slide: #1E2327; --surface: #262C31; --ink: #F3F4F1; --muted: #9AA2AA;
+    --line: #3B4349; --accent: #34C08F; --accent-soft: #173A2E; --warn: #E3A046; --warn-soft: #3A2C17;
+    --op-bg: #F3F4F1; --op-fg: #1E2327; --op-muted: #5B646D; --band: #232A2F; --lane: #222A2E; color-scheme: dark;
+  }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--font-sans);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 24px;
+  }
+  .frame { max-width: 1440px; margin: 0 auto; overflow-x: auto; display: grid; gap: 32px; }
+  .lane { fill: var(--lane); }
+  .sep { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 5; }
+  .lead-fill { fill: var(--accent-soft); }
+  .bb { font-size: 15.5px; }
+  svg.slide { display: block; width: 100%; min-width: 880px; height: auto; border-radius: 6px; }
+  .sl-bg { fill: var(--slide); }
+  .card { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .card-dash { fill: var(--surface); stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 6 5; }
+  .op { fill: var(--op-bg); }
+  .band { fill: var(--band); }
+  text { font-family: var(--font-sans); fill: var(--ink); }
+  .eyebrow { font-size: 13px; font-weight: 600; letter-spacing: 0.12em; fill: var(--muted); }
+  .title { font-size: 40px; font-weight: 600; letter-spacing: -0.01em; }
+  .sub { font-size: 19px; fill: var(--muted); }
+  .h { font-size: 24px; font-weight: 600; }
+  .hm { font-family: var(--font-mono); font-size: 24px; font-weight: 500; }
+  .b { font-size: 16.5px; }
+  .m { font-family: var(--font-mono); font-size: 14.5px; fill: var(--muted); }
+  .ch { font-size: 17px; font-weight: 600; }
+  .cb { font-size: 14.5px; fill: var(--muted); }
+  .on-op { fill: var(--op-fg); }
+  .on-op-muted { fill: var(--op-muted); }
+  .num-c { fill: var(--accent); }
+  .num-t { font-size: 15px; font-weight: 600; fill: var(--slide); text-anchor: middle; }
+  .num-op { fill: var(--op-fg); }
+  .num-op-t { font-size: 15px; font-weight: 600; fill: var(--op-bg); text-anchor: middle; }
+  .dot { fill: var(--accent); }
+  .flow { stroke: var(--accent); stroke-width: 2.5; fill: none; }
+  .loop { stroke: var(--warn); stroke-width: 2.5; fill: none; stroke-dasharray: 8 6; }
+  .head-a { fill: var(--accent); }
+  .head-w { fill: var(--warn); }
+  .pill-ok { fill: var(--accent-soft); }
+  .pill-ok-t { font-family: var(--font-mono); font-size: 14.5px; font-weight: 500; fill: var(--accent); }
+  .pill-w { fill: var(--warn-soft); }
+  .pill-w-t { font-family: var(--font-mono); font-size: 14.5px; font-weight: 500; fill: var(--warn); }
+  .warn-t { font-family: var(--font-mono); font-size: 15px; font-weight: 500; fill: var(--warn); }
+  .ok-t { font-family: var(--font-mono); font-size: 15px; font-weight: 500; fill: var(--accent); }
+  .icon { stroke: var(--accent); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .icon-op { stroke: var(--op-fg); stroke-width: 2; fill: none; stroke-linecap: round; }
+  .mid { text-anchor: middle; }
+</style>
+
+<style>html,body{margin:0;padding:0!important;background:#fff}svg.slide{min-width:0;width:1600px;border-radius:0}</style></head><body><svg class="slide" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="pt pd">
+  <title id="pt">Planning stage between two agents in pairtask</title>
+  <desc id="pd">The developer asks for a change. The lead scopes it and the builder reads the code. They discuss: the lead proposes a design and contract, the builder challenges it, the lead revises, and the builder agrees with one owner per outside action. The lead sends the plan to the developer, who gives the go on product choices. The lead, as tester, writes failing acceptance tests and the builder commits them unchanged, then build and review begins.</desc>
+  <defs>
+    <marker id="ph" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-a" d="M0 0 L10 5 L0 10 z"/></marker>
+  </defs>
+
+  <rect class="sl-bg" x="0" y="0" width="1600" height="900"/>
+
+  <text class="eyebrow" x="60" y="72">PAIRTASK · PLANNING STAGE</text>
+  <text class="title" x="60" y="122">Agree the plan before anyone writes code</text>
+  <text class="sub" x="60" y="158">The lead and the builder argue the design out, the developer settles product choices, and the tests come first.</text>
+
+  <text class="eyebrow" x="290" y="200">1 · REQUEST</text>
+  <text class="eyebrow" x="470" y="200">2 · DISCUSS DESIGN AND CONTRACT</text>
+  <text class="eyebrow" x="1030" y="200">3 · CHECK IN</text>
+  <text class="eyebrow" x="1240" y="200">4 · TESTS FIRST</text>
+
+  <rect class="lane" x="280" y="215" width="1260" height="90" rx="8"/>
+  <rect class="lane" x="280" y="320" width="1260" height="150" rx="8"/>
+  <rect class="lane" x="280" y="485" width="1260" height="150" rx="8"/>
+  <line class="sep" x1="460" y1="188" x2="460" y2="640"/>
+  <line class="sep" x1="1020" y1="188" x2="1020" y2="640"/>
+  <line class="sep" x1="1230" y1="188" x2="1230" y2="640"/>
+
+  <rect class="op" x="60" y="215" width="200" height="90" rx="10"/>
+  <text class="eyebrow on-op-muted" x="80" y="250">HUMAN</text>
+  <text class="h on-op" x="80" y="282">Developer</text>
+  <rect class="card" x="60" y="320" width="200" height="150" rx="10"/>
+  <text class="eyebrow" x="80" y="365">AGENT 1</text>
+  <text class="hm" x="80" y="400">claude-1</text>
+  <text class="b" x="80" y="432">Builder</text>
+  <rect class="lead-fill" x="60" y="485" width="200" height="150" rx="10"/>
+  <text class="eyebrow" x="80" y="530">AGENT 2</text>
+  <text class="hm" x="80" y="565">codex-1</text>
+  <text class="b" x="80" y="597">Lead + tester</text>
+
+  <!-- 1 Request -->
+  <rect class="op" x="296" y="228" width="144" height="64" rx="8"/>
+  <text class="b on-op" x="312" y="256">Asks for</text>
+  <text class="b on-op" x="312" y="278">a change</text>
+  <path class="flow" d="M300 292 V560 H316" marker-end="url(#ph)"/>
+  <path class="flow" d="M300 395 H316" marker-end="url(#ph)"/>
+  <rect class="card" x="320" y="350" width="120" height="90" rx="8"/>
+  <text class="b" x="334" y="388">Reads the</text>
+  <text class="b" x="334" y="410">existing code</text>
+  <rect class="lead-fill" x="320" y="515" width="120" height="90" rx="8"/>
+  <text class="b" x="334" y="553">Scopes</text>
+  <text class="b" x="334" y="575">the request</text>
+
+  <!-- 2 Discussion -->
+  <line class="flow" x1="440" y1="560" x2="476" y2="560" marker-end="url(#ph)"/>
+  <rect class="lead-fill" x="480" y="503" width="200" height="112" rx="10"/>
+  <text class="eyebrow" x="496" y="529">PROPOSES</text>
+  <text class="bb" x="496" y="555">Design and contract:</text>
+  <text class="bb" x="496" y="577">scope, API shape,</text>
+  <text class="bb" x="496" y="599">what the tests cover</text>
+
+  <line class="flow" x1="635" y1="503" x2="635" y2="449" marker-end="url(#ph)"/>
+  <rect class="card" x="590" y="333" width="200" height="112" rx="10"/>
+  <text class="eyebrow" x="606" y="359">CHALLENGES</text>
+  <text class="bb" x="606" y="385">Constraints from the</text>
+  <text class="bb" x="606" y="407">code, edge cases,</text>
+  <text class="bb" x="606" y="429">open questions</text>
+
+  <line class="flow" x1="745" y1="445" x2="745" y2="499" marker-end="url(#ph)"/>
+  <rect class="lead-fill" x="700" y="503" width="200" height="112" rx="10"/>
+  <text class="eyebrow" x="716" y="529">REVISES</text>
+  <text class="bb" x="716" y="555">Settles each point;</text>
+  <text class="bb" x="716" y="577">flags product choices</text>
+  <text class="bb" x="716" y="599">for the developer</text>
+
+  <line class="flow" x1="855" y1="503" x2="855" y2="449" marker-end="url(#ph)"/>
+  <rect class="card" x="810" y="333" width="190" height="112" rx="10"/>
+  <text class="eyebrow" x="826" y="359">AGREES</text>
+  <text class="bb" x="826" y="385">Same plan, one owner</text>
+  <text class="bb" x="826" y="407">per outside action,</text>
+  <text class="bb" x="826" y="429">acknowledged</text>
+
+  <!-- 3 Check in -->
+  <path class="flow" d="M1000 389 H1020 V560 H1036" marker-end="url(#ph)"/>
+  <rect class="op" x="1040" y="226" width="170" height="70" rx="8"/>
+  <text class="b on-op" x="1056" y="255">Gives the go</text>
+  <text class="cb on-op-muted" x="1056" y="279">on product choices</text>
+  <line class="flow" x1="1080" y1="296" x2="1080" y2="341" marker-end="url(#ph)"/>
+  <text class="m" x="1092" y="327">go</text>
+  <line class="flow" x1="1180" y1="510" x2="1180" y2="300" marker-end="url(#ph)"/>
+  <text class="m" x="1172" y="327" text-anchor="end">plan</text>
+  <rect class="card-dash" x="1040" y="345" width="125" height="100" rx="8"/>
+  <text class="bb" x="1054" y="388">No code</text>
+  <text class="bb" x="1054" y="410">before the go</text>
+  <rect class="lead-fill" x="1040" y="510" width="170" height="100" rx="8"/>
+  <text class="b" x="1056" y="553">Sends the plan</text>
+  <text class="b" x="1056" y="575">to the developer</text>
+
+  <!-- 4 Tests first -->
+  <line class="flow" x1="1210" y1="560" x2="1246" y2="560" marker-end="url(#ph)"/>
+  <rect class="lead-fill" x="1250" y="500" width="280" height="120" rx="8"/>
+  <text class="eyebrow" x="1266" y="527">AS TESTER</text>
+  <text class="bb" x="1266" y="553">Writes acceptance tests,</text>
+  <text class="bb" x="1266" y="575">shows them failing on the</text>
+  <text class="bb" x="1266" y="597">old code, reports hashes</text>
+  <line class="flow" x1="1480" y1="500" x2="1480" y2="436" marker-end="url(#ph)"/>
+  <rect class="card" x="1250" y="335" width="280" height="92" rx="8"/>
+  <text class="bb" x="1266" y="371">Commits the tests unchanged</text>
+  <text class="bb" x="1266" y="393">and checks their hashes</text>
+  <text class="ok-t" x="1250" y="456">Next: build and review →</text>
+
+  <!-- Rules -->
+  <rect class="band" x="0" y="668" width="1600" height="232"/>
+  <text class="eyebrow" x="60" y="710">RULES BETWEEN THE AGENTS</text>
+  <g transform="translate(60 736)">
+    <circle class="icon" cx="7" cy="8" r="5"/><circle class="icon" cx="19" cy="8" r="5"/><path class="icon" d="M0 25 a7 7 0 0 1 13 0 M12 25 a7 7 0 0 1 13 0"/>
+    <text class="ch" x="38" y="22">Roles, not models</text>
+    <text class="cb" x="0" y="54">Lead, tester and builder are</text>
+    <text class="cb" x="0" y="76">roles any agent can hold</text>
+  </g>
+  <g transform="translate(360 736)">
+    <path class="icon" d="M3 14 h9 l3 -6 h7 M22 8 l-4 -4 M22 8 l-4 4 M3 14 v8 h19"/>
+    <text class="ch" x="38" y="22">One owner per action</text>
+    <text class="cb" x="0" y="54">A handoff counts only once</text>
+    <text class="cb" x="0" y="76">the other agent acknowledges</text>
+  </g>
+  <g transform="translate(660 736)">
+    <path class="icon" d="M11 2 L20 6 V13 C20 19 15 23 11 25 C7 23 2 19 2 13 V6 Z"/>
+    <text class="ch" x="38" y="22">No relayed authority</text>
+    <text class="cb" x="0" y="54">"The developer said" from a</text>
+    <text class="cb" x="0" y="76">peer is a hint to check</text>
+  </g>
+  <g transform="translate(960 736)">
+    <rect class="icon" x="2" y="4" width="20" height="20" rx="3"/><path class="icon" d="M8 9 l8 10 M16 9 l-8 10"/>
+    <text class="ch" x="38" y="22">Tests before code</text>
+    <text class="cb" x="0" y="54">Acceptance tests fail on the</text>
+    <text class="cb" x="0" y="76">old code before the build</text>
+  </g>
+  <g transform="translate(1260 736)">
+    <path class="icon" d="M2 5 h20 v13 h-11 l-6 5 v-5 h-3 z"/>
+    <text class="ch" x="38" y="22">Short coordination</text>
+    <text class="cb" x="0" y="54">Decisions, heads, evidence;</text>
+    <text class="cb" x="0" y="76">no acks of acks</text>
+  </g>
+</svg></body></html>
