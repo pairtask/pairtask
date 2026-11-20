@@ -129,6 +129,12 @@ type ReviewAskedItem struct {
 	Supersedes       string     `json:"supersedes,omitempty"`
 	SupersededBy     string     `json:"superseded_by,omitempty"`
 	SupersedesPruned bool       `json:"supersedes_pruned,omitempty"`
+	// Forge and Requested are what was asked for (#419): the forge adapter
+	// and the revisions the request was pinned to when it was sent. They
+	// never change with the request's state; nil for a request kept from
+	// before they were pinned.
+	Forge     string     `json:"forge,omitempty"`
+	Requested *Revisions `json:"requested,omitempty"`
 }
 
 // AskFindings are a request's findings as received: how many the verdict
@@ -445,6 +451,16 @@ type ReviewOutcomeView struct {
 	Supersedes       string     `json:"supersedes,omitempty"`
 	SupersededBy     string     `json:"superseded_by,omitempty"`
 	SupersedesPruned bool       `json:"supersedes_pruned,omitempty"`
+	// Forge and Requested are what was asked for (#419): the forge adapter
+	// and the revisions the request was pinned to when it was sent. They
+	// never change with the request's state; nil when the broker that
+	// answered doesn't report them.
+	Forge     string     `json:"forge,omitempty"`
+	Requested *Revisions `json:"requested,omitempty"`
+	// Freshness is the asking side's own check of the change against
+	// Requested, only when one request was read with check; it is never
+	// stored and never sent to the other workspace.
+	Freshness *ReviewFreshness `json:"freshness,omitempty"`
 }
 
 // ReviewAdvisory is advice on a review request (#304): something known here
@@ -467,3 +483,30 @@ const (
 	AdvisoryHeadMoved        = "head_moved"
 	AdvisoryNotChecked       = "not_checked"
 )
+
+// Freshness states of a requested review's pins, as the asking side's
+// forge shows the change now.
+const (
+	FreshnessCurrent = "current" // base and head are as requested
+	FreshnessMoved   = "moved"   // either differs; Current says where to
+	FreshnessUnknown = "unknown" // it couldn't be checked; Reason says why
+)
+
+// ReviewFreshness is one check of a request's pins (#419): what the change
+// is now, when it was looked at, and why not when it couldn't be. It says
+// nothing about what the reviewing side will do.
+type ReviewFreshness struct {
+	State     string     `json:"state"`
+	Current   *Revisions `json:"current,omitempty"`
+	CheckedAt time.Time  `json:"checked_at"`
+	Reason    string     `json:"reason,omitempty"`
+}
+
+// RequestedPins is the revisions a request was pinned to, nil when it
+// carries neither.
+func RequestedPins(base, head string) *Revisions {
+	if base == "" && head == "" {
+		return nil
+	}
+	return &Revisions{Base: base, Head: head}
+}
