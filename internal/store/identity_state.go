@@ -83,9 +83,10 @@ const (
 	inputResolve   = "resolve"
 	inputWorkspace = "workspace"
 	inputLegacy    = "legacy"
-	// inputFull marks that the lineage reached MaxIdentityInputs: replay
-	// freezes it from that point on, so nothing from it verifies, across
-	// restarts, until the operator resolves it.
+	// inputFull marks that the lineage reached MaxIdentityInputs. It is
+	// terminal: no statement from the lineage is judged after it (they are
+	// refused before Apply), its state reads frozen, and admission gives
+	// unverified for everything it signs, across restarts.
 	inputFull     = "full"
 	globalLineage = ""
 )
@@ -195,6 +196,8 @@ func replayInput(h identity.Held, started bool, in input) (identity.Held, bool, 
 		h.Legacy = append(append([]string(nil), h.Legacy...), string(in.body))
 		return h, started, nil
 	case inputFull:
+		// Shown as frozen. Safe because settledStatement refuses every
+		// statement of a full lineage before Apply could see this state.
 		h.Trust = identity.Frozen
 		return h, started, nil
 	}
@@ -250,32 +253,74 @@ func applyStatement(ctx context.Context, tx *sql.Tx, s arrival) (identity.Effect
 	if !ok {
 		return identity.Effect{Kind: identity.Rejected, Reason: "not a statement a peer holds"}, nil
 	}
+	if eff, done, err := settledStatement(ctx, tx, l, st); done || err != nil {
+		return eff, err
+	}
 	h, _, err := identityHeld(ctx, tx, l)
 	if err != nil {
 		return identity.Effect{}, err
 	}
 	// Judged first: a statement that wouldn't be kept (a rejection, a
-	// duplicate, a bad signature) is a no-op at the bound as anywhere, so
-	// only a statement that would change the state can freeze a full
-	// lineage.
+	// duplicate, a bad signature) is a no-op at the bound as anywhere.
 	next, eff, err := h.Apply(st, s.at)
-	if err != nil || !keepEffects[eff.Kind] {
+	if err != nil || !keepEffects[eff.Kind] || !changesState(st) {
 		return eff, err
 	}
 	return keepWithinBound(ctx, tx, keptStatement{l, st, s, next}, eff)
 }
 
+// settledStatement answers, without judging, a statement already kept
+// (a duplicate, whatever Apply would say again) and any statement of a
+// lineage past its bound (refused).
+func settledStatement(ctx context.Context, tx *sql.Tx, l identity.Lineage, st identity.Statement) (identity.Effect, bool, error) {
+	var kept, full bool
+	err := tx.QueryRowContext(ctx, `SELECT
+    EXISTS (SELECT 1 FROM identity_inputs WHERE lineage = ?1 AND kind = ?2 AND digest = ?3),
+    EXISTS (SELECT 1 FROM identity_inputs WHERE lineage = ?1 AND kind = ?4)`,
+		lineageKey(l), inputStatement, identity.DigestOf(st.TBS()).String(), inputFull).Scan(&kept, &full)
+	switch {
+	case err != nil:
+		return identity.Effect{}, true, err
+	case kept:
+		return identity.Effect{Kind: identity.Duplicate}, true, nil
+	case full:
+		return identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}, true, nil
+	}
+	return identity.Effect{}, false, nil
+}
+
+// changesState: a statement replay needs. A notice informs and changes
+// nothing, so it is judged and answered but never kept: keeping it would
+// spend the bound and make its repeat look new.
+func changesState(st identity.Statement) bool {
+	_, notice := st.(identity.Notice)
+	return !notice
+}
+
 // keepWithinBound keeps a statement that changes the state, unless the
-// lineage is at the bound: then it freezes the lineage and is refused.
+// lineage is at the bound: then an authenticated change (applied, or a
+// conflict found) marks the lineage full, while a parked statement, not
+// yet authenticated against its predecessor, is only refused.
 func keepWithinBound(ctx context.Context, tx *sql.Tx, k keptStatement, eff identity.Effect) (identity.Effect, error) {
 	full, err := inputsFull(ctx, tx, k.lineage)
 	if err != nil {
 		return identity.Effect{}, err
 	}
-	if full {
-		return identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}, markFull(ctx, tx, k.lineage, k.at)
+	if !full {
+		return eff, keepStatement(ctx, tx, k)
 	}
-	return eff, keepStatement(ctx, tx, k)
+	refused := identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}
+	if eff.Kind == identity.Parked {
+		return refused, nil
+	}
+	return refused, markFull(ctx, tx, k.lineage, k.at)
+}
+
+// lineageFull: the lineage was marked past its bound.
+func lineageFull(ctx context.Context, q rowQuerier, l identity.Lineage) (bool, error) {
+	var full bool
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM identity_inputs WHERE lineage = ? AND kind = ?)`, lineageKey(l), inputFull).Scan(&full)
+	return full, err
 }
 
 // arrival is a statement's bytes, when it came, and from whom ("" for a
