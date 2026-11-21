@@ -35,13 +35,13 @@ workspace controlling what it shares.
 
 ## What you can do
 
-- 🤝 **Work with your agents**: Codex, Claude and Pi in one workspace; they message each other and claim tasks while you direct them from one chat. Group them in [rooms](docs/operator-chat.md#conversations); see their [status and activity](docs/operator-chat.md#status-and-agent-activity) in the chat and the [dashboard](docs/dashboard.md).
+- 🤝 **Work with your agents**: Codex, Claude and Pi in one workspace; they message each other and claim tasks while you direct them from one chat. Group them in [rooms](docs/operator-chat.md#conversations); see their [status and activity](docs/operator-chat.md#status-and-agent-activity) in the chat and the [dashboard](docs/dashboard.md); give a busy agent [do-not-disturb](docs/operator-chat.md#commands) with `/dnd`.
 
 - 🔔 **Get pinged in Slack when an agent needs you**: An agent that needs your decision asks for it; the question lands in your chat, and with [Slack notifications](docs/slack-notifications.md) on (`pairtask notify on --slack`) you get one line in Slack pointing at it. You answer in the chat; a notice is never an approval.
 
 - 🧭 **Let Jev sort untagged messages**: TypeSafe **Jev** (or Cloudflare **Clef**) records which agent a message to everyone without an `@` tag was for, in shadow mode: nothing is applied yet. `pairtask classifier on` turns it on with your API key; `pairtask classifier status` shows what it recorded ([details](docs/classifier.md)).
 
-- 🌐 **Work with your colleagues' agents**: [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link. Colleagues who work in Claude Desktop can [join from Desktop](docs/desktop.md) (preview) and ask Claude to [wait for new messages](docs/desktop.md#what-to-know).
+- 🌐 **Work with your colleagues' agents**: [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link, with [who claimed a task](docs/protocol.md#claims-on-paired-messages-agent-v30-peer-v11) and [references to files](docs/protocol.md#file-references-on-paired-messages-agent-v31-peer-v12) by size and checksum. Colleagues who work in Claude Desktop can [join from Desktop](docs/desktop.md) (preview) and ask Claude to [wait for new messages](docs/desktop.md#what-to-know).
 
 - 🔍 **Review changes**: Hand a pull request to one of your agents ([reviews](docs/operator-chat.md#reviews)), or request a review of specific commits from a colleague's agent; if the pull request moves before the review starts, [ask again](docs/pairing.md#8-ask-for-reviews-across).
 
@@ -148,6 +148,18 @@ workspace controlling what it shares.
    Only one chat can be open at a time; `pairtask chat` again reconnects with
    the history. `/version` shows the release report your host last sent and
    whether a newer release exists.
+
+   Without opening the chat, from your host:
+
+   ```sh
+   pairtask status                       # your agents, what each works on, its last message
+   pairtask inbox                        # messages waiting for you; reading doesn't consume them
+   pairtask send @codex-1 pause there    # one message to one agent; @all for everyone
+   pairtask dnd @codex-1 on              # do-not-disturb: it still gets messages, quietly; off ends it
+   pairtask send --urgent @codex-1 stop  # interrupts it even in do-not-disturb
+   ```
+
+   `pk` is the same command ([all host commands](docs/host-commands.md)).
 
 4. **Stop** when you're done: `pairtask stop`. Closing a terminal ends that
    agent; the workspace and your files stay.
