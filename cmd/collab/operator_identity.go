@@ -26,6 +26,7 @@ type identityReport struct {
 	Registered bool   `json:"registered"`
 	protocol.IdentityView
 	anchorView
+	local bool // anchor and confirm: nothing was asked of the broker
 }
 
 // identityRequest is an identity command: init or status, the broker's
@@ -209,6 +210,13 @@ func (r identityReport) isPersonKey(root protocol.SigningRoot) bool {
 }
 
 func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer) int {
+	if report.local {
+		if err := writeLocal(report, asJSON, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
 	if asJSON {
 		if err := json.NewEncoder(stdout).Encode(report); err != nil {
 			fmt.Fprintln(stderr, err)

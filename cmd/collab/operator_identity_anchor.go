@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,7 +47,7 @@ func identityAnchor(ctx context.Context, req identityRequest) (identityReport, e
 	if err != nil {
 		return identityReport{}, err
 	}
-	report := identityReport{PersonKey: keyIDOf(keys)}
+	report := identityReport{PersonKey: keyIDOf(keys), local: true}
 	err = makeAnchor(req, &report)
 	return report, err
 }
@@ -58,11 +59,11 @@ func makeAnchor(req identityRequest, report *identityReport) error {
 	if err != nil {
 		return err
 	}
-	report.anchorView = anchorOf(req.dir)
-	if code == "" {
-		return nil
+	if code != "" {
+		err = confirmTyped(req, code)
 	}
-	return confirmTyped(req, code)
+	report.anchorView = anchorOf(req.dir) // after any confirmation
+	return err
 }
 
 // errCodeLost: the anchor was made, but its only showing of the recovery
@@ -128,7 +129,25 @@ func identityConfirm(ctx context.Context, req identityRequest) (identityReport, 
 	if err := personkey.ConfirmRecovery(req.dir); err != nil {
 		return identityReport{}, err
 	}
-	return identityReport{PersonKey: keyIDOf(keys), anchorView: anchorOf(req.dir)}, nil
+	return identityReport{PersonKey: keyIDOf(keys), anchorView: anchorOf(req.dir), local: true}, nil
+}
+
+// localReport is what anchor and confirm show: this account's keys and
+// anchor only, since neither asks the broker anything.
+type localReport struct {
+	PersonKey string `json:"person_key"`
+	Dir       string `json:"dir"`
+	anchorView
+}
+
+func writeLocal(report identityReport, asJSON bool, stdout io.Writer) error {
+	if asJSON {
+		return json.NewEncoder(stdout).Encode(localReport{report.PersonKey, report.Dir, report.anchorView})
+	}
+	fmt.Fprintf(stdout, "person key %s\n", report.PersonKey)
+	writeAnchor(report.anchorView, stdout)
+	_, err := fmt.Fprintf(stdout, "keys in %s\n", report.Dir)
+	return err
 }
 
 // readHidden reads one line, without echo when it comes from a terminal.
