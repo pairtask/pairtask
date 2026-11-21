@@ -42,6 +42,7 @@ type Keys struct {
 	device ed25519.PrivateKey
 	mu     sync.Mutex
 	cert   signing.Cert
+	dir    string // where they live, beside the identity anchor
 }
 
 // ErrNoKeys: this account has no keys yet; ErrIncomplete: one of the two
@@ -68,7 +69,7 @@ func Load(dir string) (*Keys, error) {
 	if err := privateDir(dir); err != nil {
 		return nil, err
 	}
-	return &Keys{person: person, device: device}, nil
+	return &Keys{person: person, device: device, dir: dir}, nil
 }
 
 // missing counts the key files that don't exist.
@@ -107,7 +108,7 @@ func Create(dir string) (*Keys, error) {
 			return nil, err
 		}
 	}
-	return &Keys{person: keys[0], device: keys[1]}, nil
+	return &Keys{person: keys[0], device: keys[1], dir: dir}, nil
 }
 
 // PersonPublic is the person key, which the operator's workspace pins.
