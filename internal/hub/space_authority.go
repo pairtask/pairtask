@@ -39,7 +39,9 @@ type spaceAuthority struct {
 	gen     uint64
 	writing map[spaceKey]*sync.Mutex // one refresh or unpin per space at a time
 	notify  []func(space string)
-	closed  bool // Run ended: no timer, no activation, no callback
+	closed  bool       // Run ended: no timer, no activation, no callback
+	calls   int        // listener calls running now
+	drained *sync.Cond // signalled when calls drops to 0; on mu
 }
 
 type activeMap struct {
@@ -49,7 +51,9 @@ type activeMap struct {
 }
 
 func newSpaceAuthority() *spaceAuthority {
-	return &spaceAuthority{timing: realSpaceTiming(), active: map[spaceKey]activeMap{}, writing: map[spaceKey]*sync.Mutex{}}
+	a := &spaceAuthority{timing: realSpaceTiming(), active: map[spaceKey]activeMap{}, writing: map[spaceKey]*sync.Mutex{}}
+	a.drained = sync.NewCond(&a.mu)
+	return a
 }
 
 // SetSpaceTiming replaces the clock and timers; call it before Run.
@@ -80,7 +84,7 @@ func (h *Hub) KeepSpaceMap(ctx context.Context, space string, m pairbook.SignedS
 		notify = a.activate(k, v)
 	}
 	unlock()
-	tell(notify, k)
+	h.authority.tell(notify, k)
 	return err
 }
 
@@ -95,7 +99,7 @@ func (h *Hub) unpinSpace(ctx context.Context, k spaceKey) error {
 		notify = a.forget(k)
 	}
 	unlock()
-	tell(notify, k)
+	h.authority.tell(notify, k)
 	return err
 }
 
@@ -183,7 +187,7 @@ func (a *spaceAuthority) lapse(k spaceKey, gen uint64) {
 	delete(a.active, k)
 	notify := a.listeners()
 	a.mu.Unlock()
-	tell(notify, k)
+	a.tell(notify, k)
 }
 
 // holds: k's active map is still generation gen, and authority is open;
@@ -216,8 +220,8 @@ func (a *spaceAuthority) forget(k spaceKey) []func(string) {
 	return a.listeners()
 }
 
-// close stops every timer and every later activation and callback: Run
-// has ended.
+// close stops every timer and every later activation and callback, then
+// waits for listener calls still running: Run has ended.
 func (a *spaceAuthority) close() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -226,14 +230,43 @@ func (a *spaceAuthority) close() {
 		cur.stop()
 		delete(a.active, space)
 	}
+	for a.calls > 0 {
+		a.drained.Wait()
+	}
 }
 
 func (a *spaceAuthority) listeners() []func(string) {
 	return slices.Clone(a.notify)
 }
 
-func tell(fs []func(string), k spaceKey) {
+// tell calls each listener in turn, outside every lock. Once authority is
+// closed no further listener starts, and close waits for any that is
+// running, so none runs after Run has ended.
+func (a *spaceAuthority) tell(fs []func(string), k spaceKey) {
 	for _, f := range fs {
+		if !a.beginCall() {
+			return
+		}
 		f(string(k))
+		a.endCall()
+	}
+}
+
+func (a *spaceAuthority) beginCall() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.calls++
+	return true
+}
+
+func (a *spaceAuthority) endCall() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.calls--
+	if a.calls == 0 {
+		a.drained.Broadcast()
 	}
 }
