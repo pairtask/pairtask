@@ -250,7 +250,7 @@ var ErrBindingRequest = errors.New("hub: invalid binding request")
 // person (key ID person) in lineage, at epoch, at.
 func (h *Hub) AcceptBinding(lineage string, epoch uint64, person string, at time.Time) (BindingAcceptance, error) {
 	l, ok := lineageFromHex(lineage)
-	if !ok || !validKeyID(person) || epoch == 0 {
+	if !ok || !validKeyID(person) || !signable(epoch, at) {
 		return BindingAcceptance{}, ErrBindingRequest
 	}
 	ep, err := h.PairingEndpoint()
@@ -265,6 +265,14 @@ func (h *Hub) AcceptBinding(lineage string, epoch uint64, person string, at time
 	}
 	a.Sig = sig
 	return BindingAcceptance{Acceptance: a.Marshal(), WorkspaceKey: pub}, nil
+}
+
+// signable: an epoch and time the identity parser will take back.
+func signable(epoch uint64, at time.Time) bool {
+	if epoch == 0 || epoch > identity.MaxCounter {
+		return false
+	}
+	return at.UnixMilli() >= 0
 }
 
 func lineageFromHex(s string) (identity.Lineage, bool) {
