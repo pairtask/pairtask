@@ -81,14 +81,24 @@ func parseIdentity(args []string, stderr io.Writer) (identityRequest, int) {
 // check: --no-recovery only where an anchor is made, and no JSON where a
 // recovery code would be shown or typed.
 func (r identityRequest) check() error {
-	makes := r.op == "init" || r.op == "anchor"
-	if r.noRecovery && !makes {
+	if r.noRecovery && !r.makesAnchor() {
 		return errors.New("--no-recovery is for init and anchor")
 	}
-	if r.asJSON && (r.op == "confirm" || (makes && !r.noRecovery)) {
+	if r.asJSON && r.handlesCode() {
 		return errJSONRecovery
 	}
 	return nil
+}
+
+// makesAnchor: the command makes the identity anchor.
+func (r identityRequest) makesAnchor() bool { return r.op == "init" || r.op == "anchor" }
+
+// handlesCode: the command shows or reads a recovery code.
+func (r identityRequest) handlesCode() bool {
+	if r.op == "confirm" {
+		return true
+	}
+	return r.makesAnchor() && !r.noRecovery
 }
 
 // identityOpNamed: args start with init or status.

@@ -63,7 +63,7 @@ func DecodeRecovery(code string) (ed25519.PrivateKey, error) {
 	if !ok {
 		return nil, ErrRecoveryCode
 	}
-	payload, err := canonicalPayload(body)
+	payload, err := canonicalPayload([]byte(body))
 	if err != nil {
 		return nil, err
 	}
@@ -77,13 +77,16 @@ func DecodeRecovery(code string) (ed25519.PrivateKey, error) {
 // canonicalPayload decodes body only if it is exactly the 55 characters
 // that encode a 34-byte payload, with no stray trailing bits: base32 can
 // otherwise ignore a mistyped last character.
-func canonicalPayload(body string) ([]byte, error) {
+func canonicalPayload(body []byte) ([]byte, error) {
 	const textLen = 55 // base32 of 34 bytes, unpadded
 	if len(body) != textLen {
 		return nil, ErrRecoveryCode
 	}
-	payload, err := recoveryText.DecodeString(body)
-	if err != nil || len(payload) != ed25519.SeedSize+2 || recoveryText.EncodeToString(payload) != body {
+	payload, err := recoveryText.DecodeString(string(body))
+	if err != nil || len(payload) != ed25519.SeedSize+2 {
+		return nil, ErrRecoveryCode
+	}
+	if recoveryText.EncodeToString(payload) != string(body) {
 		return nil, ErrRecoveryCode
 	}
 	return payload, nil
@@ -117,7 +120,7 @@ func CreateAnchor(dir string, withRecovery bool, at time.Time) ([]byte, string, 
 		a.Recovery, code = r, c
 	}
 	body := a.Signed(keys.person).Marshal()
-	if err := writeOnce(dir, anchorFile, body); err != nil {
+	if err := keyFile(filepath.Join(dir, anchorFile)).writeOnce(body); err != nil {
 		return nil, "", err
 	}
 	return body, code, nil
@@ -133,11 +136,12 @@ func newRecovery() (ed25519.PublicKey, string, error) {
 	return ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey), code, err
 }
 
-// writeOnce publishes body at dir/name, 0600, only if nothing is there:
+// writeOnce publishes body at path, 0600, only if nothing is there:
 // written whole to a temporary file first, then linked into place, so no
 // reader ever sees part of it and an existing file is never replaced.
-func writeOnce(dir, name string, body []byte) error {
-	tmp, err := os.CreateTemp(dir, "."+name+"-*")
+func (path keyFile) writeOnce(body []byte) error {
+	dir := filepath.Dir(string(path))
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(string(path))+"-*")
 	if err != nil {
 		return err
 	}
@@ -145,13 +149,13 @@ func writeOnce(dir, name string, body []byte) error {
 	if err := writeSynced(tmp, body); err != nil {
 		return err
 	}
-	if err := os.Link(tmp.Name(), filepath.Join(dir, name)); err != nil {
+	if err := os.Link(tmp.Name(), string(path)); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return ErrAnchorExists
 		}
 		return err
 	}
-	return syncDir(dir)
+	return path.syncDir()
 }
 
 func writeSynced(f *os.File, body []byte) error {
@@ -161,8 +165,9 @@ func writeSynced(f *os.File, body []byte) error {
 	return errors.Join(werr, serr, cerr)
 }
 
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
+// syncDir syncs the directory path is in, so its new name lasts.
+func (path keyFile) syncDir() error {
+	d, err := os.Open(filepath.Dir(string(path)))
 	if err != nil {
 		return err
 	}
@@ -172,35 +177,43 @@ func syncDir(dir string) error {
 // Anchor is the stored identity anchor: checked to be private, intact,
 // signed and this person's.
 func (k *Keys) Anchor() ([]byte, error) {
-	body, err := readPrivate(filepath.Join(k.dir, anchorFile))
+	body, err := keyFile(filepath.Join(k.dir, anchorFile)).readPrivate()
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrNoAnchor
 	}
 	if err != nil {
 		return nil, err
 	}
-	a, err := identity.ParseAnchor(body)
-	if err != nil || a.Check() != nil || !a.Person.Equal(k.PersonPublic()) {
+	if !k.owns(body) {
 		return nil, ErrAnchorInvalid
 	}
 	return body, nil
 }
 
+// owns: body is an anchor, signed, of this person key.
+func (k *Keys) owns(body []byte) bool {
+	a, err := identity.ParseAnchor(body)
+	if err != nil {
+		return false
+	}
+	return a.Check() == nil && a.Person.Equal(k.PersonPublic())
+}
+
 // readPrivate reads a regular file of ours that no one else can use.
-func readPrivate(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
+func (path keyFile) readPrivate() ([]byte, error) {
+	info, err := os.Lstat(string(path))
 	if err != nil {
 		return nil, err
 	}
 	if !(info.Mode().IsRegular() && private(info)) {
 		return nil, fmt.Errorf("%w: %s must be a file of ours with mode 0600", ErrUnsafe, path)
 	}
-	return os.ReadFile(path)
+	return os.ReadFile(string(path))
 }
 
 // ConfirmRecovery records that the operator typed back part of the code.
 func ConfirmRecovery(dir string) error {
-	err := writeOnce(dir, confirmedFile, []byte("confirmed\n"))
+	err := keyFile(filepath.Join(dir, confirmedFile)).writeOnce([]byte("confirmed\n"))
 	if errors.Is(err, ErrAnchorExists) {
 		return nil // confirmed before
 	}
