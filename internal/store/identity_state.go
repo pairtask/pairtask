@@ -262,13 +262,20 @@ func applyStatement(ctx context.Context, tx *sql.Tx, s arrival) (identity.Effect
 	if err != nil || !keepEffects[eff.Kind] {
 		return eff, err
 	}
-	if full, err := inputsFull(ctx, tx, l); err != nil || full {
-		if err == nil {
-			err = markFull(ctx, tx, l, s.at)
-		}
-		return identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}, err
+	return keepWithinBound(ctx, tx, keptStatement{l, st, s, next}, eff)
+}
+
+// keepWithinBound keeps a statement that changes the state, unless the
+// lineage is at the bound: then it freezes the lineage and is refused.
+func keepWithinBound(ctx context.Context, tx *sql.Tx, k keptStatement, eff identity.Effect) (identity.Effect, error) {
+	full, err := inputsFull(ctx, tx, k.lineage)
+	if err != nil {
+		return identity.Effect{}, err
 	}
-	return eff, keepStatement(ctx, tx, keptStatement{l, st, s, next})
+	if full {
+		return identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}, markFull(ctx, tx, k.lineage, k.at)
+	}
+	return eff, keepStatement(ctx, tx, k)
 }
 
 // arrival is a statement's bytes, when it came, and from whom ("" for a
