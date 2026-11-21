@@ -40,7 +40,10 @@ def chat_command(args):
 
 
 def identity_command(action):
-    return lambda args: secured_exec(args, ["pairtask", "operator", "identity", action])
+    def build(args):
+        extra = ["--no-recovery"] if getattr(args, "no_recovery", False) else []
+        return secured_exec(args, ["pairtask", "operator", "identity", action] + extra)
+    return build
 
 
 def secured_command(args):
@@ -68,10 +71,13 @@ def parser():
     chat = sub.add_parser("chat", help="the operator chat in the secured runtime (incus exec -t … pairtask operator chat)")
     add_secured_target(chat)
     chat.set_defaults(build=chat_command)
-    for action in ("init", "status"):
+    for action in ("init", "anchor", "confirm", "status"):
         identity = sub.add_parser("identity-" + action,
                                   help="pairtask operator identity %s in the secured runtime" % action)
         add_secured_target(identity)
+        if action in ("init", "anchor"):
+            identity.add_argument("--no-recovery", action="store_true",
+                                  help="make no recovery key (not recommended: losing this machine loses the identity)")
         identity.set_defaults(build=identity_command(action))
     secured = sub.add_parser("secured", help="a shell in the secured runtime as root, where operator commands run; or one command there")
     add_secured_target(secured)
