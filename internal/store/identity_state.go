@@ -52,12 +52,13 @@ CREATE TABLE IF NOT EXISTS identity_clock (
     mark TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS identity_outbox (
-    contact   TEXT NOT NULL,
-    digest    TEXT NOT NULL,
-    body      BLOB NOT NULL,
-    queued_at TEXT NOT NULL,
-    effect    TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (contact, digest)
+    contact       TEXT NOT NULL,
+    pairing_epoch INTEGER NOT NULL,
+    digest        TEXT NOT NULL,
+    body          BLOB NOT NULL,
+    queued_at     TEXT NOT NULL,
+    effect        TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (contact, pairing_epoch, digest)
 );
 CREATE TABLE IF NOT EXISTS identity_admissions (
     contact       TEXT NOT NULL,
@@ -82,7 +83,11 @@ const (
 	inputResolve   = "resolve"
 	inputWorkspace = "workspace"
 	inputLegacy    = "legacy"
-	globalLineage  = ""
+	// inputFull marks that the lineage reached MaxIdentityInputs: replay
+	// freezes it from that point on, so nothing from it verifies, across
+	// restarts, until the operator resolves it.
+	inputFull     = "full"
+	globalLineage = ""
 )
 
 // MaxIdentityInputs bounds what a lineage may accumulate. Reaching it
@@ -189,6 +194,9 @@ func replayInput(h identity.Held, started bool, in input) (identity.Held, bool, 
 	case inputLegacy:
 		h.Legacy = append(append([]string(nil), h.Legacy...), string(in.body))
 		return h, started, nil
+	case inputFull:
+		h.Trust = identity.Frozen
+		return h, started, nil
 	}
 	return h, started, fmt.Errorf("unknown identity input %q", in.kind)
 }
@@ -247,6 +255,9 @@ func applyStatement(ctx context.Context, tx *sql.Tx, s arrival) (identity.Effect
 		return identity.Effect{}, err
 	}
 	if full, err := inputsFull(ctx, tx, l); err != nil || full {
+		if err == nil && h.Trust != "" {
+			err = markFull(ctx, tx, l, s.at)
+		}
 		return identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}, err
 	}
 	next, eff, err := h.Apply(st, s.at)
@@ -324,11 +335,22 @@ func noteLineageContact(ctx context.Context, tx *sql.Tx, k keptStatement) error 
 	return err
 }
 
-// inputsFull: the lineage reached the bound.
+// inputsFull: the lineage reached the bound (its one full marker aside).
 func inputsFull(ctx context.Context, tx *sql.Tx, l identity.Lineage) (bool, error) {
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM identity_inputs WHERE lineage = ?`, lineageKey(l)).Scan(&n)
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM identity_inputs WHERE lineage = ? AND kind != ?`, lineageKey(l), inputFull).Scan(&n)
 	return n >= MaxIdentityInputs, err
+}
+
+// markFull records, once, that the lineage hit the bound: from here on its
+// state replays frozen. A statement turned away for the bound might have
+// been a revocation, so trusting anything from the lineage after it would
+// fail open.
+func markFull(ctx context.Context, tx *sql.Tx, l identity.Lineage, at time.Time) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO identity_inputs (lineage, kind, body, digest, received_at)
+SELECT ?1, ?2, x'', '', ?3 WHERE NOT EXISTS (SELECT 1 FROM identity_inputs WHERE lineage = ?1 AND kind = ?2)`,
+		lineageKey(l), inputFull, msgStamp(at))
+	return err
 }
 
 // lineageOfKey is the held lineage a person or recovery key belongs to.

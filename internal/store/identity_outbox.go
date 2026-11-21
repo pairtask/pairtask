@@ -29,13 +29,15 @@ var identityExchange = false
 // ExchangesIdentity: sessions through this store take the identity phase.
 func (p *PeerMessages) ExchangesIdentity() bool { return identityExchange }
 
-// QueueIdentity owes the contact one signed statement; the same statement
-// again is queued once.
+// QueueIdentity owes the contact one signed statement, in its current
+// pairing: a statement owed under an earlier pairing is never sent or
+// settled under a later one. The same statement again is queued once.
 func (s *Store) QueueIdentity(ctx context.Context, contact string, statement []byte, at time.Time) error {
 	if _, err := identity.Parse(statement); err != nil {
 		return fmt.Errorf("%w: %v", identity.ErrMalformed, err)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO identity_outbox (contact, digest, body, queued_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO identity_outbox (contact, pairing_epoch, digest, body, queued_at)
+VALUES (?1, `+currentEpochOf1+`, ?2, ?3, ?4) ON CONFLICT DO NOTHING`,
 		contact, wireDigest(statement), statement, msgStamp(at))
 	return err
 }
@@ -47,8 +49,20 @@ func wireDigest(b []byte) string {
 }
 
 // PendingIdentity is up to max statements still owed contact, oldest first.
+// It reads through the session's fence, so a session whose pairing
+// was paused or replaced sends nothing.
 func (p *PeerMessages) PendingIdentity(ctx context.Context, contact string, max int) ([]messaging.IdentityStatement, error) {
-	rows, err := p.db.QueryContext(ctx, `SELECT body FROM identity_outbox WHERE contact = ? AND effect = '' ORDER BY queued_at, digest LIMIT ?`, contact, max)
+	var out []messaging.IdentityStatement
+	err := p.inTx(ctx, contact, func(tx *sql.Tx) (err error) {
+		out, err = pendingIdentity(ctx, tx, contact, max)
+		return err
+	})
+	return out, err
+}
+
+func pendingIdentity(ctx context.Context, tx *sql.Tx, contact string, max int) ([]messaging.IdentityStatement, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT body FROM identity_outbox
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND effect = '' ORDER BY queued_at, digest LIMIT ?2`, contact, max)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +81,8 @@ func (p *PeerMessages) PendingIdentity(ctx context.Context, contact string, max 
 // IdentityAnswered settles one owed statement with the contact's answer.
 func (p *PeerMessages) IdentityAnswered(ctx context.Context, contact string, a messaging.IdentityStored) error {
 	return p.inTx(ctx, contact, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE identity_outbox SET effect = ? WHERE contact = ? AND digest = ?`, a.Effect, contact, a.Digest)
+		_, err := tx.ExecContext(ctx, `UPDATE identity_outbox SET effect = ?3
+WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+` AND digest = ?2`, contact, a.Digest, a.Effect)
 		return err
 	})
 }
