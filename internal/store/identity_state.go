@@ -286,7 +286,7 @@ func keepStatement(ctx context.Context, tx *sql.Tx, k keptStatement) error {
 	if err := indexKeys(ctx, tx, key, k.next); err != nil {
 		return err
 	}
-	return noteLineageContact(ctx, tx, key, k.contact, k.at)
+	return noteLineageContact(ctx, tx, k)
 }
 
 // storedInput is one row of identity_inputs.
@@ -315,12 +315,12 @@ func indexKeys(ctx context.Context, tx *sql.Tx, key string, h identity.Held) err
 	return nil
 }
 
-func noteLineageContact(ctx context.Context, tx *sql.Tx, key, contact string, at time.Time) error {
-	if contact == "" {
+func noteLineageContact(ctx context.Context, tx *sql.Tx, k keptStatement) error {
+	if k.contact == "" {
 		return nil
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO identity_contacts (lineage, contact, first_seen) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-		key, contact, msgStamp(at))
+		lineageKey(k.lineage), k.contact, msgStamp(k.at))
 	return err
 }
 
@@ -376,14 +376,15 @@ func (s *Store) ApproveIdentity(ctx context.Context, l identity.Lineage, at time
 	})
 }
 
-// ResolveIdentity records the operator's choice in a frozen lineage,
-// checked with the local key that signed it, which is kept with it.
-func (s *Store) ResolveIdentity(ctx context.Context, l identity.Lineage, r identity.Resolution, local ed25519.PublicKey, at time.Time) error {
-	return s.localDecision(ctx, l, func(h identity.Held) (storedInput, error) {
+// ResolveIdentity records the operator's choice in the frozen lineage the
+// resolution names, checked with the local key that signed it, which is
+// kept with it.
+func (s *Store) ResolveIdentity(ctx context.Context, r identity.Resolution, local ed25519.PublicKey, at time.Time) error {
+	return s.localDecision(ctx, r.Lineage, func(h identity.Held) (storedInput, error) {
 		if _, err := identity.Resolve(h, r, local); err != nil {
 			return storedInput{}, err
 		}
-		return storedInput{lineageKey(l), inputResolve, resolveBody(r, local), "", at}, nil
+		return storedInput{lineageKey(r.Lineage), inputResolve, resolveBody(r, local), "", at}, nil
 	})
 }
 
