@@ -166,10 +166,7 @@ func wrapStore(st Store) Store {
 		if !ok {
 			return wrapped
 		}
-		if claims, ok := st.(ClaimStore); ok {
-			return claimSessionStore{sealSessionStore{wrapped, ss}, claims}
-		}
-		return sealSessionStore{wrapped, ss}
+		return wrapSealed(st, sealSessionStore{wrapped, ss})
 	}
 	switch s := st.(type) {
 	case OutcomeStore:
@@ -178,6 +175,19 @@ func wrapStore(st Store) Store {
 		return routingSessionStore{sessionStore{s}, s}
 	}
 	return sessionStore{st}
+}
+
+// wrapSealed adds the claim and identity halves a sealing store has.
+func wrapSealed(st Store, sealed sealSessionStore) Store {
+	claims, ok := st.(ClaimStore)
+	if !ok {
+		return sealed
+	}
+	cs := claimSessionStore{sealed, claims}
+	if is, ok := st.(IdentityStore); ok {
+		return identitySessionStore{cs, is}
+	}
+	return cs
 }
 
 type routingSessionStore struct {

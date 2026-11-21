@@ -22,6 +22,9 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
+	// MaxVersion is the newest version a default store speaks.
+	// IdentityVersion is newer, offered only by a store that exchanges
+	// identity (off until the chat can show identity verdicts itself).
 	MaxVersion byte = 12 // RefsVersion
 )
 
@@ -174,7 +177,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameRefs
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameIdentityMore
 }
 
 // shape is a frame type and its exact number of fields.

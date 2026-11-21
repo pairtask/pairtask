@@ -113,10 +113,13 @@ func sealVersionFor(st Store) byte {
 	if _, ok := st.(ClaimStore); !ok {
 		return SealVersion
 	}
-	if keepsRefs(st) {
-		return RefsVersion
+	if !keepsRefs(st) {
+		return ClaimVersion
 	}
-	return ClaimVersion
+	if is, ok := st.(IdentityStore); ok && is.ExchangesIdentity() {
+		return IdentityVersion
+	}
+	return RefsVersion
 }
 
 // sealSessionStore is a session's view of a store that keeps seals: its

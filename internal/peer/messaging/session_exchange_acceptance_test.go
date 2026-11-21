@@ -45,19 +45,33 @@ type sessionOutcome struct {
 
 func sessionExchange(t *testing.T, left, right messaging.Store, failRight byte) []sessionOutcome {
 	t.Helper()
+	return exchangeContacts(t, exchangeEndpoint{left, sessionContact}, exchangeEndpoint{right, sessionContact}, failRight)
+}
+
+type exchangeEndpoint struct {
+	store   messaging.Store
+	contact string
+}
+
+func exchangeContacts(t *testing.T, left, right exchangeEndpoint, failRight byte) []sessionOutcome {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	ab, ba := make(chan []byte, 1), make(chan []byte, 1)
 	done := make(chan sessionOutcome, 2)
 	go func() {
-		r, err := sessionSide(channelFrames{ctx, ba, ab, 0}, left).Dial(ctx)
+		side := sessionSide(channelFrames{ctx, ba, ab, 0}, left.store)
+		side.Contact = left.contact
+		r, err := side.Dial(ctx)
 		if err != nil {
 			cancel()
 		}
 		done <- sessionOutcome{r, err}
 	}()
 	go func() {
-		r, err := sessionSide(channelFrames{ctx, ab, ba, failRight}, right).Serve(ctx)
+		side := sessionSide(channelFrames{ctx, ab, ba, failRight}, right.store)
+		side.Contact = right.contact
+		r, err := side.Serve(ctx)
 		if err != nil {
 			cancel()
 		}
