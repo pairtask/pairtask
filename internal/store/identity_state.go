@@ -269,10 +269,7 @@ func applyStatement(ctx context.Context, tx *sql.Tx, s arrival) (identity.Effect
 	if err != nil {
 		return eff, err
 	}
-	if !worthKeeping(st, eff) {
-		return eff, nil
-	}
-	if eff.Kind == identity.Parked && waitingIn(h, s.body) {
+	if !worthKeeping(h, s.body, eff) {
 		return eff, nil
 	}
 	return keepWithinBound(ctx, tx, keptStatement{l, st, s, next, eff.Kind}, eff)
@@ -292,9 +289,13 @@ func waitingIn(h identity.Held, body []byte) bool {
 	return slices.ContainsFunc(h.Deferred, func(st identity.Statement) bool { return bytes.Equal(st.Marshal(), body) })
 }
 
-// worthKeeping: the statement changed, or may later change, the state.
-func worthKeeping(st identity.Statement, eff identity.Effect) bool {
-	return keepEffects[eff.Kind] && changesState(st)
+// worthKeeping: the statement changed, or may later change, the state,
+// and replay doesn't already hold it waiting.
+func worthKeeping(h identity.Held, body []byte, eff identity.Effect) bool {
+	if !keepEffects[eff.Kind] || !changesState(body) {
+		return false
+	}
+	return eff.Kind != identity.Parked || !waitingIn(h, body)
 }
 
 // settledStatement answers, without judging, a statement already applied
@@ -321,7 +322,11 @@ func settledStatement(ctx context.Context, tx *sql.Tx, l identity.Lineage, st id
 // changesState: a statement replay needs. A notice informs and changes
 // nothing, so it is judged and answered but never kept: keeping it would
 // spend the bound and make its repeat look new.
-func changesState(st identity.Statement) bool {
+func changesState(body []byte) bool {
+	st, err := identity.Parse(body)
+	if err != nil {
+		return false
+	}
 	_, notice := st.(identity.Notice)
 	return !notice
 }
