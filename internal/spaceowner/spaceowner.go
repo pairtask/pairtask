@@ -57,13 +57,28 @@ func (m Me) Claim(w ed25519.PublicKey, epoch uint64, at time.Time) []byte {
 	return c.Signed(m.key).Marshal()
 }
 
-// NewSpace is space's first map: this person as owner, named name, with
-// their workspace binding own, and the grant all ↔ all.
-func NewSpace(m Me, space, name string, own pairbook.Binding, now time.Time) (pairbook.SignedSpaceMap, error) {
+// Current is the map a space is at, as the broker keeps it: the last map
+// verified and its durable mark.
+type Current struct {
+	Map  pairbook.SignedSpaceMap
+	Mark pairbook.Mark
+}
+
+// Genesis is what a new space starts with: its ID, the owner's display
+// name, and the owner's binding of their workspace.
+type Genesis struct {
+	Space string
+	Name  string
+	Own   pairbook.Binding
+}
+
+// NewSpace is a space's first map: this person as owner, with their
+// workspace, and the grant all ↔ all.
+func NewSpace(m Me, g Genesis, now time.Time) (pairbook.SignedSpaceMap, error) {
 	all := pairbook.Selector{Kind: pairbook.SelectAll}
-	sm := pairbook.SpaceMap{Space: space, Version: 1,
-		People:   []pairbook.MapPerson{{Lineage: m.Lineage, Person: m.Public(), Name: name, Role: pairbook.RoleOwner, Evidence: m.Evidence}},
-		Bindings: []pairbook.Binding{own},
+	sm := pairbook.SpaceMap{Space: g.Space, Version: 1,
+		People:   []pairbook.MapPerson{{Lineage: m.Lineage, Person: m.Public(), Name: g.Name, Role: pairbook.RoleOwner, Evidence: m.Evidence}},
+		Bindings: []pairbook.Binding{g.Own},
 		Grants:   []pairbook.Grant{{A: all, B: all}}}
 	return m.issue(sm, pairbook.Mark{}, now)
 }
@@ -80,45 +95,45 @@ func (m Me) issue(sm pairbook.SpaceMap, mark pairbook.Mark, now time.Time) (pair
 	return signed, nil
 }
 
-// current verifies cur as this person's map at now, made no earlier than
+// current verifies c's map as this person's at now, no older than its
 // mark.
-func (m Me) current(cur pairbook.SignedSpaceMap, mark pairbook.Mark, now time.Time) (pairbook.VerifiedMap, error) {
-	v, err := cur.Verify(cur.Space, m.KeyID(), mark, now)
+func (m Me) current(c Current, now time.Time) (pairbook.VerifiedMap, error) {
+	v, err := c.Map.Verify(c.Map.Space, m.KeyID(), c.Mark, now)
 	if errors.Is(err, pairbook.ErrNotOwner) {
 		return v, ErrNotOwner
 	}
 	return v, err
 }
 
-// Invite invites one person to cur's space with a one-time token's hash,
-// valid for d from now, to join from cur.
-func (m Me) Invite(cur pairbook.SignedSpaceMap, mark pairbook.Mark, tokenHash [32]byte, now time.Time, d time.Duration) (pairbook.SignedMapInvite, error) {
-	v, err := m.current(cur, mark, now)
+// Invite invites one person to c's space with a one-time token's hash,
+// valid for d from now, to join from c.
+func (m Me) Invite(c Current, tokenHash [32]byte, now time.Time, d time.Duration) (pairbook.SignedMapInvite, error) {
+	v, err := m.current(c, now)
 	if err != nil {
 		return pairbook.SignedMapInvite{}, err
 	}
 	if d <= 0 || d > pairbook.InviteValidity {
 		return pairbook.SignedMapInvite{}, ErrValidity
 	}
-	i := pairbook.MapInvite{Space: cur.Space, Base: v.Mark, TokenHash: tokenHash, IssuedAt: pairbook.Millis(now), ExpiresAt: pairbook.Millis(now.Add(d))}
+	i := pairbook.MapInvite{Space: c.Map.Space, Base: v.Mark, TokenHash: tokenHash, IssuedAt: pairbook.Millis(now), ExpiresAt: pairbook.Millis(now.Add(d))}
 	signed := pairbook.SignMapInvite(m.key, i)
-	if signed.Verify(cur.Space, m.KeyID(), now) != nil {
+	if signed.Verify(c.Map.Space, m.KeyID(), now) != nil {
 		return pairbook.SignedMapInvite{}, ErrValidity // e.g. under a millisecond
 	}
 	return signed, nil
 }
 
-// Renew is last again as the next version, valid from now. last must be
-// exactly the map mark records; it may have lapsed, so it is checked as of
-// when it was issued.
-func (m Me) Renew(last pairbook.SignedSpaceMap, mark pairbook.Mark, now time.Time) (pairbook.SignedSpaceMap, error) {
-	if last.SpaceMap.Mark() != mark {
+// Renew is c's map again as the next version, valid from now. The map
+// must be exactly the one c's mark records; it may have lapsed, so it is
+// checked as of when it was issued.
+func (m Me) Renew(c Current, now time.Time) (pairbook.SignedSpaceMap, error) {
+	if c.Map.SpaceMap.Mark() != c.Mark {
 		return pairbook.SignedSpaceMap{}, ErrMark
 	}
-	if _, err := m.current(last, mark, time.UnixMilli(last.IssuedAt)); err != nil {
+	if _, err := m.current(c, time.UnixMilli(c.Map.IssuedAt)); err != nil {
 		return pairbook.SignedSpaceMap{}, err
 	}
-	return m.next(last.SpaceMap, mark, now)
+	return m.next(c.Map.SpaceMap, c.Mark, now)
 }
 
 // next is sm as the following version, signed and checked.
@@ -130,20 +145,24 @@ func (m Me) next(sm pairbook.SpaceMap, mark pairbook.Mark, now time.Time) (pairb
 	return m.issue(sm, mark, now)
 }
 
-// ChangeArgs are what a request carries besides its action: a join's name,
-// token hash and binding, a bind's binding, an unbind's workspace.
-type ChangeArgs struct {
+// Request is a request this person makes to a space, from the map Base:
+// a join's name, token hash and binding, a bind's binding, an unbind's
+// workspace.
+type Request struct {
+	Space     string
+	Action    string
+	Base      pairbook.Mark
 	Name      string
 	TokenHash [32]byte
 	Binding   pairbook.Binding
 	Workspace string
 }
 
-// Change is this person's signed request to space, made from base.
-func (m Me) Change(action, space string, base pairbook.Mark, args ChangeArgs, now time.Time) pairbook.SignedChange {
-	c := pairbook.Change{Space: space, Action: action, Base: base, Lineage: m.Lineage, Name: args.Name, TokenHash: args.TokenHash,
-		Binding: args.Binding, Workspace: args.Workspace, At: pairbook.Millis(now)}
-	if action == pairbook.ChangeJoin {
+// Change is r, signed by this person.
+func (m Me) Change(r Request, now time.Time) pairbook.SignedChange {
+	c := pairbook.Change{Space: r.Space, Action: r.Action, Base: r.Base, Lineage: m.Lineage, Name: r.Name, TokenHash: r.TokenHash,
+		Binding: r.Binding, Workspace: r.Workspace, At: pairbook.Millis(now)}
+	if r.Action == pairbook.ChangeJoin {
 		c.Evidence = m.Evidence
 	}
 	return pairbook.SignChange(m.key, c)

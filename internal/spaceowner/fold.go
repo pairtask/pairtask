@@ -32,21 +32,21 @@ type Batch struct {
 	Invited  func(tokenHash [32]byte) bool
 }
 
-// Fold applies a batch to cur, the map mark records, as one next map.
-// Requests are checked against cur (their signatures and base) and against
+// Fold applies a batch to c's map as one next map. Requests are checked
+// against that map (their signatures and base) and against
 // what earlier requests in the batch already did (in order: the first of
 // two competing requests wins, the later is rejected). next is nil when
 // nothing changed. Any error about cur, or about the resulting map, comes
 // back as err, with no outcomes.
-func (m Me) Fold(cur pairbook.SignedSpaceMap, mark pairbook.Mark, b Batch, now time.Time) (*pairbook.SignedSpaceMap, []Outcome, error) {
-	v, err := m.current(cur, mark, now)
+func (m Me) Fold(c Current, b Batch, now time.Time) (*pairbook.SignedSpaceMap, []Outcome, error) {
+	v, err := m.current(c, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	w := newWorking(cur.SpaceMap)
+	w := newWorking(c.Map.SpaceMap)
 	out := make([]Outcome, 0, len(b.Changes))
-	for _, c := range b.Changes {
-		out = append(out, Outcome{Change: c, Result: w.fold(v, c, b, now)})
+	for _, ch := range b.Changes {
+		out = append(out, Outcome{Change: ch, Result: w.fold(v, ch, b, now)})
 	}
 	if !w.changed {
 		return nil, out, nil
@@ -56,6 +56,11 @@ func (m Me) Fold(cur pairbook.SignedSpaceMap, mark pairbook.Mark, b Batch, now t
 		return nil, nil, err
 	}
 	return &next, out, nil
+}
+
+// invited: the owner's gate says tokenHash is a live, unused invite.
+func (b Batch) invited(tokenHash [32]byte) bool {
+	return b.Invited != nil && b.Invited(tokenHash)
 }
 
 // working is the next map as a batch builds it.
@@ -108,7 +113,7 @@ func (w *working) apply(c pairbook.SignedChange, b Batch) string {
 
 // join adds the person and their binding, once per token, if approved.
 func (w *working) join(c pairbook.SignedChange, b Batch) string {
-	if w.tokens[c.TokenHash] || b.Invited == nil || !b.Invited(c.TokenHash) {
+	if w.tokens[c.TokenHash] || !b.invited(c.TokenHash) {
 		return Rejected
 	}
 	if w.hasPerson(c.Lineage) || w.bound(c.Binding.Workspace()) {
