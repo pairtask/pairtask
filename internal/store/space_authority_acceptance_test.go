@@ -158,15 +158,7 @@ func TestAuthorityStopsPendingListenersOnShutdown(t *testing.T) {
 	go h.Run(run)
 	started, release := make(chan struct{}), make(chan struct{})
 	h.OnSpaceChange(func(string) { close(started); <-release })
-	late := make(chan bool, 1)
-	h.OnSpaceChange(func(string) {
-		select {
-		case <-h.Done():
-			late <- true
-		default:
-			late <- false
-		}
-	})
+	late := observeCallbackAfterShutdown(h)
 	kept := make(chan error, 1)
 	go func() { kept <- h.KeepSpaceMap(ctx, mapSpace, record) }()
 	select {
@@ -181,16 +173,38 @@ func TestAuthorityStopsPendingListenersOnShutdown(t *testing.T) {
 	case <-time.After(250 * time.Millisecond):
 	}
 	close(release)
+	checkPendingCallbacks(t, h, kept, late)
+}
+
+func checkPendingCallbacks(t *testing.T, h *hub.Hub, kept <-chan error, late <-chan bool) {
+	t.Helper()
 	select {
 	case err := <-kept:
 		spacePinCheck(t, err == nil, "map update: %v", err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("listener did not return")
 	}
-	<-h.Done()
+	select {
+	case <-h.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("broker did not finish shutdown")
+	}
 	select {
 	case afterStop := <-late:
 		spacePinCheck(t, !afterStop, "listener started after Hub.Done closed")
 	default:
 	}
+}
+
+func observeCallbackAfterShutdown(h *hub.Hub) <-chan bool {
+	late := make(chan bool, 1)
+	h.OnSpaceChange(func(string) {
+		select {
+		case <-h.Done():
+			late <- true
+		default:
+			late <- false
+		}
+	})
+	return late
 }
