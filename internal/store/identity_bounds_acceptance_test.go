@@ -81,7 +81,17 @@ func TestIdentityHistoryFullRevocationSurvivesRestart(t *testing.T) {
 	pairOK(t, db.NoteWorkspaceKey(ctx, w, messageAt))
 	record, err := identity.ParseRecord(wires["record"])
 	pairOK(t, err)
-	fillIdentityJournal(t, pairRaw(t, path), record)
+	raw := pairRaw(t, path)
+	for i := 0; i < 2; i++ {
+		effect, err := bound.ApplyIdentity(ctx, wires["notice"], messageAt)
+		pairOK(t, err)
+		pairEqual(t, effect.Kind, identity.Applied)
+	}
+	// The seed helper checks only the anchor and approval occupy journal slots.
+	fillIdentityJournal(t, raw, record)
+	pending, err := bound.ApplyIdentity(ctx, wires["succession-3"], messageAt)
+	pairOK(t, err)
+	pairEqual(t, pending.Kind, identity.Rejected)
 	before, found, err := db.HeldIdentity(ctx, anchor.Lineage())
 	pairOK(t, err)
 	pairEqual(t, found, true)
@@ -96,4 +106,12 @@ func TestIdentityHistoryFullRevocationSurvivesRestart(t *testing.T) {
 	pairOK(t, err)
 	pairEqual(t, found, true)
 	pairEqual(t, after.Trust, identity.Frozen)
+	bound, err = db.PeerMessages().Admit(ctx, contact)
+	pairOK(t, err)
+	_, person := admissionSigningKeys(t)
+	record.Version = store.MaxIdentityInputs + 1
+	later, err := bound.ApplyIdentity(ctx, record.Signed(person).Marshal(), messageAt)
+	pairOK(t, err)
+	pairEqual(t, later.Kind, identity.Rejected)
+	pairEqual(t, later.Reason, "history full")
 }
