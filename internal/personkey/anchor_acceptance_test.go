@@ -15,88 +15,99 @@ import (
 	"github.com/pairtask/pairtask/internal/personkey"
 )
 
+func checkAnchorError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newHostKeys(t *testing.T) (string, *personkey.Keys) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "host")
+	keys, err := personkey.Create(dir)
+	checkAnchorError(t, err)
+	return dir, keys
+}
+
+func checkAnchorOnDisk(t *testing.T, dir string, want []byte) {
+	t.Helper()
+	keys, err := personkey.Load(dir)
+	checkAnchorError(t, err)
+	got, err := keys.Anchor()
+	checkAnchorError(t, err)
+	if !bytes.Equal(got, want) {
+		t.Fatal("reloaded anchor differs from original")
+	}
+}
+
+func checkRecoveryMaterial(t *testing.T, a identity.Anchor, code string, recovery bool) {
+	t.Helper()
+	if (code != "") != recovery {
+		t.Fatal("unexpected recovery code presence")
+	}
+	if (len(a.Recovery) > 0) != recovery {
+		t.Fatal("unexpected recovery key presence")
+	}
+	if recovery {
+		key, err := personkey.DecodeRecovery(code)
+		checkAnchorError(t, err)
+		if !key.Public().(ed25519.PublicKey).Equal(a.Recovery) {
+			t.Fatal("printed code does not recover anchored key")
+		}
+	}
+}
+
+func checkCodeAbsentFromDisk(t *testing.T, dir, code string) {
+	t.Helper()
+	files, err := os.ReadDir(dir)
+	checkAnchorError(t, err)
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(dir, f.Name()))
+		checkAnchorError(t, err)
+		if bytes.Contains(data, []byte(code)) {
+			t.Fatal("one-time recovery code stored on disk")
+		}
+	}
+}
+
 func TestHostAnchorSurvivesReload(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		recovery bool
 	}{{"with recovery", true}, {"explicitly without recovery", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "host")
-			keys, err := personkey.Create(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
+			dir, keys := newHostKeys(t)
 			raw, code, err := personkey.CreateAnchor(dir, tc.recovery, time.Unix(1700000000, 0))
-			if err != nil {
-				t.Fatal(err)
-			}
+			checkAnchorError(t, err)
 			a, err := identity.ParseAnchor(raw)
-			if err != nil || a.Check() != nil || !bytes.Equal(a.Person, keys.PersonPublic()) {
-				t.Fatal("anchor does not verify under original host person key")
+			checkAnchorError(t, err)
+			checkAnchorError(t, a.Check())
+			if !a.Person.Equal(keys.PersonPublic()) {
+				t.Fatal("anchor names a different person")
 			}
-			if (code != "") != tc.recovery || (len(a.Recovery) > 0) != tc.recovery {
-				t.Fatal("recovery mode does not match anchor")
+			checkRecoveryMaterial(t, a, code, tc.recovery)
+			_, again, err := personkey.CreateAnchor(dir, !tc.recovery, time.Unix(1700000001, 0))
+			if !errors.Is(err, personkey.ErrAnchorExists) || again != "" {
+				t.Fatal("expected registration retry to refuse without a code")
 			}
+			checkAnchorOnDisk(t, dir, raw)
 			if tc.recovery {
-				recovered, err := personkey.DecodeRecovery(code)
-				if err != nil || !bytes.Equal(recovered.Public().(ed25519.PublicKey), a.Recovery) {
-					t.Fatal("printed code does not recover anchored key")
-				}
-			}
-			_, again, retryErr := personkey.CreateAnchor(dir, !tc.recovery, time.Unix(1700000001, 0))
-			if again != "" || !errors.Is(retryErr, personkey.ErrAnchorExists) {
-				t.Fatal("retry disclosed another recovery code")
-			}
-			reloaded, err := personkey.Load(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			held, err := reloaded.Anchor()
-			if err != nil || !bytes.Equal(held, raw) {
-				t.Fatal("host lineage changed after retry and reload")
-			}
-			files, err := os.ReadDir(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, file := range files {
-				data, err := os.ReadFile(filepath.Join(dir, file.Name()))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if code != "" && bytes.Contains(data, []byte(code)) {
-					t.Fatal("one-time recovery code written into host identity directory")
-				}
+				checkCodeAbsentFromDisk(t, dir, code)
 			}
 		})
 	}
 }
 
+type registrationResult struct {
+	raw  []byte
+	code string
+	err  error
+}
+
 func TestConcurrentHostAnchorCreation(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "host")
-	if _, err := personkey.Create(dir); err != nil {
-		t.Fatal(err)
-	}
-	type result struct {
-		raw  []byte
-		code string
-		err  error
-	}
-	results := make(chan result, 8)
-	start := make(chan struct{})
-	var workers sync.WaitGroup
-	for range 8 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			<-start
-			raw, code, err := personkey.CreateAnchor(dir, true, time.Now())
-			results <- result{raw, code, err}
-		}()
-	}
-	close(start)
-	workers.Wait()
-	close(results)
+	dir, _ := newHostKeys(t)
+	results := registerConcurrently(dir)
 	var winner []byte
 	count := 0
 	for r := range results {
@@ -115,14 +126,26 @@ func TestConcurrentHostAnchorCreation(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("recovery codes issued: %d, want 1", count)
 	}
-	keys, err := personkey.Load(dir)
-	if err != nil {
-		t.Fatal(err)
+	checkAnchorOnDisk(t, dir, winner)
+}
+
+func registerConcurrently(dir string) <-chan registrationResult {
+	results := make(chan registrationResult, 8)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			raw, code, err := personkey.CreateAnchor(dir, true, time.Now())
+			results <- registrationResult{raw, code, err}
+		}()
 	}
-	held, err := keys.Anchor()
-	if err != nil || !bytes.Equal(held, winner) {
-		t.Fatal("stored anchor differs from winning registration")
-	}
+	close(start)
+	workers.Wait()
+	close(results)
+	return results
 }
 
 func TestRecoveryCodePublishedVector(t *testing.T) {
@@ -142,6 +165,11 @@ func TestRecoveryCodePublishedVector(t *testing.T) {
 			t.Fatal("valid transcription failed")
 		}
 	}
+	checkInvalidRecoveryTranscriptions(t, vector)
+}
+
+func checkInvalidRecoveryTranscriptions(t *testing.T, vector string) {
+	t.Helper()
 	for _, input := range []string{"", vector[1:], vector + "A", "PTR2" + vector[4:], strings.Replace(vector, "AAAQE", "AAAQA", 1), vector[:len(vector)-1] + "A", vector[:len(vector)-1] + "Z"} {
 		if _, err := personkey.DecodeRecovery(input); !errors.Is(err, personkey.ErrRecoveryCode) {
 			t.Fatal("invalid recovery code accepted")
@@ -150,20 +178,12 @@ func TestRecoveryCodePublishedVector(t *testing.T) {
 }
 
 func TestHostAnchorRefusesMismatchedPerson(t *testing.T) {
-	one, two := filepath.Join(t.TempDir(), "one"), filepath.Join(t.TempDir(), "two")
-	for _, dir := range []string{one, two} {
-		if _, err := personkey.Create(dir); err != nil {
-			t.Fatal(err)
-		}
-	}
+	one, _ := newHostKeys(t)
+	two, _ := newHostKeys(t)
 	other, _, err := personkey.CreateAnchor(one, false, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	checkAnchorError(t, err)
 	path := filepath.Join(two, "anchor.bin")
-	if err := os.WriteFile(path, other, 0600); err != nil {
-		t.Fatal(err)
-	}
+	checkAnchorError(t, os.WriteFile(path, other, 0600))
 	k, err := personkey.Load(two)
 	if err == nil {
 		_, err = k.Anchor()
@@ -176,7 +196,8 @@ func TestHostAnchorRefusesMismatchedPerson(t *testing.T) {
 		t.Fatal("registration overwrote mismatched lineage")
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(got, other) {
+	checkAnchorError(t, err)
+	if !bytes.Equal(got, other) {
 		t.Fatal("damaged anchor was changed")
 	}
 }
