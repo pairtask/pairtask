@@ -142,3 +142,55 @@ func TestHubRestoresMapAndCancelsTimerOnStop(t *testing.T) {
 	spacePinCheck(t, len(notice) == 0, "cancelled timer notified after shutdown")
 	checkHeldMap(t, s, signed)
 }
+
+func TestAuthorityStopsPendingListenersOnShutdown(t *testing.T) {
+	ctx := context.Background()
+	key, m := mapRecord(t)
+	record := pairbook.SignSpaceMap(key, m)
+	s := openMapStore(t, filepath.Join(t.TempDir(), "stop.db"))
+	defer s.Close()
+	pinMap(t, s, record)
+	h := hub.New(s, 0, slog.New(slog.DiscardHandler))
+	clock := authorityClock{now: mapTime}
+	h.SetSpaceTiming(clock.timing())
+	run, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go h.Run(run)
+	started, release := make(chan struct{}), make(chan struct{})
+	h.OnSpaceChange(func(string) { close(started); <-release })
+	late := make(chan bool, 1)
+	h.OnSpaceChange(func(string) {
+		select {
+		case <-h.Done():
+			late <- true
+		default:
+			late <- false
+		}
+	})
+	kept := make(chan error, 1)
+	go func() { kept <- h.KeepSpaceMap(ctx, mapSpace, record) }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("listener did not start")
+	}
+	cancel()
+	select {
+	case <-h.Done():
+	case <-time.After(250 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-kept:
+		spacePinCheck(t, err == nil, "map update: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("listener did not return")
+	}
+	<-h.Done()
+	select {
+	case afterStop := <-late:
+		spacePinCheck(t, !afterStop, "listener started after Hub.Done closed")
+	default:
+	}
+}
