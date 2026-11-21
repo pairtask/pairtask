@@ -37,25 +37,24 @@ func TestReviewRefreshRecovery(t *testing.T) {
 	go h.Run(ctx)
 	defer func() { cancel(); <-h.Done() }()
 	r := h.SubmitOperator(ctx, 0, protocol.Message{Type: protocol.TypeOperatorIdentity, MessageID: "test-identity", IdentityOp: protocol.IdentityOpStatus})
-	if r.Type != protocol.TypeOperatorIdentityResult {
-		t.Fatal(r)
-	}
-	if err := h.RefreshSpace(ctx, mapSpace); err != nil {
-		t.Fatal(err)
-	}
+	spacePinCheck(t, r.Type == protocol.TypeOperatorIdentityResult, "identity status: %v", r)
+	err := h.RefreshSpace(ctx, mapSpace)
+	spacePinCheck(t, err == nil, "initial refresh: %v", err)
+
 	denied := &space.Refusal{Status: 403}
 	dir.err = denied
-	if err := h.RefreshSpace(ctx, mapSpace); !errors.Is(err, denied) || h.SpaceRefreshError(mapSpace) == "" {
-		t.Fatal(err)
-	}
-	if got, ok := h.SpaceAuthority(mapSpace); !ok || got.Mark != signed.Mark() {
-		t.Fatal("lost valid cached authority")
-	}
+	err = h.RefreshSpace(ctx, mapSpace)
+	spacePinCheck(t, errors.Is(err, denied), "expected refusal, got %v", err)
+	spacePinCheck(t, h.SpaceRefreshError(mapSpace) != "", "refusal missing from status")
+	got, active := h.SpaceAuthority(mapSpace)
+	spacePinCheck(t, active, "lost valid cached authority")
+	spacePinCheck(t, got.Mark == signed.Mark(), "cached mark changed on refusal")
+
 	dir.err = nil
 	m.Version++
 	dir.reply = pairbook.SignSpaceMap(key, m)
-	if err := h.RefreshSpace(ctx, mapSpace); err != nil || h.SpaceRefreshError(mapSpace) != "" {
-		t.Fatal(err)
-	}
+	err = h.RefreshSpace(ctx, mapSpace)
+	spacePinCheck(t, err == nil, "refresh after refusal: %v", err)
+	spacePinCheck(t, h.SpaceRefreshError(mapSpace) == "", "refusal persisted after successful refresh")
 	checkHeldMap(t, s, dir.reply)
 }

@@ -47,9 +47,11 @@ func TestReviewV1MapWire(t *testing.T) {
 			t.Fatal(r.Method, r.URL.Path)
 		}
 		payload := decode[map[string]json.RawMessage](t, readRequest(t, r))
-		if string(payload["applied"]) != "[]" || payload["base"] == nil || payload["map"] == nil {
-			t.Fatal(payload)
+		if string(payload["applied"]) != "[]" {
+			t.Fatalf("applied = %s, want []", payload["applied"])
 		}
+		_ = decode[pairbook.Mark](t, payload["base"])
+		_ = decode[pairbook.SignedSpaceMap](t, payload["map"])
 		return response(409, map[string]string{"code": "conflict"}), nil
 	})
 	var refused *space.Refusal
