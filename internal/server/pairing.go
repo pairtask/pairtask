@@ -205,6 +205,7 @@ func (p *PairingServer) firstRound(netCtx, storeCtx context.Context, conn *first
 		p.log.Info("message session refused", "cause", hub.PairingCause(err))
 		return nil, hub.FirstRound{}
 	}
+	p.hub.NoteWorkspaceKey(storeCtx, conn.PeerKey())
 	sessionCtx, cancel := context.WithTimeout(netCtx, hub.MessageBudget)
 	defer cancel()
 	counted := &messaging.Counted{Frames: conn.MessageFrames(sessionCtx)}

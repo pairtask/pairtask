@@ -24,6 +24,9 @@ const (
 	// FrameIdentityStored answers it: the statement's digest and what the
 	// receiver did with it.
 	FrameIdentityStored byte = 35
+	// FrameIdentityMore ends a side's identity batch, as End does, and says
+	// more statements are owed: the round then carries nothing else.
+	FrameIdentityMore byte = 36
 	// MaxIdentityBytes bounds one statement.
 	MaxIdentityBytes = 16 << 10
 )
@@ -75,6 +78,7 @@ func (s Session) identity() (IdentityStore, bool) {
 }
 
 var (
+	identityMoreShape   = shape{FrameIdentityMore, 0}
 	identityShape       = shape{FrameIdentity, 1}
 	identityStoredCodec = fieldCodec[IdentityStored]{shape{FrameIdentityStored, 2}, "identity answer",
 		func(a IdentityStored) []string { return []string{a.Digest, a.Effect} },
@@ -110,15 +114,20 @@ func DecodeIdentityStored(frame []byte) (IdentityStored, error) {
 // next, then End.
 func (s Session) sendIdentity(ctx context.Context, r *Result) error {
 	is, _ := s.identity()
-	pending, err := is.PendingIdentity(ctx, s.Contact, SessionMessages)
+	pending, err := is.PendingIdentity(ctx, s.Contact, SessionMessages+1)
 	if err != nil {
 		return err
 	}
-	for _, st := range pending {
+	more := len(pending) > SessionMessages
+	for _, st := range pending[:min(len(pending), SessionMessages)] {
 		if err := s.sendStatement(ctx, is, st); err != nil {
 			return err
 		}
 		r.IdentitySent++
+	}
+	if more {
+		r.IdentityMore = true
+		return s.send(encode(FrameIdentityMore))
 	}
 	return s.send(EncodeEnd())
 }
@@ -150,8 +159,13 @@ func (s Session) receiveIdentity(ctx context.Context, r *Result) error {
 		if err != nil {
 			return err
 		}
-		if kind, _ := Kind(frame); kind == FrameEnd {
+		switch kind, _ := Kind(frame); kind {
+		case FrameEnd:
 			return DecodeEnd(frame)
+		case FrameIdentityMore:
+			r.IdentityMore = true
+			_, err := decode(frame, identityMoreShape)
+			return err
 		}
 		if count >= SessionMessages {
 			return fmt.Errorf("%w: more identity statements than a session carries", ErrProtocol)

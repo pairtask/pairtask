@@ -228,6 +228,7 @@ func (h *Hub) dialSession(ctx context.Context, c peer.Contact) (messaging.Result
 	if err != nil {
 		return messaging.Result{}, nil, err
 	}
+	h.NoteWorkspaceKey(storeCtx, conn.PeerKey())
 	counted := &messaging.Counted{Frames: conn.MessageFrames(netCtx)}
 	s := messaging.Session{Frames: counted, Store: admitted, Contact: c.IdentityKey, Now: h.pair.cfg.Clock}
 	r, version, err := s.OpenDial(storeCtx)

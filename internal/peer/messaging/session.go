@@ -47,6 +47,9 @@ type Result struct {
 	// Identity statements (#392) this side sent and had answered, and the
 	// peer's this side judged.
 	IdentitySent, IdentityReceived int
+	// IdentityMore: a side had more identity statements than a round
+	// carries, so this round carried nothing else.
+	IdentityMore bool
 }
 
 // Moved reports durable progress: anything stored, refused or confirmed,
@@ -209,9 +212,15 @@ type phase func(context.Context, *Result) error
 // directories.
 func (s Session) phases(ctx context.Context, dialer bool) (Result, error) {
 	var r Result
-	for _, step := range s.steps(dialer) {
+	for i, step := range s.steps(dialer) {
 		if err := step(ctx, &r); err != nil {
 			return r, err
+		}
+		// Identity statements still owed either way: no application frame
+		// in this round, so none is judged before them (#392). The next
+		// round starts with identity again.
+		if i == 1 && r.IdentityMore {
+			return r, nil
 		}
 	}
 	return r, nil
