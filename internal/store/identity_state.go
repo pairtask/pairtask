@@ -1,12 +1,14 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/identity"
@@ -33,10 +35,11 @@ CREATE TABLE IF NOT EXISTS identity_inputs (
     kind        TEXT NOT NULL,
     body        BLOB NOT NULL,
     digest      TEXT NOT NULL DEFAULT '',
+    effect      TEXT NOT NULL DEFAULT '',
     received_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS identity_inputs_lineage ON identity_inputs(lineage, seq);
-CREATE UNIQUE INDEX IF NOT EXISTS identity_inputs_statement ON identity_inputs(lineage, digest) WHERE kind = 'statement';
+CREATE INDEX IF NOT EXISTS identity_inputs_statement ON identity_inputs(lineage, digest) WHERE kind = 'statement';
 CREATE TABLE IF NOT EXISTS identity_keys (
     key_id  TEXT PRIMARY KEY,
     lineage TEXT NOT NULL
@@ -269,7 +272,24 @@ func applyStatement(ctx context.Context, tx *sql.Tx, s arrival) (identity.Effect
 	if !worthKeeping(st, eff) {
 		return eff, nil
 	}
-	return keepWithinBound(ctx, tx, keptStatement{l, st, s, next}, eff)
+	if eff.Kind == identity.Parked && waitingIn(h, s.body) {
+		return eff, nil
+	}
+	return keepWithinBound(ctx, tx, keptStatement{l, st, s, next, eff.Kind}, eff)
+}
+
+// waitingIn: these exact bytes, signature included, are waiting in the
+// state now (parked or deferred), so keeping them again would change
+// nothing on replay. One that was evicted from the bounded waiting lists,
+// or a different envelope with the same signed fields, is kept again, so
+// replay reproduces it in its new place.
+func waitingIn(h identity.Held, body []byte) bool {
+	for _, p := range h.Parked {
+		if bytes.Equal(p.Statement.Marshal(), body) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(h.Deferred, func(st identity.Statement) bool { return bytes.Equal(st.Marshal(), body) })
 }
 
 // worthKeeping: the statement changed, or may later change, the state.
@@ -277,15 +297,16 @@ func worthKeeping(st identity.Statement, eff identity.Effect) bool {
 	return keepEffects[eff.Kind] && changesState(st)
 }
 
-// settledStatement answers, without judging, a statement already kept
-// (a duplicate, whatever Apply would say again) and any statement of a
-// lineage past its bound (refused).
+// settledStatement answers, without judging, a statement already applied
+// here (a duplicate: authenticated, its effect final) and any statement of
+// a lineage past its bound (refused). A statement only ever kept as parked
+// or frozen is judged again, since state may have changed since.
 func settledStatement(ctx context.Context, tx *sql.Tx, l identity.Lineage, st identity.Statement) (identity.Effect, bool, error) {
 	var kept, full bool
 	err := tx.QueryRowContext(ctx, `SELECT
-    EXISTS (SELECT 1 FROM identity_inputs WHERE lineage = ?1 AND kind = ?2 AND digest = ?3),
+    EXISTS (SELECT 1 FROM identity_inputs WHERE lineage = ?1 AND kind = ?2 AND digest = ?3 AND effect = ?5),
     EXISTS (SELECT 1 FROM identity_inputs WHERE lineage = ?1 AND kind = ?4)`,
-		lineageKey(l), inputStatement, identity.DigestOf(st.TBS()).String(), inputFull).Scan(&kept, &full)
+		lineageKey(l), inputStatement, identity.DigestOf(st.TBS()).String(), inputFull, string(identity.Applied)).Scan(&kept, &full)
 	switch {
 	case err != nil:
 		return identity.Effect{}, true, err
@@ -344,7 +365,8 @@ type keptStatement struct {
 	lineage identity.Lineage
 	st      identity.Statement
 	arrival
-	next identity.Held
+	next   identity.Held
+	effect identity.EffectKind
 }
 
 func keepStatement(ctx context.Context, tx *sql.Tx, k keptStatement) error {
@@ -355,7 +377,7 @@ func keepStatement(ctx context.Context, tx *sql.Tx, k keptStatement) error {
 			return err
 		}
 	}
-	if err := insertInput(ctx, tx, storedInput{key, inputStatement, k.body, identity.DigestOf(k.st.TBS()).String(), k.at}); err != nil {
+	if err := insertInput(ctx, tx, storedInput{key, inputStatement, k.body, identity.DigestOf(k.st.TBS()).String(), k.at, k.effect}); err != nil {
 		return err
 	}
 	if err := indexKeys(ctx, tx, key, k.next); err != nil {
@@ -370,11 +392,12 @@ type storedInput struct {
 	body          []byte
 	digest        string
 	at            time.Time
+	effect        identity.EffectKind // a statement's effect when kept; "" for other inputs
 }
 
 func insertInput(ctx context.Context, tx *sql.Tx, in storedInput) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO identity_inputs (lineage, kind, body, digest, received_at) VALUES (?, ?, ?, ?, ?)`,
-		in.lineage, in.kind, in.body, in.digest, msgStamp(in.at))
+	_, err := tx.ExecContext(ctx, `INSERT INTO identity_inputs (lineage, kind, body, digest, effect, received_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		in.lineage, in.kind, in.body, in.digest, string(in.effect), msgStamp(in.at))
 	return err
 }
 
@@ -458,7 +481,7 @@ func (s *Store) ApproveIdentity(ctx context.Context, l identity.Lineage, at time
 		if _, err := h.Approve(); err != nil {
 			return storedInput{}, err
 		}
-		return storedInput{lineageKey(l), inputApprove, []byte{}, "", at}, nil
+		return storedInput{lineageKey(l), inputApprove, []byte{}, "", at, ""}, nil
 	})
 }
 
@@ -470,7 +493,7 @@ func (s *Store) ResolveIdentity(ctx context.Context, r identity.Resolution, loca
 		if _, err := identity.Resolve(h, r, local); err != nil {
 			return storedInput{}, err
 		}
-		return storedInput{lineageKey(r.Lineage), inputResolve, resolveBody(r, local), "", at}, nil
+		return storedInput{lineageKey(r.Lineage), inputResolve, resolveBody(r, local), "", at, ""}, nil
 	})
 }
 
