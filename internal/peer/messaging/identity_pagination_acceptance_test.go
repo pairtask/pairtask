@@ -15,8 +15,8 @@ import (
 	"github.com/pairtask/pairtask/internal/signing"
 )
 
-func TestIdentityRevocationAfterFullPagePrecedesMessage(t *testing.T) {
-	ctx := context.Background()
+func paginationSigningFixtures(t *testing.T) (map[string][]byte, map[string]ed25519.PrivateKey) {
+	t.Helper()
 	raw, err := os.ReadFile("../../identity/testdata/wire-v1.json")
 	sessionOK(t, err)
 	var packet struct {
@@ -29,17 +29,24 @@ func TestIdentityRevocationAfterFullPagePrecedesMessage(t *testing.T) {
 		}
 	}
 	sessionOK(t, json.Unmarshal(raw, &packet))
-	keys := func(label string) ed25519.PrivateKey {
+	keys := make(map[string]ed25519.PrivateKey)
+	for label := range packet.Fixtures {
 		b, err := hex.DecodeString(packet.Fixtures[label].Seed)
 		sessionOK(t, err)
-		return ed25519.NewKeyFromSeed(b)
+		keys[label] = ed25519.NewKeyFromSeed(b)
 	}
 	wires := map[string][]byte{}
 	for _, v := range packet.Vectors {
 		wires[v.Name], err = hex.DecodeString(v.Wire)
 		sessionOK(t, err)
 	}
-	w := keys("W0").Public().(ed25519.PublicKey)
+	return wires, keys
+}
+
+func TestIdentityRevocationAfterFullPagePrecedesMessage(t *testing.T) {
+	ctx := context.Background()
+	wires, keys := paginationSigningFixtures(t)
+	w := keys["W0"].Public().(ed25519.PublicKey)
 	sender := identity.KeyID(w)
 	receiver := sessionContact
 	left, _ := sessionFixtureFor(t, receiver)
@@ -58,12 +65,12 @@ func TestIdentityRevocationAfterFullPagePrecedesMessage(t *testing.T) {
 	sessionOK(t, right.NoteWorkspaceKey(ctx, w, sessionAt))
 	record, err := identity.ParseRecord(wires["record"])
 	sessionOK(t, err)
-	person := keys("P0")
+	person := keys["P0"]
 	for i := 0; i < messaging.SessionMessages; i++ {
 		record.Version = uint64(i + 1)
 		sessionOK(t, left.QueueIdentity(ctx, receiver, record.Signed(person).Marshal(), sessionAt.Add(time.Duration(i)*time.Second)))
 	}
-	device := keys("D0")
+	device := keys["D0"]
 	cert, err := signing.ParseCert(wires["device"])
 	sessionOK(t, err)
 	cert.NotBefore = time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)
