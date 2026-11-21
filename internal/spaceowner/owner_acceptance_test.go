@@ -27,9 +27,10 @@ func must(t *testing.T, err error) {
 }
 
 type person struct {
-	me spaceowner.Me
-	p  ed25519.PublicKey
-	w  ed25519.PrivateKey
+	keys *personkey.Keys
+	me   spaceowner.Me
+	p    ed25519.PublicKey
+	w    ed25519.PrivateKey
 }
 
 func newPerson(t *testing.T) person {
@@ -43,7 +44,7 @@ func newPerson(t *testing.T) person {
 	must(t, err)
 	_, w, err := ed25519.GenerateKey(rand.Reader)
 	must(t, err)
-	return person{me, keys.PersonPublic(), w}
+	return person{keys, me, keys.PersonPublic(), w}
 }
 
 func (p person) binding() pairbook.Binding {
@@ -54,12 +55,12 @@ func (p person) binding() pairbook.Binding {
 
 func (p person) create(t *testing.T) pairbook.SignedSpaceMap {
 	t.Helper()
-	m, err := spaceowner.NewSpace(p.me, spaceID, "Owner", p.binding(), at)
+	m, err := spaceowner.NewSpace(p.me, spaceowner.Genesis{Space: spaceID, Name: "Owner", Own: p.binding()}, at)
 	must(t, err)
 	return m
 }
 
-func TestSpaceOwnerUsesExistingHostIdentity(t *testing.T) {
+func TestSpaceOwnerRequiresAnchor(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "keys")
 	keys, err := personkey.Create(dir)
 	must(t, err)
@@ -67,6 +68,9 @@ func TestSpaceOwnerUsesExistingHostIdentity(t *testing.T) {
 	if !errors.Is(err, personkey.ErrNoAnchor) {
 		t.Fatalf("missing anchor error: %v", err)
 	}
+}
+
+func TestSpaceOwnerUsesExistingHostIdentity(t *testing.T) {
 	p := newPerson(t)
 	m := p.create(t)
 	v, err := m.Verify(spaceID, pairbook.KeyID(p.p), pairbook.Mark{}, at)
@@ -90,7 +94,7 @@ func TestOwnerRejectsMismatchedWorkspaceAcceptance(t *testing.T) {
 	p, other := newPerson(t), newPerson(t)
 	b := p.binding()
 	b.Acceptance = other.binding().Acceptance
-	if _, err := spaceowner.NewSpace(p.me, spaceID, "owner", b, at); err == nil {
+	if _, err := spaceowner.NewSpace(p.me, spaceowner.Genesis{Space: spaceID, Name: "owner", Own: b}, at); err == nil {
 		t.Fatal("owner created a map with a mismatched workspace acceptance")
 	}
 }
@@ -99,11 +103,14 @@ func TestRenewExpiredMapFromDurableMark(t *testing.T) {
 	p := newPerson(t)
 	m := p.create(t)
 	now := time.UnixMilli(m.ExpiresAt).Add(time.Hour)
-	next, err := p.me.Renew(m, m.Mark(), now)
+	next, err := p.me.Renew(spaceowner.Current{Map: m, Mark: m.Mark()}, now)
 	must(t, err)
 	_, err = next.Verify(spaceID, pairbook.KeyID(p.p), m.Mark(), now)
 	must(t, err)
-	if next.Version != m.Version+1 || next.IssuedAt != now.UnixMilli() || next.ExpiresAt != now.Add(pairbook.MapValidity).UnixMilli() {
+	if next.Version != m.Version+1 {
+		t.Fatal("incorrect renewed version")
+	}
+	if next.IssuedAt != now.UnixMilli() || next.ExpiresAt != now.Add(pairbook.MapValidity).UnixMilli() {
 		t.Fatal("incorrect renewal version or lifetime")
 	}
 	restore := next.SpaceMap
@@ -128,7 +135,7 @@ func TestRenewRequiresOwnerAndExactDurableMark(t *testing.T) {
 		{"older snapshot", p.me, pairbook.Mark{Version: m.Version + 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := tc.signer.Renew(m, tc.mark, now); err == nil {
+			if _, err := tc.signer.Renew(spaceowner.Current{Map: m, Mark: tc.mark}, now); err == nil {
 				t.Fatal("untrusted renewal succeeded")
 			}
 		})
@@ -136,7 +143,7 @@ func TestRenewRequiresOwnerAndExactDurableMark(t *testing.T) {
 }
 
 func (p person) join(mark pairbook.Mark, token [32]byte) pairbook.SignedChange {
-	return p.me.Change(pairbook.ChangeJoin, spaceID, mark, spaceowner.ChangeArgs{Name: "Member", Binding: p.binding(), TokenHash: token}, at)
+	return p.me.Change(spaceowner.Request{Action: pairbook.ChangeJoin, Space: spaceID, Base: mark, Name: "Member", Binding: p.binding(), TokenHash: token}, at)
 }
 
 func TestBatchConsumesOneInviteOnce(t *testing.T) {
@@ -145,7 +152,7 @@ func TestBatchConsumesOneInviteOnce(t *testing.T) {
 	base := m.Mark()
 	token := [32]byte{1}
 	batch := spaceowner.Batch{Changes: []pairbook.SignedChange{a.join(base, token), b.join(base, token)}, Invited: func(hash [32]byte) bool { return hash == token }, Approved: func(pairbook.SignedChange) bool { return true }}
-	next, out, err := owner.me.Fold(m, base, batch, at)
+	next, out, err := owner.me.Fold(spaceowner.Current{Map: m, Mark: base}, batch, at)
 	must(t, err)
 	if next == nil || next.Version != base.Version+1 {
 		t.Fatal("expected one successor")
@@ -162,7 +169,7 @@ func TestBatchConsumesOneInviteOnce(t *testing.T) {
 	if m.Mark() != base {
 		t.Fatal("fold mutated previous map")
 	}
-	replayed, again, err := owner.me.Fold(*next, next.Mark(), batch, at)
+	replayed, again, err := owner.me.Fold(spaceowner.Current{Map: *next, Mark: next.Mark()}, batch, at)
 	must(t, err)
 	if replayed != nil {
 		t.Fatal("stale requests changed map")
@@ -185,9 +192,9 @@ func checkOutcomes(t *testing.T, out []spaceowner.Outcome, want ...string) {
 func TestCurrentBindReplayAndOwnerLeave(t *testing.T) {
 	owner := newPerson(t)
 	m := owner.create(t)
-	bind := owner.me.Change(pairbook.ChangeBind, spaceID, m.Mark(), spaceowner.ChangeArgs{Binding: owner.binding()}, at)
-	leave := owner.me.Change(pairbook.ChangeLeave, spaceID, m.Mark(), spaceowner.ChangeArgs{}, at)
-	next, out, err := owner.me.Fold(m, m.Mark(), spaceowner.Batch{Changes: []pairbook.SignedChange{bind, leave}}, at)
+	bind := owner.me.Change(spaceowner.Request{Action: pairbook.ChangeBind, Space: spaceID, Base: m.Mark(), Binding: owner.binding()}, at)
+	leave := owner.me.Change(spaceowner.Request{Action: pairbook.ChangeLeave, Space: spaceID, Base: m.Mark()}, at)
+	next, out, err := owner.me.Fold(spaceowner.Current{Map: m, Mark: m.Mark()}, spaceowner.Batch{Changes: []pairbook.SignedChange{bind, leave}}, at)
 	must(t, err)
 	if next != nil {
 		t.Fatal("unchanged bind or owner leave produced a new map")
@@ -199,7 +206,7 @@ func TestSignedInviteBoundToSpaceOwnerAndMap(t *testing.T) {
 	owner := newPerson(t)
 	m := owner.create(t)
 	token := [32]byte{3}
-	inv, err := owner.me.Invite(m, m.Mark(), token, at, time.Hour)
+	inv, err := owner.me.Invite(spaceowner.Current{Map: m, Mark: m.Mark()}, token, at, time.Hour)
 	must(t, err)
 	must(t, inv.Verify(spaceID, pairbook.KeyID(owner.p), at))
 	if inv.Base != m.Mark() || inv.TokenHash != token {
@@ -213,7 +220,7 @@ func TestSignedInviteBoundToSpaceOwnerAndMap(t *testing.T) {
 		t.Fatal("modified invite accepted")
 	}
 	for _, d := range []time.Duration{0, time.Nanosecond, pairbook.InviteValidity + time.Second} {
-		if _, err := owner.me.Invite(m, m.Mark(), token, at, d); err == nil {
+		if _, err := owner.me.Invite(spaceowner.Current{Map: m, Mark: m.Mark()}, token, at, d); err == nil {
 			t.Fatalf("invalid invite duration %v accepted", d)
 		}
 	}
@@ -223,13 +230,69 @@ func TestBatchRefusesUnauthorizedNoOp(t *testing.T) {
 	owner, other := newPerson(t), newPerson(t)
 	m := owner.create(t)
 	b := owner.binding()
-	forged := owner.me.Change(pairbook.ChangeBind, spaceID, m.Mark(), spaceowner.ChangeArgs{Binding: b}, at)
+	forged := owner.me.Change(spaceowner.Request{Action: pairbook.ChangeBind, Space: spaceID, Base: m.Mark(), Binding: b}, at)
 	forged.Sig[0] ^= 1
-	unrelated := other.me.Change(pairbook.ChangeBind, spaceID, m.Mark(), spaceowner.ChangeArgs{Binding: b}, at)
-	next, out, err := owner.me.Fold(m, m.Mark(), spaceowner.Batch{Changes: []pairbook.SignedChange{forged, unrelated}}, at)
+	unrelated := other.me.Change(spaceowner.Request{Action: pairbook.ChangeBind, Space: spaceID, Base: m.Mark(), Binding: b}, at)
+	next, out, err := owner.me.Fold(spaceowner.Current{Map: m, Mark: m.Mark()}, spaceowner.Batch{Changes: []pairbook.SignedChange{forged, unrelated}}, at)
 	must(t, err)
 	if next != nil {
 		t.Fatal("invalid bind changed map")
 	}
 	checkOutcomes(t, out, spaceowner.Rejected, spaceowner.Rejected)
+}
+
+func TestLeaveRemovesAllMemberReferencesFromSuccessor(t *testing.T) {
+	owner, member := newPerson(t), newPerson(t)
+	m := owner.create(t)
+	l := member.me.Lineage
+	m.People = append(m.People, pairbook.MapPerson{Lineage: l, Person: member.p, Name: "Member", Role: pairbook.RoleMember, Evidence: member.me.Evidence})
+	m.Bindings = append(m.Bindings, member.binding())
+	m.Groups = []pairbook.Group{{Name: "team", Members: []pairbook.Lineage{owner.me.Lineage, l}}}
+	who := pairbook.Selector{Kind: pairbook.SelectPerson, Name: pairbook.LineageHex(l)}
+	group := pairbook.Selector{Kind: pairbook.SelectGroup, Name: "team"}
+	m.Grants = append(m.Grants, pairbook.Grant{A: who, B: group}, pairbook.Grant{A: group, B: who})
+	m = pairbook.SignSpaceMap(owner.keys.PersonKey(), m.SpaceMap)
+	base := m.Mark()
+	leave := member.me.Change(spaceowner.Request{Action: pairbook.ChangeLeave, Space: spaceID, Base: base}, at)
+	next, out, err := owner.me.Fold(spaceowner.Current{Map: m, Mark: base}, spaceowner.Batch{Changes: []pairbook.SignedChange{leave, leave}}, at)
+	must(t, err)
+	checkOutcomes(t, out, spaceowner.Applied, spaceowner.Rejected)
+	if next == nil {
+		t.Fatal("missing successor after leave")
+	}
+	v, err := next.Verify(spaceID, owner.me.KeyID(), base, at)
+	must(t, err)
+	if len(v.People()) != 1 {
+		t.Fatal("departed person retained")
+	}
+	if len(next.Grants) != 1 || len(next.Groups[0].Members) != 1 {
+		t.Fatal("incomplete removal from policy or roster")
+	}
+	if _, ok := v.BoundTo(member.binding().Workspace()); ok {
+		t.Fatal("departed workspace retained")
+	}
+	if m.Mark() != base {
+		t.Fatal("leave modified prior signed map")
+	}
+}
+
+func TestJoinWaitsForOwnerApproval(t *testing.T) {
+	owner, member := newPerson(t), newPerson(t)
+	m := owner.create(t)
+	token := [32]byte{7}
+	change := member.join(m.Mark(), token)
+	batch := spaceowner.Batch{Changes: []pairbook.SignedChange{change}}
+	next, out, err := owner.me.Fold(spaceowner.Current{Map: m, Mark: m.Mark()}, batch, at)
+	must(t, err)
+	checkOutcomes(t, out, spaceowner.Rejected)
+	if next != nil {
+		t.Fatal("missing invite still produced successor")
+	}
+	batch.Invited = func(hash [32]byte) bool { return hash == token }
+	next, out, err = owner.me.Fold(spaceowner.Current{Map: m, Mark: m.Mark()}, batch, at)
+	must(t, err)
+	checkOutcomes(t, out, spaceowner.AwaitingApproval)
+	if next != nil {
+		t.Fatal("unapproved join produced successor")
+	}
 }
