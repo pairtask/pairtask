@@ -11,6 +11,7 @@ package firstcontact
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -278,6 +279,17 @@ func (c *Conn) Frames(ctx context.Context) peer.Frames {
 
 // Close closes the connection.
 func (c *Conn) Close() error { return c.tls.Close() }
+
+// PeerKey is the peer workspace's identity key, as its pinned certificate
+// presented it; nil when there is none (verification refused that already).
+func (c *Conn) PeerKey() ed25519.PublicKey {
+	certs := c.tls.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return nil
+	}
+	pub, _ := certs[0].PublicKey.(ed25519.PublicKey)
+	return pub
+}
 
 // Dial connects to an inviter and completes the handshake.
 func Dial(ctx context.Context, ep Endpoint, id *peer.WorkspaceIdentity, clock func() time.Time) (*Conn, error) {
