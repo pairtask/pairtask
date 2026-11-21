@@ -242,6 +242,6 @@ func (h *Hub) unpinAfter(ctx context.Context, id string, check func(space.Pin) *
 		if err := remote(net, p, d); err != nil {
 			return nil, err
 		}
-		return nil, h.unpinSpace(local, p.Space)
+		return nil, h.unpinSpace(local, spaceKey(p.Space))
 	}}, nil
 }

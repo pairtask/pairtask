@@ -48,35 +48,43 @@ func (s *Store) KeepSpaceMap(ctx context.Context, space string, m pairbook.Signe
 		return pairbook.VerifiedMap{}, err
 	}
 	defer tx.Rollback()
-	v, err := keepSpaceMap(ctx, tx, space, m, now)
+	v, err := keepSpaceMap(ctx, tx, mapWrite{space, m, now})
 	if err != nil {
 		return pairbook.VerifiedMap{}, err
 	}
 	return v, tx.Commit()
 }
 
-func keepSpaceMap(ctx context.Context, tx *sql.Tx, space string, m pairbook.SignedSpaceMap, now time.Time) (pairbook.VerifiedMap, error) {
-	pin, ok, err := spacePin(ctx, tx, space)
+// mapWrite is a map to keep: its expected space, the map, and when.
+type mapWrite struct {
+	space string
+	m     pairbook.SignedSpaceMap
+	now   time.Time
+}
+
+func keepSpaceMap(ctx context.Context, tx *sql.Tx, w mapWrite) (pairbook.VerifiedMap, error) {
+	pin, ok, err := spacePin(ctx, tx, w.space)
 	if err != nil {
 		return pairbook.VerifiedMap{}, err
 	}
 	if !ok {
 		return pairbook.VerifiedMap{}, ErrNoSpacePin
 	}
-	prev, err := spaceMark(ctx, tx, space)
+	prev, err := spaceMark(ctx, tx, w.space)
 	if err != nil {
 		return pairbook.VerifiedMap{}, err
 	}
-	v, err := m.Verify(space, pin.Owner, prev.Mark, now)
+	v, err := w.m.Verify(w.space, pin.Owner, prev.Mark, w.now)
 	if err != nil || v.Mark == prev.Mark {
 		return v, err
 	}
-	return v, swapSpaceMap(ctx, tx, m, prev, now)
+	return v, swapSpaceMap(ctx, tx, w, prev)
 }
 
 // swapSpaceMap writes m in place of the map prev names, only if prev is
 // still what is stored.
-func swapSpaceMap(ctx context.Context, tx *sql.Tx, m pairbook.SignedSpaceMap, prev storedMark, now time.Time) error {
+func swapSpaceMap(ctx context.Context, tx *sql.Tx, w mapWrite, prev storedMark) error {
+	m := w.m
 	body, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -85,7 +93,7 @@ func swapSpaceMap(ctx context.Context, tx *sql.Tx, m pairbook.SignedSpaceMap, pr
 	res, err := tx.ExecContext(ctx, `INSERT INTO space_maps (space, map, version, digest, kept_at) VALUES (?1, ?2, ?3, ?4, ?5)
 ON CONFLICT (space) DO UPDATE SET map = ?2, version = ?3, digest = ?4, kept_at = ?5
 WHERE space_maps.version = ?6 AND space_maps.digest = ?7`,
-		m.Space, body, strconv.FormatUint(mark.Version, 10), mark.Digest[:], msgStamp(now), strconv.FormatUint(prev.Version, 10), prev.Digest[:])
+		m.Space, body, strconv.FormatUint(mark.Version, 10), mark.Digest[:], msgStamp(w.now), strconv.FormatUint(prev.Version, 10), prev.Digest[:])
 	if err != nil {
 		return err
 	}

@@ -2,17 +2,11 @@ package hub
 
 import (
 	"context"
-	"crypto"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/pairtask/pairtask/internal/identity"
 	"github.com/pairtask/pairtask/pairbook"
 )
 
@@ -34,13 +28,16 @@ func realSpaceTiming() SpaceTiming {
 	return SpaceTiming{Now: time.Now, After: func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop }}
 }
 
+// spaceKey is a space's ID inside the authority.
+type spaceKey string
+
 // spaceAuthority holds the active maps; safe from any goroutine.
 type spaceAuthority struct {
 	mu      sync.Mutex
 	timing  SpaceTiming
-	active  map[string]activeMap
+	active  map[spaceKey]activeMap
 	gen     uint64
-	writing map[string]*sync.Mutex // one refresh or unpin per space at a time
+	writing map[spaceKey]*sync.Mutex // one refresh or unpin per space at a time
 	notify  []func(space string)
 	closed  bool // Run ended: no timer, no activation, no callback
 }
@@ -52,7 +49,7 @@ type activeMap struct {
 }
 
 func newSpaceAuthority() *spaceAuthority {
-	return &spaceAuthority{timing: realSpaceTiming(), active: map[string]activeMap{}, writing: map[string]*sync.Mutex{}}
+	return &spaceAuthority{timing: realSpaceTiming(), active: map[spaceKey]activeMap{}, writing: map[spaceKey]*sync.Mutex{}}
 }
 
 // SetSpaceTiming replaces the clock and timers; call it before Run.
@@ -75,36 +72,36 @@ func (h *Hub) OnSpaceChange(f func(space string)) {
 // Listeners are told after every lock is released, so one may refresh the
 // same space; they read the current state rather than trust the call.
 func (h *Hub) KeepSpaceMap(ctx context.Context, space string, m pairbook.SignedSpaceMap) error {
-	a := h.authority
-	unlock := a.lockSpace(space)
+	a, k := h.authority, spaceKey(space)
+	unlock := a.lockSpace(k)
 	v, err := h.store.KeepSpaceMap(ctx, space, m, a.now())
 	var notify []func(string)
 	if err == nil {
-		notify = a.activate(space, v)
+		notify = a.activate(k, v)
 	}
 	unlock()
-	tell(notify, space)
+	tell(notify, k)
 	return err
 }
 
 // unpinSpace removes space's pin and map and ends its authority, under the
 // space's writer lock, so a refresh in flight can't bring it back.
-func (h *Hub) unpinSpace(ctx context.Context, space string) error {
+func (h *Hub) unpinSpace(ctx context.Context, k spaceKey) error {
 	a := h.authority
-	unlock := a.lockSpace(space)
-	err := h.store.UnpinSpace(ctx, space)
+	unlock := a.lockSpace(k)
+	err := h.store.UnpinSpace(ctx, string(k))
 	var notify []func(string)
 	if err == nil {
-		notify = a.forget(space)
+		notify = a.forget(k)
 	}
 	unlock()
-	tell(notify, space)
+	tell(notify, k)
 	return err
 }
 
 // SpaceAuthority is space's active map, if it has one that hasn't expired.
 func (h *Hub) SpaceAuthority(space string) (pairbook.VerifiedMap, bool) {
-	return h.authority.get(space)
+	return h.authority.get(spaceKey(space))
 }
 
 // restoreSpaceMaps makes each kept map active again, if it still verifies
@@ -116,17 +113,17 @@ func (h *Hub) restoreSpaceMaps(ctx context.Context) {
 		return
 	}
 	for _, space := range spaces {
-		h.restoreSpaceMap(ctx, space)
+		h.restoreSpaceMap(ctx, spaceKey(space))
 	}
 }
 
-func (h *Hub) restoreSpaceMap(ctx context.Context, space string) {
-	m, _, found, err := h.store.SpaceMap(ctx, space)
+func (h *Hub) restoreSpaceMap(ctx context.Context, k spaceKey) {
+	m, _, found, err := h.store.SpaceMap(ctx, string(k))
 	if err != nil || !found {
 		return
 	}
-	if err := h.KeepSpaceMap(ctx, space, m); err != nil && !errors.Is(err, pairbook.ErrExpired) {
-		h.log.Warn("space map not restored", "space", space, "err", err)
+	if err := h.KeepSpaceMap(ctx, string(k), m); err != nil && !errors.Is(err, pairbook.ErrExpired) {
+		h.log.Warn("space map not restored", "space", string(k), "err", err)
 	}
 }
 
@@ -137,12 +134,12 @@ func (a *spaceAuthority) now() time.Time {
 }
 
 // lockSpace serializes refreshes of one space.
-func (a *spaceAuthority) lockSpace(space string) func() {
+func (a *spaceAuthority) lockSpace(k spaceKey) func() {
 	a.mu.Lock()
-	l, ok := a.writing[space]
+	l, ok := a.writing[k]
 	if !ok {
 		l = &sync.Mutex{}
-		a.writing[space] = l
+		a.writing[k] = l
 	}
 	a.mu.Unlock()
 	l.Lock()
@@ -151,49 +148,55 @@ func (a *spaceAuthority) lockSpace(space string) func() {
 
 // activate makes v space's active map, with a timer for its expiry, and
 // is who to tell (none for the same map again, or after close).
-func (a *spaceAuthority) activate(space string, v pairbook.VerifiedMap) []func(string) {
+func (a *spaceAuthority) activate(k spaceKey, v pairbook.VerifiedMap) []func(string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
 		return nil
 	}
-	if old, ok := a.active[space]; ok && old.v.Mark == v.Mark {
+	if old, ok := a.active[k]; ok && old.v.Mark == v.Mark {
 		return nil
 	}
-	a.replace(space, v)
+	a.replace(k, v)
 	return a.listeners()
 }
 
 // replace swaps in v and its timer; a.mu held.
-func (a *spaceAuthority) replace(space string, v pairbook.VerifiedMap) {
-	if old, ok := a.active[space]; ok {
+func (a *spaceAuthority) replace(k spaceKey, v pairbook.VerifiedMap) {
+	if old, ok := a.active[k]; ok {
 		old.stop()
 	}
 	a.gen++
 	gen := a.gen
 	wait := time.UnixMilli(v.ExpiresAt).Sub(a.timing.Now())
-	stop := a.timing.After(wait, func() { a.lapse(space, gen) })
-	a.active[space] = activeMap{v: v, gen: gen, stop: stop}
+	stop := a.timing.After(wait, func() { a.lapse(k, gen) })
+	a.active[k] = activeMap{v: v, gen: gen, stop: stop}
 }
 
 // lapse ends space's map gen, unless a newer one replaced it.
-func (a *spaceAuthority) lapse(space string, gen uint64) {
+func (a *spaceAuthority) lapse(k spaceKey, gen uint64) {
 	a.mu.Lock()
-	cur, ok := a.active[space]
-	if a.closed || !ok || cur.gen != gen {
+	if !a.holds(k, gen) {
 		a.mu.Unlock()
 		return
 	}
-	delete(a.active, space)
+	delete(a.active, k)
 	notify := a.listeners()
 	a.mu.Unlock()
-	tell(notify, space)
+	tell(notify, k)
 }
 
-func (a *spaceAuthority) get(space string) (pairbook.VerifiedMap, bool) {
+// holds: k's active map is still generation gen, and authority is open;
+// a.mu held.
+func (a *spaceAuthority) holds(k spaceKey, gen uint64) bool {
+	cur, ok := a.active[k]
+	return ok && !a.closed && cur.gen == gen
+}
+
+func (a *spaceAuthority) get(k spaceKey) (pairbook.VerifiedMap, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	cur, ok := a.active[space]
+	cur, ok := a.active[k]
 	if !ok || pairbook.Millis(a.timing.Now()) >= cur.v.ExpiresAt {
 		return pairbook.VerifiedMap{}, false
 	}
@@ -201,15 +204,15 @@ func (a *spaceAuthority) get(space string) (pairbook.VerifiedMap, bool) {
 }
 
 // forget drops space's active map (on unpin), and is who to tell.
-func (a *spaceAuthority) forget(space string) []func(string) {
+func (a *spaceAuthority) forget(k spaceKey) []func(string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	cur, ok := a.active[space]
+	cur, ok := a.active[k]
 	if !ok || a.closed {
 		return nil
 	}
 	cur.stop()
-	delete(a.active, space)
+	delete(a.active, k)
 	return a.listeners()
 }
 
@@ -229,68 +232,8 @@ func (a *spaceAuthority) listeners() []func(string) {
 	return slices.Clone(a.notify)
 }
 
-func tell(fs []func(string), space string) {
+func tell(fs []func(string), k spaceKey) {
 	for _, f := range fs {
-		f(space)
+		f(string(k))
 	}
-}
-
-// BindingAcceptance is this workspace's half of binding it to a person:
-// the workspace key's signed acceptance of the person's claim, and the
-// key. Only the operator socket asks for it.
-type BindingAcceptance struct {
-	Acceptance   []byte
-	WorkspaceKey ed25519.PublicKey
-}
-
-// ErrBindingRequest: a malformed lineage or person key ID.
-var ErrBindingRequest = errors.New("hub: invalid binding request")
-
-// AcceptBinding signs this workspace's acceptance of belonging to the
-// person (key ID person) in lineage, at epoch, at.
-func (h *Hub) AcceptBinding(lineage string, epoch uint64, person string, at time.Time) (BindingAcceptance, error) {
-	l, ok := lineageFromHex(lineage)
-	if !ok || !validKeyID(person) || !signable(epoch, at) {
-		return BindingAcceptance{}, ErrBindingRequest
-	}
-	ep, err := h.PairingEndpoint()
-	if err != nil {
-		return BindingAcceptance{}, err
-	}
-	pub := ep.Identity.PublicKey()
-	a := identity.Acceptance{Lineage: l, Epoch: epoch, Person: person, Workspace: pairbook.KeyID(pub), At: at}
-	sig, err := ep.Identity.Sign(rand.Reader, a.TBS(), crypto.Hash(0))
-	if err != nil {
-		return BindingAcceptance{}, err
-	}
-	a.Sig = sig
-	return BindingAcceptance{Acceptance: a.Marshal(), WorkspaceKey: pub}, nil
-}
-
-// signable: an epoch and time the identity parser will take back.
-func signable(epoch uint64, at time.Time) bool {
-	if epoch == 0 || epoch > identity.MaxCounter {
-		return false
-	}
-	return at.UnixMilli() >= 0
-}
-
-func lineageFromHex(s string) (identity.Lineage, bool) {
-	var l identity.Lineage
-	b, err := hex.DecodeString(s)
-	if err != nil || len(b) != len(l) || hex.EncodeToString(b) != s {
-		return l, false
-	}
-	copy(l[:], b)
-	return l, true
-}
-
-// validKeyID: "sha256:" and 64 lowercase hex digits.
-func validKeyID(id string) bool {
-	h, ok := strings.CutPrefix(id, "sha256:")
-	if !ok || len(h) != 64 {
-		return false
-	}
-	b, err := hex.DecodeString(h)
-	return err == nil && hex.EncodeToString(b) == h
 }
