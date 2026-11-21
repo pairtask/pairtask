@@ -71,12 +71,18 @@ func (r BindingRequest) lineage() (identity.Lineage, error) {
 }
 
 func (r BindingRequest) signable() bool {
-	if r.Epoch == 0 || r.Epoch > identity.MaxCounter || r.At.UnixMilli() < 0 {
+	if !r.inRange() {
 		return false
 	}
 	h, ok := strings.CutPrefix(r.Person, "sha256:")
 	b, canonical := canonicalHex(h)
 	return ok && canonical && len(b) == 32
+}
+
+// inRange: the epoch and time fit what the identity parser takes.
+func (r BindingRequest) inRange() bool {
+	epochOK := r.Epoch != 0 && r.Epoch <= identity.MaxCounter
+	return epochOK && r.At.UnixMilli() >= 0
 }
 
 // canonicalHex decodes lowercase hex, and only that.
