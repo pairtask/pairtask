@@ -24,3 +24,16 @@ type Directory interface {
 }
 
 var _ Directory = (*Client)(nil)
+
+// MapDirectory is the Pairbook v1 calls (space maps).
+type MapDirectory interface {
+	PutMap(ctx context.Context, pin Pin, put MapPut) error
+	Map(ctx context.Context, pin Pin) (pairbook.SignedSpaceMap, error)
+	PostMapInvite(ctx context.Context, pin Pin, inv pairbook.SignedMapInvite) error
+	MapInvite(ctx context.Context, inv Invite) (pairbook.SignedMapInvite, error)
+	SubmitChange(ctx context.Context, pin Pin, ch pairbook.SignedChange, token *[32]byte) error
+	Changes(ctx context.Context, pin Pin) ([]pairbook.SignedChange, error)
+	DropChange(ctx context.Context, pin Pin, digest [32]byte) error
+}
+
+var _ MapDirectory = (*Client)(nil)

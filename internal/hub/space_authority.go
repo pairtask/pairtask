@@ -38,6 +38,7 @@ type spaceAuthority struct {
 	active  map[spaceKey]activeMap
 	gen     uint64
 	writing map[spaceKey]*sync.Mutex // one refresh or unpin per space at a time
+	refused map[spaceKey]string      // why the last refresh failed, for status
 	notify  []func(space string)
 	closed  bool       // Run ended: no timer, no activation, no callback
 	calls   int        // listener calls running now
@@ -51,7 +52,7 @@ type activeMap struct {
 }
 
 func newSpaceAuthority() *spaceAuthority {
-	a := &spaceAuthority{timing: realSpaceTiming(), active: map[spaceKey]activeMap{}, writing: map[spaceKey]*sync.Mutex{}}
+	a := &spaceAuthority{timing: realSpaceTiming(), active: map[spaceKey]activeMap{}, writing: map[spaceKey]*sync.Mutex{}, refused: map[spaceKey]string{}}
 	a.drained = sync.NewCond(&a.mu)
 	return a
 }

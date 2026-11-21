@@ -2,6 +2,7 @@ package pairbook
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"slices"
 	"time"
 
@@ -140,3 +141,6 @@ func claimedLineage(b Binding) (Lineage, bool) {
 	}
 	return Lineage(c.Lineage), true
 }
+
+// Digest names a change on the wire: SHA-256 of its signed bytes.
+func (c Change) Digest() [32]byte { return sha256.Sum256(c.SigningBytes()) }

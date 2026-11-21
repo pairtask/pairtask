@@ -20,6 +20,9 @@ type SpaceConfig struct {
 	Directory func(base string, signer crypto.Signer) (space.Directory, error)
 	HTTP      *http.Client
 	Clock     func() time.Time
+	// Maps makes the v1 client (space maps) for one directory, signing as
+	// this workspace. nil = space.NewClient, as Directory.
+	Maps func(base string, signer crypto.Signer) (space.MapDirectory, error)
 }
 
 // SetSpaces enables operator_space; without it, every space operation is
@@ -29,6 +32,9 @@ func (h *Hub) SetSpaces(cfg SpaceConfig) {
 		cfg.Directory = func(base string, signer crypto.Signer) (space.Directory, error) {
 			return space.NewClient(base, signer, space.Options{HTTP: cfg.HTTP, Now: cfg.Clock})
 		}
+	}
+	if cfg.Maps == nil {
+		cfg.Maps = defaultMaps(cfg)
 	}
 	h.spaces = &cfg
 	h.spaceBusy = map[string]bool{}
