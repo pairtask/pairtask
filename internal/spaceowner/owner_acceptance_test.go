@@ -189,16 +189,23 @@ func checkOutcomes(t *testing.T, out []spaceowner.Outcome, want ...string) {
 	}
 }
 
+func (p person) foldWithoutSuccessor(t *testing.T, m pairbook.SignedSpaceMap, changes ...pairbook.SignedChange) []spaceowner.Outcome {
+	t.Helper()
+	current := spaceowner.Current{Map: m, Mark: m.Mark()}
+	next, out, err := p.me.Fold(current, spaceowner.Batch{Changes: changes}, at)
+	must(t, err)
+	if next != nil {
+		t.Fatal("batch unexpectedly produced a successor map")
+	}
+	return out
+}
+
 func TestCurrentBindReplayAndOwnerLeave(t *testing.T) {
 	owner := newPerson(t)
 	m := owner.create(t)
 	bind := owner.me.Change(spaceowner.Request{Action: pairbook.ChangeBind, Space: spaceID, Base: m.Mark(), Binding: owner.binding()}, at)
 	leave := owner.me.Change(spaceowner.Request{Action: pairbook.ChangeLeave, Space: spaceID, Base: m.Mark()}, at)
-	next, out, err := owner.me.Fold(spaceowner.Current{Map: m, Mark: m.Mark()}, spaceowner.Batch{Changes: []pairbook.SignedChange{bind, leave}}, at)
-	must(t, err)
-	if next != nil {
-		t.Fatal("unchanged bind or owner leave produced a new map")
-	}
+	out := owner.foldWithoutSuccessor(t, m, bind, leave)
 	checkOutcomes(t, out, spaceowner.Unchanged, spaceowner.Rejected)
 }
 
@@ -233,11 +240,7 @@ func TestBatchRefusesUnauthorizedNoOp(t *testing.T) {
 	forged := owner.me.Change(spaceowner.Request{Action: pairbook.ChangeBind, Space: spaceID, Base: m.Mark(), Binding: b}, at)
 	forged.Sig[0] ^= 1
 	unrelated := other.me.Change(spaceowner.Request{Action: pairbook.ChangeBind, Space: spaceID, Base: m.Mark(), Binding: b}, at)
-	next, out, err := owner.me.Fold(spaceowner.Current{Map: m, Mark: m.Mark()}, spaceowner.Batch{Changes: []pairbook.SignedChange{forged, unrelated}}, at)
-	must(t, err)
-	if next != nil {
-		t.Fatal("invalid bind changed map")
-	}
+	out := owner.foldWithoutSuccessor(t, m, forged, unrelated)
 	checkOutcomes(t, out, spaceowner.Rejected, spaceowner.Rejected)
 }
 
