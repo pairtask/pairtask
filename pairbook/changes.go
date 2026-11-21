@@ -90,7 +90,7 @@ func (v VerifiedMap) checkJoin(s SignedChange, now time.Time) error {
 		return ErrInvalid
 	}
 	st, err := s.Evidence.state(now)
-	if err != nil || st.lineage != s.Lineage || st.person != KeyID(s.Person) {
+	if err != nil || !st.names(s.Lineage, s.Person) {
 		return ErrInvalid
 	}
 	if _, taken := v.workspaces[s.Binding.Workspace()]; taken {

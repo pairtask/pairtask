@@ -1,7 +1,6 @@
 package pairbook
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"slices"
 	"time"
@@ -96,14 +95,23 @@ type Binding struct {
 	WorkspaceKey ed25519.PublicKey
 }
 
-// NewBinding binds workspace to the person in lineage l at epoch, at. It
-// needs both private keys, so it is for a workspace on the person's own
-// machine; a linked machine supplies its acceptance separately.
-func NewBinding(person, workspace ed25519.PrivateKey, l Lineage, epoch uint64, at time.Time) Binding {
+// BindingOf is what a binding names besides the two keys: the person's
+// lineage and current epoch, and when it was made.
+type BindingOf struct {
+	Lineage Lineage
+	Epoch   uint64
+	At      time.Time
+}
+
+// NewBinding binds workspace to the person as of. It needs both private
+// keys, so it is for a workspace on the person's own machine; a linked
+// machine supplies its acceptance separately.
+func NewBinding(person, workspace ed25519.PrivateKey, of BindingOf) Binding {
 	wpub := publicOf(workspace)
 	w := KeyID(wpub)
-	claim := identity.Claim{Lineage: identity.Lineage(l), Epoch: epoch, Workspace: w, At: at}.Signed(person)
-	accept := identity.Acceptance{Lineage: identity.Lineage(l), Epoch: epoch, Person: KeyID(publicOf(person)), Workspace: w, At: at}.Signed(workspace)
+	l := identity.Lineage(of.Lineage)
+	claim := identity.Claim{Lineage: l, Epoch: of.Epoch, Workspace: w, At: of.At}.Signed(person)
+	accept := identity.Acceptance{Lineage: l, Epoch: of.Epoch, Person: KeyID(publicOf(person)), Workspace: w, At: of.At}.Signed(workspace)
 	return Binding{Claim: claim.Marshal(), Acceptance: accept.Marshal(), WorkspaceKey: wpub}
 }
 
@@ -122,19 +130,35 @@ func (b Binding) check(p personState, notAfter time.Time) error {
 	if err != nil || a.Check(b.WorkspaceKey) != nil {
 		return ErrInvalid
 	}
-	if !b.matches(c, a, p) || c.At.After(notAfter) || a.At.After(notAfter) {
+	if !b.matches(c, a, p) {
+		return ErrInvalid
+	}
+	if c.At.After(notAfter) { // a.At is the same time
 		return ErrInvalid
 	}
 	return nil
 }
 
+// matches: the two halves name the same binding, of W's own key, for p as
+// it stands now.
 func (b Binding) matches(c identity.Claim, a identity.Acceptance, p personState) bool {
-	w := b.Workspace()
-	same := c.Lineage == a.Lineage && c.Epoch == a.Epoch && c.Workspace == a.Workspace && c.At.Equal(a.At)
-	return same && w != "" && c.Workspace == w && Lineage(c.Lineage) == p.lineage && c.Epoch == p.epoch && a.Person == p.person
+	return halvesAgree(c, a) && c.Workspace == b.Workspace() && p.current(c, a)
 }
 
-// sameBinding: a and b are the same binding, byte for byte.
-func sameBinding(a, b Binding) bool {
-	return bytes.Equal(a.Claim, b.Claim) && bytes.Equal(a.Acceptance, b.Acceptance) && sameKey(a.WorkspaceKey, b.WorkspaceKey)
+// halvesAgree: claim and acceptance name the same lineage, epoch,
+// workspace and time.
+func halvesAgree(c identity.Claim, a identity.Acceptance) bool {
+	same := c.Lineage == a.Lineage && c.Epoch == a.Epoch
+	return same && c.Workspace == a.Workspace && c.At.Equal(a.At)
+}
+
+// current: the binding is of p's lineage, at p's current epoch, accepted
+// for p's current key.
+func (p personState) current(c identity.Claim, a identity.Acceptance) bool {
+	return Lineage(c.Lineage) == p.lineage && c.Epoch == p.epoch && a.Person == p.person
+}
+
+// names: the evidence is of lineage l and its current key is key.
+func (p personState) names(l Lineage, key ed25519.PublicKey) bool {
+	return p.lineage == l && p.person == KeyID(key)
 }

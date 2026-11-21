@@ -109,6 +109,14 @@ func (m SpaceMap) SigningBytes() []byte {
 	return e.b
 }
 
+// follows: m may replace prev, being newer or the same map again.
+func (m Mark) follows(prev Mark) bool {
+	if m.Version != prev.Version {
+		return m.Version > prev.Version
+	}
+	return m.Digest == prev.Digest
+}
+
 // Mark is this map's place: its version and the digest of its signed
 // bytes.
 func (m SpaceMap) Mark() Mark { return Mark{m.Version, sha256.Sum256(m.SigningBytes())} }
@@ -133,7 +141,7 @@ func (s SignedSpaceMap) Verify(space, ownerKeyID string, mark Mark, now time.Tim
 		return VerifiedMap{}, err
 	}
 	own := s.SpaceMap.Mark()
-	if own.Version < mark.Version || (own.Version == mark.Version && own.Digest != mark.Digest) {
+	if !own.follows(mark) {
 		return VerifiedMap{}, ErrRollback
 	}
 	return s.build(own)
@@ -191,7 +199,7 @@ func (s SignedSpaceMap) people(at time.Time) (map[Lineage]Person, map[Lineage]pe
 // entryValid: p's fields agree with its evidence, and the owner role sits
 // on the key that signed the map.
 func (s SignedSpaceMap) entryValid(p MapPerson, st personState) bool {
-	if !validName(p.Name) || st.lineage != p.Lineage || st.person != KeyID(p.Person) {
+	if !validName(p.Name) || !st.names(p.Lineage, p.Person) {
 		return false
 	}
 	switch p.Role {
@@ -210,16 +218,26 @@ func groupsOf(groups []Group, people map[Lineage]Person) (map[string]map[Lineage
 		if !validName(g.Name) || out[g.Name] != nil {
 			return nil, ErrInvalid
 		}
-		members := map[Lineage]bool{} // its own copy of the input's lineages
-		for _, l := range g.Members {
-			if _, ok := people[l]; !ok || members[l] {
-				return nil, ErrInvalid
-			}
-			members[l] = true
+		members, err := groupMembers(g, people)
+		if err != nil {
+			return nil, err
 		}
 		out[g.Name] = members
 	}
 	return out, nil
+}
+
+// groupMembers is g's members as a set of its own: each a person in the
+// map, none twice.
+func groupMembers(g Group, people map[Lineage]Person) (map[Lineage]bool, error) {
+	members := map[Lineage]bool{}
+	for _, l := range g.Members {
+		if _, ok := people[l]; !ok || members[l] {
+			return nil, ErrInvalid
+		}
+		members[l] = true
+	}
+	return members, nil
 }
 
 // grantsValid: every selector is well formed and names something in the

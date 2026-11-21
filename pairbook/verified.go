@@ -49,11 +49,11 @@ type bound struct {
 // bind adds a binding: valid for its person, and the only binding of its
 // workspace (one workspace never belongs to two people, nor twice).
 func (v *VerifiedMap) bind(b Binding, states map[Lineage]personState, issued time.Time) error {
-	l, ok := claimedLineage(b)
-	st, known := states[l]
-	if !ok || !known || b.check(st, issued) != nil {
+	st, ok := bindingState(b, states)
+	if !ok || b.check(st, issued) != nil {
 		return ErrInvalid
 	}
+	l := st.lineage
 	w := b.Workspace()
 	if _, dup := v.workspaces[w]; dup {
 		return ErrInvalid
@@ -64,6 +64,16 @@ func (v *VerifiedMap) bind(b Binding, states map[Lineage]personState, issued tim
 	slices.Sort(p.Workspaces)
 	v.people[l] = p
 	return nil
+}
+
+// bindingState is the state of the person b's claim names, if in the map.
+func bindingState(b Binding, states map[Lineage]personState) (personState, bool) {
+	l, ok := claimedLineage(b)
+	if !ok {
+		return personState{}, false
+	}
+	st, known := states[l]
+	return st, known
 }
 
 // People is every person in the map, sorted by lineage.
@@ -127,11 +137,16 @@ func (v VerifiedMap) Peers(workspace string, now time.Time) ([]Peer, error) {
 // granted: some grant pairs a and b, either way round.
 func (v VerifiedMap) granted(a, b Lineage) bool {
 	for _, g := range v.grants {
-		if (v.selects(g.A, a) && v.selects(g.B, b)) || (v.selects(g.A, b) && v.selects(g.B, a)) {
+		if v.pairs(g, a, b) || v.pairs(g, b, a) {
 			return true
 		}
 	}
 	return false
+}
+
+// pairs: g's A side selects a and its B side b.
+func (v VerifiedMap) pairs(g Grant, a, b Lineage) bool {
+	return v.selects(g.A, a) && v.selects(g.B, b)
 }
 
 func (v VerifiedMap) selects(s Selector, l Lineage) bool {
