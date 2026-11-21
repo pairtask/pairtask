@@ -1,47 +1,90 @@
 package pairbook
 
 import (
+	"bytes"
 	"crypto/ed25519"
-	"errors"
+	"slices"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/identity"
 )
 
-// People (Pairbook v1): a space's members are people, not machines. The
-// owner signs one membership per person, naming the person's lineage and
-// current person key. Each person binds the workspaces they can be reached
-// at: the person's Claim and the workspace's Acceptance, both signed, as
-// one Binding. Addresses stay per workspace. The directory still only
-// stores and forwards: a membership counts only under the pinned owner
-// key, a person's current key and epoch come from their own signed
-// identity statements, and a binding only from both signatures.
+// People (Pairbook v1). A space's members are people, each with the
+// workspaces they bound. Everything about who is in a space and who may
+// connect to whom lives in one owner-signed SpaceMap (spacemap.go); this
+// file holds the person-level parts the map carries: a person's identity
+// evidence and their workspace bindings.
 //
 // Every exported field is wire bytes or a plain key, so a module outside
 // pairtask can build and check these records.
-
-// Domains of the people records. v0's member and revocation records stay
-// valid until the client moves to people.
-const (
-	membershipDomain       = "pairbook-membership-v2"
-	personJoinDomain       = "pairbook-person-join-v2"
-	unbindDomain           = "pairbook-unbind-v2"
-	personRevocationDomain = "pairbook-person-revocation-v2"
-)
-
-// ErrNotImplemented marks the people checks until they are built.
-var ErrNotImplemented = errors.New("pairbook: not implemented")
 
 // Lineage names a person across key changes: SHA-256 of their identity
 // anchor's signed bytes.
 type Lineage [32]byte
 
 // PersonEvidence is what establishes a person's current key and epoch:
-// their marshalled identity anchor and the identity statements after it
-// (records, successions, handovers), in order.
+// their marshalled identity anchor, the identity statements after it
+// (records, successions, handovers) in order, and the public keys of every
+// workspace those statements name, current or past, so a record's
+// workspace bindings can be checked.
 type PersonEvidence struct {
 	Anchor     []byte
 	Statements [][]byte
+	Workspaces []ed25519.PublicKey
+}
+
+// personState is what a person's evidence establishes.
+type personState struct {
+	lineage Lineage
+	person  string // current person key ID
+	key     ed25519.PublicKey
+	epoch   uint64
+}
+
+// state replays the evidence through the identity rules at at. Any
+// statement that doesn't apply cleanly, or a frozen lineage, makes the
+// evidence invalid.
+func (e PersonEvidence) state(at time.Time) (personState, error) {
+	a, err := identity.ParseAnchor(e.Anchor)
+	if err != nil {
+		return personState{}, ErrInvalid
+	}
+	h, eff, err := identity.Held{Workspaces: e.workspaceKeys()}.Apply(a, at)
+	if err != nil || eff.Kind != identity.Applied {
+		return personState{}, ErrInvalid
+	}
+	for _, b := range e.Statements {
+		if h, err = applyEvidence(h, b, at); err != nil {
+			return personState{}, err
+		}
+	}
+	if h.Trust == identity.Frozen {
+		return personState{}, ErrInvalid
+	}
+	return personState{lineage: Lineage(h.Lineage), person: h.Person, key: slices.Clone(h.Key(h.Person)), epoch: h.Epoch}, nil
+}
+
+// workspaceKeys indexes the evidence's workspace keys by ID, copied.
+func (e PersonEvidence) workspaceKeys() map[string]ed25519.PublicKey {
+	ws := map[string]ed25519.PublicKey{}
+	for _, k := range e.Workspaces {
+		if id := KeyID(k); id != "" {
+			ws[id] = slices.Clone(k)
+		}
+	}
+	return ws
+}
+
+func applyEvidence(h identity.Held, b []byte, at time.Time) (identity.Held, error) {
+	st, err := identity.Parse(b)
+	if err != nil {
+		return h, ErrInvalid
+	}
+	next, eff, err := h.Apply(st, at)
+	if err != nil || eff.Kind != identity.Applied {
+		return h, ErrInvalid
+	}
+	return next, nil
 }
 
 // Binding says workspace W belongs to a person: the person's signed claim
@@ -53,7 +96,9 @@ type Binding struct {
 	WorkspaceKey ed25519.PublicKey
 }
 
-// NewBinding binds workspace to the person in lineage l at epoch, at.
+// NewBinding binds workspace to the person in lineage l at epoch, at. It
+// needs both private keys, so it is for a workspace on the person's own
+// machine; a linked machine supplies its acceptance separately.
 func NewBinding(person, workspace ed25519.PrivateKey, l Lineage, epoch uint64, at time.Time) Binding {
 	wpub := publicOf(workspace)
 	w := KeyID(wpub)
@@ -62,150 +107,34 @@ func NewBinding(person, workspace ed25519.PrivateKey, l Lineage, epoch uint64, a
 	return Binding{Claim: claim.Marshal(), Acceptance: accept.Marshal(), WorkspaceKey: wpub}
 }
 
-// Membership is a person admitted to a space by its owner.
-type Membership struct {
-	Space     string
-	Lineage   Lineage
-	Person    ed25519.PublicKey
-	Name      string
-	Role      string
-	IssuedAt  int64
-	ExpiresAt int64
-}
+// Workspace is the bound workspace's key ID ("" for a malformed binding).
+func (b Binding) Workspace() string { return KeyID(b.WorkspaceKey) }
 
-// SignedMembership is a membership and the owner's signature.
-type SignedMembership struct {
-	Membership
-	Owner ed25519.PublicKey
-	Sig   []byte
-}
-
-// SigningBytes are the bytes a membership's signature covers.
-func (m Membership) SigningBytes() []byte {
-	return newEncoder(membershipDomain).str(m.Space).bytes(m.Lineage[:]).bytes(m.Person).str(m.Name).str(m.Role).time(m.IssuedAt).time(m.ExpiresAt).b
-}
-
-// SignMembership signs m with the owner's person key.
-func SignMembership(owner ed25519.PrivateKey, m Membership) SignedMembership {
-	return SignedMembership{Membership: m, Owner: publicOf(owner), Sig: sign(owner, m.SigningBytes())}
-}
-
-// PersonJoin asks to join a space as a person, with the person's evidence
-// and the binding of the workspace asking.
-type PersonJoin struct {
-	Space    string
-	Evidence PersonEvidence
-	Name     string
-	At       int64
-	Binding  Binding
-}
-
-// SignedPersonJoin is a join request signed by the person key.
-type SignedPersonJoin struct {
-	PersonJoin
-	Person ed25519.PublicKey
-	Sig    []byte
-}
-
-// SigningBytes are the bytes a join request's signature covers.
-func (j PersonJoin) SigningBytes() []byte {
-	e := newEncoder(personJoinDomain).str(j.Space).bytes(j.Evidence.Anchor)
-	e.time(int64(len(j.Evidence.Statements)))
-	for _, st := range j.Evidence.Statements {
-		e.bytes(st)
+// check verifies the binding for person p as of notAfter: both signatures,
+// matching fields, p's current epoch and key, W's own key, and neither half
+// dated after notAfter.
+func (b Binding) check(p personState, notAfter time.Time) error {
+	c, err := identity.ParseClaim(b.Claim)
+	if err != nil || c.Check(p.key) != nil {
+		return ErrInvalid
 	}
-	return e.str(j.Name).time(j.At).bytes(j.Binding.Claim).bytes(j.Binding.Acceptance).bytes(j.Binding.WorkspaceKey).b
+	a, err := identity.ParseAcceptance(b.Acceptance)
+	if err != nil || a.Check(b.WorkspaceKey) != nil {
+		return ErrInvalid
+	}
+	if !b.matches(c, a, p) || c.At.After(notAfter) || a.At.After(notAfter) {
+		return ErrInvalid
+	}
+	return nil
 }
 
-// SignPersonJoin signs j with the person key.
-func SignPersonJoin(person ed25519.PrivateKey, j PersonJoin) SignedPersonJoin {
-	return SignedPersonJoin{PersonJoin: j, Person: publicOf(person), Sig: sign(person, j.SigningBytes())}
+func (b Binding) matches(c identity.Claim, a identity.Acceptance, p personState) bool {
+	w := b.Workspace()
+	same := c.Lineage == a.Lineage && c.Epoch == a.Epoch && c.Workspace == a.Workspace && c.At.Equal(a.At)
+	return same && w != "" && c.Workspace == w && Lineage(c.Lineage) == p.lineage && c.Epoch == p.epoch && a.Person == p.person
 }
 
-// Verify checks the request belongs to space, is fresh at now, is signed by
-// the person's current key under its evidence, and carries a valid binding.
-func (s SignedPersonJoin) Verify(space string, now time.Time) error { return ErrNotImplemented }
-
-// Unbind withdraws a workspace from the person in Lineage.
-type Unbind struct {
-	Space     string
-	Lineage   Lineage
-	Workspace string
-	At        int64
-}
-
-// SignedUnbind is an unbind signed by the person key.
-type SignedUnbind struct {
-	Unbind
-	Person ed25519.PublicKey
-	Sig    []byte
-}
-
-// SigningBytes are the bytes an unbind's signature covers.
-func (u Unbind) SigningBytes() []byte {
-	return newEncoder(unbindDomain).str(u.Space).bytes(u.Lineage[:]).str(u.Workspace).time(u.At).b
-}
-
-// SignUnbind signs u with the person key.
-func SignUnbind(person ed25519.PrivateKey, u Unbind) SignedUnbind {
-	return SignedUnbind{Unbind: u, Person: publicOf(person), Sig: sign(person, u.SigningBytes())}
-}
-
-// PersonRevocation removes a person, and every workspace they bound, from
-// a space: signed by the owner, or by the person leaving.
-type PersonRevocation struct {
-	Space   string
-	Lineage Lineage
-	By      ed25519.PublicKey
-	At      int64
-}
-
-// SignedPersonRevocation is a person revocation signed by its By key.
-type SignedPersonRevocation struct {
-	PersonRevocation
-	Sig []byte
-}
-
-// SigningBytes are the bytes a person revocation's signature covers.
-func (r PersonRevocation) SigningBytes() []byte {
-	return newEncoder(personRevocationDomain).str(r.Space).bytes(r.Lineage[:]).bytes(r.By).time(r.At).b
-}
-
-// SignPersonRevocation signs r with by, which must be r.By's private key.
-func SignPersonRevocation(by ed25519.PrivateKey, r PersonRevocation) SignedPersonRevocation {
-	return SignedPersonRevocation{PersonRevocation: r, Sig: sign(by, r.SigningBytes())}
-}
-
-// People is a space's people records as the directory returns them, not
-// yet trusted.
-type People struct {
-	Memberships []SignedMembership
-	Evidence    []PersonEvidence
-	Bindings    []Binding
-	Unbinds     []SignedUnbind
-	Revocations []SignedPersonRevocation
-}
-
-// Person is a verified member: their membership, current epoch, the
-// workspaces bound to them, and workspaces another person also claims
-// (which count for nobody).
-type Person struct {
-	Membership Membership
-	Epoch      uint64
-	Workspaces []string
-	Conflicts  []string
-}
-
-// Verified is the people a node may trust at now in space, under the owner
-// person key with ID ownerKeyID.
-func (p People) Verified(space, ownerKeyID string, now time.Time) []Person { return nil }
-
-// Owner is the space owner as a verified person.
-func (p People) Owner(space, ownerKeyID string, now time.Time) (Person, bool) {
-	return Person{}, false
-}
-
-// BoundTo is the verified person workspace is bound to, if exactly one.
-func (p People) BoundTo(space, ownerKeyID, workspace string, now time.Time) (Person, bool) {
-	return Person{}, false
+// sameBinding: a and b are the same binding, byte for byte.
+func sameBinding(a, b Binding) bool {
+	return bytes.Equal(a.Claim, b.Claim) && bytes.Equal(a.Acceptance, b.Acceptance) && sameKey(a.WorkspaceKey, b.WorkspaceKey)
 }
