@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,7 +254,8 @@ func TestLeaveRemovesAllMemberReferencesFromSuccessor(t *testing.T) {
 	m.Groups = []pairbook.Group{{Name: "team", Members: []pairbook.Lineage{owner.me.Lineage, l}}}
 	who := pairbook.Selector{Kind: pairbook.SelectPerson, Name: pairbook.LineageHex(l)}
 	group := pairbook.Selector{Kind: pairbook.SelectGroup, Name: "team"}
-	m.Grants = append(m.Grants, pairbook.Grant{A: who, B: group}, pairbook.Grant{A: group, B: who})
+	upper := pairbook.Selector{Kind: pairbook.SelectPerson, Name: strings.ToUpper(who.Name)}
+	m.Grants = append(m.Grants, pairbook.Grant{A: who, B: group}, pairbook.Grant{A: group, B: upper})
 	m = pairbook.SignSpaceMap(owner.keys.PersonKey(), m.SpaceMap)
 	base := m.Mark()
 	leave := member.me.Change(spaceowner.Request{Action: pairbook.ChangeLeave, Space: spaceID, Base: base}, at)
