@@ -52,6 +52,7 @@ type Hub struct {
 	notifier   hubNotifier     // decision requests told to the operator outside the chat (#352)
 	spaces     *SpaceConfig    // Pairbook spaces; nil until SetSpaces
 	spaceBusy  map[string]bool // spaces with a change in flight; owned by Run
+	authority  *spaceAuthority // the active map of each Pairbook v1 space
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -92,6 +93,7 @@ func New(st *store.Store, startSeq uint64, log *slog.Logger) *Hub {
 		operator:   make(chan operatorRequest),
 		startedAt:  time.Now().UTC(),
 		epoch:      uuid.NewString(),
+		authority:  newSpaceAuthority(),
 	}
 	h.pair.cfg = defaultPairingConfig()
 	// The invitation manager does no I/O; it fails only on a missing store,
@@ -152,6 +154,7 @@ func (h *Hub) Run(ctx context.Context) {
 	defer h.settleBackground()
 	defer h.disconnectAll(clients)
 	h.beginBackground(ctx)
+	h.restoreSpaceMaps(ctx)
 	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {

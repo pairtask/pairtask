@@ -242,6 +242,10 @@ func (h *Hub) unpinAfter(ctx context.Context, id string, check func(space.Pin) *
 		if err := remote(net, p, d); err != nil {
 			return nil, err
 		}
-		return nil, h.store.UnpinSpace(local, p.Space)
+		if err := h.store.UnpinSpace(local, p.Space); err != nil {
+			return nil, err
+		}
+		h.authority.forget(p.Space)
+		return nil, nil
 	}}, nil
 }
