@@ -41,7 +41,10 @@ func (p *PeerMessages) AcceptVersion(ctx context.Context, contact string, a mess
 		if err != nil {
 			return err
 		}
-		return expireUnacked(ctx, tx, contact, now)
+		if err := expireUnacked(ctx, tx, contact, now); err != nil {
+			return err
+		}
+		return admissionStage("before-commit")
 	})
 	switch {
 	case errors.Is(err, errNothingStored):
@@ -170,8 +173,14 @@ func publicationRerouted(ctx context.Context, tx *sql.Tx, in inboundRow) (bool, 
 // insertAccepted stores an accepted message and stages it for this side's
 // agents when it is theirs.
 func insertAccepted(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer, bool, error) {
+	if err := admissionStage("before-message"); err != nil {
+		return messaging.Answer{}, false, err
+	}
 	if err := insertMessage(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err // never Stored when the insert failed
+	}
+	if err := admissionStage("after-message"); err != nil {
+		return messaging.Answer{}, false, err
 	}
 	if err := keepSeal(ctx, tx, r.key, r.m.Seal); err != nil {
 		return messaging.Answer{}, false, err

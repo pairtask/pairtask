@@ -67,16 +67,20 @@ func sessionDB(t *testing.T, path string) *store.Store {
 }
 func sessionFixture(t *testing.T) (*store.Store, string) {
 	t.Helper()
+	return sessionFixtureFor(t, sessionContact)
+}
+func sessionFixtureFor(t *testing.T, contact string) (*store.Store, string) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "messages.db")
 	db := sessionDB(t, path)
-	outcome := peer.PairingOutcome{OperationID: "operation", InvitationID: "invitation", IdentityKey: sessionContact, Name: "Peer", TranscriptID: make([]byte, 64), At: sessionAt}
+	outcome := peer.PairingOutcome{OperationID: "operation", InvitationID: "invitation", IdentityKey: contact, Name: "Peer", TranscriptID: make([]byte, 64), At: sessionAt}
 	if _, err := db.Commit(context.Background(), outcome); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Accept(context.Background(), sessionContact); err != nil {
+	if _, err := db.Accept(context.Background(), contact); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Deliver(context.Background(), sessionContact, peer.PairingAccepted, sessionAt); err != nil {
+	if _, err := db.Deliver(context.Background(), contact, peer.PairingAccepted, sessionAt); err != nil {
 		t.Fatal(err)
 	}
 	return db, path

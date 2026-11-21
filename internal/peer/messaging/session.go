@@ -44,6 +44,12 @@ type Result struct {
 	// Claim notices (#419): those this side sent and had answered, and the
 	// peer's this side kept or dropped for good.
 	ClaimNoticesSent, ClaimNoticesStored, ClaimNoticesDropped int
+	// Identity statements (#392) this side sent and had answered, and the
+	// peer's this side judged.
+	IdentitySent, IdentityReceived int
+	// IdentityMore: a side had more identity statements than a round
+	// carries, so this round carried nothing else.
+	IdentityMore bool
 }
 
 // Moved reports durable progress: anything stored, refused or confirmed,
@@ -57,7 +63,7 @@ func (r Result) counted() int {
 	messages := r.Sent + r.Received + r.Refused + r.RefusalsRecorded
 	receipts := r.ReadsSent + r.ReadsStored
 	claims := r.ClaimNoticesSent + r.ClaimNoticesStored + r.ClaimNoticesDropped
-	return messages + receipts + r.OutcomesSent + r.OutcomesStored + r.consentCounted() + claims
+	return messages + receipts + r.OutcomesSent + r.OutcomesStored + r.consentCounted() + claims + r.IdentitySent + r.IdentityReceived
 }
 
 // consentCounted is the consent outcomes settled either way.
@@ -206,9 +212,15 @@ type phase func(context.Context, *Result) error
 // directories.
 func (s Session) phases(ctx context.Context, dialer bool) (Result, error) {
 	var r Result
-	for _, step := range s.steps(dialer) {
+	for i, step := range s.steps(dialer) {
 		if err := step(ctx, &r); err != nil {
 			return r, err
+		}
+		// Identity statements still owed either way: no application frame
+		// in this round, so none is judged before them (#392). The next
+		// round starts with identity again.
+		if i == 1 && r.IdentityMore {
+			return r, nil
 		}
 	}
 	return r, nil
@@ -217,7 +229,13 @@ func (s Session) phases(ctx context.Context, dialer bool) (Result, error) {
 // steps are the phases in this side's order: in each pair, the dialer
 // sends first.
 func (s Session) steps(dialer bool) []phase {
-	pairs := [][2]phase{{s.sendMessages, s.receiveMessages}, {s.sendReads, s.receiveReads}}
+	// Identity statements first (#392): a revocation is judged before any
+	// message from the device it revokes.
+	var pairs [][2]phase
+	if _, ok := s.identity(); ok {
+		pairs = append(pairs, [2]phase{s.sendIdentity, s.receiveIdentity})
+	}
+	pairs = append(pairs, [2]phase{s.sendMessages, s.receiveMessages}, [2]phase{s.sendReads, s.receiveReads})
 	if _, ok := s.routing(); ok {
 		pairs = append(pairs, [2]phase{s.sendAgentReads, s.receiveAgentReads}, [2]phase{s.sendDirectory, s.receiveDirectory})
 	}
