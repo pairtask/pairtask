@@ -51,6 +51,14 @@ CREATE TABLE IF NOT EXISTS identity_clock (
     id   INTEGER PRIMARY KEY CHECK (id = 1),
     mark TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS identity_outbox (
+    contact   TEXT NOT NULL,
+    digest    TEXT NOT NULL,
+    body      BLOB NOT NULL,
+    queued_at TEXT NOT NULL,
+    effect    TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (contact, digest)
+);
 CREATE TABLE IF NOT EXISTS identity_admissions (
     contact       TEXT NOT NULL,
     pairing_epoch INTEGER NOT NULL,

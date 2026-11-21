@@ -167,7 +167,11 @@ func wrapStore(st Store) Store {
 			return wrapped
 		}
 		if claims, ok := st.(ClaimStore); ok {
-			return claimSessionStore{sealSessionStore{wrapped, ss}, claims}
+			cs := claimSessionStore{sealSessionStore{wrapped, ss}, claims}
+			if is, ok := st.(IdentityStore); ok {
+				return identitySessionStore{cs, is}
+			}
+			return cs
 		}
 		return sealSessionStore{wrapped, ss}
 	}
