@@ -70,16 +70,16 @@ func TestIdentityStoreRestartRetainsParkedAndFrozenProofs(t *testing.T) {
 		apply("handover-2", identity.Applied)
 		held, found, err := db.HeldIdentity(ctx, anchor.Lineage())
 		pairOK(t, err)
-		if !found || held.Seq != 3 || len(held.Parked) != 0 {
-			t.Fatalf("pending proof did not advance: seq=%d parked=%d", held.Seq, len(held.Parked))
-		}
+		pairEqual(t, found, true)
+		pairEqual(t, held.Seq, 3)
+		pairEqual(t, len(held.Parked), 0)
 		apply("fork-at-anchor", identity.FrozenEffect)
 		reopen()
 		held, found, err = db.HeldIdentity(ctx, anchor.Lineage())
 		pairOK(t, err)
-		if !found || held.Trust != identity.Frozen || len(held.Conflicts) == 0 {
-			t.Fatal("lost authenticated conflict")
-		}
+		pairEqual(t, found, true)
+		pairEqual(t, held.Trust, identity.Frozen)
+		pairEqual(t, len(held.Conflicts) > 0, true)
 		return held
 	}
 	control := run(t, false)

@@ -76,21 +76,20 @@ func TestIdentityRevocationAfterFullPagePrecedesMessage(t *testing.T) {
 	_, err = left.PeerMessages().Queue(ctx, messaging.Outgoing{Contact: receiver, ID: header.MessageID, Text: "hello", Now: sessionAt, Seal: sealed.Marshal()})
 	sessionOK(t, err)
 	round := func() []sessionOutcome {
-		out := exchangeContacts(t, identityEnabled{l}, receiver, identityEnabled{r}, sender, 0)
+		out := exchangeContacts(t, exchangeEndpoint{identityEnabled{l}, receiver}, exchangeEndpoint{identityEnabled{r}, sender}, 0)
 		sessionSuccess(t, out)
 		return out
 	}
 	first := round()
 	for _, o := range first {
-		if !o.result.IdentityMore || o.result.Sent+o.result.Received+o.result.Refused != 0 {
-			t.Fatalf("first round: %+v", o.result)
-		}
+		sessionEqual(t, o.result.IdentityMore, true)
+		sessionEqual(t, o.result.Sent+o.result.Received+o.result.Refused, 0)
 	}
 	held, found, err := right.HeldIdentity(ctx, anchor.Lineage())
 	sessionOK(t, err)
-	if !found || held.Version != uint64(messaging.SessionMessages) || len(held.Revoked) != 0 {
-		t.Fatal("first page not applied")
-	}
+	sessionEqual(t, found, true)
+	sessionEqual(t, held.Version, uint64(messaging.SessionMessages))
+	sessionEqual(t, len(held.Revoked), 0)
 	frame := signing.Frame{MessageID: header.MessageID, SenderKind: header.SenderKind, SenderID: header.SenderID, Text: "hello", Addresses: []string{(protocol.PeerLink{Contact: sender, Receiver: receiver}).Address()}}
 	before, _ := identity.Admit(sealed, frame, held, identity.Clock{Now: time.Now})
 	if before.State != signing.Verified {
@@ -102,16 +101,12 @@ func TestIdentityRevocationAfterFullPagePrecedesMessage(t *testing.T) {
 	}
 	held, _, err = right.HeldIdentity(ctx, anchor.Lineage())
 	sessionOK(t, err)
-	if len(held.Revoked) != 1 || held.Revoked[0] != revoke.Device {
-		t.Fatal("revocation missing")
-	}
+	sessionEqual(t, len(held.Revoked), 1)
+	sessionEqual(t, held.Revoked[0], revoke.Device)
 	after, _ := identity.Admit(sealed, frame, held, identity.Clock{Now: time.Now})
-	if after.State != signing.Invalid || after.Reason != "revoked device" {
-		t.Fatalf("unexpected verification after round two: %+v", after)
-	}
+	sessionEqual(t, after.State, signing.Invalid)
+	sessionEqual(t, after.Reason, "revoked device")
 	for _, o := range round() {
-		if o.result.IdentityReceived+o.result.Received+o.result.Refused != 0 {
-			t.Fatalf("retry repeated work: %+v", o.result)
-		}
+		sessionEqual(t, o.result.IdentityReceived+o.result.Received+o.result.Refused, 0)
 	}
 }

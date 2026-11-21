@@ -82,17 +82,17 @@ func TestIdentityAdmissionRollbackAndCurrentVerification(t *testing.T) {
 	pairOK(t, err)
 	_, _, found, err := bound.Admission(ctx, contact, m.ID)
 	pairOK(t, err)
-	if found || len(messagePage(t, db.PeerMessages(), contact)) != 0 {
-		t.Fatal("failed transaction left admission or message")
-	}
+	pairEqual(t, found, false)
+	pairEqual(t, len(messagePage(t, db.PeerMessages(), contact)), 0)
 	now = cert.NotBefore
 	_, err = bound.Accept(ctx, contact, m, now)
 	pairOK(t, err)
 	current, evidence, found, err := bound.Admission(ctx, contact, m.ID)
 	pairOK(t, err)
-	if !found || current.State != signing.Verified || evidence.State != signing.Verified || !evidence.AdmittedAt.Equal(now) {
-		t.Fatalf("retry: found=%v current=%+v evidence=%+v", found, current, evidence)
-	}
+	pairEqual(t, found, true)
+	pairEqual(t, current.State, signing.Verified)
+	pairEqual(t, evidence.State, signing.Verified)
+	pairEqual(t, evidence.AdmittedAt.Equal(now), true)
 	personSeed, err := hex.DecodeString(fixture.Fixtures["P0"].Seed)
 	pairOK(t, err)
 	revoke := identity.Revocation{Lineage: anchor.Lineage(), Epoch: 1, Device: evidence.Device, At: now}
@@ -100,7 +100,7 @@ func TestIdentityAdmissionRollbackAndCurrentVerification(t *testing.T) {
 	apply("revoke-admitted-device")
 	current, after, found, err := bound.Admission(ctx, contact, m.ID)
 	pairOK(t, err)
-	if !found || current.State != signing.Invalid || after != evidence {
-		t.Fatalf("revocation: found=%v current=%+v evidence=%+v", found, current, after)
-	}
+	pairEqual(t, found, true)
+	pairEqual(t, current.State, signing.Invalid)
+	pairEqual(t, after, evidence)
 }
