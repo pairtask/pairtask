@@ -40,8 +40,9 @@ type spaceAuthority struct {
 	timing  SpaceTiming
 	active  map[string]activeMap
 	gen     uint64
-	writing map[string]*sync.Mutex // one refresh per space at a time
+	writing map[string]*sync.Mutex // one refresh or unpin per space at a time
 	notify  []func(space string)
+	closed  bool // Run ended: no timer, no activation, no callback
 }
 
 type activeMap struct {
@@ -71,16 +72,34 @@ func (h *Hub) OnSpaceChange(f func(space string)) {
 
 // KeepSpaceMap keeps m as space's map (verified against the pin and the
 // stored mark, durable first) and makes it the active one.
+// Listeners are told after every lock is released, so one may refresh the
+// same space; they read the current state rather than trust the call.
 func (h *Hub) KeepSpaceMap(ctx context.Context, space string, m pairbook.SignedSpaceMap) error {
 	a := h.authority
 	unlock := a.lockSpace(space)
-	defer unlock()
 	v, err := h.store.KeepSpaceMap(ctx, space, m, a.now())
-	if err != nil {
-		return err
+	var notify []func(string)
+	if err == nil {
+		notify = a.activate(space, v)
 	}
-	a.activate(space, v)
-	return nil
+	unlock()
+	tell(notify, space)
+	return err
+}
+
+// unpinSpace removes space's pin and map and ends its authority, under the
+// space's writer lock, so a refresh in flight can't bring it back.
+func (h *Hub) unpinSpace(ctx context.Context, space string) error {
+	a := h.authority
+	unlock := a.lockSpace(space)
+	err := h.store.UnpinSpace(ctx, space)
+	var notify []func(string)
+	if err == nil {
+		notify = a.forget(space)
+	}
+	unlock()
+	tell(notify, space)
+	return err
 }
 
 // SpaceAuthority is space's active map, if it has one that hasn't expired.
@@ -130,17 +149,19 @@ func (a *spaceAuthority) lockSpace(space string) func() {
 	return l.Unlock
 }
 
-// activate makes v space's active map, with a timer for its expiry.
-func (a *spaceAuthority) activate(space string, v pairbook.VerifiedMap) {
+// activate makes v space's active map, with a timer for its expiry, and
+// is who to tell (none for the same map again, or after close).
+func (a *spaceAuthority) activate(space string, v pairbook.VerifiedMap) []func(string) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return nil
+	}
 	if old, ok := a.active[space]; ok && old.v.Mark == v.Mark {
-		a.mu.Unlock()
-		return // the same map again
+		return nil
 	}
 	a.replace(space, v)
-	notify := a.listeners()
-	a.mu.Unlock()
-	tell(notify, space)
+	return a.listeners()
 }
 
 // replace swaps in v and its timer; a.mu held.
@@ -159,7 +180,7 @@ func (a *spaceAuthority) replace(space string, v pairbook.VerifiedMap) {
 func (a *spaceAuthority) lapse(space string, gen uint64) {
 	a.mu.Lock()
 	cur, ok := a.active[space]
-	if !ok || cur.gen != gen {
+	if a.closed || !ok || cur.gen != gen {
 		a.mu.Unlock()
 		return
 	}
@@ -179,18 +200,28 @@ func (a *spaceAuthority) get(space string) (pairbook.VerifiedMap, bool) {
 	return cur.v, true
 }
 
-// forget drops space's active map (on unpin), and tells the listeners.
-func (a *spaceAuthority) forget(space string) {
+// forget drops space's active map (on unpin), and is who to tell.
+func (a *spaceAuthority) forget(space string) []func(string) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	cur, ok := a.active[space]
-	if ok {
+	if !ok || a.closed {
+		return nil
+	}
+	cur.stop()
+	delete(a.active, space)
+	return a.listeners()
+}
+
+// close stops every timer and every later activation and callback: Run
+// has ended.
+func (a *spaceAuthority) close() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.closed = true
+	for space, cur := range a.active {
 		cur.stop()
 		delete(a.active, space)
-	}
-	notify := a.listeners()
-	a.mu.Unlock()
-	if ok {
-		tell(notify, space)
 	}
 }
 

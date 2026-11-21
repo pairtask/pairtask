@@ -151,6 +151,7 @@ func (h *Hub) Done() <-chan struct{} { return h.done }
 func (h *Hub) Run(ctx context.Context) {
 	clients := make(map[string]*Client)
 	defer close(h.done)
+	defer h.authority.close()
 	defer h.settleBackground()
 	defer h.disconnectAll(clients)
 	h.beginBackground(ctx)
