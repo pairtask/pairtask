@@ -95,9 +95,12 @@ func (m Me) issue(sm pairbook.SpaceMap, mark pairbook.Mark, now time.Time) (pair
 	return signed, nil
 }
 
-// current verifies c's map as this person's at now, no older than its
-// mark.
+// current verifies c's map as this person's at now: exactly the map its
+// mark records.
 func (m Me) current(c Current, now time.Time) (pairbook.VerifiedMap, error) {
+	if c.Map.SpaceMap.Mark() != c.Mark {
+		return pairbook.VerifiedMap{}, ErrMark
+	}
 	v, err := c.Map.Verify(c.Map.Space, m.KeyID(), c.Mark, now)
 	if errors.Is(err, pairbook.ErrNotOwner) {
 		return v, ErrNotOwner
@@ -127,9 +130,6 @@ func (m Me) Invite(c Current, tokenHash [32]byte, now time.Time, d time.Duration
 // must be exactly the one c's mark records; it may have lapsed, so it is
 // checked as of when it was issued.
 func (m Me) Renew(c Current, now time.Time) (pairbook.SignedSpaceMap, error) {
-	if c.Map.SpaceMap.Mark() != c.Mark {
-		return pairbook.SignedSpaceMap{}, ErrMark
-	}
 	if _, err := m.current(c, time.UnixMilli(c.Map.IssuedAt)); err != nil {
 		return pairbook.SignedSpaceMap{}, err
 	}

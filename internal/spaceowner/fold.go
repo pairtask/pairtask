@@ -3,6 +3,7 @@ package spaceowner
 import (
 	"bytes"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/pairbook"
@@ -172,9 +173,9 @@ func (w *working) leave(c pairbook.SignedChange) string {
 	return Applied
 }
 
-// names: s selects exactly the person l.
+// names: s selects exactly the person l, however its hex is cased.
 func names(s pairbook.Selector, l pairbook.Lineage) bool {
-	return s.Kind == pairbook.SelectPerson && s.Name == pairbook.LineageHex(l)
+	return s.Kind == pairbook.SelectPerson && strings.EqualFold(s.Name, pairbook.LineageHex(l))
 }
 
 func (w *working) hasPerson(l pairbook.Lineage) bool {
