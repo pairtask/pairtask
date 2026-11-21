@@ -41,6 +41,9 @@ type Result struct {
 	// DirectoryAcked: the peer answered a directory other than the one it
 	// last answered (#305).
 	DirectoryChanged, DirectoryAcked bool
+	// Claim notices (#419): those this side sent and had answered, and the
+	// peer's this side kept or dropped for good.
+	ClaimNoticesSent, ClaimNoticesStored, ClaimNoticesDropped int
 }
 
 // Moved reports durable progress: anything stored, refused or confirmed,
@@ -53,7 +56,8 @@ func (r Result) Moved() bool {
 func (r Result) counted() int {
 	messages := r.Sent + r.Received + r.Refused + r.RefusalsRecorded
 	receipts := r.ReadsSent + r.ReadsStored
-	return messages + receipts + r.OutcomesSent + r.OutcomesStored + r.consentCounted()
+	claims := r.ClaimNoticesSent + r.ClaimNoticesStored + r.ClaimNoticesDropped
+	return messages + receipts + r.OutcomesSent + r.OutcomesStored + r.consentCounted() + claims
 }
 
 // consentCounted is the consent outcomes settled either way.
@@ -223,6 +227,9 @@ func (s Session) steps(dialer bool) []phase {
 	if _, ok := s.consent(); ok {
 		pairs = append(pairs, [2]phase{s.sendConsentOutcomes, s.receiveConsentOutcomes})
 	}
+	if _, ok := s.claims(); ok {
+		pairs = append(pairs, [2]phase{s.sendClaimNotices, s.receiveClaimNotices})
+	}
 	steps := make([]phase, 0, 2*len(pairs))
 	for _, pair := range pairs {
 		if !dialer {
@@ -319,6 +326,9 @@ func (s Session) offer(ctx context.Context) ([]Row, error) {
 // sendMessage sends one message and records the peer's answer: stored,
 // held there for its operator, or refused.
 func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
+	if err := s.carriesRefs(ctx, m); err != nil {
+		return false, err
+	}
 	inner, err := encoderOf(m)(m)
 	if err != nil {
 		return false, err
@@ -333,10 +343,13 @@ func (s Session) sendMessage(ctx context.Context, m Message) (bool, error) {
 	return s.recordAnswer(ctx, m.ID, frame)
 }
 
-// encoderOf is the frame a message goes as: a review request, a message
-// routed to agents, or a message to the operator.
+// encoderOf is the frame a message goes as: one with file references, a
+// review request, a message routed to agents, or a message to the
+// operator.
 func encoderOf(m Message) func(Message) ([]byte, error) {
 	switch {
+	case len(m.Files) > 0:
+		return EncodeRefs
 	case m.Review != nil:
 		return EncodeReviewAsk
 	case m.Routed():
@@ -420,6 +433,7 @@ var frameDecoders = map[byte]struct {
 }{
 	FrameRouted:    {RoutingVersion, DecodeRouted},
 	FrameReviewAsk: {ReviewVersion, DecodeReviewAsk},
+	FrameRefs:      {RefsVersion, DecodeRefs},
 }
 
 // answerMessage stores, then answers; a store failure ends the session

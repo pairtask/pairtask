@@ -22,7 +22,7 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 10 // SealVersion
+	MaxVersion byte = 12 // RefsVersion
 )
 
 // LiveVersion is the first version whose sessions can stay open;
@@ -88,6 +88,9 @@ type Message struct {
 	// internal/signing encodes it; empty for an unsigned message. Not part
 	// of Hash: a message's identity doesn't change with its signature.
 	Seal []byte
+	// Files, version 12: the files the sender names (#419), in its order;
+	// covered by Hash whenever there are any.
+	Files []FileRef `json:"files,omitempty"`
 }
 
 // ReplyRef names the message a reply answers: its ID in the namespace of
@@ -122,6 +125,7 @@ func (m Message) Hash() [32]byte {
 	if m.Review != nil {
 		parts = append(append(parts, "review"), m.Review.parts()...)
 	}
+	parts = append(parts, refParts(m.Files)...)
 	h := sha256.New()
 	for _, part := range parts {
 		var size [8]byte
@@ -170,7 +174,7 @@ type wireFrame []byte
 func (f wireFrame) sized() bool { return len(f) >= 2 && len(f) <= MaxFrameBytes }
 
 func (f wireFrame) known() bool {
-	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameSealed
+	return f[0] == frameVersion && f[1] >= FrameHello && f[1] <= FrameRefs
 }
 
 // shape is a frame type and its exact number of fields.

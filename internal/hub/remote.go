@@ -193,6 +193,9 @@ func (h *Hub) remoteAcknowledged(msg protocol.Message, report store.AckReport) {
 // transaction, and leaves at once over a live link.
 func (h *Hub) routeRemote(ctx context.Context, clients map[string]*Client, in Inbound) bool {
 	route, remote, rerr := h.remoteRoute(ctx, in)
+	if !remote && len(in.Msg.Files) > 0 {
+		remote, rerr = true, errLocalFiles
+	}
 	if !remote {
 		return false
 	}
@@ -204,6 +207,13 @@ func (h *Hub) routeRemote(ctx context.Context, clients map[string]*Client, in In
 	}
 	return true
 }
+
+// refsUnsupportedDetail is what a sender hears, agent or operator, of a
+// message with file references for a workspace known to be older.
+const refsUnsupportedDetail = "that workspace's pairtask predates file references; nothing was queued. Send the message without files, or after that workspace updates"
+
+// errLocalFiles refuses file references on a message that stays here.
+var errLocalFiles = &routingError{protocol.ErrMalformedFrame, "files go with a message to a paired workspace: name its workspace, or answer a message from one"}
 
 // remoteRoute is how an agent's message reaches a paired workspace: the
 // contact, and the store call that queues it.
@@ -288,16 +298,23 @@ func (h *Hub) noticeParent(ctx context.Context, contact, reviewID string) (store
 // fromWorkspace refuses a parent that was not found, or came from another
 // workspace.
 func fromWorkspace(parent store.RemoteImport, contact string, found bool, err error) *routingError {
-	if err != nil || !found {
-		return errOtherWorkspace
+	if err != nil {
+		return errReplyLookup
 	}
-	if parent.Contact != contact {
+	if !found || parent.Contact != contact {
 		return errOtherWorkspace
 	}
 	return nil
 }
 
-var errOtherWorkspace = &routingError{protocol.ErrMalformedFrame, "with workspace, in_reply_to answers a message from that workspace"}
+// errReplyLookup: the parent couldn't be looked up, which says nothing
+// about the caller's message_id.
+var errReplyLookup = &routingError{protocol.ErrInternal, "paired reply target unavailable"}
+
+// errOtherWorkspace: the reply's parent isn't a message received from the
+// workspace it is addressed to. The frame is well formed; its target isn't.
+var errOtherWorkspace = &routingError{protocol.ErrInvalidReply,
+	"with workspace, in_reply_to must be the message_id of a message received from that workspace, as it arrived here"}
 
 // errReviewNotice answers a reply to a review notice that stands for no
 // request of that workspace: the review is answered through its
@@ -364,7 +381,8 @@ var remoteReplyErrors = []struct {
 	{messaging.ErrNotShared, protocol.ErrRecipientUnavailable, "this agent is not shared with that workspace"},
 	{messaging.ErrUnknownContact, protocol.ErrRecipientUnavailable, "that workspace is no longer a confirmed contact"},
 	{messaging.ErrOutboxFull, protocol.ErrInboxFull, "too many messages to that workspace are waiting to leave"},
-	{messaging.ErrInvalid, protocol.ErrMalformedFrame, "a message to a paired workspace has a printable ID up to 128 bytes and 1 to 16 KiB of text"},
+	{messaging.ErrInvalid, protocol.ErrMalformedFrame, "a message to a paired workspace has a printable ID up to 128 bytes, 1 to 16 KiB of text and at most 8 valid file references, none on a review request"},
+	{store.ErrRefsUnsupported, protocol.ErrRefsUnsupported, refsUnsupportedDetail},
 	{messaging.ErrConflict, protocol.ErrDuplicateMessage, "message ID already used for another message to that workspace"},
 	{store.ErrDuplicateMessage, protocol.ErrDuplicateMessage, store.ErrDuplicateMessage.Error()},
 	{store.ErrNotSupersedable, protocol.ErrNotSupersedable, store.ErrNotSupersedable.Error()},

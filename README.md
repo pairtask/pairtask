@@ -41,13 +41,13 @@ workspace controlling what it shares.
 
 - 🧭 **Let Jev sort untagged messages**: TypeSafe **Jev** (or Cloudflare **Clef**) records which agent a message to everyone without an `@` tag was for, in shadow mode: nothing is applied yet. `pairtask classifier on` turns it on with your API key; `pairtask classifier status` shows what it recorded ([details](docs/classifier.md)).
 
-- 🌐 **Work with your colleagues' agents**: [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link. Colleagues who work in Claude Desktop can [join from Desktop](docs/desktop.md) (preview).
+- 🌐 **Work with your colleagues' agents**: [Pair two workspaces](#connect-two-machines); choose [which agents to share](docs/pairing.md#7-let-agents-talk-across) and [which reviews to allow](docs/pairing.md#8-ask-for-reviews-across). Messages and review requests cross the link. Colleagues who work in Claude Desktop can [join from Desktop](docs/desktop.md) (preview) and ask Claude to [wait for new messages](docs/desktop.md#what-to-know).
 
 - 🔍 **Review changes**: Hand a pull request to one of your agents ([reviews](docs/operator-chat.md#reviews)), or request a review of specific commits from a colleague's agent; if the pull request moves before the review starts, [ask again](docs/pairing.md#8-ask-for-reviews-across).
 
 - 🔗 **Manage connections**: [Recover a paired workspace's address](docs/pairing.md#moving-between-networks) on an available LAN or tailnet, or set it by hand; [pause, resume or unpair](docs/pairing.md#change-or-stop); [repair](docs/pairing.md#repair) a pairing one side still holds.
 
-- ⚡ **Run and maintain**: One `pairtask` command [installs, starts and upgrades](docs/host-commands.md#install-and-upgrade); [check running versions and available updates](docs/host-commands.md#install-and-upgrade); [restart agents after an upgrade](docs/sandbox.md#after-an-upgrade-restart-agent-sessions); [track delivery](docs/durable-inboxes.md); [back up or archive messages](docs/durable-inboxes.md#backup-and-archive).
+- ⚡ **Run and maintain**: One `pairtask` command [installs, starts and upgrades](docs/host-commands.md#install-and-upgrade); `pairtask update` [updates the agent tools](docs/sandbox-tools.md#updating-the-agent-clients) in the running sandbox; [check running versions and available updates](docs/host-commands.md#install-and-upgrade); [restart agents after an upgrade](docs/sandbox.md#after-an-upgrade-restart-agent-sessions); [track delivery](docs/durable-inboxes.md); [back up or archive messages](docs/durable-inboxes.md#backup-and-archive).
 
 - 🧰 **Choose your environment**: Agents in [containers](docs/sandbox.md), the broker in an [offline one](docs/secured-runtime.md), projects kept across upgrades; [host folders](docs/sandbox-mounts.md), [Docker](docs/sandbox.md#docker-and-compose) and [tools](docs/sandbox-tools.md) when you want them; or run [directly on your machine](docs/quickstart.md) and connect any MCP client [by hand](docs/mcp.md).
 
@@ -74,6 +74,17 @@ workspace controlling what it shares.
    ([why](docs/sandbox.md#after-an-upgrade-restart-agent-sessions)). Upgrades
    end running sessions and keep your projects. If it stops on the Incus
    server version, see [upgrades](docs/sandbox.md#upgrades).
+
+   To update only the agent tools (Claude Code, Codex and the CodeScene MCP
+   server), without replacing the sandbox:
+
+   ```sh
+   pairtask update
+   ```
+
+   Running sessions continue. To undo the last update, run
+   `pairtask update --rollback`
+   ([details](docs/sandbox-tools.md#updating-the-agent-clients)).
 
 3. **Sign in** inside the workspace:
 
@@ -234,8 +245,11 @@ workspace ([names](docs/pairing.md#names)).
 
 Run `pairtask identity init` once on your host to sign messages as yourself
 (step 5 of [first time](#first-time)). When the other operator first signs, their key appears
-in their `⇄` tab as unverified. Compare its fingerprint with them, then use
-`/pair accept-key` in that tab to approve it. Received rows say whether they
+in their `⇄` tab as unverified. Compare the whole fingerprint with them over
+another channel, then use `/pair accept-key` in that tab to approve it (Tab
+lists the keys waiting; name one when several wait). Approving a key says who
+signs, not what they may do: authority still comes from the pairing and from
+what you shared. Received rows say whether they
 are signed by their operator, attested by their workspace for an agent, or
 unsigned. [The pairing guide](docs/pairing.md#signed-messages) explains the
 verification marks and key approval.

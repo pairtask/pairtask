@@ -203,6 +203,8 @@ type retirement struct {
 type retireStep struct{ label, query string }
 
 var retireSteps = []retireStep{
+	{"", `UPDATE claim_notices_out SET pending=0, dropped='unpaired'
+WHERE contact=?1 AND pairing_epoch=?3 AND pending=1`},
 	{"", `UPDATE pairing_exchanges SET state = 'retired', retired_at = ?2, reason = ?4
 WHERE identity_key = ?1 AND state IN ('open', 'installed') AND operation_id != ?5`},
 	{"", `UPDATE peer_joins SET retired_at = ?2 WHERE peer = ?1 AND retired_at IS NULL AND operation_id != ?5`},

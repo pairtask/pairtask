@@ -58,7 +58,36 @@ type Claim struct {
 	State             string     `json:"state"`
 	ClaimedAt         time.Time  `json:"claimed_at"`
 	FinishedAt        *time.Time `json:"finished_at,omitempty"` // released or done
+	// MessageID names a paired message instead of an operator message
+	// (#419): the one this side received, or the one it sent, whose claims
+	// these are. OperatorMessageID is then empty.
+	MessageID string `json:"message_id,omitempty"`
+	// Remote marks a claim learned from a paired workspace: its agent's,
+	// about a message this side sent. Always set on such a claim, never on
+	// a local one. What it says is the other workspace's word: data.
+	Remote *ClaimRemote `json:"remote,omitempty"`
 }
+
+// ClaimRemote says which paired workspace a claim came from: its identity key.
+type ClaimRemote struct {
+	Workspace string `json:"workspace"`
+}
+
+// PairedClaimVersion: claim frames take message_id for a message from, or
+// sent to, a paired workspace; results carry remote claims and whether a
+// change is shown to the other side (#419).
+const PairedClaimVersion = 30
+
+// Why a claim change on a paired message isn't shown to its sender.
+const (
+	ClaimNotShared   = "not_shared"  // the claiming agent isn't shared with that workspace
+	ClaimUnsupported = "unsupported" // that workspace runs a version without claim notices
+	ClaimUnpaired    = "unpaired"    // there is no current pairing with that workspace
+	// ClaimMixed answers a read when the caller's claims on the message
+	// are hidden for different reasons: none is shown, and no one reason
+	// says why.
+	ClaimMixed = "mixed"
+)
 
 // ClaimPage is a bounded list of claims with the total. Embedded in a frame,
 // all three fields are present whenever the page is, even when empty.
@@ -89,6 +118,20 @@ type ClaimSet struct {
 func ValidateClaimMessage(messageID string) error {
 	if messageID == "" || len(messageID) > 128 {
 		return errors.New("operator_message_id is required, at most 128 bytes")
+	}
+	return nil
+}
+
+// ValidateClaimSubject checks what a claim frame is about: an operator
+// message, or a paired message by message_id (#419), never both.
+func ValidateClaimSubject(operatorMessageID, messageID string) error {
+	switch {
+	case operatorMessageID != "" && messageID != "":
+		return errors.New("give operator_message_id or message_id, not both")
+	case messageID == "":
+		return ValidateClaimMessage(operatorMessageID)
+	case len(messageID) > 128:
+		return errors.New("message_id is at most 128 bytes")
 	}
 	return nil
 }

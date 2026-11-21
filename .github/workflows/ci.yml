@@ -79,7 +79,7 @@ jobs:
     needs: [classify]
     if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,13 +97,15 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      # Each package gets 1800s under -race: internal/store took 820s and
+      # Each package gets 2700s under -race: internal/store took 820s and
       # internal/server 810s on main, and a runner about 30% slower took
-      # store past the earlier 1200s (#276); 1800s restores about a 2x
-      # margin. Tests keep their own deadlines, so a hang still fails within
-      # the budget.
+      # store past the earlier 1200s (#276). On 2026-11-18 store ran past
+      # 1800s twice (main 39397e9, #406), each time inside fixture setup,
+      # while internal/server took about 1580s in the same runs: the suites
+      # grew, so 2700s restores the margin. Tests keep their own deadlines,
+      # so a hang still fails within the budget.
       - if: needs.classify.outputs.go != 'false'
-        run: go test -race ./... -timeout=1800s
+        run: go test -race ./... -timeout=2700s
       - if: needs.classify.outputs.scripts != 'false'
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Test the Pi extension
@@ -205,14 +207,19 @@ jobs:
       reason: ${{ steps.decide.outputs.reason }}
       # docs_only: a pull request or main push touching only safe documentation;
       # the Go, macOS and vector jobs skip (reported as skipped, never as a
-      # pass they did not earn). The four flags select PR suites by path;
+      # pass they did not earn). The flags select PR suites by path;
       # docs-only main pushes skip all suites. Other pushes and events,
       # workflow or classifier changes, and unknown paths run every suite.
+      # tools: a pull request changed the lock in the agent clients' versions
+      # or checksums only; the tools lane runs, and such a change alone (with
+      # safe docs and script tests) skips the image builds, which the merge
+      # to main then runs as for every release.
       docs_only: ${{ steps.decide.outputs.docs_only }}
       go: ${{ steps.decide.outputs.go }}
       scripts: ${{ steps.decide.outputs.scripts }}
       pi: ${{ steps.decide.outputs.pi }}
       infra: ${{ steps.decide.outputs.infra }}
+      tools: ${{ steps.decide.outputs.tools }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -232,6 +239,30 @@ jobs:
           force=()
           if [[ "$FORCE_FULL" == true ]]; then force=(--force-full); fi
           python3 scripts/ci-classify.py --event "$EVENT" --ref "$REF" --base "$BASE" --head "$HEAD" "${force[@]}" | tee -a "$GITHUB_OUTPUT"
+
+  tools-lane:
+    # A client-only change to the tool lock (see scripts/tools_lane.py): the
+    # publishers' checksums for both architectures against the lock, then the
+    # agent clients downloaded, verified and run on this architecture, up to
+    # the Codex App Server's initialize answer. Minutes, with no race step and
+    # no image builds; the merge to main proves the images, and the relay's
+    # own frame limit (#408) has its Go tests in internal/host.
+    needs: [classify]
+    if: needs.classify.outputs.tools == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the lock against the publishers and run the agent clients
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/tools-lane.py --architecture "$(uname -m)" --workdir "$RUNNER_TEMP/tools-lane"
 
   images:
     # On pushes, wait for base-mirror so images build from the just-published mirror; elsewhere it is skipped.
@@ -318,7 +349,7 @@ jobs:
         run: |
           sudo env PAIRTASK_ALLOW_ROOT=1 python3 scripts/sandbox-download.py --remote local --from-dir dist/workspace/release --output dist/installed
           set -o pipefail
-          sudo env "PATH=$PATH" "PAIRTASK_OPERATOR_PREPARED=$PAIRTASK_OPERATOR_PREPARED" PAIRTASK_ALLOW_ROOT=1 python3 scripts/sandbox-smoke.py --remote local --image-dir dist/installed --mount-check --secured-check --network-check | tee -a operator-prepared.log
+          sudo env "PATH=$PATH" "PAIRTASK_OPERATOR_PREPARED=$PAIRTASK_OPERATOR_PREPARED" PAIRTASK_ALLOW_ROOT=1 python3 scripts/sandbox-smoke.py --remote local --image-dir dist/installed --mount-check --secured-check --network-check --tools-update-check | tee -a operator-prepared.log
       - name: Prove offline controller and dev boundaries
         if: needs.classify.outputs.images != 'false'
         run: sudo env "PATH=$PATH" python3 scripts/sandbox-boundary.py --remote local --image-dir dist/installed

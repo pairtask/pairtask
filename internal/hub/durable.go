@@ -20,6 +20,7 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 	if !ok {
 		return
 	}
+	h.noteEnforcement(c, true)
 	clients[c.ID] = c
 	h.seq++
 	welcome := protocol.Message{Type: protocol.TypeWelcome, AgentID: c.ID, SessionID: c.SessionID, Seq: h.seq, ProtocolVersion: c.ProtocolVersion}
@@ -30,6 +31,7 @@ func (h *Hub) connect(clients map[string]*Client, c *Client) {
 			return
 		}
 	}
+	h.sendSummary(context.Background(), clients, c) // one owed since DND ended, if any
 	h.noteConnected(c, reclaimed)
 	h.noteHelloRooms(c)
 	h.log.Info("agent connected", "agent_id", c.ID, "session_id", c.SessionID, "replayed", len(pending), "online", len(clients))

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/signing"
 )
 
 // Publisher submits peer data to a host. Success is never an agent acknowledgment.
@@ -113,7 +114,7 @@ func (l *Listener) deliver(messages []protocol.Message) error {
 		if err := l.retain(msg); err != nil {
 			return err
 		}
-		if msg.Type == protocol.TypeAck {
+		if unpublished[msg.Type] || quiet(msg) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(l.ctx, ioTimeout)
@@ -126,8 +127,50 @@ func (l *Listener) deliver(messages []protocol.Message) error {
 		l.status.Submitted++
 		l.status.LastMessageID = msg.MessageID
 		l.mu.Unlock()
+		if err := l.reportSummary(msg); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// unpublished are the frames kept for receive and never submitted to the
+// host: receipts, and the answer to this adapter's own summary receipt.
+var unpublished = map[string]bool{protocol.TypeAck: true, protocol.TypeAttentionSubmittedResult: true}
+
+// reportSummary tells the broker the host was shown a DND summary (#422),
+// only after it was: the broker then stops owing it. The receipt names
+// the generation and nothing else; it acknowledges no message.
+func (l *Listener) reportSummary(msg protocol.Message) error {
+	if msg.Type != protocol.TypeAttentionSummary || msg.AttentionSummary == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(l.ctx, ioTimeout)
+	defer cancel()
+	c, err := l.connection(ctx)
+	if err != nil {
+		return err
+	}
+	return c.writeFrame(ctx, protocol.Message{Type: protocol.TypeAttentionSubmitted, AttentionGeneration: msg.AttentionSummary.Generation})
+}
+
+// quiet: the broker says this message must not interrupt (#422). A
+// suppressed one is kept for receive and never submitted to the host; an
+// urgent one interrupts only as the local operator's, and never with a
+// seal that doesn't hold. A message without a disposition notifies.
+func quiet(msg protocol.Message) bool {
+	switch msg.Attention {
+	case protocol.AttentionSuppressed:
+		return true
+	case protocol.AttentionUrgent:
+		return msg.Origin != protocol.OriginOperator || invalidSeal(msg)
+	}
+	return false
+}
+
+// invalidSeal: this adapter judged the message's seal and it doesn't hold.
+func invalidSeal(msg protocol.Message) bool {
+	return msg.Verification != nil && msg.Verification.State == signing.Invalid
 }
 
 func (l *Listener) retain(msg protocol.Message) error {

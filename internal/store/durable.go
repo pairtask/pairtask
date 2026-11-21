@@ -67,7 +67,7 @@ func persistDurable(ctx context.Context, tx *sql.Tx, msg protocol.Message, recip
 			return err
 		}
 	}
-	return nil
+	return markAttention(ctx, tx, msg, recipients)
 }
 
 // DurableWireBytes includes replay metadata and a conservative allowance for

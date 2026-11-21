@@ -137,11 +137,19 @@ func (h *Hub) contactChange(ctx context.Context, req operatorRequest) protocol.M
 }
 
 // opRefusals say why an operation of their kind was refused, if they know.
-var opRefusals = []func(error) (*routingError, bool){ownRefusal, reviewRefusal, nameRefusal, pauseRefusal, ackRefusal, homeRefusal}
+var opRefusals = []func(error) (*routingError, bool){ownRefusal, reviewRefusal, nameRefusal, pauseRefusal, ackRefusal, homeRefusal, refsRefusal}
 
 // ownRefusal is the operation's own refusal, as it said it.
 func ownRefusal(err error) (*routingError, bool) {
 	return errors.AsType[*routingError](err)
+}
+
+// refsRefusal: the contact's pairtask predates file references (#419).
+func refsRefusal(err error) (*routingError, bool) {
+	if !errors.Is(err, store.ErrRefsUnsupported) {
+		return nil, false
+	}
+	return &routingError{protocol.ErrRefsUnsupported, refsUnsupportedDetail}, true
 }
 
 // contactRefusal is what the operator hears of a failed change; store
@@ -322,7 +330,7 @@ func contactMessageView(r messaging.Row) protocol.ContactMessageView {
 		Text: r.Text, State: r.State, RefusalClass: r.Refusal.Class, RefusalReason: r.Refusal.Reason,
 		DeliveredAt: r.DeliveredAt, ReadAt: r.ReadAt, Receipt: r.Receipt, Cursor: r.Cursor,
 		From: r.From, To: r.To, ReplyID: r.ReplyTo.ID, ReplySide: replySides[r.ReplyTo.Author], AckState: r.AckState, AckedAt: r.AckedAt,
-		PairingEpoch: r.PairingEpoch, SealDowngraded: r.SealDowngraded}
+		PairingEpoch: r.PairingEpoch, SealDowngraded: r.SealDowngraded, Files: r.Files}
 	if len(r.Seal) > 0 {
 		view.Seal = base64.StdEncoding.EncodeToString(r.Seal)
 	}
@@ -424,7 +432,9 @@ func (h *Hub) messageView(ctx context.Context, r messaging.Row) (protocol.Contac
 			return view, err
 		}
 	}
-	return view, nil
+	claims, err := h.store.ContactClaims(ctx, r)
+	view.MessageClaims = protocol.ClaimsOf(claims)
+	return view, err
 }
 
 // agentAcks adds to a message sent to the contact's agents those that

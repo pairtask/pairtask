@@ -141,9 +141,9 @@ func (p *PeerMessages) Queue(ctx context.Context, o messaging.Outgoing) (messagi
 	if err := p.localOnly(); err != nil {
 		return messaging.Row{}, err
 	}
-	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo, Review: o.Review, Seal: o.Seal}
+	m := messaging.Message{ID: o.ID, Text: o.Text, From: o.From, To: o.To, ReplyTo: o.ReplyTo, Review: o.Review, Seal: o.Seal, Files: o.Files}
 	if !validOutgoing(m) {
-		return messaging.Row{}, fmt.Errorf("%w: ID, text or routing", messaging.ErrInvalid)
+		return messaging.Row{}, fmt.Errorf("%w: ID, text, routing or file references", messaging.ErrInvalid)
 	}
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -166,7 +166,7 @@ func validOutgoing(m messaging.Message) bool {
 	if !messaging.ValidID(m.ID) || !messaging.ValidText(m.Text) {
 		return false
 	}
-	return messaging.ValidRouting(m) && validAsk(m)
+	return messaging.ValidRouting(m) && validAsk(m) && validFiles(m)
 }
 
 // validAsk: no review request, or one within the rules.
@@ -196,17 +196,21 @@ type outgoing struct {
 }
 
 // queueIn is Queue inside its transaction: the existing row for a replay,
-// or a new one with the next sequence; either keeps the message's seal.
+// or a new one with the next sequence; either keeps the message's seal,
+// and names the files the kept message does.
 func queueIn(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error) {
 	row, err := queueRow(ctx, tx, o)
 	if err != nil {
 		return row, err
 	}
+	if err := sameFiles(ctx, tx, o.key, o.m.Files); err != nil {
+		return messaging.Row{}, err
+	}
 	if err := keepSeal(ctx, tx, o.key, o.m.Seal); err != nil {
 		return row, err
 	}
 	rows := []messaging.Row{row}
-	err = withSeals(ctx, tx, rows)
+	err = withKept(ctx, tx, rows)
 	return rows[0], err
 }
 
@@ -220,20 +224,35 @@ func queueRow(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error
 	if err != nil || found {
 		return o.replayedAsk(ctx, tx, row, err)
 	}
-	// A paused contact takes nothing new; a retry above still answers (#276).
-	if err := requireActive(ctx, tx, key.contact); err != nil {
-		return messaging.Row{}, err
-	}
-	if err := refuseUnpairedByThem(ctx, tx, key.contact); err != nil {
-		return messaging.Row{}, err
-	}
-	if err := o.senderMaySpeak(ctx, tx); err != nil {
-		return messaging.Row{}, err
-	}
-	if err := outboxRoom(ctx, tx, o); err != nil {
+	if err := o.admitted(ctx, tx); err != nil {
 		return messaging.Row{}, err
 	}
 	return queueNew(ctx, tx, o)
+}
+
+// newChecks are what a new outbound message passes before it is queued,
+// in order: a contact that isn't paused (a retry of a queued one is
+// answered before, #276) and hasn't unpaired, a sender that may speak
+// there, a contact that can carry its file references, and room in the
+// outbox.
+var newChecks = []func(context.Context, *sql.Tx, outgoing) error{
+	func(ctx context.Context, tx *sql.Tx, o outgoing) error { return requireActive(ctx, tx, o.key.contact) },
+	func(ctx context.Context, tx *sql.Tx, o outgoing) error {
+		return refuseUnpairedByThem(ctx, tx, o.key.contact)
+	},
+	func(ctx context.Context, tx *sql.Tx, o outgoing) error { return o.senderMaySpeak(ctx, tx) },
+	refsCarried,
+	outboxRoom,
+}
+
+// admitted is the first refusal of a new message, if any.
+func (o outgoing) admitted(ctx context.Context, tx *sql.Tx) error {
+	for _, check := range newChecks {
+		if err := check(ctx, tx, o); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // queueNew queues a new message with the next sequence, and records the
@@ -252,6 +271,9 @@ func queueNew(ctx context.Context, tx *sql.Tx, o outgoing) (messaging.Row, error
 		return messaging.Row{}, err
 	}
 	if err := keepSeal(ctx, tx, o.key, m.Seal); err != nil {
+		return messaging.Row{}, err
+	}
+	if err := keepFiles(ctx, tx, o.key, m.Files); err != nil {
 		return messaging.Row{}, err
 	}
 	if err := recordedAsk(ctx, tx, o); err != nil {
@@ -465,13 +487,16 @@ func (p *PeerMessages) Offer(ctx context.Context, contact string, now time.Time,
 		if err := holdForUpgrade(ctx, tx, contact, carried); err != nil {
 			return err
 		}
+		if err := endUncarriedRefs(ctx, tx, refsSession{contact, l.Version, now}); err != nil {
+			return err
+		}
 		rows, err := queryRows(ctx, tx, `WHERE contact = ?1 AND pairing_epoch = `+currentEpochOf1+`
     AND direction = 'out' AND state = 'queued' AND `+carried+` ORDER BY n`, contact)
 		if err != nil {
 			return err
 		}
 		out = within(rows, budget{limit.count + 1, limit.bytes})
-		return withSeals(ctx, tx, out)
+		return withKept(ctx, tx, out)
 	})
 	if err != nil {
 		return nil, err
@@ -620,7 +645,7 @@ func (p *PeerMessages) page(ctx context.Context, q pageQuery) ([]messaging.Row, 
 	for _, r := range rows[:min(len(rows), limit)] {
 		out = append(out, r.Row)
 	}
-	return out, more, withSeals(ctx, p.db, out)
+	return out, more, withKept(ctx, p.db, out)
 }
 
 // Confirmed reports a confirmed contact: the only identities a message

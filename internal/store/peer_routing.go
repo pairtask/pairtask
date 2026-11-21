@@ -124,6 +124,9 @@ func (p *PeerMessages) Unshare(ctx context.Context, contact string, agents []str
 			}
 		}
 		// A revoke is an explicit decision: it never reads as undecided (#293).
+		if err := settleUnsharedClaims(ctx, tx, contact); err != nil {
+			return err
+		}
 		if err := denyScopes(ctx, tx, denial{contact, named, []string{protocol.ConsentMessage}, now}); err != nil {
 			return err
 		}
@@ -211,6 +214,9 @@ WHERE state = 'pending' AND `+ungranted, msgStamp(now), contact)
 	_, err = tx.ExecContext(ctx, `DELETE FROM durable_inbox WHERE acknowledged_at IS NULL AND message_id IN (
     SELECT local_id FROM remote_imports WHERE state = 'imported' AND `+ungranted+`)`, msgStamp(now), contact)
 	if err != nil {
+		return err
+	}
+	if err := pruneAttention(ctx, tx); err != nil {
 		return err
 	}
 	return settleConsentOutcomes(ctx, tx, contact) // an allowed hold withheld is told so (#293)

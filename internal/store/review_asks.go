@@ -813,5 +813,6 @@ func (a AskOut) View() protocol.ReviewOutcomeView {
 	return protocol.ReviewOutcomeView{AskID: a.AskID, Workspace: a.Contact, Reviewer: a.Reviewer, Repository: a.Ask.Repository, Change: a.Ask.Change,
 		State: a.State, Attempt: a.Attempt, Intent: a.Intent, Verdict: a.Verdict, Summary: a.Summary, URL: a.URL, Reason: a.Reason,
 		ReviewID: a.ReviewID, Findings: a.Findings, PairingEpoch: a.Epoch,
-		MovedTo: movedFrom(a.State, a.Reason), Supersedes: a.Supersedes, SupersededBy: a.SupersededBy, SupersedesPruned: a.SupersedesPruned}
+		MovedTo: movedFrom(a.State, a.Reason), Supersedes: a.Supersedes, SupersededBy: a.SupersededBy, SupersedesPruned: a.SupersedesPruned,
+		Forge: a.Ask.Forge, Requested: protocol.RequestedPins(a.Ask.Base, a.Ask.Head)}
 }

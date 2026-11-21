@@ -56,7 +56,7 @@ func verifyContactRow(v protocol.ContactMessageView, view signingView) signing.R
 	if v.From == "" {
 		kind, id = signing.SenderOperator, protocol.OperatorID
 	}
-	link := protocol.PeerLink{Contact: v.Contact, Receiver: view.own, To: v.To, ReplyID: v.ReplyID, ReplyAuthor: replyAuthors[v.ReplySide]}
+	link := protocol.PeerLink{Contact: v.Contact, Receiver: view.own, To: v.To, ReplyID: v.ReplyID, ReplyAuthor: replyAuthors[v.ReplySide], Files: v.Files}
 	frame := signing.Frame{MessageID: v.ID, SenderKind: kind, SenderID: id, Text: v.Text, Addresses: []string{link.Address()}}
 	if result.State != signing.Invalid && !signsRow(seal, frame, link) {
 		return signing.Result{State: signing.Invalid, Reason: "the seal signs another message"}

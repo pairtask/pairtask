@@ -185,6 +185,7 @@ var responseHandlers = map[string]responseHandler{
 	kindContactAsk:         (*Model).contactAskResult,
 	kindCardAsks:           (*Model).cardAsksResult,
 	kindAskedDetail:        (*Model).askedDetailResult,
+	kindAttention:          (*Model).attentionResult,
 	kindRemoteReview:       (*Model).remoteReviewResult,
 	kindConsentList:        (*Model).consentListResult,
 	kindConsentDecide:      (*Model).consentDecideResult,

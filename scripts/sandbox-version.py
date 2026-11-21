@@ -12,8 +12,10 @@ import json
 import re
 import sys
 
+from sandbox_operator_config import existing_deployment
 from sandbox_releases import repository
 from sandbox_remote import default_remote
+import sandbox_tools_update
 import sandbox_version
 
 
@@ -36,6 +38,15 @@ def parser():
     return p
 
 
+def updated_clients(project):
+    """The line for agent clients moved by `pairtask update`, or None."""
+    try:
+        directory = existing_deployment(project)
+    except (ValueError, OSError):
+        return None
+    return sandbox_tools_update.clients_line(sandbox_tools_update.glance(directory)) if directory else None
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     scope = sandbox_version.Scope(args.project, args.remote, args.repo)
@@ -51,13 +62,21 @@ def main(argv=None):
     if args.json:
         print(json.dumps(data, sort_keys=True))
         return 0
-    for line in sandbox_version.lines(data):
+    for line in report_lines(data, args.project, notified):
         print(line)
-    if not notified:
-        print("chat:      update notice not delivered (the broker may predate it)")
-    if data["scope"] == "custom":
-        print("scope:     pass the same --project/--remote/--repo to pk version again; without them it reads the default deployment")
     return 0
+
+
+def report_lines(data, project, notified):
+    """The report, then what a reader should also know: clients moved by
+    an update, a notice the chat didn't get, and a custom scope."""
+    notes = {
+        updated_clients(project): True,
+        "chat:      update notice not delivered (the broker may predate it)": not notified,
+        "scope:     pass the same --project/--remote/--repo to pk version again; without them it reads the default deployment":
+            data["scope"] == "custom",
+    }
+    return list(sandbox_version.lines(data)) + [line for line, shown in notes.items() if line and shown]
 
 
 if __name__ == "__main__":

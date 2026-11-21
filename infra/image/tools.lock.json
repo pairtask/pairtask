@@ -26,34 +26,34 @@
       }
     },
     "codex": {
-      "version": "0.159.3",
+      "version": "0.170.0",
       "kind": "archive",
       "url": "https://github.com/openai/codex/releases/download/rust-v{version}/codex-package-{arch}.tar.gz",
       "entry": "bin/codex",
       "architectures": {
         "aarch64": {
           "arch": "aarch64-unknown-linux-musl",
-          "sha256": "20b7d673cf2b64b6c6208fa4fda06feb9dac0572da9987294b48cde1dab9d001"
+          "sha256": "3f7e1ae38c4fe27322e082b855e8eec936d08fa538d62b71c07e2a53f34e8847"
         },
         "x86_64": {
           "arch": "x86_64-unknown-linux-musl",
-          "sha256": "3930f31ac5fca861ea3e444e2683f261190d96b63fba58e0a40a879174369cdf"
+          "sha256": "a77ff87be7ba809d715728270a78f5ce3527dc07529416d1ef8929b90b8475eb"
         }
       }
     },
     "claude": {
-      "version": "2.1.283",
+      "version": "2.1.327",
       "kind": "binary",
       "url": "https://downloads.claude.ai/claude-code-releases/{version}/{arch}/claude",
       "entry": "claude",
       "architectures": {
         "aarch64": {
           "arch": "linux-arm64",
-          "sha256": "346d294f0103d6fc0de11ac953579b5c62dfa90698a4cfc486b6f927c615e697"
+          "sha256": "acf0ef2f9da8d5ab08f193f007e19a06cbfb608b96a2f1f758d63a92a386cff8"
         },
         "x86_64": {
           "arch": "linux-x64",
-          "sha256": "1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2"
+          "sha256": "343c744baa14bfd38286a7cb90871051f04379956da6c5b803a9e66019a76ac9"
         }
       }
     },

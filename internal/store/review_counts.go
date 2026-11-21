@@ -214,7 +214,7 @@ const (
 // it (#259).
 var askedColumns = `a.contact, a.ask_id, COALESCE(pm.cursor, 0), a.reviewer, a.state, a.verdict, a.url,
     a.updated_at, a.settled_at IS NOT NULL, COALESCE(a.review_id, ''), a.reason, a.findings, a.findings_seq, a.findings_attempt,
-    COALESCE(ch.state, ''), COALESCE(ch.reason, ''), a.pairing_epoch, a.supersedes, a.superseded_by, ` + parentKept("a")
+    COALESCE(ch.state, ''), COALESCE(ch.reason, ''), a.pairing_epoch, a.supersedes, a.superseded_by, a.ask, ` + parentKept("a")
 
 const askedFrom = `review_asks_out a LEFT JOIN peer_messages pm ON pm.contact = a.contact AND pm.pairing_epoch = a.pairing_epoch
     AND pm.direction = 'out' AND pm.message_id = a.ask_id
@@ -227,7 +227,18 @@ type askedRow struct {
 	updated string
 	epoch   int64
 	f       keptFindings
-	kept    bool // the request it replaces is still kept
+	kept    bool   // the request it replaces is still kept
+	ask     string // the request as it was sent, encoded
+}
+
+// asked is the forge and the revisions the stored request names; neither
+// when it can't be read, never a guess.
+func (r askedRow) asked() (string, *protocol.Revisions) {
+	var ask messaging.ReviewAsk
+	if json.Unmarshal([]byte(r.ask), &ask) != nil {
+		return "", nil
+	}
+	return ask.Forge, protocol.RequestedPins(ask.Base, ask.Head)
 }
 
 // scanAsked reads one request of askedColumns, with at most limit
@@ -237,10 +248,11 @@ func scanAsked(row rowScanner, limit int) (askedRow, error) {
 	item := &r.item
 	err := row.Scan(&item.Contact, &item.AskID, &item.Cursor, &item.Reviewer, &item.State, &item.Verdict, &item.URL,
 		&r.updated, &item.Settled, &item.ReviewID, &item.Reason, &r.f.envelope, &r.f.seq, &r.f.attempt, &item.Consent, &item.ConsentReason,
-		&r.epoch, &item.Supersedes, &item.SupersededBy, &r.kept)
+		&r.epoch, &item.Supersedes, &item.SupersededBy, &r.ask, &r.kept)
 	if err != nil {
 		return r, err
 	}
+	item.Forge, item.Requested = r.asked()
 	item.Findings, item.PairingEpoch = r.f.view(limit), r.epoch
 	item.MovedTo, item.SupersedesPruned = movedFrom(item.State, item.Reason), item.Supersedes != "" && !r.kept
 	item.UpdatedAt, err = time.Parse(time.RFC3339Nano, r.updated)

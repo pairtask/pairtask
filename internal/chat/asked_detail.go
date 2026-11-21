@@ -114,6 +114,9 @@ func (m *Model) askedDetailRows(d *askedDetail) []string {
 		rows = append(rows, "  reason: "+safe(it.Reason))
 	}
 	rows = append(rows, mutedStyle.Render("  "+theirReviewID(it.ReviewID)))
+	if requested := requestedWords(it.Forge, it.Requested, false); requested != "" {
+		rows = append(rows, mutedStyle.Render("  "+requested))
+	}
 	return append(rows, m.receivedFindingRows(it.Findings)...)
 }
 

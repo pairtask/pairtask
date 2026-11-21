@@ -3,9 +3,11 @@
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 import re
 import sys
+import urllib.parse
 import urllib.request
 
 from sandbox_https import urlopen
@@ -28,7 +30,14 @@ def fingerprint(value):
 
 
 def publisher_json(url):
-    request = urllib.request.Request(url, headers={"User-Agent": "collab-ai-image-builder"})
+    headers = {"User-Agent": "collab-ai-image-builder"}
+    # GitHub's API allows 60 unauthenticated calls an hour per address, which
+    # shared CI runners exhaust; a token from the environment lifts that. It
+    # goes to api.github.com only and is never printed.
+    token = os.environ.get("GH_TOKEN")
+    if token and urllib.parse.urlsplit(url).hostname == "api.github.com":
+        headers["Authorization"] = "Bearer " + token
+    request = urllib.request.Request(url, headers=headers)
     with urlopen(request, timeout=60) as response:
         return json.load(response)
 
@@ -45,14 +54,23 @@ def go_checksum(selected, arch):
 
 def codex_checksum(selected, arch):
     release = publisher_json(f"https://api.github.com/repos/openai/codex/releases/tags/rust-v{selected}")
-    name = f"codex-package-{arch}.tar.gz"
+    return asset_checksum(release, f"codex-package-{arch}.tar.gz")
+
+
+def cs_mcp_checksum(selected, arch):
+    release = publisher_json(f"https://api.github.com/repos/codescene-oss/codescene-mcp-server/releases/tags/MCP-{selected}")
+    return asset_checksum(release, f"cs-mcp-linux-{arch}.zip")
+
+
+def asset_checksum(release, name):
+    """The SHA256 GitHub recorded for one asset of a release."""
     for item in release["assets"]:
         if item["name"] == name:
             digest = item.get("digest") or ""
             if not digest.startswith("sha256:"):
                 raise ValueError(f"No publisher SHA256 for {name}")
             return fingerprint(digest.removeprefix("sha256:"))
-    raise ValueError(f"This Codex version has no supported native package: {name}")
+    raise ValueError(f"This release has no asset {name}")
 
 
 def claude_checksum(selected, arch):
@@ -65,7 +83,61 @@ def claude_checksum(selected, arch):
 def resolver(name):
     """The publisher checksum lookup for a tool, or None when a new version
     needs its checksum pinned by hand. Looked up at call time."""
-    return {"go": go_checksum, "codex": codex_checksum, "claude": claude_checksum}.get(name)
+    return {"go": go_checksum, "codex": codex_checksum, "claude": claude_checksum, "cs-mcp": cs_mcp_checksum}.get(name)
+
+
+def publisher_text(url):
+    """A short plain-text answer from a publisher, such as a version."""
+    request = urllib.request.Request(url, headers={"User-Agent": "collab-ai-image-builder"})
+    with urlopen(request, timeout=60) as response:
+        return response.read(128).decode("ascii", "replace").strip()
+
+
+def exact(value, source):
+    """value as an exact version, or ValueError naming where it came from."""
+    try:
+        return version(value)
+    except argparse.ArgumentTypeError as error:
+        raise ValueError(f"{source} names no exact version ({value!r})") from error
+
+
+def claude_latest():
+    """Claude Code's newest release. Not what an update takes by default
+    (claude_stable is); kept for telling the two channels apart."""
+    return exact(publisher_text("https://downloads.claude.ai/claude-code-releases/latest"), "Claude Code's latest release")
+
+
+def claude_stable():
+    """The version on Claude Code's stable channel, which trails its newest
+    release. An answer that isn't an exact version is an error: there is no
+    falling back to the newest."""
+    return exact(publisher_text("https://downloads.claude.ai/claude-code-releases/stable"), "Claude Code's stable channel")
+
+
+def tagged_latest(repository, prefix):
+    """The version of a GitHub repository's latest full release, from its
+    tag; GitHub's "latest" is never a draft or a prerelease."""
+    release = publisher_json(f"https://api.github.com/repos/{repository}/releases/latest")
+    tag = str(release.get("tag_name", ""))
+    if not tag.startswith(prefix):
+        raise ValueError(f"The latest release of {repository} has an unexpected tag ({tag!r})")
+    return exact(tag[len(prefix):], f"The latest release of {repository}")
+
+
+def codex_latest():
+    return tagged_latest("openai/codex", "rust-v")
+
+
+def cs_mcp_latest():
+    return tagged_latest("codescene-oss/codescene-mcp-server", "MCP-")
+
+
+def latest(name):
+    """The version an update moves an agent client to when none is named:
+    Claude Code's stable channel, and the latest full release of Codex and
+    of the CodeScene MCP server, which publish no stable channel. Looked up
+    at call time; the checksum for it comes from resolver(name), separately."""
+    return {"claude": claude_stable, "codex": codex_latest, "cs-mcp": cs_mcp_latest}[name]()
 
 
 def resolve_lock(path, architecture, args):

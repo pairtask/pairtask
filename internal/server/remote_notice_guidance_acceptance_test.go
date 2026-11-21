@@ -102,8 +102,8 @@ func TestRemoteNoticeGuidanceAcceptancePrefixNeverOverridesOtherContact(t *testi
 	messageConfirm(f.redeemOperatorFixture, other, 2)
 	before := f.snapshot()
 	response := f.reply(f.notice.MessageID, other.Fingerprint())
-	operatorEqual(t, "wrong workspace denied", response.Code, protocol.ErrMalformedFrame)
-	operatorEqual(t, "wrong-contact reason preserved", response.Detail, "with workspace, in_reply_to answers a message from that workspace")
+	operatorEqual(t, "wrong workspace denied", response.Code, protocol.ErrInvalidReply)
+	operatorEqual(t, "wrong-contact reason preserved", response.Detail, "with workspace, in_reply_to must be the message_id of a message received from that workspace, as it arrived here")
 	noticeGuidanceUnchanged(f, before)
 }
 
@@ -115,8 +115,8 @@ func TestRemoteNoticeGuidanceAcceptanceLookupFailureIsNotMissingNotice(t *testin
 	response := f.reply(f.notice.MessageID, f.key)
 	_, err = f.db.Exec(`ALTER TABLE held_remote_imports RENAME TO remote_imports`)
 	operatorNoError(t, err)
-	operatorEqual(t, "database lookup failure denied", response.Code, protocol.ErrMalformedFrame)
-	operatorEqual(t, "existing lookup-error detail preserved", response.Detail, "with workspace, in_reply_to answers a message from that workspace")
+	operatorEqual(t, "database lookup failure denied", response.Code, protocol.ErrInternal)
+	operatorEqual(t, "lookup failure is not a bad parent", response.Detail, "paired reply target unavailable")
 	noticeGuidanceUnchanged(f, before)
 }
 
@@ -142,8 +142,8 @@ func TestRemoteNoticeGuidanceAcceptanceNonReviewMissingParentKeepsExistingReason
 	f := newNoticeGuidanceServer(t)
 	before := f.snapshot()
 	response := f.reply("ordinary-missing-message", f.key)
-	operatorEqual(t, "missing ordinary reply rejected", response.Code, protocol.ErrMalformedFrame)
-	operatorEqual(t, "ordinary error unchanged", response.Detail, "with workspace, in_reply_to answers a message from that workspace")
+	operatorEqual(t, "missing ordinary reply rejected", response.Code, protocol.ErrInvalidReply)
+	operatorEqual(t, "ordinary error unchanged", response.Detail, "with workspace, in_reply_to must be the message_id of a message received from that workspace, as it arrived here")
 	noticeGuidanceUnchanged(f, before)
 }
 

@@ -72,7 +72,7 @@ const (
 var reasonClass = map[string]string{
 	ReasonInvalid: Terminal, ReasonTooLarge: Terminal, ReasonConflict: Terminal, ReasonTooOld: Terminal,
 	ReasonInboxFull: Transient, ReasonBusy: Transient, ReasonNotShared: Terminal, ReasonInvalidSeal: Terminal,
-	ReasonUnsigned: Terminal,
+	ReasonUnsigned: Terminal, ReasonRefsUnsupported: Terminal,
 }
 
 // Refusal is why a message wasn't stored.

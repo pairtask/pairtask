@@ -10,9 +10,10 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 # Every app revision has these; testdata, fixtures Go tests share with
-# scripts (#277), only newer ones.
+# scripts (#277), and pairbook, the public Pairbook contract package the
+# app imports, only newer ones.
 REQUIRED_APP_PATHS = ["go.mod", "go.sum", "cmd", "internal"]
-OPTIONAL_APP_PATHS = ["testdata"]
+OPTIONAL_APP_PATHS = ["testdata", "pairbook"]
 APP_PATHS = REQUIRED_APP_PATHS + OPTIONAL_APP_PATHS
 RECIPE_PATHS = ["infra/image/" + name for name in (
     "install.sh", "install-build-go.py", "install-layout.py", "layout_schema.py", "layout-v2.json", "sshd_config", "pairtask-broker.service",
@@ -25,7 +26,7 @@ RECIPE_PATHS = ["infra/image/" + name for name in (
     "pairtask-rtk-setup", "pairtask-rtk-setup.service", "codex-config.toml",
     "docker-packages.txt", "pairtask-docker-setup",
     "pairtask-docker-session.service", "pairtask-docker-setup.service", "pairtask-user-workspace.conf",
-    "tool_download.py", "tool_lock.py", "tool_store.py", "build-playwright-bundle.py",
+    "tool_download.py", "tool_lock.py", "tool_smoke.py", "tool_store.py", "tool_update.py", "build-playwright-bundle.py",
     "pairtask-tools-activate", "pairtask-tools-ready", "pairtask-tool", "pairtask-tools-ready.service",
     "pairtask-tools-setup.service", "pairtask-playwright", "pairtask-codescene-login",
     "pairtask-chromium.apparmor", "mcp/package.json", "mcp/package-lock.json", "mcp/servers.json",

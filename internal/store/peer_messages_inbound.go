@@ -176,6 +176,9 @@ func insertAccepted(ctx context.Context, tx *sql.Tx, r newRow) (messaging.Answer
 	if err := keepSeal(ctx, tx, r.key, r.m.Seal); err != nil {
 		return messaging.Answer{}, false, err
 	}
+	if err := keepFiles(ctx, tx, r.key, r.m.Files); err != nil {
+		return messaging.Answer{}, false, err
+	}
 	if err := stageImport(ctx, tx, r); err != nil {
 		return messaging.Answer{}, false, err
 	}
@@ -196,7 +199,7 @@ var inboundChecks = []inboundCheck{
 		if !validSequence(m.N) || !messaging.ValidID(m.ID) {
 			return true, nil
 		}
-		return !messaging.ValidRouting(m) || !validAsk(m), nil
+		return !messaging.ValidRouting(m) || !validAsk(m) || !validFiles(m), nil
 	}},
 	{messaging.ReasonInvalidSeal, sealRefuses},
 	{messaging.ReasonNotShared, func(ctx context.Context, tx *sql.Tx, contact string, m messaging.Message) (bool, error) {

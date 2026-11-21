@@ -58,10 +58,13 @@ func (s *Store) ReleaseClaim(ctx context.Context, req ClaimRequest) (protocol.Cl
 	})
 }
 
-// FinishClaim marks the agent's active owner claim done: terminal, and the
-// task never becomes free again.
+// FinishClaim marks the agent's active claim done, in the role it names
+// (owner when it names none): terminal, and that role's slot for the task
+// never becomes free again.
 func (s *Store) FinishClaim(ctx context.Context, req ClaimRequest) (protocol.ClaimSet, error) {
-	req.Role = protocol.RoleOwner
+	if req.Role == "" {
+		req.Role = protocol.RoleOwner
+	}
 	return s.claimTx(ctx, req.MessageID, req.Agent, func(tx *sql.Tx) error {
 		return assignFinish.orClaim(ctx, tx, req, func() error { return finishClaim(ctx, tx, req, protocol.ClaimDone) })
 	})
@@ -232,6 +235,7 @@ func (s *Store) RecentClaims(ctx context.Context, limit int) ([]protocol.ClaimSe
 // (#278), each once, with its newest claim or assignment.
 const claimedMessages = `SELECT operator_message_id, MAX(at) AS latest FROM (
     SELECT operator_message_id, claimed_at AS at FROM claims
+    WHERE operator_message_id NOT IN (SELECT local_id FROM remote_imports)
     UNION ALL SELECT operator_message_id, assigned_at AS at FROM assignments
 ) GROUP BY operator_message_id`
 

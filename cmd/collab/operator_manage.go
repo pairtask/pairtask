@@ -28,6 +28,8 @@ func runOperatorInbox(ctx context.Context, args []string, stdout, stderr io.Writ
 		return 2
 	}
 	switch args[0] {
+	case "summary":
+		return runInboxSummary(ctx, args[1:], stdout, stderr)
 	case "status":
 		return runInboxStatus(ctx, args[1:], stdout, stderr)
 	case "ack":

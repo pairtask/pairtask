@@ -41,6 +41,9 @@ func (h *Hub) claim(ctx context.Context, in Inbound) protocol.Message {
 	if refusal := h.claimPreflight(in, now); refusal != nil {
 		return *refusal
 	}
+	if msg.MessageID != "" {
+		return h.pairedClaim(ctx, in, now)
+	}
 	req := store.ClaimRequest{MessageID: msg.OperatorMessageID, Task: msg.Task, Topic: msg.Topic, Role: msg.Role, Agent: in.From.ID, At: now}
 	set, err := h.runClaim(ctx, msg.Type, req)
 	if err != nil {
@@ -63,11 +66,8 @@ func (h *Hub) claimPreflight(in Inbound, now time.Time) *protocol.Message {
 		frame := statusError(msg.RequestID, code, detail)
 		return &frame
 	}
-	switch {
-	case msg.RequestID == "" || len(msg.RequestID) > 128:
-		return refuse(protocol.ErrMalformedFrame, "request_id is required, at most 128 bytes")
-	case in.From.ProtocolVersion < protocol.ClaimVersion:
-		return refuse(protocol.ErrMalformedFrame, "claims require protocol_version 8")
+	if detail := malformedClaim(in); detail != "" {
+		return refuse(protocol.ErrMalformedFrame, detail)
 	}
 	if err := validClaimFrame(msg); err != nil {
 		return refuse(protocol.ErrInvalidClaim, err.Error())
@@ -76,6 +76,23 @@ func (h *Hub) claimPreflight(in Inbound, now time.Time) *protocol.Message {
 		return refuse(protocol.ErrClaimRateLimited, "too many claim changes; retry shortly")
 	}
 	return nil
+}
+
+// malformedClaim is why a claim frame can't be served at all: its
+// request_id, or a protocol version without claims, or without claims on
+// a paired message when it names one. "" when it can.
+func malformedClaim(in Inbound) string {
+	version := in.From.ProtocolVersion
+	if in.Msg.RequestID == "" || len(in.Msg.RequestID) > 128 {
+		return "request_id is required, at most 128 bytes"
+	}
+	if version < protocol.ClaimVersion {
+		return "claims require protocol_version 8"
+	}
+	if in.Msg.MessageID != "" && version < protocol.PairedClaimVersion {
+		return "claims on a paired message require protocol_version 30"
+	}
+	return ""
 }
 
 func (h *Hub) runClaim(ctx context.Context, kind string, req store.ClaimRequest) (protocol.ClaimSet, error) {
@@ -117,7 +134,7 @@ func page(set protocol.ClaimSet) *protocol.ClaimPage {
 
 // validClaimFrame checks the fields each claim frame needs.
 func validClaimFrame(msg protocol.Message) error {
-	if err := protocol.ValidateClaimMessage(msg.OperatorMessageID); err != nil {
+	if err := protocol.ValidateClaimSubject(msg.OperatorMessageID, msg.MessageID); err != nil {
 		return err
 	}
 	if msg.Type == protocol.TypeClaimGet {
@@ -140,7 +157,7 @@ func validClaimChange(msg protocol.Message) error {
 	case protocol.TypeClaimRelease:
 		return protocol.ValidateRole(msg.Role)
 	case protocol.TypeClaimDone:
-		// The role may be left out (done is the owner's); one given must
+		// The role may be left out (done is then the owner's); one given must
 		// be a client's role, never an assignment's (#278).
 		if msg.Role != "" {
 			return protocol.ValidateRole(msg.Role)
@@ -166,4 +183,34 @@ func (m bucketMap) of(agent string, now time.Time) *tokenBucket {
 		m[agent] = b
 	}
 	return b
+}
+
+// pairedClaim serves a claim frame that names a paired message (#419): one
+// this agent received, which it may claim, or one it sent, whose claims
+// the other workspace told of it may read. A change the sender is owed is
+// queued with it, and the link woken; neither side ever refuses anything
+// else because of a claim.
+func (h *Hub) pairedClaim(ctx context.Context, in Inbound, now time.Time) protocol.Message {
+	msg := in.Msg
+	req := store.ClaimRequest{MessageID: msg.MessageID, Task: msg.Task, Topic: msg.Topic, Role: msg.Role, Agent: in.From.ID, At: now}
+	out, err := h.store.PairedClaim(ctx, msg.Type, req)
+	if err != nil {
+		failure := h.claimFailure(msg.RequestID, protocol.ClaimSet{}, err)
+		if failure.Code == protocol.ErrClaimConflict {
+			failure.MessageID, failure.ClaimPage = msg.MessageID, page(out.Set)
+		}
+		return failure
+	}
+	answer := protocol.Message{Type: protocol.TypeClaimResult, RequestID: msg.RequestID, MessageID: msg.MessageID, ClaimPage: page(out.Set)}
+	if out.Known {
+		answer.RemoteVisible, answer.RemoteReason = &out.Visible, out.Reason
+	}
+	if !out.Changed {
+		return answer
+	}
+	h.MessagesChanged(out.Contact)
+	if out.Visible {
+		h.SyncMessages(out.Contact)
+	}
+	return answer
 }

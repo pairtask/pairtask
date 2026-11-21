@@ -144,11 +144,16 @@ func signedBy(s Seal) (Cert, error) {
 	if KeyID(s.RootKey) != leaf.Issuer {
 		return Cert{}, errRootKey
 	}
-	if leaf.Workspace != s.Header.Workspace {
+	if leaf.Workspace != s.Header.Workspace && !personIssued(leaf) {
 		return Cert{}, errWorkspace
 	}
 	return leaf, nil
 }
+
+// personIssued: a device certificate bound to a person rather than to one
+// workspace (#392); which workspaces it may speak for is the person's
+// bindings, judged by the identity package, not the certificate.
+func personIssued(leaf Cert) bool { return leaf.Kind == KindDevice && leaf.Workspace == "" }
 
 // OperatorID is the reserved sender ID of a workspace's operator.
 const OperatorID = "operator"

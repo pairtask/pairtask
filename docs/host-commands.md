@@ -28,6 +28,7 @@ on a machine you keep.)
 | `curl -fsSL https://raw.githubusercontent.com/pairtask/pairtask/main/install.sh \| sh` | host | The one-line install: checks Python 3.9+, Git, Incus (and Colima on macOS, offering the `brew install` line), fetches the latest release's host tooling into `~/.pairtask/host`, puts `pairtask` on your PATH, then runs `pairtask install --release <that tag>` (`pairtask upgrade` when already installed); run again later to upgrade both. `--no-provision` updates only the `pairtask` command, leaving the VM and containers alone. Options after `sh -s --`: `--version TAG`, `--no-provision`, `--no-modify-path`, `--yes`. Never run as root. | yes, if containers exist |
 | `pairtask install` | host | First install: on macOS starts the Colima VM, then downloads and verifies the latest release, provisions the containers, configures SSH and lists them. Flags go to the rollout (`--release workspace-vX.Y.Z`, `--remote`, `--project`, `--storage-pool`, `--network`, `--tools`). | yes, if containers exist |
 | `pairtask upgrade` | host | Download the release, stop the containers, replace them, keep projects and agent home. Same flags as install. It doesn't update `pairtask` itself (the installer does) or the Incus server (`vm incus-plan`). Restart agent sessions afterwards ([after an upgrade](sandbox.md#after-an-upgrade-restart-agent-sessions)). | yes |
+| `pairtask update` | host | Move Claude Code, Codex and the CodeScene MCP server in the running sandbox to selected versions: Claude Code to its publisher's stable channel (which may be older than the version installed), Codex and the CodeScene MCP server to their latest release (`--claude`, `--codex`, `--cs-mcp VERSION` for an exact one, which is also how to take a Claude Code newer than stable), without replacing the containers. Each new client is checksum-verified and started unprivileged before anything is switched; both containers switch together or neither does; nothing existing is changed. `pairtask update --rollback` returns to the clients from before, with no download; `--status` reports and changes nothing; `--repair` finishes or reverts an interrupted update. `pairtask upgrade` ends an update: the new sandbox runs its release's own versions. Restart agent sessions to pick the new client up ([updating the agent clients](sandbox-tools.md#updating-the-agent-clients)). | no |
 | `pairtask version` | host | Which app release the containers run, which host tooling release this `pairtask` is, the latest published release, and the one manual command that would update them; it never upgrades anything. The running release is observed each time: each container's creation image and the build source baked into it must match exactly one published release, else it says `unknown` or `mixed`. The latest release is cached for 6 hours (`--refresh` asks GitHub now) and shown with its age. The command suggested is `pairtask upgrade` for an older app, or the installer for older host tooling, and never one that would go back to an older release; for a deployment named with `--project`, `--remote` or `--repo`, pass the same flags here to get its command. A deployment `pairtask upgrade` cannot target (a remote other than `local` or the Colima one, or a project name other than letters, digits, `-` and `_`) is still reported, with no upgrade suggested. `--json` prints the report. It also hands the result to the chat, which shows it in the footer and under `/version`; `pairtask chat` does so from cached data before it opens and refreshes it in the background, and `pairtask upgrade` reports what runs afterwards. | no |
 | `pairtask size show` | host | How big the sandbox is and how full: the macOS VM's CPU, RAM and disk, the Incus pool, the workspace's CPU, RAM and root disk, and each volume with the share it uses; a volume at 90% or more is flagged. It only reads. `--json` prints the report. [Resize](sandbox-storage.md#resize). | no |
 | `pairtask size plan --memory 6 --agent-home 10` then `pairtask size apply` | host | Grow the workspace's CPU or RAM, the root disk quota every sandbox container shares, or a volume's quota. `plan` refuses shrinking, values out of range, CPU or RAM the VM can't give alongside the other containers, and sizes another tfvars file sets; then it records them in the deployment's `size.auto.tfvars.json` and previews the change, which `apply` carries out. [Resize](sandbox-storage.md#resize). | yes |
@@ -74,6 +75,7 @@ Step by step: [pair two machines](pairing.md).
 | `pairtask identity init` / `pairtask identity status` | host → secured | Make your signing keys, once, or show them and the folder they are in (`pairtask operator identity …` in secured). The keys stay on secured's state volume and survive upgrades; `init` refuses while keys exist. [Signed messages](operator-chat.md#trust-model). | no |
 | `pairtask secured` | host → secured | A root shell in the secured runtime, where operator commands such as `pairtask operator send` run; terminal restored afterwards. With a command (`pairtask secured pairtask operator receive`) it runs that one command, with a terminal when `--tty` is given. | no |
 | `incus --project pairtask exec colima-pairtask:secured -- pairtask operator send --to codex-1 "text"` | secured | One-shot operator message, receive or ack without the chat; refused while a chat is open. [Secured runtime](secured-runtime.md#operator-messages). | no |
+| `pairtask dnd @codex-1 on` (also `off`, or nothing to show it) | host → secured | Do-not-disturb for one agent: messages still reach it without interrupting it; `pairtask send --urgent @codex-1 text` interrupts anyway. In the chat: `/dnd` and `/urgent`. Inside secured: `pairtask operator dnd --agent codex-1 on`. Like other one-shot operator commands, refused while a chat is open. | no |
 | `reset` | host | Repairs a terminal left in mouse-reporting mode by a dropped session. | no |
 
 ## Mounts and sharing
@@ -292,3 +294,31 @@ settings for a standalone broker: [Jev classifier guide](classifier.md).
 Off by default. Tells you in Slack when an agent needs your decision; you
 answer in the chat. Slack setup, options, what leaves the host and the
 settings for a standalone broker: [Slack notifications guide](slack-notifications.md).
+
+`pairtask send @AGENT TEXT...` sends a message through the secured runtime;
+`pairtask send @all TEXT...` broadcasts. Text is joined with spaces and passed
+literally, including words beginning with `--`. Put `--remote`, `--project` and
+`--secured` before the target to select another runtime. `pk` accepts the same commands.
+
+`pairtask inbox [--limit N] [--json]` shows the newest unacknowledged messages
+(default 10, maximum 50), their senders and ages. Reading this summary neither
+receives nor acknowledges messages. The same target flags select its runtime.
+
+`pairtask dnd @AGENT on` turns do-not-disturb on for one of your agents:
+messages still reach it and stay in its inbox, but they don't interrupt it.
+`pairtask dnd @AGENT off` ends it, and the agent gets one summary of what
+stayed quiet. `pairtask dnd @AGENT` shows the setting, whether it is enforced
+now and how many quiet messages wait; add `--json` for the full answer.
+`pairtask send --urgent @AGENT TEXT...` sends one message that interrupts the
+agent anyway; put `--urgent` before the target, since anything after it is
+text. Both name exactly one agent of this workspace.
+
+`pairtask status` also shows agents' declared work and each agent's last message
+to the operator, including acknowledged messages. If secured or its broker is
+unavailable, the other status information remains available.
+
+The agent roster uses the broker's bounded snapshot and explicitly reports any
+truncation. Last-message lookup scans at most 512 newest history entries; if
+that limit leaves agents unresolved, their last message is unknown. JSON adds
+`roster_truncated`, `declaration_total` and `last_messages_truncated` to make
+these limits visible. Older brokers report an unsupported request.

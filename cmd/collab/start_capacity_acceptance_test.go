@@ -102,6 +102,7 @@ func TestStartCapacityAcceptanceRecoveryNamesDisposableCachesAndKeepsState(t *te
 	writeCapacityFile(t, cache)
 	keep := capacityFile{filepath.Join(home, ".codex", "session"), "keep me"}
 	writeCapacityFile(t, keep)
+	useCacheVolume(t, filepath.Join(t.TempDir(), "no-workspace", ".cache")) // caches still in home
 	var stderr bytes.Buffer
 	full := reportCapacity(func() (homeSpace, error) {
 		return homeSpace{Path: home, Free: 0, Total: 2 << 30}, nil
@@ -124,9 +125,7 @@ func TestStartCapacityAcceptanceWorkspaceCacheExplainsOldHomeCopies(t *testing.T
 	volume := filepath.Join(t.TempDir(), "workspace", ".cache")
 	current := capacityFile{filepath.Join(volume, "go-build", "current"), "current artifact"}
 	writeCapacityFile(t, current)
-	previous := cacheVolume
-	cacheVolume = volume
-	t.Cleanup(func() { cacheVolume = previous })
+	useCacheVolume(t, volume)
 
 	var stderr bytes.Buffer
 	reportCapacity(func() (homeSpace, error) {
@@ -135,6 +134,15 @@ func TestStartCapacityAcceptanceWorkspaceCacheExplainsOldHomeCopies(t *testing.T
 	assertCapacityText(t, stderr.String(), volume, "old copies in the home", "rm -rf ~/.cache/go-build")
 	assertCapacityFile(t, old)
 	assertCapacityFile(t, current)
+}
+
+// useCacheVolume points the moved-cache check at volume for one test, so
+// the report doesn't depend on whether this machine has /workspace/.cache.
+func useCacheVolume(t *testing.T, volume string) {
+	t.Helper()
+	previous := cacheVolume
+	cacheVolume = volume
+	t.Cleanup(func() { cacheVolume = previous })
 }
 
 type capacityFile struct {

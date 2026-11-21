@@ -17,7 +17,8 @@ const pendingAcceptance = "pending_acceptance"
 var pairVerbs = []string{"open", "find", "status", "cancel", "accept", "reject", "redeem", "settle"}
 
 // contactPairVerbs are offered too in a contact's tab, where they act.
-var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairApprove, pairDecline, pairName, pairAddress, pairPause, pairResume, pairUnpair}
+var contactPairVerbs = []string{pairShare, pairUnshare, pairReviews, pairApprove, pairDecline, pairName, pairAddress, pairPause, pairResume, pairUnpair,
+	pairAcceptKey, pairRequireSeals}
 
 // pairVerbsHere are the /pair words that act in the open tab.
 func (m *Model) pairVerbsHere() []string {
@@ -30,27 +31,33 @@ func (m *Model) pairVerbsHere() []string {
 
 // pairUsages say what each /pair word takes, in the input box's label.
 var pairUsages = map[string]string{
-	"open":    "open [--discoverable]: show a one-time code for the other workspace; --discoverable announces it by name on this network while open",
-	"find":    "find: list open invitations on this network and tailnet devices; pick one to fill redeem",
-	"status":  "status [OPERATION_ID]",
-	"cancel":  "cancel: close the open invitation",
-	"accept":  "accept KEY: the start of the request's key; Tab lists requests",
-	"reject":  "reject KEY: the start of the request's key; Tab lists requests",
-	"redeem":  "redeem HOST:PORT CODE [NAME]: NAME is how this workspace shows on theirs",
-	"settle":  "settle [OPERATION_ID]: finish a redemption the other side accepted",
-	"share":   "share AGENT...|*: in a ⇄ tab, that workspace may message these agents",
-	"unshare": "unshare AGENT...|*: in a ⇄ tab, it may message them no more",
-	"reviews": "reviews AGENT... ask|auto|off [--publish] [--formal]: in a ⇄ tab, what that workspace may ask of these agents",
-	"approve": "approve ID: in a ⇄ tab, let one of its review requests through",
-	"decline": "decline ID: in a ⇄ tab, refuse one of its review requests",
-	"name":    "name NAME|--clear: in a ⇄ tab, what this side calls that workspace",
-	"pause":   "pause: in a ⇄ tab, block new traffic with that workspace, both ways, until resume",
-	"resume":  "resume: in a ⇄ tab, let queued messages flow with that workspace again",
-	"unpair":  "unpair [NAME|KEY]: end that workspace's pairing for good, its history kept; a card asks you to confirm",
-	"consent": "consent [ID | contact:NAME | on NAME | off NAME | reset NAME AGENT OPERATION]: what paired workspaces wait for you to decide",
+	"open":           "open [--discoverable]: show a one-time code for the other workspace; --discoverable announces it by name on this network while open",
+	"find":           "find: list open invitations on this network and tailnet devices; pick one to fill redeem",
+	"status":         "status [OPERATION_ID]",
+	"cancel":         "cancel: close the open invitation",
+	"accept":         "accept KEY: the start of the request's key; Tab lists requests",
+	"reject":         "reject KEY: the start of the request's key; Tab lists requests",
+	"redeem":         "redeem HOST:PORT CODE [NAME]: NAME is how this workspace shows on theirs",
+	"settle":         "settle [OPERATION_ID]: finish a redemption the other side accepted",
+	"share":          "share AGENT...|*: in a ⇄ tab, that workspace may message these agents",
+	"unshare":        "unshare AGENT...|*: in a ⇄ tab, it may message them no more",
+	"reviews":        "reviews AGENT... ask|auto|off [--publish] [--formal]: in a ⇄ tab, what that workspace may ask of these agents",
+	"approve":        "approve ID: in a ⇄ tab, let one of its review requests through",
+	"decline":        "decline ID: in a ⇄ tab, refuse one of its review requests",
+	"name":           "name NAME|--clear: in a ⇄ tab, what this side calls that workspace",
+	"pause":          "pause: in a ⇄ tab, block new traffic with that workspace, both ways, until resume",
+	"resume":         "resume: in a ⇄ tab, let queued messages flow with that workspace again",
+	"unpair":         "unpair [NAME|KEY]: end that workspace's pairing for good, its history kept; a card asks you to confirm",
+	pairAcceptKey:    "accept-key [KEY]: in a ⇄ tab, approve that operator's person key after comparing its full fingerprint with them; KEY is needed when several await; Tab lists them",
+	pairRequireSeals: "require-seals on|off: in a ⇄ tab, refuse that workspace's unsigned messages, or take them again marked unsigned",
+	"consent":        "consent [ID | contact:NAME | on NAME | off NAME | reset NAME AGENT OPERATION]: what paired workspaces wait for you to decide",
 }
 
-func decidesRequest(word string) bool {
+// pairWord is one /pair word as typed.
+type pairWord string
+
+// decidesRequest: the word accepts or rejects a pairing request.
+func (word pairWord) decidesRequest() bool {
 	return word == "accept" || word == "reject"
 }
 
@@ -104,6 +111,27 @@ var pairWordChoices = map[string]func(*Model, argLine) []string{
 	protocol.PairingOpStatus: (*Model).operationChoices,
 	protocol.PairingOpSettle: (*Model).operationChoices,
 	pairConsent:              (*Model).consentCompletions,
+	pairAcceptKey:            (*Model).pendingPersonKeyChoices,
+	pairRequireSeals:         (*Model).sealsChoices,
+}
+
+// pendingPersonKeyChoices are the open ⇄ tab's person keys awaiting
+// acceptance, whole, since accept-key takes an exact key; nothing elsewhere,
+// and nothing once a key is typed. Picking one fills the line and sends
+// nothing: Enter is the approval.
+func (m *Model) pendingPersonKeyChoices(l argLine) []string {
+	if len(l.words) != 1 || !m.conv.selected.isContact() {
+		return nil
+	}
+	return withPrefix(m.contacts.thread(m.conv.selected.contact).pendingKeys, l.current)
+}
+
+// sealsChoices are require-seals' two settings, in the ⇄ tab they act in.
+func (m *Model) sealsChoices(l argLine) []string {
+	if len(l.words) != 1 || !m.conv.selected.isContact() {
+		return nil
+	}
+	return withPrefix([]string{"on", "off"}, l.current)
 }
 
 // pendingRequestKeys are the keys of the listed requests that wait for a
@@ -116,7 +144,7 @@ func (m *Model) pendingRequestKeys() []string {
 	if s == nil {
 		return nil
 	}
-	all := make([]string, 0, len(s.Requests))
+	all := make(digests, 0, len(s.Requests))
 	var pending []string
 	for _, r := range s.Requests {
 		digest := protocol.KeyDigest(r.IdentityKey)
@@ -130,18 +158,25 @@ func (m *Model) pendingRequestKeys() []string {
 	}
 	keys := make([]string, len(pending))
 	for i, d := range pending {
-		keys[i] = uniquePrefix(d, all)
+		keys[i] = all.uniquePrefix(d)
 	}
 	return keys
 }
 
+// digests are the keys of every listed request, which a short key must be
+// unique among.
+type digests []string
+
 // uniquePrefix is the shortest prefix of digest, at least a short key long,
 // that no other digest starts with.
-func uniquePrefix(digest string, all []string) string {
+func (all digests) uniquePrefix(digest string) string {
 	for n := len(protocol.ShortKey(digest)); n < len(digest); n++ {
-		prefix := digest[:n]
-		if !slices.ContainsFunc(all, func(o string) bool { return o != digest && strings.HasPrefix(o, prefix) }) {
-			return prefix
+		shared := false
+		for _, o := range all {
+			shared = shared || (o != digest && strings.HasPrefix(o, digest[:n]))
+		}
+		if !shared {
+			return digest[:n]
 		}
 	}
 	return digest
@@ -194,8 +229,8 @@ func (m *Model) commandHint() string {
 		return "command · " + keys
 	}
 	usage := c.usage
-	if c.name == "pair" {
-		usage = pairWordUsage(rest, usage)
+	if l, ok := splitArgLine(m.compose.cmd.input.Value()); ok && c.name == "pair" {
+		usage = pairWordUsage(l, c)
 	}
 	if note := m.reviewerNote(c.name, rest); note != "" {
 		return "/" + c.name + " · " + note + " · " + usage + " · " + keys // first, so a narrow line keeps it
@@ -205,10 +240,13 @@ func (m *Model) commandHint() string {
 
 // pairWordUsage narrows /pair's usage to the word being used, once it is
 // typed or unambiguous.
-func pairWordUsage(rest, all string) string {
-	word, _, _ := strings.Cut(strings.TrimLeft(rest, " "), " ")
+func pairWordUsage(l argLine, pair command) string {
+	word := l.current
+	if len(l.words) > 0 {
+		word = l.words[0]
+	}
 	if word == "" {
-		return all
+		return pair.usage
 	}
 	matches := withPrefix(pairVerbs, word)
 	if usage, ok := pairUsages[word]; ok {
@@ -217,7 +255,7 @@ func pairWordUsage(rest, all string) string {
 	if len(matches) == 1 {
 		return pairUsages[matches[0]]
 	}
-	return all
+	return pair.usage
 }
 
 // invitationLabel is the open invitation's row: when it expires and the

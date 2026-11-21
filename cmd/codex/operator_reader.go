@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/pairtask/pairtask/internal/host"
@@ -25,6 +27,9 @@ func readOperatorFrames(ctx context.Context, input io.Reader, dispatch func(host
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-result:
+		if errors.Is(err, host.ErrFrameTooLarge) {
+			return fmt.Errorf("from the operator client: %w", err)
+		}
 		return err
 	}
 }

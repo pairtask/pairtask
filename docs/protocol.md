@@ -155,10 +155,11 @@ Agents that negotiated v5 can write to the operator: `to: "operator"` with
 - **Older agents:** a v4 durable send returns `durability_unavailable`; a v4
   non-durable send returns `unknown_recipient`.
 
-The operator endpoint gains three one-shot requests:
+The operator endpoint accepts these one-shot requests:
 
 | Request | Effect |
 | --- | --- |
+| `status` | Returns the existing `status` snapshot through the operator-UID authenticated socket, without opening or replacing the operator chat session. No receipts change. Older brokers return `unsupported_operation`; this endpoint extension does not change the wire schema or negotiation version. |
 | `operator_receive {page_request: {after_seq, upper_seq, limit}}` | Returns `operator_page` with unacknowledged inbox messages in sequence order. `upper_seq: 0` starts a scan bounded by the highest committed message; echo the returned `upper_seq` to continue. It changes no receipts. |
 | `operator_received {message_ids}` | After the client has adopted a page, records `adapter_received` (1 to 32 IDs, all validated first). |
 | `operator_ack {message_id}` | The human's explicit receipt. Requires `adapter_received`. It means received, never approval or completion. |
@@ -332,6 +333,154 @@ All conversation, with the author and `origin: "agent"`.
   a public answer is never silently narrowed; direct sends still work.
 - **The operator's own `@all`** is unchanged: it reaches the agents, never the
   operator's own inbox.
+
+## Claims on paired messages (agent v30, peer v11)
+
+The four claim frames also accept `message_id` instead of
+`operator_message_id`. Exactly one selector is required. Only an actual
+recipient of the imported message may claim it; sharing alone grants no
+claim access. Local first-claim and role rules still apply. Only the sending
+agent may read claims on its sent message. The operator reads them in the
+paired conversation, including Desktop `check_inbox`.
+
+A result names `message_id`. Local claims have no `remote`; claims learned
+from the other workspace always carry `remote: {workspace}` with its canonical
+identity key. `claimed_at` is the peer's reported time, not an independently
+verified timestamp. These are last-reported states and never authorize,
+lock, or refuse a message, reply, or review.
+
+Mutations of received-message claims report `remote_visible`: true means a
+notice was queued, not delivered. False carries `remote_reason` (`not_shared`,
+`unsupported`, or `unpaired`); MCP adds explanatory `remote_reason_text`.
+Reads omit both visibility fields when the caller has no recorded claim
+notice. Otherwise they summarize that caller's claims: true if any was
+queued or answered-kept; false with their common reason if all are hidden,
+or `mixed` if hidden for different reasons. A read can also report a terminal
+peer refusal. An ended pairing always reports `unpaired`.
+Unsharing cancels queued notices atomically and stops further updates; the
+sender keeps the last state already reported. Re-sharing never revives a
+cancelled notice. Unpairing cancels notices and hides remote claims from the
+ended pairing, even if a later pairing reuses the message ID.
+
+Peer version 11 exchanges `ClaimNotice` (frame 31) and `ClaimReply` (32),
+after consent outcomes. The notice carries message ID, agent, role, task,
+state, sequence (1 through 2^63-1) and time; the reply repeats the complete key and sequence.
+An empty reason means kept; terminal reasons are `unknown_message`,
+`not_recipient`, `stale`, `conflict`, and `full`. Higher sequences replace,
+identical replays are kept, and conflicting equal or older sequences change
+nothing. A receiver keeps at most 16 held (active or done) claims and 64
+lifetime claim keys per message. Released keys free held capacity, but stay
+as sequence tombstones: a delayed older active notice cannot resurrect them.
+Reactivating a released key also requires held capacity. Updates that do not
+newly hold a key still work at the limits. Claim records are collected with
+their retained subjects.
+
+A peer below version 11 receives no claim frames. Pending notices settle as
+`unsupported`; changes while unsupported remain local. Upgrading does not
+replay them automatically: the next change can queue the current state with
+a sequence above every earlier recorded state. Hidden changes are recorded
+with their reason and are never pending for transmission. Local changes and notice insertion
+commit together, so a failed notice write rolls back the claim change.
+
+## File references on paired messages (agent v31, peer v12)
+
+A message to a paired workspace may name up to 8 files. Each reference is
+`{path, size, sha256}`, exactly as the sender states it:
+
+- `path`: a label of 1 to 512 bytes of UTF-8 without control characters,
+  such as the file's path in a shared repository. It is shown to the reader
+  and never opened, resolved or created by pairtask on either side.
+- `size`: bytes, 0 to 2^53-1.
+- `sha256`: 64 lower-case hex digits.
+
+Nothing is transferred, fetched or verified. The reader gets a statement to
+compare with a file it obtains another way: the same size and the same
+digest. A reference grants nothing and says nothing about where the file is.
+
+An agent sends them as `files` on a `msg` with `workspace`, new or a reply;
+the operator on an `operator_contact` `send`. A local message with `files`,
+a review request with `files`, more than 8, or one outside the bounds above
+is refused before anything is stored. The receiving agents get `files` in the
+message's payload beside `text`; a contact message carries `files` in the
+conversation, including Desktop `check_inbox`. A client refuses to send
+`files` to a broker below agent protocol 31, which would drop them.
+
+Peer version 12 adds one frame, `Refs` (33): the frame the message would
+otherwise go as (plain or routed), then a count byte and, for each reference
+in order, the label with a two-byte length, eight bytes of size and the 32
+digest bytes. Only a message with references uses it, so every other message
+is byte for byte what it was, at every version. The message's identity (its
+hash, and so the receiver's replay check) covers the references in order.
+
+A signed message's seal covers them too. Its recipients gain one entry,
+`files-sha512:` and 128 hex digits: the SHA-512 of `pairtask-file-refs-v1`,
+a zero byte, and the references as the frame carries them. The entry is
+longer than any agent ID can be, and a recipient that long never binds, so
+no recipient list can stand for a file list. A message without references
+has no such entry and its seal is unchanged. Adding, removing, reordering or
+changing a reference under a seal is refused as `invalid_seal`.
+
+A message with references is never sent without them:
+
+- If the contact's last session agreed a version below 12, the send is
+  refused at once with `refs_unsupported` and nothing is queued.
+- If its version isn't known yet (it hasn't connected since pairing or
+  since this release), the message is queued. If the session then agrees a
+  version below 12, the message ends as `refused` with reason
+  `refs_unsupported`, visible on the message with its references kept, and
+  the agent that sent it gets one notice from `pairtask` saying so. It is
+  never offered again; send it again without files, or after that workspace
+  updates.
+
+## Do-not-disturb and urgent messages (agent v32)
+
+The operator can turn do-not-disturb (DND) on for one local agent. Nothing
+is delayed, dropped or acknowledged by it: delivery and retention are what
+they were, durable or not. DND only changes whether the delivered frame
+interrupts the agent.
+
+- **Setting.** `operator_attention` with `agent_id` and `attention_op` (`on`,
+  `off` or `status`) answers `operator_attention_result` with
+  `attention_state`: `dnd`, `since`, `enforced`, `reason`, `pending` (kept
+  quiet and not yet acknowledged), `inbox_used` (every unacknowledged
+  message) and `inbox_limit`. Only the operator sets it; an agent's request
+  is refused. The setting is stored and survives restarts.
+- **What a recipient gets.** The broker decides for each recipient when the
+  message is admitted and stamps the delivered `msg` with `attention`:
+  `suppressed` (keep it, don't interrupt), `urgent` (the operator's urgent
+  message, through DND), or nothing (notify, as always). The decision is
+  kept with the message, so a replay carries the same one, whatever DND is
+  by then. An `attention` written by a sender is discarded, and only the
+  authenticated local operator's request can make a message urgent.
+- **Urgent.** `operator_send` takes `urgent: true`. Only the local operator's
+  own send can be urgent: never an agent's and never anything from a paired
+  workspace, its operator included. Urgency is part of the request, so a
+  retry with the same ID must say the same. It changes notification only: no
+  permission, no authority. An adapter ignores `urgent` on a message whose
+  seal doesn't hold.
+- **Adapters.** An adapter at v32 keeps a `suppressed` message for `receive`
+  and doesn't submit it to its host. An older adapter can't: `enforced` is
+  then false with `reason: adapter_too_old`, its frames carry no `attention`,
+  and it is interrupted as before. `reason: offline` means the agent isn't
+  connected; the setting applies when it connects.
+- **What the sender is told.** A local sender's accepted answer carries
+  `recipients[].attention` for each recipient whose DND is on: `suppressed`,
+  `unsupported` (it will be interrupted) or `offline`. Nothing for a
+  recipient whose DND is off or whom an urgent message reaches anyway.
+  Repeated operator sends return the retained delivery outcome without
+  attention advisories. A paired workspace is told nothing about DND.
+- **When DND ends.** If messages kept quiet are still unacknowledged, the
+  agent is owed one `attention_summary` (`generation`, `count`,
+  `message_ids`, oldest first), sent when DND is off and the agent is
+  connected. It is not sent while DND is on, and turning DND off again
+  repeats nothing. The adapter answers `attention_submitted` with
+  `attention_generation` once its host was shown the summary, and gets
+  `attention_submitted_result` with `accepted`; only the generation owed to
+  that agent is accepted. A summary acknowledges no message.
+- **Bounds.** A quiet message still occupies the agent's inbox (32
+  unacknowledged messages); once it is full, senders get `inbox_full` as
+  always. A message that isn't durable is quiet while DND is on, is not in
+  any summary, and is lost on restart as before.
 
 ## Task claims (v8)
 

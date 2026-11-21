@@ -58,9 +58,15 @@ func TestChatV2ReviewHelpPanelCanScrollToLastLine(t *testing.T) {
 	h.input(tea.WindowSizeMsg{Width: 60, Height: 10})
 	v2Command(h, "/help")
 	var seen strings.Builder
-	for range 30 {
+	var previous string
+	for range 100 {
 		v2FrameFits(t, h, 60, 10)
-		seen.WriteString(ansi.Strip(h.m.View().Content))
+		frame := ansi.Strip(h.m.View().Content)
+		seen.WriteString(frame)
+		if frame == previous {
+			break
+		}
+		previous = frame
 		h.input(chatKey(tea.KeyPgDown, 0))
 	}
 	if !strings.Contains(seen.String(), "/quit") {
