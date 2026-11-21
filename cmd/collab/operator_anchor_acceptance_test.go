@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pairtask/pairtask/internal/identity"
 	"github.com/pairtask/pairtask/internal/personkey"
 )
 
@@ -83,10 +87,54 @@ func TestHostAnchorConfirmationThroughCLI(t *testing.T) {
 	if strings.Count(stdout.String(), "PTR1-") != 1 || strings.Contains(stderr.String(), "PTR1-") {
 		t.Fatal("unexpected recovery disclosure")
 	}
+	checkConfirmationReport(t, stdout.String())
 	stdout.Reset()
 	stderr.Reset()
 	code = run(context.Background(), []string{"operator", "identity", "anchor"}, &stdout, &stderr)
 	if code == 0 || strings.Contains(stdout.String()+stderr.String(), "PTR1-") {
 		t.Fatal("repeat anchor registration should refuse without a code")
+	}
+}
+
+func checkConfirmationReport(t *testing.T, output string) {
+	t.Helper()
+	if !strings.Contains(output, "Confirmed.") {
+		t.Fatal("missing confirmation acknowledgment")
+	}
+	for _, unexpected := range []string{"not confirmed", "not registered with this broker", "workspace "} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("unexpected local report text %q", unexpected)
+		}
+	}
+}
+
+func TestLocalAnchorJSONWithoutRecovery(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
+	t.Setenv(personkey.DirEnv, dir)
+	keys, err := personkey.Create(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"operator", "identity", "anchor", "--no-recovery", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("anchor exited %d: %s", code, &stderr)
+	}
+	raw, err := keys.Anchor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := identity.ParseAnchor(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage := a.Lineage()
+	want := map[string]string{"dir": dir, "anchor": "ok", "lineage": hex.EncodeToString(lineage[:]), "person_key": identity.KeyID(keys.PersonPublic())}
+	var got map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("unexpected local report fields: got %v, want %v", got, want)
 	}
 }
