@@ -210,20 +210,27 @@ func (r identityReport) isPersonKey(root protocol.SigningRoot) bool {
 }
 
 func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer) int {
-	if report.local {
-		if err := writeLocal(report, asJSON, stdout); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
+	if err := reportIdentity(report, asJSON, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
-	if asJSON {
-		if err := json.NewEncoder(stdout).Encode(report); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
+	return 0
+}
+
+// reportIdentity writes the report: anchor and confirm locally, the rest
+// with the broker's view; as JSON or text.
+func reportIdentity(report identityReport, asJSON bool, stdout io.Writer) error {
+	switch {
+	case report.local:
+		return writeLocal(report, asJSON, stdout)
+	case asJSON:
+		return json.NewEncoder(stdout).Encode(report)
 	}
+	writeIdentityText(report, stdout)
+	return nil
+}
+
+func writeIdentityText(report identityReport, stdout io.Writer) {
 	switch {
 	case report.PersonKey == "":
 		fmt.Fprintln(stdout, "no keys: your messages go unsigned; `pairtask identity init` on the host makes them")
@@ -236,5 +243,4 @@ func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer)
 		writeAnchor(report.anchorView, stdout)
 	}
 	fmt.Fprintf(stdout, "workspace %s\nkeys in %s\n", report.Workspace, report.Dir)
-	return 0
 }
