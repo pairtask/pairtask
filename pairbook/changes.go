@@ -122,8 +122,10 @@ func (v VerifiedMap) checkMember(s SignedChange, now time.Time) error {
 	return ErrInvalid
 }
 
+// checkBind: a valid binding of a workspace that is free, or already this
+// person's (the owner then finds whether it is the very same binding).
 func (v VerifiedMap) checkBind(s SignedChange, p Person, now time.Time) error {
-	if _, taken := v.workspaces[s.Binding.Workspace()]; taken {
+	if b, taken := v.workspaces[s.Binding.Workspace()]; taken && b.lineage != p.Lineage {
 		return ErrInvalid
 	}
 	st := personState{lineage: p.Lineage, person: KeyID(p.Person), key: p.Person, epoch: p.Epoch}

@@ -207,3 +207,8 @@ func create(path keyFile, key ed25519.PrivateKey) error {
 	_, werr := f.Write(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 	return errors.Join(werr, f.Sync(), f.Close())
 }
+
+// PersonKey is the person private key, for this host process to sign
+// person statements (an identity anchor, a space map) with. It never
+// leaves the process: nothing sends it to a broker or another host.
+func (k *Keys) PersonKey() ed25519.PrivateKey { return k.person }

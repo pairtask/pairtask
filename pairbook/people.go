@@ -162,3 +162,8 @@ func (p personState) current(c identity.Claim, a identity.Acceptance) bool {
 func (p personState) names(l Lineage, key ed25519.PublicKey) bool {
 	return p.lineage == l && p.person == KeyID(key)
 }
+
+// ClaimedLineage is the person a binding's claim names (false when the
+// claim doesn't parse). It says nothing about validity: a map's Verify
+// checks that.
+func (b Binding) ClaimedLineage() (Lineage, bool) { return claimedLineage(b) }
