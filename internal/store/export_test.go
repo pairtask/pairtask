@@ -35,3 +35,11 @@ func SetAdmissionHook(h func(stage string) error) (restore func()) {
 	admissionHook = h
 	return func() { admissionHook = old }
 }
+
+// SetIdentityExchange is test-only: turns the identity phase (peer version
+// 13) on or off for stores in this process.
+func SetIdentityExchange(on bool) (restore func()) {
+	old := identityExchange
+	identityExchange = on
+	return func() { identityExchange = old }
+}

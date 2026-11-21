@@ -116,7 +116,7 @@ func sealVersionFor(st Store) byte {
 	if !keepsRefs(st) {
 		return ClaimVersion
 	}
-	if _, ok := st.(IdentityStore); ok {
+	if is, ok := st.(IdentityStore); ok && is.ExchangesIdentity() {
 		return IdentityVersion
 	}
 	return RefsVersion

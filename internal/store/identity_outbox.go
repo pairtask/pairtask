@@ -20,6 +20,15 @@ import (
 
 var _ messaging.IdentityStore = (*PeerMessages)(nil)
 
+// identityExchange turns the identity phase on (peer version 13). It stays
+// off until the chat can show identity verdicts itself (#421 slice 2): a
+// statement a peer sends must never let a row look verified that the
+// identity state holds unapproved or frozen. Tests turn it on.
+var identityExchange = false
+
+// ExchangesIdentity: sessions through this store take the identity phase.
+func (p *PeerMessages) ExchangesIdentity() bool { return identityExchange }
+
 // QueueIdentity owes the contact one signed statement; the same statement
 // again is queued once.
 func (s *Store) QueueIdentity(ctx context.Context, contact string, statement []byte, at time.Time) error {

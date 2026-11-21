@@ -59,6 +59,9 @@ type IdentityStored struct {
 // IdentityStore is what an IdentityVersion session needs besides Store.
 type IdentityStore interface {
 	Store
+	// ExchangesIdentity is true when the store takes part in the identity
+	// phase; until then its sessions stay at the version before it.
+	ExchangesIdentity() bool
 	// PendingIdentity is up to max statements still owed contact, oldest first.
 	PendingIdentity(ctx context.Context, contact string, max int) ([]IdentityStatement, error)
 	// IdentityAnswered records the contact's answer to one of them: any
@@ -197,6 +200,8 @@ type identitySessionStore struct {
 	claimSessionStore
 	is IdentityStore
 }
+
+func (s identitySessionStore) ExchangesIdentity() bool { return s.is.ExchangesIdentity() }
 
 func (s identitySessionStore) PendingIdentity(ctx context.Context, contact string, max int) ([]IdentityStatement, error) {
 	out, err := s.is.PendingIdentity(ctx, contact, max)
