@@ -22,7 +22,10 @@ const MaxFrameBytes = 32 << 10
 // keeps a session open after its first round (live.go).
 const (
 	MinVersion byte = 1
-	MaxVersion byte = 13 // IdentityVersion
+	// MaxVersion is the newest version a default store speaks.
+	// IdentityVersion is newer, offered only by a store that exchanges
+	// identity (off until the chat can show identity verdicts itself).
+	MaxVersion byte = 12 // RefsVersion
 )
 
 // LiveVersion is the first version whose sessions can stay open;
