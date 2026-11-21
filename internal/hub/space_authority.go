@@ -76,6 +76,9 @@ func (h *Hub) OnSpaceChange(f func(space string)) {
 // Listeners are told after every lock is released, so one may refresh the
 // same space; they read the current state rather than trust the call.
 func (h *Hub) KeepSpaceMap(ctx context.Context, space string, m pairbook.SignedSpaceMap) error {
+	if h.store == nil {
+		return errNoSpaceStore
+	}
 	a, k := h.authority, spaceKey(space)
 	unlock := a.lockSpace(k)
 	v, err := h.store.KeepSpaceMap(ctx, space, m, a.now())
@@ -103,6 +106,9 @@ func (h *Hub) unpinSpace(ctx context.Context, k spaceKey) error {
 	return err
 }
 
+// errNoSpaceStore: a hub without a store keeps no space maps.
+var errNoSpaceStore = errors.New("hub: no store for space maps")
+
 // SpaceAuthority is space's active map, if it has one that hasn't expired.
 func (h *Hub) SpaceAuthority(space string) (pairbook.VerifiedMap, bool) {
 	return h.authority.get(spaceKey(space))
@@ -111,6 +117,9 @@ func (h *Hub) SpaceAuthority(space string) (pairbook.VerifiedMap, bool) {
 // restoreSpaceMaps makes each kept map active again, if it still verifies
 // against its pin and its own mark now.
 func (h *Hub) restoreSpaceMaps(ctx context.Context) {
+	if h.store == nil {
+		return // a hub run without a store keeps no spaces
+	}
 	spaces, err := h.store.SpaceMapSpaces(ctx)
 	if err != nil {
 		h.log.Warn("space maps not restored", "err", err)
