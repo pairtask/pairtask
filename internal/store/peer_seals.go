@@ -132,6 +132,14 @@ func sealRefuses(ctx context.Context, tx *sql.Tx, contact string, m messaging.Me
 	if check.own == "" {
 		return true, nil // a side without an identity can't be addressed
 	}
+	// A root that belongs to a lineage held here is judged by identity,
+	// never by the per-workspace rule below (#392).
+	if h, held, err := heldForSeal(ctx, tx, seal); err != nil || held {
+		if err != nil {
+			return false, err
+		}
+		return admitByIdentity(ctx, tx, sealedMessage{contact, check.own, m, seal}, h)
+	}
 	result := signing.Verify(&seal, check.roots, time.Now())
 	if result.State == signing.Invalid || !sealBinds(seal, contact, check.own, m) {
 		return true, nil
