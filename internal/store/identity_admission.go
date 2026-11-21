@@ -95,7 +95,7 @@ func admitByIdentity(ctx context.Context, tx *sql.Tx, s sealedMessage, h identit
 	if err != nil {
 		return false, err
 	}
-	result, ev, err := judgeSeal(ctx, tx, s.seal, frame, h, identity.Clock{Now: identityNow, Mark: mark})
+	result, ev, err := judgeSeal(ctx, tx, sealCase{s.seal, frame, h, identity.Clock{Now: identityNow, Mark: mark}})
 	if err != nil {
 		return false, err
 	}
@@ -111,12 +111,24 @@ func admitByIdentity(ctx context.Context, tx *sql.Tx, s sealedMessage, h identit
 	return false, admissionStage("after-evidence")
 }
 
+// sealCase is what judging one seal takes: the seal, the frame it must
+// have signed, the lineage's state and the clock.
+type sealCase struct {
+	seal  signing.Seal
+	frame signing.Frame
+	held  identity.Held
+	clock identity.Clock
+}
+
 // judgeSeal is identity.Admit, except for a lineage past its bound: an
 // invalid seal stays invalid, and nothing else from it verifies.
-func judgeSeal(ctx context.Context, q rowQuerier, seal signing.Seal, frame signing.Frame, h identity.Held, clock identity.Clock) (signing.Result, identity.Evidence, error) {
-	result, ev := identity.Admit(seal, frame, h, clock)
-	full, err := lineageFull(ctx, q, h.Lineage)
-	if err != nil || !full || result.State == signing.Invalid {
+func judgeSeal(ctx context.Context, q rowQuerier, c sealCase) (signing.Result, identity.Evidence, error) {
+	result, ev := identity.Admit(c.seal, c.frame, c.held, c.clock)
+	if result.State == signing.Invalid {
+		return result, ev, nil
+	}
+	full, err := lineageFull(ctx, q, c.held.Lineage)
+	if err != nil || !full {
 		return result, ev, err
 	}
 	capped := signing.Result{State: signing.Unverified, Reason: "identity history full; the operator must resolve it"}
@@ -202,7 +214,7 @@ func (p *PeerMessages) currentAdmission(ctx context.Context, contact, id string,
 		return signing.Result{}, err
 	}
 	_, frame := sealFrame(contact, own, rows[0].Message)
-	result, _, err := judgeSeal(ctx, p.db, seal, frame, h, identity.Clock{Now: identityNow, Mark: mark})
+	result, _, err := judgeSeal(ctx, p.db, sealCase{seal, frame, h, identity.Clock{Now: identityNow, Mark: mark}})
 	return result, err
 }
 

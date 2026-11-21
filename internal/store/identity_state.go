@@ -263,10 +263,18 @@ func applyStatement(ctx context.Context, tx *sql.Tx, s arrival) (identity.Effect
 	// Judged first: a statement that wouldn't be kept (a rejection, a
 	// duplicate, a bad signature) is a no-op at the bound as anywhere.
 	next, eff, err := h.Apply(st, s.at)
-	if err != nil || !keepEffects[eff.Kind] || !changesState(st) {
+	if err != nil {
 		return eff, err
 	}
+	if !worthKeeping(st, eff) {
+		return eff, nil
+	}
 	return keepWithinBound(ctx, tx, keptStatement{l, st, s, next}, eff)
+}
+
+// worthKeeping: the statement changed, or may later change, the state.
+func worthKeeping(st identity.Statement, eff identity.Effect) bool {
+	return keepEffects[eff.Kind] && changesState(st)
 }
 
 // settledStatement answers, without judging, a statement already kept
