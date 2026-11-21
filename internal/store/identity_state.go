@@ -254,15 +254,19 @@ func applyStatement(ctx context.Context, tx *sql.Tx, s arrival) (identity.Effect
 	if err != nil {
 		return identity.Effect{}, err
 	}
-	if full, err := inputsFull(ctx, tx, l); err != nil || full {
-		if err == nil && h.Trust != "" {
-			err = markFull(ctx, tx, l, s.at)
-		}
-		return identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}, err
-	}
+	// Judged first: a statement that wouldn't be kept (a rejection, a
+	// duplicate, a bad signature) is a no-op at the bound as anywhere, so
+	// only a statement that would change the state can freeze a full
+	// lineage.
 	next, eff, err := h.Apply(st, s.at)
 	if err != nil || !keepEffects[eff.Kind] {
 		return eff, err
+	}
+	if full, err := inputsFull(ctx, tx, l); err != nil || full {
+		if err == nil {
+			err = markFull(ctx, tx, l, s.at)
+		}
+		return identity.Effect{Kind: identity.Rejected, Reason: errHistoryFull}, err
 	}
 	return eff, keepStatement(ctx, tx, keptStatement{l, st, s, next})
 }
