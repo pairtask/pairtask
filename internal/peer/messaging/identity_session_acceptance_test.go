@@ -4,8 +4,25 @@ import (
 	"context"
 	"errors"
 	"github.com/pairtask/pairtask/internal/peer/messaging"
+	"github.com/pairtask/pairtask/internal/store"
 	"testing"
 )
+
+// Enable the experimental capability on this session's store only.
+type identityEnabled struct{ *store.PeerMessages }
+
+func (identityEnabled) ExchangesIdentity() bool { return true }
+
+func TestIdentityExchangeDefaultsToVersion12(t *testing.T) {
+	db, _ := sessionFixture(t)
+	bound, err := db.PeerMessages().Admit(context.Background(), sessionContact)
+	sessionOK(t, err)
+	frames := &scriptFrames{input: [][]byte{epochSessionHello(t, 13), epochSessionID(t, bound.PairingID())}}
+	_, version, _ := sessionSide(frames, bound).OpenServe(context.Background())
+	if version != 12 {
+		t.Fatalf("default broker negotiated %d with a v13 peer", version)
+	}
+}
 
 func TestIdentityPhaseRefusesEarlyMessage(t *testing.T) {
 	ctx := context.Background()
@@ -16,7 +33,7 @@ func TestIdentityPhaseRefusesEarlyMessage(t *testing.T) {
 	}
 	msg := messaging.Message{ID: "early", N: 1, CreatedAt: sessionAt, Text: "before identity end"}
 	frames := &scriptFrames{input: [][]byte{epochSessionHello(t, 13), epochSessionID(t, bound.PairingID()), sessionMessage(t, msg)}}
-	_, version, err := sessionSide(frames, bound).OpenServe(ctx)
+	_, version, err := sessionSide(frames, identityEnabled{bound}).OpenServe(ctx)
 	if version != 13 || !errors.Is(err, messaging.ErrProtocol) {
 		t.Fatalf("negotiated %d, error %v", version, err)
 	}
