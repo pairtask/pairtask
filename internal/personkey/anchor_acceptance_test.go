@@ -142,7 +142,7 @@ func TestRecoveryCodePublishedVector(t *testing.T) {
 			t.Fatal("valid transcription failed")
 		}
 	}
-	for _, input := range []string{"", vector[1:], vector + "A", "PTR2" + vector[4:], strings.Replace(vector, "AAAQE", "AAAQA", 1), vector[:len(vector)-1] + "A"} {
+	for _, input := range []string{"", vector[1:], vector + "A", "PTR2" + vector[4:], strings.Replace(vector, "AAAQE", "AAAQA", 1), vector[:len(vector)-1] + "A", vector[:len(vector)-1] + "Z"} {
 		if _, err := personkey.DecodeRecovery(input); !errors.Is(err, personkey.ErrRecoveryCode) {
 			t.Fatal("invalid recovery code accepted")
 		}

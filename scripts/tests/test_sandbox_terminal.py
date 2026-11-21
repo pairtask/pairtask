@@ -219,8 +219,8 @@ class SessionEntryPointAcceptanceTests(unittest.TestCase):
             "incus", "--project", "work", "exec", "-t", "lab:secured-one", "--", "pairtask", "operator", "chat",
         ])
 
-    def test_identity_init_and_status_run_in_secured(self):
-        for action in ("init", "status"):
+    def test_identity_commands_run_in_secured(self):
+        for action in ("init", "anchor", "status"):
             with self.subTest(action=action):
                 self.run.reset_mock()
                 result = self.main(["identity-" + action, "--remote", "lab", "--project", "work",
@@ -229,6 +229,18 @@ class SessionEntryPointAcceptanceTests(unittest.TestCase):
                 self.run.assert_called_once_with([
                     "incus", "--project", "work", "exec", "-t", "lab:secured-one", "--",
                     "pairtask", "operator", "identity", action,
+                ])
+
+    def test_identity_no_recovery_reaches_the_secured_command(self):
+        for action in ("init", "anchor"):
+            with self.subTest(action=action):
+                self.run.reset_mock()
+                result = self.main(["identity-" + action, "--remote", "lab", "--project", "work",
+                                    "--secured", "secured-one", "--no-recovery"])
+                self.assertEqual(result, 23)
+                self.run.assert_called_once_with([
+                    "incus", "--project", "work", "exec", "-t", "lab:secured-one", "--",
+                    "pairtask", "operator", "identity", action, "--no-recovery",
                 ])
 
     def test_secured_shell_and_command_keep_argument_boundaries(self):
