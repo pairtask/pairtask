@@ -67,7 +67,9 @@
     {"name": "check_inbox", "description": "The newest messages with paired workspaces, and which are unread; or only the ones not shown yet."},
     {"name": "wait_inbox", "description": "Wait until a paired workspace has sent a message not shown yet, or until the timeout."},
     {"name": "mark_read", "description": "Mark received messages read; the sender sees the receipt."},
-    {"name": "pair_address", "description": "Move a paired workspace to its new HOST:PORT once the same workspace answers there."}
+    {"name": "pair_address", "description": "Move a paired workspace to its new HOST:PORT once the same workspace answers there."},
+    {"name": "pairbook_join", "description": "Join a space in your company's Pairbook with its join link; you confirm this machine in the browser."},
+    {"name": "pairbook_join_status", "description": "Where this machine's joins to company Pairbook spaces stand."}
   ],
   "compatibility": {
     "platforms": ["darwin", "linux"]
