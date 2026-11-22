@@ -37,6 +37,8 @@ const operatorPairbookUsage = `usage: pairtask space COMMAND [--space ID] [--soc
   leave                          leave the space
   unbind WORKSPACE               take one of your workspaces out of the space
   publish HOST:PORT... [--valid 24h]  where other members reach this workspace; renewed while you're in
+  share AGENT / unshare AGENT     list an agent in the space, or stop; listing only advertises it,
+                                 who may message it is still your contact sharing (/pair share)
 --space may be left out when exactly one space is pinned.
 v0 spaces: pairtask space v0 COMMAND (list, publish, revoke and delete also work without v0).`
 
@@ -65,6 +67,8 @@ var pairbookCommands = map[string]pairbookCommand{
 	"leave":    pairbookLeave,
 	"unbind":   pairbookUnbind,
 	"publish":  pairbookPublish,
+	"share":    pairbookShare,
+	"unshare":  pairbookUnshare,
 }
 
 // runOperatorPairbook runs one pairbook command.

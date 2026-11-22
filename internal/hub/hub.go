@@ -55,6 +55,7 @@ type Hub struct {
 	authority  *spaceAuthority  // the active map of each Pairbook v1 space
 	reconciler *spaceReconciler // connects what the active maps grant; nil until Run
 	refresher  *spaceRefresher  // fetches pinned spaces' maps and resends the outbox; nil until Run
+	noStatus   statusless       // Pairbooks that keep no status, asked again later
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger

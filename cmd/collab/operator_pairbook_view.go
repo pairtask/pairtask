@@ -13,49 +13,122 @@ import (
 )
 
 // memberList is the people in a space, as its kept map names them.
+// memberList is the people this workspace may see in a space. Each keeps
+// its workspaces' key IDs, as before; Status adds their online state and
+// listed agents when the Pairbook keeps status (absent otherwise).
 type memberList []memberView
 
 type memberView struct {
-	Name       string   `json:"name"`
-	Role       string   `json:"role"`
-	Person     string   `json:"person"` // lineage, hex
-	Workspaces []string `json:"workspaces"`
+	Name       string                    `json:"name"`
+	Role       string                    `json:"role"`
+	Person     string                    `json:"person"` // lineage, hex
+	Workspaces []string                  `json:"workspaces"`
+	Status     []protocol.SpaceWorkspace `json:"status,omitempty"`
 }
 
 func (l memberList) String() string {
 	var b strings.Builder
 	for _, m := range l {
-		fmt.Fprintf(&b, "%-20s %-6s %s  %s\n", m.Name, m.Role, m.Person[:12], strings.Join(m.Workspaces, ", "))
+		fmt.Fprintf(&b, "%-20s %-6s %s\n", m.Name, m.Role, m.Person[:12])
+		for _, w := range m.statusOf() {
+			fmt.Fprintf(&b, "  %s  %s%s\n", fingerprintOf(w.Workspace), presence(w, m.Status != nil), agentNote(w.Agents))
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// pairbookMembers lists the people in the space; it signs nothing.
+// statusOf is the member's workspaces with status, or bare when unknown.
+func (m memberView) statusOf() []protocol.SpaceWorkspace {
+	if m.Status != nil {
+		return m.Status
+	}
+	out := make([]protocol.SpaceWorkspace, 0, len(m.Workspaces))
+	for _, w := range m.Workspaces {
+		out = append(out, protocol.SpaceWorkspace{Workspace: w})
+	}
+	return out
+}
+
+// presence is a workspace's online state, or unknown when the Pairbook
+// keeps none.
+func presence(w protocol.SpaceWorkspace, known bool) string {
+	switch {
+	case !known:
+		return "status unknown"
+	case w.Online:
+		return "online"
+	case w.LastSeen.IsZero():
+		return "not seen"
+	}
+	return "last seen " + w.LastSeen.Local().Format("2006-01-02 15:04")
+}
+
+func agentNote(agents []protocol.SpaceAgent) string {
+	if len(agents) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(agents))
+	for _, a := range agents {
+		names = append(names, a.Name)
+	}
+	return "  agents: " + strings.Join(names, ", ")
+}
+
+// pairbookMembers lists the people this workspace may see in the space,
+// online and with their listed agents; it signs nothing.
 func pairbookMembers(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
 	pin, err := s.pin(ctx, a.space)
 	if err != nil {
 		return nil, err
 	}
-	cur, err := s.current(ctx, pin.Space)
+	res, err := s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapPeople, Space: pin.Space})
 	if err != nil {
 		return nil, err
 	}
-	out := memberList{}
-	for _, p := range cur.Map.People {
-		out = append(out, memberView{Name: p.Name, Role: p.Role, Person: pairbook.LineageHex(p.Lineage), Workspaces: boundTo(cur.Map, p.Lineage)})
-	}
-	return out, nil
+	return membersOf(res), nil
 }
 
-// boundTo are the workspaces the map binds to l.
-func boundTo(m pairbook.SignedSpaceMap, l pairbook.Lineage) []string {
-	out := []string{}
-	for _, b := range m.Bindings {
-		if owner, ok := b.ClaimedLineage(); ok && owner == l {
-			out = append(out, b.Workspace())
+func membersOf(res *protocol.SpaceResult) memberList {
+	out := memberList{}
+	for _, p := range res.People {
+		m := memberView{Name: p.Name, Role: p.Role, Person: p.Person, Workspaces: []string{}}
+		for _, w := range p.Workspaces {
+			m.Workspaces = append(m.Workspaces, w.Workspace)
 		}
+		if res.StatusKnown {
+			m.Status = append([]protocol.SpaceWorkspace{}, p.Workspaces...)
+		}
+		out = append(out, m)
 	}
 	return out
+}
+
+// pairbookShare lists an agent in the space; pairbookUnshare stops.
+func pairbookShare(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
+	return pairbookListing(ctx, s, a, protocol.SpaceOpMapShare)
+}
+
+func pairbookUnshare(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
+	return pairbookListing(ctx, s, a, protocol.SpaceOpMapUnshare)
+}
+
+func pairbookListing(ctx context.Context, s *pairbookSession, a pairbookArgs, op string) (any, error) {
+	if len(a.words) != 1 {
+		return nil, errors.New("name one AGENT")
+	}
+	pin, err := s.pin(ctx, a.space)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.space(ctx, protocol.SpaceRequest{Op: op, Space: pin.Space, Agent: a.words[0]})
+	if err != nil {
+		return nil, err
+	}
+	listed := "none"
+	if len(res.Shares) > 0 {
+		listed = strings.Join(res.Shares, ", ")
+	}
+	return done("Listed in " + pin.Space + ": " + listed + ". Listing advertises agents; who may message them is still your contact sharing."), nil
 }
 
 // statusList is each space's state.

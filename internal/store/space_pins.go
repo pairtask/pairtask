@@ -74,7 +74,7 @@ func (s *Store) UnpinSpace(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"space_maps", "space_addresses"} {
+	for _, table := range []string{"space_maps", "space_addresses", "space_shares"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE space = ?`, id); err != nil {
 			return err
 		}

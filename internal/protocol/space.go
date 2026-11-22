@@ -41,6 +41,9 @@ const (
 	SpaceOpMapEnroll      = "map_enroll"       // link (an organization join link), name → enroll: pins the space, starts enrolling this workspace
 	SpaceOpMapEnrollSend  = "map_enroll_send"  // space, enrollment, record (the person's join) → enroll_state
 	SpaceOpMapEnrollState = "map_enroll_state" // space, enrollment → enroll_state
+	SpaceOpMapShare       = "map_share"        // space, agent: list the agent in the space (advertises it; messaging stays with contact sharing)
+	SpaceOpMapUnshare     = "map_unshare"      // space, agent: stop listing it
+	SpaceOpMapPeople      = "map_people"       // space → people: who this workspace may see, online and listed agents; status_known false if the Pairbook keeps none
 
 	// ErrSpace is a refused space operation; the detail names why.
 	ErrSpace = "space_refused"
@@ -73,6 +76,7 @@ type SpaceRequest struct {
 	Until   time.Time       `json:"until,omitempty"`   // map_submit (join): the invite's expiry; the join isn't retried after it
 
 	Enrollment string `json:"enrollment,omitempty"` // map_enroll_send, map_enroll_state
+	Agent      string `json:"agent,omitempty"`      // map_share, map_unshare
 }
 
 // SpaceResult answers a space operation.
@@ -94,6 +98,33 @@ type SpaceResult struct {
 
 	Enroll      *SpaceEnroll      `json:"enroll,omitempty"`       // map_enroll
 	EnrollState *SpaceEnrollState `json:"enroll_state,omitempty"` // map_enroll_send, map_enroll_state
+	People      []SpacePerson     `json:"people,omitempty"`       // map_people
+	StatusKnown bool              `json:"status_known,omitempty"` // map_people: the Pairbook reported status
+	Shares      []string          `json:"shares,omitempty"`       // map_share, map_unshare: the agents now listed
+}
+
+// SpacePerson is a person and the status of their workspaces this
+// workspace may see.
+type SpacePerson struct {
+	Person     string           `json:"person"`
+	Name       string           `json:"name"`
+	Role       string           `json:"role"`
+	Workspaces []SpaceWorkspace `json:"workspaces"`
+}
+
+// SpaceWorkspace is one workspace's status and the agents it lists.
+type SpaceWorkspace struct {
+	Workspace string       `json:"workspace"`
+	Online    bool         `json:"online"`
+	LastSeen  time.Time    `json:"last_seen,omitzero"`
+	Agents    []SpaceAgent `json:"agents,omitempty"`
+}
+
+// SpaceAgent is an agent a workspace lists in a space.
+type SpaceAgent struct {
+	Name    string `json:"name"`
+	Role    string `json:"role,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 // SpaceEnroll is a started enrollment: what the host signs the join with
