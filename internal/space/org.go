@@ -115,10 +115,16 @@ func (c *Client) SubmitEnroll(ctx context.Context, pin Pin, id string, ch pairbo
 	return out, c.v1(ctx, pin, request{method: http.MethodPut, path: enrollPath(pin, id), body: body}, &out)
 }
 
-// EnrollState is enrollment id's state now.
+// EnrollState is enrollment id's state now. One the Pairbook itself says
+// it doesn't have (its own not_found: purged, or never this workspace's) is
+// expired; any other failure is an error, and the enrollment may still be.
 func (c *Client) EnrollState(ctx context.Context, pin Pin, id string) (EnrollState, error) {
 	var out EnrollState
-	return out, c.v1(ctx, pin, request{method: http.MethodGet, path: enrollPath(pin, id)}, &out)
+	err := c.v1(ctx, pin, request{method: http.MethodGet, path: enrollPath(pin, id)}, &out)
+	if notFound(err) {
+		return EnrollState{State: EnrollExpired}, nil
+	}
+	return out, err
 }
 
 func enrollPath(pin Pin, id string) string { return mapPath(pin, "/enrollments/"+id) }

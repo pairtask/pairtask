@@ -94,8 +94,10 @@ func (en *enrolling) resume(ctx context.Context, kept savedEnroll) (any, error) 
 	res, err := en.s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapEnrollState, Space: en.e.Space, Enrollment: en.e.Enrollment})
 	st, err := enrollStateOf(res, err)
 	if err != nil {
-		en.saved.drop(en.e.Space) // unknown to the Pairbook now: start afresh next time
-		return nil, err
+		// Kept: the Pairbook or broker may only be unreachable now. Only a
+		// final state, or the Pairbook saying it has no such enrollment
+		// (reported as expired), drops it.
+		return nil, fmt.Errorf("couldn't check the enrollment started earlier; it is kept, run the same command again later: %w", err)
 	}
 	return en.follow(ctx, st, nil)
 }
