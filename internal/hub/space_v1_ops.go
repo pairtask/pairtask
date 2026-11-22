@@ -73,6 +73,9 @@ func (h *Hub) mapPublish(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 	if rerr := decodeRecord(r.Record, &req); rerr != nil {
 		return spaceStep{}, rerr
 	}
+	if receipt, ok := h.publishedAlready(ctx, req.Put); ok {
+		return receipt, nil
+	}
 	pin, rerr := h.publishPin(ctx, r.Directory, req.Put)
 	if rerr != nil {
 		return spaceStep{}, rerr
@@ -80,6 +83,35 @@ func (h *Hub) mapPublish(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 	return spaceStep{space: pin.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
 		return h.sendMap(net, local, pin, req)
 	}}, nil
+}
+
+// publishedAlready answers a publish whose map is the one kept now (a
+// retry after a lost reply) with its mark, as a receipt: nothing newly
+// supplied is applied. A send of that map still waiting in the outbox is
+// finished first, from the record kept.
+func (h *Hub) publishedAlready(ctx context.Context, put space.MapPut) (spaceStep, bool) {
+	_, stored, found, err := h.store.SpaceMap(ctx, put.Map.Space)
+	if err != nil || !found || put.Map.SpaceMap.Mark() != stored {
+		return spaceStep{}, false
+	}
+	receipt := &protocol.SpaceResult{Mark: markView(stored)}
+	return spaceStep{space: put.Map.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
+		h.finishWaiting(net, local, "map", hex.EncodeToString(stored.Digest[:]))
+		return receipt, nil
+	}}, true
+}
+
+// finishWaiting dispatches the outbox record kind/digest, if one waits.
+func (h *Hub) finishWaiting(net, local context.Context, kind, digest string) {
+	items, err := h.store.SpaceSends(local)
+	if err != nil {
+		return
+	}
+	for _, it := range items {
+		if it.Kind == kind && it.Digest == digest {
+			_, _ = h.dispatch(net, local, it)
+		}
+	}
 }
 
 // publishPin is the pin a put goes under, checked locally first: the pin
@@ -189,20 +221,42 @@ func (h *Hub) mapChanges(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 		if err != nil {
 			return nil, err
 		}
-		return changesResult(changes)
+		return h.changesResult(net, pin, changes)
 	}}, nil
 }
 
-func changesResult(changes []pairbook.SignedChange) (*protocol.SpaceResult, error) {
-	out := &protocol.SpaceResult{Changes: []json.RawMessage{}}
+// changesResult is the pending changes and, for each join, where its
+// invite stands by this owner's own ledger: live, spent, or unknown (not
+// issued here: the host leaves that join pending, never rejects it).
+func (h *Hub) changesResult(ctx context.Context, pin space.Pin, changes []pairbook.SignedChange) (*protocol.SpaceResult, error) {
+	out := &protocol.SpaceResult{Changes: []json.RawMessage{}, Invites: []string{}}
 	for _, c := range changes {
 		b, err := json.Marshal(c)
 		if err != nil {
 			return nil, err
 		}
-		out.Changes = append(out.Changes, b)
+		state, err := h.inviteStateOf(ctx, pin, c)
+		if err != nil {
+			return nil, err
+		}
+		out.Changes, out.Invites = append(out.Changes, b), append(out.Invites, state)
 	}
 	return out, nil
+}
+
+// inviteStateOf is a join's invite state; "" for any other change.
+func (h *Hub) inviteStateOf(ctx context.Context, pin space.Pin, c pairbook.SignedChange) (string, error) {
+	if c.Action != pairbook.ChangeJoin {
+		return "", nil
+	}
+	digest := c.Digest()
+	key := store.SpaceInvite{Space: pin.Space, Owner: pin.Owner, TokenHash: hex.EncodeToString(c.TokenHash[:])}
+	state, err := h.store.SpaceInviteFor(ctx, key, hex.EncodeToString(digest[:]), h.authority.now())
+	return inviteStateNames[state], err
+}
+
+var inviteStateNames = map[store.InviteState]string{
+	store.InviteUnknown: protocol.InviteUnknown, store.InviteLive: protocol.InviteLive, store.InviteSpent: protocol.InviteSpent,
 }
 
 // mapDrop tells the directory the owner refused a pending request.

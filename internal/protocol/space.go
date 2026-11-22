@@ -79,12 +79,22 @@ type SpaceResult struct {
 	// v1 results.
 	Record       json.RawMessage   `json:"record,omitempty"`        // map_current, map_invite_fetch
 	Changes      []json.RawMessage `json:"changes,omitempty"`       // map_changes
+	Invites      []string          `json:"invites,omitempty"`       // map_changes: per change, a join's invite state by this owner's ledger, else ""
 	Mark         *SpaceMark        `json:"mark,omitempty"`          // map_publish, map_current, map_refresh
 	Acceptance   []byte            `json:"acceptance,omitempty"`    // map_accept
 	WorkspaceKey []byte            `json:"workspace_key,omitempty"` // map_accept
 	Maps         []SpaceMapStatus  `json:"maps,omitempty"`          // map_status
 	Stale        bool              `json:"stale,omitempty"`         // map_publish: another map won; fetch and fold again
 }
+
+// Invite states map_changes gives a join: issued here and live; expired or
+// given to another change; or not issued here (the host leaves the join
+// pending rather than rejecting it).
+const (
+	InviteLive    = "live"
+	InviteSpent   = "spent"
+	InviteUnknown = "unknown"
+)
 
 // SpaceMark is a map's place: its version and digest (64 hex).
 type SpaceMark struct {
