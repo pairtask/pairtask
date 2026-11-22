@@ -1,4 +1,4 @@
-package spaceowner
+package owner
 
 import (
 	"bytes"
@@ -57,6 +57,21 @@ func (m Me) Fold(c Current, b Batch, now time.Time) (*pairbook.SignedSpaceMap, [
 		return nil, nil, err
 	}
 	return &next, out, nil
+}
+
+// Remove is c's map without the person l, as the next version: with
+// everything that names them, as when they leave. The owner can't be
+// removed.
+func (m Me) Remove(c Current, l pairbook.Lineage, now time.Time) (pairbook.SignedSpaceMap, error) {
+	v, err := m.current(c, now)
+	if err != nil {
+		return pairbook.SignedSpaceMap{}, err
+	}
+	w := newWorking(c.Map.SpaceMap)
+	if l == m.Lineage || w.remove(l) != Applied {
+		return pairbook.SignedSpaceMap{}, ErrNoPerson
+	}
+	return m.next(w.sm, v.Mark, now)
 }
 
 // invited: the owner's gate says tokenHash is a live, unused invite.
@@ -156,11 +171,13 @@ func (w *working) unbind(c pairbook.SignedChange) string {
 
 // leave removes the person with everything that names them: bindings,
 // group memberships and grants that select them alone.
-func (w *working) leave(c pairbook.SignedChange) string {
-	if !w.hasPerson(c.Lineage) {
+func (w *working) leave(c pairbook.SignedChange) string { return w.remove(c.Lineage) }
+
+// remove drops the person l and everything that names them.
+func (w *working) remove(l pairbook.Lineage) string {
+	if !w.hasPerson(l) {
 		return Rejected
 	}
-	l := c.Lineage
 	w.sm.People = slices.DeleteFunc(w.sm.People, func(p pairbook.MapPerson) bool { return p.Lineage == l })
 	w.sm.Bindings = slices.DeleteFunc(w.sm.Bindings, func(x pairbook.Binding) bool {
 		owner, ok := x.ClaimedLineage()
