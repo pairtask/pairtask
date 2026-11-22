@@ -2,6 +2,7 @@ package space
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -116,6 +117,21 @@ func (c *Client) Changes(ctx context.Context, pin Pin) ([]pairbook.SignedChange,
 // DropChange tells the directory the owner refused a pending request.
 func (c *Client) DropChange(ctx context.Context, pin Pin, digest [32]byte) error {
 	return c.v1(ctx, pin, request{method: http.MethodDelete, path: mapPath(pin, "/changes/"+hex.EncodeToString(digest[:]))}, nil)
+}
+
+// MapAddress fetches the signed address record of the workspace whose key
+// is node, and returns it only if node signed it for this space and it is
+// valid now: a record signed by another key is never used to reach node.
+func (c *Client) MapAddress(ctx context.Context, pin Pin, node ed25519.PublicKey) (pairbook.SignedAddress, error) {
+	var got pairbook.SignedAddress
+	err := c.v1(ctx, pin, request{method: http.MethodGet, path: mapPath(pin, "/addresses/"+pairbook.KeyID(node))}, &got)
+	if err != nil {
+		return got, err
+	}
+	if !got.Node.Equal(node) || got.Verify(pin.Space, c.now()) != nil {
+		return pairbook.SignedAddress{}, ErrUntrusted
+	}
+	return got, nil
 }
 
 // v1 sends r to pin's directory, refusing a pin for another one.

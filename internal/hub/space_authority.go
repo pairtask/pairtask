@@ -38,11 +38,14 @@ type spaceAuthority struct {
 	active  map[spaceKey]activeMap
 	gen     uint64
 	writing map[spaceKey]*sync.Mutex // one refresh or unpin per space at a time
-	refused map[spaceKey]string      // why the last refresh failed, for status
-	notify  []func(space string)
-	closed  bool       // Run ended: no timer, no activation, no callback
-	calls   int        // listener calls running now
-	drained *sync.Cond // signalled when calls drops to 0; on mu
+	// contactsMu orders installs, retires and map changes: taken after a
+	// space lock, never before one, and never while calling listeners.
+	contactsMu sync.Mutex
+	refused    map[spaceKey]string // why the last refresh failed, for status
+	notify     []func(space string)
+	closed     bool       // Run ended: no timer, no activation, no callback
+	calls      int        // listener calls running now
+	drained    *sync.Cond // signalled when calls drops to 0; on mu
 }
 
 type activeMap struct {
@@ -85,7 +88,9 @@ func (h *Hub) KeepSpaceMap(ctx context.Context, space string, m pairbook.SignedS
 	v, err := h.store.KeepSpaceMap(ctx, space, m, a.now())
 	var notify []func(string)
 	if err == nil {
+		a.contactsMu.Lock()
 		notify = a.activate(k, v)
+		a.contactsMu.Unlock()
 	}
 	unlock()
 	h.authority.tell(notify, k)
@@ -100,7 +105,9 @@ func (h *Hub) unpinSpace(ctx context.Context, k spaceKey) error {
 	err := h.store.UnpinSpace(ctx, string(k))
 	var notify []func(string)
 	if err == nil {
+		a.contactsMu.Lock()
 		notify = a.forget(k)
+		a.contactsMu.Unlock()
 	}
 	unlock()
 	h.authority.tell(notify, k)

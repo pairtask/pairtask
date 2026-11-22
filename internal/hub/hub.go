@@ -44,15 +44,16 @@ type Inbound struct {
 type Hub struct {
 	membership chan membership
 	inbound    chan Inbound
-	importAt   int64           // where the next import pass goes on; owned by Run
-	rescan     atomic.Bool     // an import pass was asked for since the scan began
-	importDue  atomic.Bool     // an import pass is due; signalled on pair.changed (#222)
-	consent    hubConsent      // held requests and session authority (#293)
-	classify   hubClassifier   // shadow predictions for untagged operator sends (#339)
-	notifier   hubNotifier     // decision requests told to the operator outside the chat (#352)
-	spaces     *SpaceConfig    // Pairbook spaces; nil until SetSpaces
-	spaceBusy  map[string]bool // spaces with a change in flight; owned by Run
-	authority  *spaceAuthority // the active map of each Pairbook v1 space
+	importAt   int64            // where the next import pass goes on; owned by Run
+	rescan     atomic.Bool      // an import pass was asked for since the scan began
+	importDue  atomic.Bool      // an import pass is due; signalled on pair.changed (#222)
+	consent    hubConsent       // held requests and session authority (#293)
+	classify   hubClassifier    // shadow predictions for untagged operator sends (#339)
+	notifier   hubNotifier      // decision requests told to the operator outside the chat (#352)
+	spaces     *SpaceConfig     // Pairbook spaces; nil until SetSpaces
+	spaceBusy  map[string]bool  // spaces with a change in flight; owned by Run
+	authority  *spaceAuthority  // the active map of each Pairbook v1 space
+	reconciler *spaceReconciler // connects what the active maps grant; nil until Run
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -152,10 +153,12 @@ func (h *Hub) Run(ctx context.Context) {
 	clients := make(map[string]*Client)
 	defer close(h.done)
 	defer h.authority.close()
+	defer h.stopSpaceReconciler() // runs first: dials end before authority closes
 	defer h.settleBackground()
 	defer h.disconnectAll(clients)
 	h.beginBackground(ctx)
 	h.restoreSpaceMaps(ctx)
+	h.startSpaceReconciler(ctx)
 	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {

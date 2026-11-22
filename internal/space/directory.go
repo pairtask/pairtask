@@ -34,6 +34,7 @@ type MapDirectory interface {
 	SubmitChange(ctx context.Context, pin Pin, ch pairbook.SignedChange, token *[32]byte) error
 	Changes(ctx context.Context, pin Pin) ([]pairbook.SignedChange, error)
 	DropChange(ctx context.Context, pin Pin, digest [32]byte) error
+	MapAddress(ctx context.Context, pin Pin, node ed25519.PublicKey) (pairbook.SignedAddress, error)
 }
 
 var _ MapDirectory = (*Client)(nil)
