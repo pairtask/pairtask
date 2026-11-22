@@ -206,7 +206,7 @@ func (s *pairbookSession) applyFold(ctx context.Context, f foldRun) (foldReport,
 	if err != nil {
 		return rep, false, err
 	}
-	if stale, err := s.publishNext(ctx, f, next, outcomes, &rep); err != nil || stale {
+	if stale, err := s.publishNext(ctx, f, folded{next, outcomes}, &rep); err != nil || stale {
 		return rep, stale, err
 	}
 	rep.Dropped, err = s.dropDead(ctx, f, outcomes)
@@ -227,14 +227,20 @@ func renewWhenDue(f foldRun, next *pairbook.SignedSpaceMap, now time.Time, rep *
 	return &renewed, nil
 }
 
-// publishNext publishes next, when there is one, into rep.
-func (s *pairbookSession) publishNext(ctx context.Context, f foldRun, next *pairbook.SignedSpaceMap, outcomes []spaceowner.Outcome, rep *foldReport) (bool, error) {
-	if next == nil {
+// folded is a fold's next map (nil: none) and what it did to each request.
+type folded struct {
+	next     *pairbook.SignedSpaceMap
+	outcomes []spaceowner.Outcome
+}
+
+// publishNext publishes the fold's next map, when there is one, into rep.
+func (s *pairbookSession) publishNext(ctx context.Context, f foldRun, d folded, rep *foldReport) (bool, error) {
+	if d.next == nil {
 		return false, nil
 	}
-	stale, err := s.publishFold(ctx, f, *next, outcomes)
+	stale, err := s.publishFold(ctx, f, *d.next, d.outcomes)
 	if err == nil && !stale {
-		rep.Changed, rep.Version = true, next.Version
+		rep.Changed, rep.Version = true, d.next.Version
 	}
 	return stale, err
 }
