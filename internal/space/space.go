@@ -37,6 +37,9 @@ type Pin struct {
 	JoinedAt time.Time // when pinned
 }
 
+// Names: the pin is to the owner and directory the invite names.
+func (p Pin) Names(inv Invite) bool { return p.Owner == inv.Owner && p.Base == inv.Base }
+
 // Invite is a parsed invite link:
 //
 //	https://HOST[:PORT]/v0/spaces/ID#token=B64URL&owner=sha256:HEX

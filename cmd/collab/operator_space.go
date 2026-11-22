@@ -14,7 +14,8 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorSpaceUsage = `usage: pairtask space COMMAND [--socket PATH] [--json] [--timeout 30s]
+const operatorSpaceUsage = `usage: pairtask space v0 COMMAND [--socket PATH] [--json] [--timeout 30s]
+v0 spaces (members are machine keys); pairtask space shows the current commands.
   list
   create --directory URL (or --pairbook URL) [--name NAME] [--id ID]
   invite   [--space ID] [--valid 24h]
@@ -82,8 +83,25 @@ func addresses(r *protocol.SpaceRequest, words []string) error {
 }
 
 // runOperatorSpace runs a Pairbook space command (pairtask space, or
-// pairtask operator space): one operator_space request to the broker.
+// pairtask operator space). The v1 commands (spaces of people) own the
+// verbs they share with v0; v0's other verbs still run as before, and any
+// v0 verb runs as `space v0 VERB`.
 func runOperatorSpace(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, operatorPairbookUsage)
+		return 2
+	}
+	if args[0] == "v0" {
+		return runSpaceV0(ctx, args[1:], stdout, stderr)
+	}
+	if pairbookCommands[args[0]] != nil {
+		return runOperatorPairbook(ctx, args, stdout, stderr)
+	}
+	return runSpaceV0(ctx, args, stdout, stderr)
+}
+
+// runSpaceV0 runs a v0 space command: one operator_space request.
+func runSpaceV0(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	call, req, code := parseSpace(args, stderr)
 	if code != -1 {
 		return code

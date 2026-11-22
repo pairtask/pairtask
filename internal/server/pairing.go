@@ -114,6 +114,10 @@ func (p *PairingServer) serve(ctx context.Context, raw net.Conn) {
 		p.controlSession(attemptCtx{netCtx, storeCtx}, conn, ep)
 		return
 	}
+	if conn.Protocol() == firstcontact.SpaceALPN {
+		p.spaceConnect(netCtx, conn, ep)
+		return
+	}
 	if !take(p.slots) {
 		p.log.Warn("pairing connection refused: too many")
 		return
@@ -130,7 +134,7 @@ func (p *PairingServer) handshake(netCtx context.Context, raw net.Conn, ep hub.P
 		return nil, false
 	}
 	defer release(p.handshakes)
-	opts := firstcontact.ServerOptions{ContactPins: ep.ContactPins, MessagePins: ep.MessagePins, ControlPins: ep.ControlPins}
+	opts := firstcontact.ServerOptions{ContactPins: ep.ContactPins, MessagePins: ep.MessagePins, ControlPins: ep.ControlPins, SpacePins: ep.SpacePins}
 	conn, err := firstcontact.ServerWith(netCtx, raw, ep.Identity, ep.Clock, opts)
 	if err != nil {
 		p.log.Info("pairing first contact failed", "cause", hub.PairingCause(err))

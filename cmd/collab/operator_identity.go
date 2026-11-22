@@ -17,7 +17,7 @@ import (
 	"github.com/pairtask/pairtask/internal/signing"
 )
 
-const operatorIdentityUsage = "usage: pairtask operator identity (init | status) [--socket PATH] [--json]"
+const operatorIdentityUsage = "usage: pairtask operator identity (init | anchor | confirm | status) [--no-recovery] [--socket PATH] [--json]"
 
 // identityReport is what identity init and status show.
 type identityReport struct {
@@ -25,13 +25,16 @@ type identityReport struct {
 	Dir        string `json:"dir"`
 	Registered bool   `json:"registered"`
 	protocol.IdentityView
+	anchorView
+	local bool // anchor and confirm: nothing was asked of the broker
 }
 
 // identityRequest is an identity command: init or status, the broker's
 // socket, the key directory and the output form.
 type identityRequest struct {
-	op, socket, dir string
-	asJSON          bool
+	op, socket, dir    string
+	asJSON, noRecovery bool
+	out                io.Writer // where a recovery code and its prompts go
 }
 
 // runOperatorIdentity makes this account's signing keys (init), the
@@ -42,6 +45,7 @@ func runOperatorIdentity(ctx context.Context, args []string, stdout, stderr io.W
 	if code != -1 {
 		return code
 	}
+	req.out = stdout
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	report, err := identityOp(ctx, req)
@@ -62,17 +66,45 @@ func parseIdentity(args []string, stderr io.Writer) (identityRequest, int) {
 	flags.SetOutput(stderr)
 	flags.StringVar(&req.socket, "socket", defaultOperatorSocket, "operator Unix socket path (secured only)")
 	flags.BoolVar(&req.asJSON, "json", false, "emit the result as JSON")
+	flags.BoolVar(&req.noRecovery, "no-recovery", false, "make no recovery key (init, anchor; not recommended)")
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, operatorIdentityUsage)
 		return req, 2
 	}
 	req.op = args[0]
+	if err := req.check(); err != nil {
+		fmt.Fprintln(stderr, "operator identity:", err)
+		return req, 2
+	}
 	return req, -1
+}
+
+// check: --no-recovery only where an anchor is made, and no JSON where a
+// recovery code would be shown or typed.
+func (r identityRequest) check() error {
+	if r.noRecovery && !r.makesAnchor() {
+		return errors.New("--no-recovery is for init and anchor")
+	}
+	if r.asJSON && r.handlesCode() {
+		return errJSONRecovery
+	}
+	return nil
+}
+
+// makesAnchor: the command makes the identity anchor.
+func (r identityRequest) makesAnchor() bool { return r.op == "init" || r.op == "anchor" }
+
+// handlesCode: the command shows or reads a recovery code.
+func (r identityRequest) handlesCode() bool {
+	if r.op == "confirm" {
+		return true
+	}
+	return r.makesAnchor() && !r.noRecovery
 }
 
 // identityOpNamed: args start with init or status.
 func identityOpNamed(args []string) bool {
-	return len(args) > 0 && slices.Contains([]string{"init", "status"}, args[0])
+	return len(args) > 0 && identityOps[args[0]] != nil
 }
 
 // identityOp creates and registers keys (init) or reports them (status).
@@ -82,13 +114,18 @@ func identityOp(ctx context.Context, req identityRequest) (identityReport, error
 		return identityReport{}, err
 	}
 	req.dir = dir
-	op := identityStatus
-	if req.op == "init" {
-		op = identityInit
-	}
-	report, err := op(ctx, req)
+	report, err := identityOps[req.op](ctx, req)
 	report.Dir = dir
 	return report, err
+}
+
+// identityOps are the identity commands by name.
+var identityOps map[string]func(context.Context, identityRequest) (identityReport, error)
+
+func init() {
+	identityOps = map[string]func(context.Context, identityRequest) (identityReport, error){
+		"init": identityInit, "anchor": identityAnchor, "confirm": identityConfirm, "status": identityStatus,
+	}
 }
 
 // errNotSecured: init found no broker to register a key with, so it made
@@ -112,7 +149,11 @@ func identityInit(ctx context.Context, req identityRequest) (identityReport, err
 		return identityReport{}, err
 	}
 	view, err := registerPerson(ctx, req.socket, keys)
-	return identityReport{PersonKey: signing.KeyID(keys.PersonPublic()), Registered: err == nil, IdentityView: view}, err
+	report := identityReport{PersonKey: signing.KeyID(keys.PersonPublic()), Registered: err == nil, IdentityView: view}
+	if err != nil {
+		return report, err
+	}
+	return report, makeAnchor(req, &report)
 }
 
 var errKeysExist = errors.New("this account has keys already; `pairtask identity status` on the host shows them")
@@ -143,6 +184,7 @@ func identityStatus(ctx context.Context, req identityRequest) (identityReport, e
 	}
 	report.IdentityView = view
 	report.Registered = report.pinned()
+	report.anchorView = anchorOf(req.dir)
 	return report, nil
 }
 
@@ -168,13 +210,27 @@ func (r identityReport) isPersonKey(root protocol.SigningRoot) bool {
 }
 
 func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer) int {
-	if asJSON {
-		if err := json.NewEncoder(stdout).Encode(report); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
+	if err := reportIdentity(report, asJSON, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
+	return 0
+}
+
+// reportIdentity writes the report: anchor and confirm locally, the rest
+// with the broker's view; as JSON or text.
+func reportIdentity(report identityReport, asJSON bool, stdout io.Writer) error {
+	switch {
+	case report.local:
+		return writeLocal(report, asJSON, stdout)
+	case asJSON:
+		return json.NewEncoder(stdout).Encode(report)
+	}
+	writeIdentityText(report, stdout)
+	return nil
+}
+
+func writeIdentityText(report identityReport, stdout io.Writer) {
 	switch {
 	case report.PersonKey == "":
 		fmt.Fprintln(stdout, "no keys: your messages go unsigned; `pairtask identity init` on the host makes them")
@@ -183,6 +239,8 @@ func writeIdentity(report identityReport, asJSON bool, stdout, stderr io.Writer)
 	default:
 		fmt.Fprintf(stdout, "person key %s, not registered with this broker: the chat registers it when it starts\n", report.PersonKey)
 	}
+	if report.PersonKey != "" {
+		writeAnchor(report.anchorView, stdout)
+	}
 	fmt.Fprintf(stdout, "workspace %s\nkeys in %s\n", report.Workspace, report.Dir)
-	return 0
 }

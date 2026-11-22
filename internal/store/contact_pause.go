@@ -299,10 +299,22 @@ func pauseOutcome(ctx context.Context, tx *sql.Tx, r ContactPause, replay bool) 
 		if err := refuseUnpaired(ctx, tx, r.Contact); err != nil {
 			return ContactPauseResult{}, "", err
 		}
+		if err := spacePauseRefusal(ctx, tx, r); err != nil {
+			return ContactPauseResult{}, "", err
+		}
 		return changePause(ctx, tx, r)
 	}
 	out, err := pauseResult(ctx, tx, r.OperationID)
 	return out, pauseDetail(r.Paused, true) + " (replayed)", err
+}
+
+// spacePauseRefusal makes the operator's pause a refusal in every space,
+// and a resume lifts it.
+func spacePauseRefusal(ctx context.Context, tx *sql.Tx, r ContactPause) error {
+	if r.Paused {
+		return refuseSpace(ctx, tx, r.Contact, r.At)
+	}
+	return allowSpace(ctx, tx, r.Contact)
 }
 
 // pauseAudit is the audit row an operation finishes, what it records, and

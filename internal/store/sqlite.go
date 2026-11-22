@@ -83,22 +83,31 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
-	// Tables added since the epoch transition's released shape are created
-	// once it has succeeded, so a failed or refused transition leaves no new
-	// schema object behind.
-	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema); err != nil {
+	if err := afterTransition(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply classifier schema: %w", err)
-	}
-	if err := resetAttentionEnforcement(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("reset attention enforcement: %w", err)
-	}
-	if err := clearConsentOwner(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("clear session consent: %w", err)
+		return nil, err
 	}
 	return &Store{db: db, path: path, gate: &consentGate{}}, nil
+}
+
+// afterTransition runs once the epoch transition has succeeded: tables
+// added since its released shape are created only then, so a failed or
+// refused transition leaves no new schema object behind; then the
+// one-time and every-open steps that need them.
+func afterTransition(db *sql.DB) error {
+	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema + spaceMapsSchema + spaceAttemptsSchema + spaceContactsSchema + spaceOutboxSchema); err != nil {
+		return fmt.Errorf("apply classifier schema: %w", err)
+	}
+	if err := resetAttentionEnforcement(db); err != nil {
+		return fmt.Errorf("reset attention enforcement: %w", err)
+	}
+	if err := seedSpaceRefusals(db); err != nil {
+		return fmt.Errorf("seed space refusals: %w", err)
+	}
+	if err := clearConsentOwner(db); err != nil {
+		return fmt.Errorf("clear session consent: %w", err)
+	}
+	return nil
 }
 
 // Existing tables don't gain columns from CREATE TABLE IF NOT EXISTS. Added
@@ -187,6 +196,9 @@ var laterColumns = []struct{ table, column, decl string }{
 	// The signing state a contact was last told how to update from (#395):
 	// "" while it signs, or before any notice.
 	{"peer_contacts", "signing_notice", "TEXT NOT NULL DEFAULT ''"},
+	// A space connect's pairing ID (Pairbook), as both members derived it;
+	// NULL for a code exchange, whose pairing ID hashes its transcript.
+	{"pairing_exchanges", "space_pairing_id", "BLOB"},
 }
 
 // columnAdded runs once, in the transaction that adds its column: what the

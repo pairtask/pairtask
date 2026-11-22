@@ -39,6 +39,8 @@ SCRIPTED = {
     "shell": ("sandbox-session.py", ["shell"], "SSH into the workspace; restores your terminal after"),
     "chat": ("sandbox-session.py", ["chat"], "the operator chat; restores your terminal after"),
     "secured": ("sandbox-session.py", ["secured"], "a shell in the secured runtime, where operator commands run; or: secured CMD"),
+    "space": ("sandbox-session.py", ["secured", "--tty", "pairtask", "operator", "space"],
+              "Pairbook spaces of people: create [NAME] --pairbook URL | invite | join LINK | requests | approve PERSON | sync | members | status | leave"),
     "version": ("sandbox-version.py", [], "the app and host releases, the latest one and the command to update; changes nothing"),
 }
 ACTIONS = {
@@ -54,8 +56,9 @@ ACTIONS = {
                    "the shadow classifier for untagged messages: on [--provider jev|clef] | off | status"),
     "notify": ("sandbox-notify.py", {"on": "on", "off": "off", "status": "status"},
                "tell you in Slack when an agent needs a decision: on --slack [--hidden] | off | status"),
-    "identity": ("sandbox-session.py", {"init": "identity-init", "status": "identity-status"},
-                 "your signing key, kept in the secured runtime: init (once) | status"),
+    "identity": ("sandbox-session.py", {"init": "identity-init", "anchor": "identity-anchor",
+                                        "confirm": "identity-confirm", "status": "identity-status"},
+                 "your signing key, kept in the secured runtime: init (once) | anchor (once, for keys made before it) | confirm | status"),
     "size": ("sandbox-size.py", {"show": "show", "plan": "plan", "apply": "apply", "vm": "vm"},
              "the sandbox's size: show [--json] | plan --memory/--cpu/--disk/--agent-home… GIB | apply | vm --memory/--cpu/--disk [--apply]"),
 }

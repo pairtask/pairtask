@@ -39,7 +39,7 @@ func (s *Store) Exchange(ctx context.Context, operationID string) (peer.Exchange
 
 const exchangeSelect = `SELECT xseq, operation_id, identity_key, role, kind, repair_key, mode, transcript_id, begun_mark, state, decision,
     COALESCE(decided_at, ''), COALESCE(delivered_at, ''), COALESCE(installed_at, ''), COALESCE(retired_at, ''),
-    COALESCE(installed_epoch, 0), reason FROM pairing_exchanges`
+    COALESCE(installed_epoch, 0), reason, space_pairing_id FROM pairing_exchanges`
 
 func exchangeRow(ctx context.Context, q rowQuerier, operationID string) (peer.ExchangeRecord, bool, error) {
 	return scanExchange(q.QueryRowContext(ctx, exchangeSelect+` WHERE operation_id = ?`, operationID))
@@ -51,7 +51,7 @@ func scanExchange(row rowScanner) (peer.ExchangeRecord, bool, error) {
 	var decision string
 	times := make([]string, 4)
 	err := row.Scan(&x.XSeq, &x.OperationID, &x.IdentityKey, &x.Role, &x.Kind, &x.Repair, &x.Mode, &x.TranscriptID, &mark, &x.State, &decision,
-		&times[0], &times[1], &times[2], &times[3], &x.InstalledEpoch, &x.Reason)
+		&times[0], &times[1], &times[2], &times[3], &x.InstalledEpoch, &x.Reason, &x.SpacePairingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peer.ExchangeRecord{}, false, nil
 	}
@@ -59,6 +59,7 @@ func scanExchange(row rowScanner) (peer.ExchangeRecord, bool, error) {
 		return peer.ExchangeRecord{}, false, err
 	}
 	x.BegunMark, x.Decision, x.TranscriptID = uint64(mark), decisionState(decision), bytes.Clone(x.TranscriptID)
+	x.SpacePairingID = bytes.Clone(x.SpacePairingID)
 	err = scanTimes(times, &x.DecidedAt, &x.DeliveredAt, &x.InstalledAt, &x.RetiredAt)
 	return x, err == nil, err
 }

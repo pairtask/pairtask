@@ -99,7 +99,7 @@ func installedResult(in installing) (peer.InstallResult, error) {
 func historicalResult(x peer.ExchangeRecord) peer.InstallResult {
 	result := peer.InstallResult{Exchange: x, Epoch: x.InstalledEpoch}
 	if x.InstalledEpoch != 0 {
-		result.PairingID = peer.PairingID(x.TranscriptID)
+		result.PairingID = peer.ExchangePairingID(x)
 	}
 	return result
 }
@@ -132,6 +132,9 @@ func deliverOpen(ctx context.Context, tx *sql.Tx, in installing) (peer.InstallRe
 			return peer.InstallResult{}, err
 		}
 		return peer.InstallResult{}, ledgerRefusal{peer.ErrCrossedTransition}
+	}
+	if err := allowSpace(ctx, tx, in.x.IdentityKey); err != nil { // pairing by code lifts the operator's space refusal
+		return peer.InstallResult{}, err
 	}
 	return install(ctx, tx, in, c)
 }
@@ -236,7 +239,7 @@ type installedPairing struct {
 // consent; every epoch-keyed row starts empty at the new epoch, and a
 // notice still pending under another pairing is superseded.
 func installContact(ctx context.Context, tx *sql.Tx, p installedPairing) error {
-	pairingID := peer.PairingID(p.x.TranscriptID)
+	pairingID := peer.ExchangePairingID(p.x)
 	if err := supersedeReplacedNotices(ctx, tx, p.x.IdentityKey, pairingID); err != nil {
 		return err
 	}

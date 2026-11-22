@@ -85,6 +85,11 @@ func unpairIn(ctx context.Context, tx *sql.Tx, r ContactUnpair) (ContactUnpairRe
 	if err != nil {
 		return out, replay, err
 	}
+	if !replay { // the operator's unpair holds in every space; a replay restores nothing lifted since
+		if err := refuseSpace(ctx, tx, r.Contact, r.At); err != nil {
+			return out, replay, err
+		}
+	}
 	if err := register(ctx, tx, op, replay); err != nil {
 		return out, replay, err
 	}

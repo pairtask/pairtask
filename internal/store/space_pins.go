@@ -69,8 +69,18 @@ func (s *Store) SpacePins(ctx context.Context) ([]space.Pin, error) {
 // UnpinSpace forgets id's pin, after leaving or deleting the space; an
 // unknown space is already forgotten.
 func (s *Store) UnpinSpace(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM space_pins WHERE space = ?`, id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM space_maps WHERE space = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM space_pins WHERE space = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func spacePin(ctx context.Context, q rowQuerier, id string) (space.Pin, bool, error) {

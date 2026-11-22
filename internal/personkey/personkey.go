@@ -42,6 +42,7 @@ type Keys struct {
 	device ed25519.PrivateKey
 	mu     sync.Mutex
 	cert   signing.Cert
+	dir    string // where they live, beside the identity anchor
 }
 
 // ErrNoKeys: this account has no keys yet; ErrIncomplete: one of the two
@@ -68,7 +69,7 @@ func Load(dir string) (*Keys, error) {
 	if err := privateDir(dir); err != nil {
 		return nil, err
 	}
-	return &Keys{person: person, device: device}, nil
+	return &Keys{person: person, device: device, dir: dir}, nil
 }
 
 // missing counts the key files that don't exist.
@@ -107,7 +108,7 @@ func Create(dir string) (*Keys, error) {
 			return nil, err
 		}
 	}
-	return &Keys{person: keys[0], device: keys[1]}, nil
+	return &Keys{person: keys[0], device: keys[1], dir: dir}, nil
 }
 
 // PersonPublic is the person key, which the operator's workspace pins.
@@ -206,3 +207,8 @@ func create(path keyFile, key ed25519.PrivateKey) error {
 	_, werr := f.Write(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 	return errors.Join(werr, f.Sync(), f.Close())
 }
+
+// PersonKey is the person private key, for this host process to sign
+// person statements (an identity anchor, a space map) with. It never
+// leaves the process: nothing sends it to a broker or another host.
+func (k *Keys) PersonKey() ed25519.PrivateKey { return k.person }

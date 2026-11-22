@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -85,6 +86,9 @@ type ExchangeRecord struct {
 	InstalledAt, RetiredAt   time.Time
 	InstalledEpoch           int64 // 0 unless it was installed
 	Reason                   string
+	// SpacePairingID is a space connect's pairing ID, as both members
+	// derived it; nil for a code exchange.
+	SpacePairingID []byte
 }
 
 // InstallResult is what delivering an exchange did: its ledger row, whether
@@ -153,9 +157,40 @@ const pairingIDDomain = "pairtask/pairing-epoch/1"
 
 // PairingID is the ID of the pairing an exchange installs:
 // SHA-256(domain || transcript), the same on both sides.
+// SpaceOperationPrefix opens the operation ID of every space connect's
+// exchange: "space:" + space + ":" + hex(connect ID). It names the row;
+// what marks a row as a space connect is its SpacePairingID.
+const SpaceOperationPrefix = "space:"
+
+// ExchangePairingID is the pairing ID an exchange installs. A code
+// exchange hashes its transcript, whatever its operation ID; a space
+// connect installs the ID both members derived from their space, keys and
+// attempt, as it is.
+func ExchangePairingID(x ExchangeRecord) []byte {
+	if x.SpacePairingID != nil {
+		return bytes.Clone(x.SpacePairingID)
+	}
+	return PairingID(x.TranscriptID)
+}
+
 func PairingID(transcript []byte) []byte {
 	h := sha256.New()
 	h.Write([]byte(pairingIDDomain))
 	h.Write(transcript)
 	return h.Sum(nil)
 }
+
+// SpaceInstall is a contact made by a Pairbook space connect, installed as
+// an epoch pairing so messaging admits it: Role is "joiner" on the side
+// that dialed and "inviter" on the side that answered.
+type SpaceInstall struct {
+	Contact   Contact
+	Space     string
+	ConnectID [16]byte
+	PairingID [32]byte
+	Role      string
+}
+
+// ErrSpaceConflict refuses a space install that would change a confirmed
+// contact or reuse an operation for another peer, pairing or role.
+var ErrSpaceConflict = errors.New("peer: space connect conflicts with an existing pairing")

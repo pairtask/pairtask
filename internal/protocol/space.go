@@ -1,6 +1,9 @@
 package protocol
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Pairbook spaces (operator → broker): create or join a space in a Pairbook
 // directory, approve members, publish this workspace's address. The broker
@@ -21,6 +24,20 @@ const (
 	SpaceOpLeave    = "leave"    // space
 	SpaceOpDelete   = "delete"   // space
 
+	// Pairbook v1 (space maps). The person key never reaches the broker:
+	// the host signs maps, invites and changes, and the broker checks,
+	// keeps, sends and fetches them.
+	SpaceOpMapAccept      = "map_accept"       // lineage, epoch, person, at → acceptance, workspace_key
+	SpaceOpMapPublish     = "map_publish"      // directory, record (MapPut) → mark
+	SpaceOpMapCurrent     = "map_current"      // space → record (SignedSpaceMap), mark
+	SpaceOpMapChanges     = "map_changes"      // space → changes
+	SpaceOpMapDrop        = "map_drop"         // space, digest
+	SpaceOpMapInvite      = "map_invite"       // space, record (SignedMapInvite)
+	SpaceOpMapInviteFetch = "map_invite_fetch" // link → record (SignedMapInvite)
+	SpaceOpMapSubmit      = "map_submit"       // space or link, record (SignedChange), token for a join
+	SpaceOpMapRefresh     = "map_refresh"      // space → mark
+	SpaceOpMapStatus      = "map_status"       // → maps
+
 	// ErrSpace is a refused space operation; the detail names why.
 	ErrSpace = "space_refused"
 
@@ -40,6 +57,16 @@ type SpaceRequest struct {
 	Node      string   `json:"node,omitempty"`         // approve, revoke: the member's key ID
 	Addresses []string `json:"addresses,omitempty"`    // publish: HOST:PORT
 	ValidFor  int64    `json:"valid_for_ms,omitempty"` // invite, approve, publish
+
+	// v1 fields. Record is the pairbook record the op names, as JSON.
+	Record  json.RawMessage `json:"record,omitempty"`
+	Digest  string          `json:"digest,omitempty"`  // map_drop: 64 hex
+	Token   string          `json:"token,omitempty"`   // map_submit (join): the invite secret; never logged or echoed
+	Lineage string          `json:"lineage,omitempty"` // map_accept: 64 hex
+	Epoch   uint64          `json:"epoch,omitempty"`   // map_accept
+	Person  string          `json:"person,omitempty"`  // map_accept: person key ID
+	At      time.Time       `json:"at,omitempty"`      // map_accept
+	Until   time.Time       `json:"until,omitempty"`   // map_submit (join): the invite's expiry; the join isn't retried after it
 }
 
 // SpaceResult answers a space operation.
@@ -48,6 +75,42 @@ type SpaceResult struct {
 	Invite   string        `json:"invite,omitempty"`   // invite: the link, a secret shown to the operator only
 	Members  []SpaceMember `json:"members,omitempty"`  // members: verified against the pin
 	Requests []SpaceMember `json:"requests,omitempty"` // requests: verified pending requests
+
+	// v1 results.
+	Record       json.RawMessage   `json:"record,omitempty"`        // map_current, map_invite_fetch
+	Changes      []json.RawMessage `json:"changes,omitempty"`       // map_changes
+	Invites      []string          `json:"invites,omitempty"`       // map_changes: per change, a join's invite state by this owner's ledger, else ""
+	Mark         *SpaceMark        `json:"mark,omitempty"`          // map_publish, map_current, map_refresh
+	Acceptance   []byte            `json:"acceptance,omitempty"`    // map_accept
+	WorkspaceKey []byte            `json:"workspace_key,omitempty"` // map_accept
+	Maps         []SpaceMapStatus  `json:"maps,omitempty"`          // map_status
+	Stale        bool              `json:"stale,omitempty"`         // map_publish: another map won; fetch and fold again
+}
+
+// Invite states map_changes gives a join: issued here and live; expired or
+// given to another change; or not issued here (the host leaves the join
+// pending rather than rejecting it).
+const (
+	InviteLive    = "live"
+	InviteSpent   = "spent"
+	InviteUnknown = "unknown"
+)
+
+// SpaceMark is a map's place: its version and digest (64 hex).
+type SpaceMark struct {
+	Version uint64 `json:"version"`
+	Digest  string `json:"digest"`
+}
+
+// SpaceMapStatus is how one pinned space stands under its map.
+type SpaceMapStatus struct {
+	Space     string     `json:"space"`
+	State     string     `json:"state"` // pending (no map with us yet) | active | expired | refused
+	Mark      *SpaceMark `json:"mark,omitempty"`
+	ExpiresAt time.Time  `json:"expires_at,omitempty"`
+	Refresh   string     `json:"refresh_error,omitempty"`
+	Managed   []string   `json:"managed,omitempty"` // contacts this space connected
+	Refused   []string   `json:"refused,omitempty"` // workspaces the operator refused
 }
 
 // SpacePin is a space this workspace created or joined.

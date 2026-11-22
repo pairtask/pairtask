@@ -67,6 +67,16 @@ class HostRoutingTests(unittest.TestCase):
         discovery.start()
         self.addCleanup(discovery.stop)
 
+    def test_space_preserves_host_command_arguments(self):
+        for args in (["create", "Shared office", "--pairbook", "https://example.test"],
+                     ["join", "https://example.test/v0/spaces/123#token=T&owner=P"],
+                     ["v0", "invite", "--valid", "2h"]):
+            with self.subTest(args=args):
+                self.assertEqual(cli.plan(["space", *args], system="Linux"), [
+                    cli.script("sandbox-session.py", "secured", "--tty", "pairtask",
+                               "operator", "space", *args),
+                ])
+
     def test_identity_and_secured_commands_are_discoverable_and_routed(self):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(["--help"]), 0)
