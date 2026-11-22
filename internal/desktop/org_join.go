@@ -64,6 +64,39 @@ type enrollments struct {
 	person *spaceowner.Me
 	follow map[string]*PairbookJoinResult // by space: the last state seen
 	active map[string]bool                // by space: a follower runs here
+	// life is what followers and retries run under; Close ends it and
+	// waits for them, so none outlives the node or holds its lock file.
+	life    context.Context
+	stop    context.CancelFunc
+	running sync.WaitGroup
+}
+
+var (
+	errNodeClosed        = errors.New("this Desktop node is closing")
+	errFollowedElsewhere = errors.New("another Claude Desktop window follows this enrollment")
+)
+
+// stopJoins ends every follower and retry and waits for them.
+func (n *Node) stopJoins() {
+	if n.joins.stop != nil {
+		n.joins.stop()
+	}
+	n.joins.running.Wait()
+}
+
+// spawn runs fn as a follower of this node's lifetime, unless it ended.
+func (n *Node) spawn(fn func()) bool {
+	n.joins.mu.Lock()
+	defer n.joins.mu.Unlock()
+	if n.joins.life == nil || n.joins.life.Err() != nil {
+		return false
+	}
+	n.joins.running.Add(1)
+	go func() {
+		defer n.joins.running.Done()
+		fn()
+	}()
+	return true
 }
 
 const resumeRetry = 30 * time.Second
@@ -105,6 +138,9 @@ func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (Pairboo
 	if args.Link == "" {
 		return joinGuidance(set), nil
 	}
+	if n.joins.life == nil || n.joins.life.Err() != nil {
+		return PairbookJoinResult{}, errNodeClosed
+	}
 	l, err := space.ParseOrgLink(args.Link)
 	if err != nil {
 		return PairbookJoinResult{}, errors.New("that isn't a Pairbook join link; it looks like https://HOST/join#space=...&owner=..., from the admin's space page")
@@ -115,9 +151,13 @@ func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (Pairboo
 	if cur, ok := n.following(l.Space); ok {
 		return cur, nil // one enrollment per space: this is where it stands
 	}
-	lock, ok := takeFollow(n.lockPath(l.Space))
-	if !ok {
-		return PairbookJoinResult{Space: l.Space, State: "followed by another Claude Desktop window", Guidance: "Ask in that window, or call pairbook_join_status there."}, nil
+	lock, err := takeFollow(n.lockPath(l.Space))
+	if err != nil {
+		n.stopFollowing(l.Space, nil) // no lock taken: nothing follows it here
+		if errors.Is(err, errFollowedElsewhere) {
+			return PairbookJoinResult{Space: l.Space, State: "followed by another Claude Desktop window", Guidance: "Ask in that window, or call pairbook_join_status there."}, nil
+		}
+		return PairbookJoinResult{}, err
 	}
 	out, err := n.beginJoin(ctx, joinLink(args.Link), lock)
 	if err != nil {
@@ -141,7 +181,9 @@ func (n *Node) beginJoin(ctx context.Context, link joinLink, lock *followLock) (
 		return PairbookJoinResult{}, err
 	}
 	out := n.track(f, enrollState(st.State))
-	go n.finish(f, st, lock)
+	if !n.spawn(func() { n.finish(f, st, lock) }) {
+		return out, errNodeClosed
+	}
 	return out, nil
 }
 
@@ -260,7 +302,7 @@ func (n *Node) track(f *enroll.Flow, state enrollState) PairbookJoinResult {
 // lets go of the space.
 func (n *Node) finish(f *enroll.Flow, st protocol.SpaceEnrollState, lock *followLock) {
 	defer n.stopFollowing(f.Enroll.Space, lock)
-	out, err := f.Follow(n.base, st)
+	out, err := f.Follow(n.joins.life, st)
 	n.track(f, finalState(out, err))
 }
 
@@ -285,7 +327,7 @@ func (n *Node) resumeJoins() {
 		if !ok {
 			continue
 		}
-		go n.resumeJoin(s)
+		n.spawn(func() { n.resumeJoin(s) })
 	}
 }
 
@@ -301,19 +343,22 @@ func (n *Node) resumeJoin(s enroll.Saved) {
 	if _, ok := n.following(s.Enroll.Space); ok {
 		return
 	}
-	lock, ok := takeFollow(n.lockPath(s.Enroll.Space))
-	if !ok {
+	lock, err := takeFollow(n.lockPath(s.Enroll.Space))
+	if err != nil {
 		n.stopFollowing(s.Enroll.Space, nil)
+		if !errors.Is(err, errFollowedElsewhere) {
+			n.trackSaved(s, enrollState("not followed: "+err.Error()))
+		}
 		return
 	}
 	for {
-		_, err := n.beginJoin(n.base, joinLink(s.Link), lock)
+		_, err := n.beginJoin(n.joins.life, joinLink(s.Link), lock)
 		if err == nil {
-			return
+			return // a follower holds the lock now
 		}
 		n.trackSaved(s, enrollState("retrying: "+err.Error()))
 		select {
-		case <-n.base.Done():
+		case <-n.joins.life.Done():
 			n.stopFollowing(s.Enroll.Space, lock)
 			return
 		case <-time.After(resumeRetry):
