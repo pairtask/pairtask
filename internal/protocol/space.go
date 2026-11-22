@@ -122,8 +122,9 @@ type SpaceWorkspace struct {
 
 // SpaceAgent is an agent a workspace lists in a space.
 type SpaceAgent struct {
-	Name string `json:"name"`
-	Role string `json:"role,omitempty"`
+	Name    string `json:"name"`
+	Role    string `json:"role,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 // SpaceEnroll is a started enrollment: what the host signs the join with

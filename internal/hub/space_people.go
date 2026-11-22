@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -169,58 +170,110 @@ func (h *Hub) changeShare(ctx context.Context, id, agent string, share bool) err
 	if err != nil {
 		return err
 	}
-	if len(shares) >= maxSpaceAgents {
+	if len(shares) >= maxSpaceAgents && !slices.Contains(shares, agent) {
 		return errors.New("at most 32 agents can be listed in a space")
 	}
 	return h.store.ShareInSpace(ctx, id, agent, h.authority.now())
 }
 
-// mapPeople is who this workspace may see in a space, with their status;
-// from a Pairbook that keeps no status, the people the signed map holds.
+var errNotInSpace = errors.New("this workspace isn't in the space now: no current map binds it")
+
+// mapPeople is who this workspace may see in a space: itself and the
+// workspaces its current map grants it, by person, with their status. A
+// Pairbook that keeps no status gives the signed map's view, status
+// unknown; any other refusal (a 403 above all) is the answer.
 func (h *Hub) mapPeople(ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError) {
 	pin, rerr := h.pinFor(ctx, r.Space)
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
 	return spaceStep{space: pin.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
-		if st, ok := h.statuser(pin); ok {
-			people, err := st.Status(net, pin)
-			h.noStatus.note(pin.Base, err, h.authority.now())
-			if err == nil {
-				return &protocol.SpaceResult{People: peopleView(people), StatusKnown: true}, nil
-			}
+		shown, err := h.visible(pin.Space)
+		if err != nil {
+			return nil, err
 		}
-		return h.mapOnlyPeople(local, pin.Space)
+		people, known, err := h.remotePeople(net, pin)
+		if err != nil {
+			return nil, err
+		}
+		if !known {
+			return h.mapOnlyPeople(local, pin.Space, shown)
+		}
+		return &protocol.SpaceResult{People: peopleView(people, shown), StatusKnown: true}, nil
 	}}, nil
 }
 
-// mapOnlyPeople is the stored map's people and workspaces, status unknown.
-func (h *Hub) mapOnlyPeople(ctx context.Context, id string) (*protocol.SpaceResult, error) {
-	m, _, found, err := h.store.SpaceMap(ctx, id)
-	if err != nil || !found {
-		return nil, errors.Join(err, errors.New("no map of this space yet"))
+// visible is this workspace and the workspaces its current map grants it.
+func (h *Hub) visible(id string) (map[string]bool, error) {
+	v, ok := h.SpaceAuthority(id)
+	ep, err := h.PairingEndpoint()
+	if !ok || err != nil {
+		return nil, errNotInSpace
 	}
-	bound := map[pairbook.Lineage][]protocol.SpaceWorkspace{}
-	for _, b := range m.Bindings {
-		if l, ok := b.ClaimedLineage(); ok {
-			bound[l] = append(bound[l], protocol.SpaceWorkspace{Workspace: b.Workspace()})
-		}
+	me := ep.Identity.Fingerprint()
+	if _, bound := v.BoundTo(me); !bound {
+		return nil, errNotInSpace
 	}
-	out := make([]protocol.SpacePerson, 0, len(m.People))
-	for _, p := range m.People {
-		out = append(out, protocol.SpacePerson{Person: pairbook.LineageHex(p.Lineage), Name: p.Name, Role: p.Role, Workspaces: bound[p.Lineage]})
+	peers, err := v.Peers(me, h.authority.now())
+	if err != nil {
+		return nil, errNotInSpace
 	}
-	return &protocol.SpaceResult{People: out}, nil
+	shown := map[string]bool{me: true}
+	for _, p := range peers {
+		shown[p.Workspace] = true
+	}
+	return shown, nil
 }
 
-func peopleView(people []space.PersonStatus) []protocol.SpacePerson {
+// remotePeople is the Pairbook's status; known is false only when it keeps
+// none.
+func (h *Hub) remotePeople(ctx context.Context, pin space.Pin) ([]space.PersonStatus, bool, error) {
+	st, ok := h.statuser(pin)
+	if !ok {
+		return nil, false, nil
+	}
+	people, err := st.Status(ctx, pin)
+	h.noStatus.note(pin.Base, err, h.authority.now())
+	if errors.Is(err, space.ErrNoStatus) {
+		return nil, false, nil
+	}
+	return people, err == nil, err
+}
+
+// mapOnlyPeople is the stored map's people with the workspaces shown
+// admits, status unknown.
+func (h *Hub) mapOnlyPeople(ctx context.Context, id string, shown map[string]bool) (*protocol.SpaceResult, error) {
+	m, _, found, err := h.store.SpaceMap(ctx, id)
+	if err != nil || !found {
+		return nil, errors.Join(err, errNotInSpace)
+	}
+	bound := map[pairbook.Lineage][]space.WorkspaceStatus{}
+	for _, b := range m.Bindings {
+		if l, ok := b.ClaimedLineage(); ok {
+			bound[l] = append(bound[l], space.WorkspaceStatus{Workspace: b.Workspace()})
+		}
+	}
+	people := make([]space.PersonStatus, 0, len(m.People))
+	for _, p := range m.People {
+		people = append(people, space.PersonStatus{Person: pairbook.LineageHex(p.Lineage), Name: p.Name, Role: p.Role, Workspaces: bound[p.Lineage]})
+	}
+	return &protocol.SpaceResult{People: peopleView(people, shown)}, nil
+}
+
+// peopleView is people with only the workspaces shown admits; a person
+// left with none is left out.
+func peopleView(people []space.PersonStatus, shown map[string]bool) []protocol.SpacePerson {
 	out := make([]protocol.SpacePerson, 0, len(people))
 	for _, p := range people {
 		v := protocol.SpacePerson{Person: p.Person, Name: p.Name, Role: p.Role}
 		for _, w := range p.Workspaces {
-			v.Workspaces = append(v.Workspaces, workspaceView(w))
+			if shown[w.Workspace] {
+				v.Workspaces = append(v.Workspaces, workspaceView(w))
+			}
 		}
-		out = append(out, v)
+		if len(v.Workspaces) > 0 {
+			out = append(out, v)
+		}
 	}
 	return out
 }
@@ -228,7 +281,7 @@ func peopleView(people []space.PersonStatus) []protocol.SpacePerson {
 func workspaceView(w space.WorkspaceStatus) protocol.SpaceWorkspace {
 	v := protocol.SpaceWorkspace{Workspace: w.Workspace, Online: w.Online, LastSeen: w.LastSeen}
 	for _, a := range w.Agents {
-		v.Agents = append(v.Agents, protocol.SpaceAgent{Name: a.Name, Role: a.Role})
+		v.Agents = append(v.Agents, protocol.SpaceAgent{Name: a.Name, Role: a.Role, Summary: a.Summary})
 	}
 	return v
 }
