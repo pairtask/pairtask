@@ -43,7 +43,9 @@ func runOperatorChat(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	opts := chat.Options{Dial: chat.SocketDialer(cfg.socket, cfg.timeout), Bounds: chat.Bounds{ResolveChange: changeLookup(forges), CheckPins: pinCheck(forges)},
 		Seal: seal}
+	stopSync := startSpaceAutoSync(ctx, operatorCall{socket: cfg.socket, timeout: cfg.timeout}, spaceAutoSyncEvery)
 	m, err := chat.Run(ctx, opts, os.Stdin, output)
+	stopSync()
 	if err != nil {
 		fmt.Fprintln(stderr, "operator chat:", err)
 		return 1
