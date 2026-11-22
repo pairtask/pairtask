@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/space"
@@ -34,18 +35,35 @@ func (h *Hub) mapAddress(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
-	if !h.boundHere(pin.Space) {
-		return spaceStep{}, spaceRefusal("this workspace isn't in space " + pin.Space + " yet; publish once the owner has admitted it")
-	}
 	keep := store.SpaceAddress{Space: pin.Space, Addrs: r.Addresses, Valid: valid}
 	return spaceStep{space: pin.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
-		unlock := h.authority.lockSpace(spaceKey(pin.Space))
+		unlock := h.authority.lockSpace(spaceKey(keep.Space))
 		defer unlock()
+		current, err := h.addressTarget(local, keep.Space)
+		if err != nil {
+			return nil, err
+		}
 		if err := h.store.KeepSpaceAddress(local, keep); err != nil {
 			return nil, err
 		}
-		return nil, h.publishAddress(net, local, pin, keep)
+		return nil, h.publishAddress(net, local, current, keep)
 	}}, nil
+}
+
+// addressTarget is space's pin as kept now, under the space's lock, when
+// its active map binds this workspace; a space unpinned or left since the
+// request was made is refused, so nothing is kept or published for it.
+func (h *Hub) addressTarget(ctx context.Context, id string) (space.Pin, error) {
+	pin, found, err := h.store.SpacePin(ctx, id)
+	switch {
+	case err != nil:
+		return pin, err
+	case !found:
+		return pin, errors.New("space " + id + " is not pinned here")
+	case !h.boundHere(id):
+		return pin, errors.New("this workspace isn't in space " + id + " yet; publish once the owner has admitted it")
+	}
+	return pin, nil
 }
 
 // publishAddress signs and sends a's record and notes when.
@@ -78,11 +96,11 @@ func (h *Hub) renewAddress(ctx context.Context, id string) {
 	unlock := h.authority.lockSpace(spaceKey(id))
 	defer unlock()
 	a, found, err := h.store.SpaceAddressOf(ctx, id)
-	if err != nil || !found || !h.addressDue(a) || !h.boundHere(id) {
+	if err != nil || !found || !h.addressDue(a) {
 		return
 	}
-	pin, found, err := h.store.SpacePin(ctx, id)
-	if err != nil || !found {
+	pin, err := h.addressTarget(ctx, id)
+	if err != nil {
 		return
 	}
 	if err := h.publishAddress(ctx, ctx, pin, a); err != nil {
