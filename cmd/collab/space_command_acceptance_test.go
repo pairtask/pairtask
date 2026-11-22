@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,12 +63,26 @@ func TestSpaceCommandAcceptanceInviteAndPublishArguments(t *testing.T) {
 	spaceCommandCheck(t, req.ValidFor == (2*time.Hour).Milliseconds(), "wrong invite arguments: %+v", req)
 	out.Reset()
 	stderr.Reset()
-	code = run(context.Background(), []string{"space", "publish", "a.example:7445", "b.example:7445", "--space", commandSpaceID, "--socket", path}, &out, &stderr)
+	code = run(context.Background(), []string{"space", "v0", "publish", "a.example:7445", "b.example:7445", "--space", commandSpaceID, "--socket", path}, &out, &stderr)
 	spaceCommandCheck(t, code == 0, "publish failed: %s", stderr.String())
 	req = decodeSpaceCLI(t, roomCLIRequest(t, requests))
 	spaceCommandCheck(t, req.Op == protocol.SpaceOpPublish, "wrong publish arguments: %+v", req)
 	spaceCommandCheck(t, len(req.Addresses) == 2, "wrong publish arguments: %+v", req)
 	spaceCommandCheck(t, req.Addresses[0] == "a.example:7445", "wrong publish arguments: %+v", req)
+}
+
+func TestSpaceCommandAcceptanceV1Publish(t *testing.T) {
+	path, requests := pairingCLISocket(t, func(map[string]any) map[string]any { return spaceCLIResult() })
+	var out, stderr bytes.Buffer
+	args := []string{"space", "publish", "a.example:7445", "b.example:7445", "--space", commandSpaceID, "--socket", path}
+	code := run(context.Background(), args, &out, &stderr)
+	spaceCommandCheck(t, code == 0, "v1 publish failed: %s", stderr.String())
+	lookup := decodeSpaceCLI(t, roomCLIRequest(t, requests))
+	spaceCommandCheck(t, lookup.Op == protocol.SpaceOpList, "expected pin lookup: %+v", lookup)
+	req := decodeSpaceCLI(t, roomCLIRequest(t, requests))
+	spaceCommandCheck(t, req.Op == protocol.SpaceOpMapAddress && req.Space == commandSpaceID, "wrong v1 publish route: %+v", req)
+	spaceCommandCheck(t, req.ValidFor == (24*time.Hour).Milliseconds(), "wrong v1 publish validity: %+v", req)
+	spaceCommandCheck(t, slices.Equal(req.Addresses, []string{"a.example:7445", "b.example:7445"}), "wrong v1 publish endpoints: %+v", req)
 }
 
 func TestSpaceCommandAcceptanceJoinAndBrokerRefusal(t *testing.T) {
