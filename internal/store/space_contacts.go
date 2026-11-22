@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS space_contacts (
 );
 CREATE TABLE IF NOT EXISTS space_refusals (
     workspace TEXT PRIMARY KEY,
-    at        TEXT NOT NULL
+    at        TEXT NOT NULL,
+    source    TEXT NOT NULL DEFAULT 'operator' -- operator: recorded when it happened; seeded: from before space connects existed
 );
 `
 
@@ -42,6 +43,36 @@ func spaceRefused(ctx context.Context, q rowQuerier, workspace string) (bool, er
 	var refused bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM space_refusals WHERE workspace = ?)`, workspace).Scan(&refused)
 	return refused, err
+}
+
+// spaceRefusalsSeeded names the one-time seeding in schema_steps.
+const spaceRefusalsSeeded = "space_refusals_seeded"
+
+// seedSpaceRefusals carries the operator's decisions made before space
+// connects existed into refusals, once: every contact already unpaired or
+// paused. The seeding and its schema step commit together, so a crash
+// between them can't skip it, and no later open seeds again, so an
+// automatic retire is never taken for the operator's decision.
+func seedSpaceRefusals(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var done bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM schema_steps WHERE name = ?)`, spaceRefusalsSeeded).Scan(&done); err != nil || done {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO space_refusals (workspace, at, source)
+SELECT identity_key, CASE WHEN unpaired_at != '' THEN unpaired_at ELSE paused_at END, 'seeded'
+FROM peer_contacts WHERE unpaired_at != '' OR paused_at != ''
+ON CONFLICT DO NOTHING`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_steps (name, applied_at) VALUES (?, ?)`, spaceRefusalsSeeded, msgStamp(time.Now())); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // refuseSpace records the operator's refusal of workspace.

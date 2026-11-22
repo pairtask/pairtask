@@ -94,6 +94,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("reset attention enforcement: %w", err)
 	}
+	if err := seedSpaceRefusals(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("seed space refusals: %w", err)
+	}
 	if err := clearConsentOwner(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("clear session consent: %w", err)
