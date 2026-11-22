@@ -10,6 +10,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/identity"
@@ -32,17 +33,18 @@ type Me struct {
 	Evidence pairbook.PersonEvidence
 }
 
-// New is the owner whose key is key and whose identity anchor is anchor;
-// the anchor must be key's own.
+// New is the owner whose key is key and whose identity anchor is anchor:
+// the anchor must be signed by key itself. Both are copied, so the caller
+// may wipe its buffers.
 func New(key ed25519.PrivateKey, anchor []byte) (Me, error) {
 	a, err := identity.ParseAnchor(anchor)
 	if err != nil {
 		return Me{}, err
 	}
-	if len(key) != ed25519.PrivateKeySize || !a.Person.Equal(key.Public()) {
+	if len(key) != ed25519.PrivateKeySize || !a.Person.Equal(key.Public()) || a.Check() != nil {
 		return Me{}, ErrAnchor
 	}
-	return Me{key: key, Lineage: pairbook.Lineage(a.Lineage()), Evidence: pairbook.PersonEvidence{Anchor: anchor}}, nil
+	return Me{key: slices.Clone(key), Lineage: pairbook.Lineage(a.Lineage()), Evidence: pairbook.PersonEvidence{Anchor: slices.Clone(anchor)}}, nil
 }
 
 // NewAnchor is an identity anchor for key made at at, with no recovery
