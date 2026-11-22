@@ -40,7 +40,7 @@ SCRIPTED = {
     "chat": ("sandbox-session.py", ["chat"], "the operator chat; restores your terminal after"),
     "secured": ("sandbox-session.py", ["secured"], "a shell in the secured runtime, where operator commands run; or: secured CMD"),
     "space": ("sandbox-session.py", ["secured", "--tty", "pairtask", "operator", "space"],
-              "Pairbook spaces of people: create --pairbook URL | invite | join LINK | requests | approve PERSON | sync | members | status | leave"),
+              "Pairbook spaces of people: create [NAME] --pairbook URL | invite | join LINK | requests | approve PERSON | sync | members | status | leave"),
     "version": ("sandbox-version.py", [], "the app and host releases, the latest one and the command to update; changes nothing"),
 }
 ACTIONS = {

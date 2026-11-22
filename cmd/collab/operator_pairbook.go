@@ -26,7 +26,7 @@ import (
 // keeps and sends the signed records. members and status sign nothing.
 
 const operatorPairbookUsage = `usage: pairtask space COMMAND [--space ID] [--socket PATH] [--json] [--timeout 30s]
-  create --pairbook URL [--name NAME]  a new space, owned by you; everyone in it can connect
+  create [NAME] --pairbook URL   a new space, owned by you (NAME: your name in it; default this machine's); everyone can connect
   invite [--for 168h]            a one-time invite link (shown once)
   join LINK [--name NAME]        ask to join (named after this machine unless --name); in once the owner approves
   requests                       the requests waiting for the owner
@@ -186,10 +186,11 @@ func (s *pairbookSession) binding(ctx context.Context, me spaceowner.Me, now tim
 
 // pairbookCreate makes a space owned by this person, with this workspace.
 func pairbookCreate(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
-	if len(a.words) != 0 || a.directory == "" {
-		return nil, errors.New("create needs --pairbook URL (and --name for your name in it)")
+	given, err := createName(a)
+	if err != nil {
+		return nil, err
 	}
-	name, err := joinName(a.name)
+	name, err := joinName(given)
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +212,21 @@ func pairbookCreate(ctx context.Context, s *pairbookSession, a pairbookArgs) (an
 		return nil, err
 	}
 	return s.publish(ctx, a.directory, spacePut{put: space.MapPut{Map: m}})
+}
+
+// createName is the owner's name create was given: NAME or --name (not
+// both), or "" for this machine's host name. It is the owner's name in the
+// space; a space map carries no title of its own.
+func createName(a pairbookArgs) (string, error) {
+	switch {
+	case a.directory == "" || len(a.words) > 1:
+		return "", errors.New("create needs --pairbook URL, and at most one NAME")
+	case len(a.words) == 1 && a.name != "":
+		return "", errors.New("give your name as NAME or --name, not both")
+	case len(a.words) == 1:
+		return a.words[0], nil
+	}
+	return a.name, nil
 }
 
 // newSpaceID is a fresh space ID: 32 lowercase hex.
