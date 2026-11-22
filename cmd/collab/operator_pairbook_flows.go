@@ -24,11 +24,19 @@ func (s *pairbookSession) pin(ctx context.Context, id string) (protocol.SpacePin
 		return protocol.SpacePin{}, err
 	}
 	for _, p := range res.Pins {
-		if p.Space == id || id == "" && len(res.Pins) == 1 {
+		if chosen(p, id, len(res.Pins)) {
 			return p, nil
 		}
 	}
 	return protocol.SpacePin{}, errors.New("name the space with --space (pinned: " + pinList(res.Pins) + ")")
+}
+
+// chosen: id names p, or no id was given and p is the only pin.
+func chosen(p protocol.SpacePin, id string, pins int) bool {
+	if id == "" {
+		return pins == 1
+	}
+	return p.Space == id
 }
 
 func pinList(pins []protocol.SpacePin) string {

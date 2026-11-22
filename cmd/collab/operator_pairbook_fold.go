@@ -132,7 +132,7 @@ func planFold(p pending, approve string) (foldPlan, error) {
 	var matches []string
 	for i, c := range p.changes {
 		plan.place(c, p.states[i])
-		if approve != "" && p.states[i] == protocol.InviteLive && namesJoin(c, approve) {
+		if approves(c, p.states[i], approve) {
 			d := c.Digest()
 			matches = append(matches, hex.EncodeToString(d[:]))
 		}
@@ -160,6 +160,14 @@ func (p *foldPlan) place(c pairbook.SignedChange, state string) {
 	default:
 		p.batch = append(p.batch, c)
 	}
+}
+
+// approves: approve names c, a join whose invite is live.
+func approves(c pairbook.SignedChange, state, approve string) bool {
+	if approve == "" || state != protocol.InviteLive {
+		return false
+	}
+	return namesJoin(c, approve)
 }
 
 // namesJoin: prefix starts the join's lineage or its request digest.
@@ -194,22 +202,55 @@ func (s *pairbookSession) applyFold(ctx context.Context, f foldRun) (foldReport,
 		return foldReport{}, false, err
 	}
 	rep := reportOf(outcomes, f)
-	if next == nil && renewDue(f.cur.Map, now) {
-		renewed, err := f.me.Renew(f.cur, now)
-		if err != nil {
-			return rep, false, err
-		}
-		next, rep.Renewed = &renewed, true
+	next, err = renewWhenDue(f, next, now, &rep)
+	if err != nil {
+		return rep, false, err
 	}
-	if next != nil {
-		stale, err := s.publishFold(ctx, f, *next, outcomes)
-		if err != nil || stale {
-			return rep, stale, err
-		}
-		rep.Changed, rep.Version = true, next.Version
+	if stale, err := s.publishNext(ctx, f, next, outcomes, &rep); err != nil || stale {
+		return rep, stale, err
 	}
 	rep.Dropped, err = s.dropDead(ctx, f, outcomes)
 	return rep, false, err
+}
+
+// renewWhenDue is next, or, when nothing else changed and half the map's
+// validity has passed, the map renewed.
+func renewWhenDue(f foldRun, next *pairbook.SignedSpaceMap, now time.Time, rep *foldReport) (*pairbook.SignedSpaceMap, error) {
+	if next != nil || !renewDue(f.cur.Map, now) {
+		return next, nil
+	}
+	renewed, err := f.me.Renew(f.cur, now)
+	if err != nil {
+		return nil, err
+	}
+	rep.Renewed = true
+	return &renewed, nil
+}
+
+// publishNext publishes next, when there is one, into rep.
+func (s *pairbookSession) publishNext(ctx context.Context, f foldRun, next *pairbook.SignedSpaceMap, outcomes []spaceowner.Outcome, rep *foldReport) (bool, error) {
+	if next == nil {
+		return false, nil
+	}
+	stale, err := s.publishFold(ctx, f, *next, outcomes)
+	if err == nil && !stale {
+		rep.Changed, rep.Version = true, next.Version
+	}
+	return stale, err
+}
+
+// deadResults are the outcomes whose request can never apply.
+var deadResults = map[string]bool{spaceowner.Rejected: true, spaceowner.Stale: true, spaceowner.Unchanged: true}
+
+// deadChanges are spent joins and requests with a dead outcome.
+func deadChanges(spent []pairbook.SignedChange, outcomes []spaceowner.Outcome) []pairbook.SignedChange {
+	dead := append([]pairbook.SignedChange(nil), spent...)
+	for _, o := range outcomes {
+		if deadResults[o.Result] {
+			dead = append(dead, o.Change)
+		}
+	}
+	return dead
 }
 
 // renewDue: half the map's validity has passed.
@@ -253,12 +294,7 @@ func (s *pairbookSession) publishFold(ctx context.Context, f foldRun, next pairb
 // from another map), already true, or on a spent invite. A join awaiting
 // approval is kept.
 func (s *pairbookSession) dropDead(ctx context.Context, f foldRun, outcomes []spaceowner.Outcome) (int, error) {
-	dead := append([]pairbook.SignedChange(nil), f.plan.spent...)
-	for _, o := range outcomes {
-		if o.Result == spaceowner.Rejected || o.Result == spaceowner.Stale || o.Result == spaceowner.Unchanged {
-			dead = append(dead, o.Change)
-		}
-	}
+	dead := deadChanges(f.plan.spent, outcomes)
 	for _, c := range dead {
 		d := c.Digest()
 		if _, err := s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapDrop, Space: f.pin.Space, Digest: hex.EncodeToString(d[:])}); err != nil {
