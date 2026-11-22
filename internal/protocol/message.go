@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	Version                 = AttentionVersion
+	Version                 = SpacePeopleVersion
 	AcknowledgmentVersion   = 2
 	DurableVersion          = 3
 	OriginVersion           = 4

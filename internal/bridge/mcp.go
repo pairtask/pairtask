@@ -64,6 +64,7 @@ func newMCP(c messagingClient, options *mcp.ServerOptions) *mcp.Server {
 	addRoomTools(s, c)
 	addReviewTools(s, c)
 	addWorkspaceTools(s, c)
+	addSpaceTools(s, c)
 	addReviewAskTools(s, c)
 	addReviewsAskedTool(s, c)
 	additive := false

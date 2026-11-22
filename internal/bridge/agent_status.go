@@ -276,7 +276,7 @@ func (l *Listener) observeToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
 // statusAnswers are the correlated answers to an agent's own requests.
 var statusAnswers = map[string]bool{protocol.TypeAgentStatusResult: true, protocol.TypeClaimResult: true, protocol.TypeRoomResult: true,
 	protocol.TypeReviewResult: true, protocol.TypeWorkspacesResult: true, protocol.TypeReviewsAskedResult: true, protocol.TypeDecisionResult: true,
-	protocol.TypeRoleResult: true, protocol.TypeClassifierFeedbackResult: true}
+	protocol.TypeRoleResult: true, protocol.TypeClassifierFeedbackResult: true, protocol.TypeSpacePeopleResult: true}
 
 func isStatusAnswer(msg protocol.Message) bool {
 	if statusAnswers[msg.Type] {
