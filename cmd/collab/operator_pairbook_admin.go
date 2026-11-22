@@ -33,6 +33,8 @@ pairtask space admin spaces | create NAME | show SPACE | audit
 pairtask space admin remove SPACE PERSON
 pairtask space admin approve|deny SPACE ENROLLMENT
 pairtask space admin admission SPACE approve|auto
+pairtask space admin policy SPACE              groups and access rules, with the version they apply to
+pairtask space admin policy-set SPACE FILE     set them from JSON (what policy shows, edited); refused if the space changed
 pairtask space admin logout
   --pairbook https://PAIRBOOK picks one when you are signed in to several`
 
@@ -94,14 +96,32 @@ type adminRun struct {
 }
 
 var adminVerbs = map[string]adminRun{
-	"spaces":    {0, http.MethodGet, func([]string) string { return "spaces" }, nil},
-	"audit":     {0, http.MethodGet, func([]string) string { return "audit" }, nil},
-	"show":      {1, http.MethodGet, func(w []string) string { return "spaces/" + url.PathEscape(w[0]) }, nil},
-	"create":    {1, http.MethodPost, func([]string) string { return "spaces" }, field("name", 0)},
-	"remove":    {2, http.MethodPost, func(w []string) string { return "spaces/" + url.PathEscape(w[0]) + "/remove" }, field("person", 1)},
-	"admission": {2, http.MethodPost, func(w []string) string { return "spaces/" + url.PathEscape(w[0]) + "/admission" }, field("policy", 1)},
-	"approve":   {2, http.MethodPost, enrollmentPath("approve"), shownEnrollment},
-	"deny":      {2, http.MethodPost, enrollmentPath("deny"), shownEnrollment},
+	"spaces":     {0, http.MethodGet, func([]string) string { return "spaces" }, nil},
+	"audit":      {0, http.MethodGet, func([]string) string { return "audit" }, nil},
+	"show":       {1, http.MethodGet, func(w []string) string { return "spaces/" + url.PathEscape(w[0]) }, nil},
+	"create":     {1, http.MethodPost, func([]string) string { return "spaces" }, field("name", 0)},
+	"remove":     {2, http.MethodPost, func(w []string) string { return "spaces/" + url.PathEscape(w[0]) + "/remove" }, field("person", 1)},
+	"admission":  {2, http.MethodPost, func(w []string) string { return "spaces/" + url.PathEscape(w[0]) + "/admission" }, field("policy", 1)},
+	"approve":    {2, http.MethodPost, enrollmentPath("approve"), shownEnrollment},
+	"deny":       {2, http.MethodPost, enrollmentPath("deny"), shownEnrollment},
+	"policy":     {1, http.MethodGet, policyPath, nil},
+	"policy-set": {2, http.MethodPut, policyPath, policyFile},
+}
+
+func policyPath(w []string) string { return "spaces/" + url.PathEscape(w[0]) + "/policy" }
+
+// policyFile is the policy to set, as JSON from the file named: groups,
+// grants and the base_version it was edited from.
+func policyFile(_ context.Context, _ adminToken, w []string) (any, error) {
+	b, err := os.ReadFile(w[1])
+	if err != nil {
+		return nil, err
+	}
+	var policy json.RawMessage
+	if err := json.Unmarshal(b, &policy); err != nil {
+		return nil, fmt.Errorf("%s isn't JSON: %w", w[1], err)
+	}
+	return policy, nil
 }
 
 func field(name string, i int) func(context.Context, adminToken, []string) (any, error) {

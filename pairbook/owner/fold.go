@@ -74,6 +74,29 @@ func (m Me) Remove(c Current, l pairbook.Lineage, now time.Time) (pairbook.Signe
 	return m.next(w.sm, v.Mark, now)
 }
 
+// SetPolicy is c's map with groups and grants replaced, as the next
+// version; its people and bindings stay. The map's own checks hold the
+// result to valid names, groups of people in the map and selectors that
+// name a known group or person. No grants is allowed: it connects no one.
+func (m Me) SetPolicy(c Current, groups []pairbook.Group, grants []pairbook.Grant, now time.Time) (pairbook.SignedSpaceMap, error) {
+	v, err := m.current(c, now)
+	if err != nil {
+		return pairbook.SignedSpaceMap{}, err
+	}
+	sm := c.Map.SpaceMap
+	sm.Groups = cloneGroups(groups)
+	sm.Grants = slices.Clone(grants)
+	return m.next(sm, v.Mark, now)
+}
+
+func cloneGroups(groups []pairbook.Group) []pairbook.Group {
+	out := make([]pairbook.Group, len(groups))
+	for i, g := range groups {
+		out[i] = pairbook.Group{Name: g.Name, Members: slices.Clone(g.Members)}
+	}
+	return out
+}
+
 // invited: the owner's gate says tokenHash is a live, unused invite.
 func (b Batch) invited(tokenHash [32]byte) bool {
 	return b.Invited != nil && b.Invited(tokenHash)
