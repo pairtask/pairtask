@@ -83,26 +83,31 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
-	// Tables added since the epoch transition's released shape are created
-	// once it has succeeded, so a failed or refused transition leaves no new
-	// schema object behind.
-	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema + spaceMapsSchema + spaceAttemptsSchema + spaceContactsSchema); err != nil {
+	if err := afterTransition(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply classifier schema: %w", err)
-	}
-	if err := resetAttentionEnforcement(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("reset attention enforcement: %w", err)
-	}
-	if err := seedSpaceRefusals(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("seed space refusals: %w", err)
-	}
-	if err := clearConsentOwner(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("clear session consent: %w", err)
+		return nil, err
 	}
 	return &Store{db: db, path: path, gate: &consentGate{}}, nil
+}
+
+// afterTransition runs once the epoch transition has succeeded: tables
+// added since its released shape are created only then, so a failed or
+// refused transition leaves no new schema object behind; then the
+// one-time and every-open steps that need them.
+func afterTransition(db *sql.DB) error {
+	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema + spaceMapsSchema + spaceAttemptsSchema + spaceContactsSchema); err != nil {
+		return fmt.Errorf("apply classifier schema: %w", err)
+	}
+	if err := resetAttentionEnforcement(db); err != nil {
+		return fmt.Errorf("reset attention enforcement: %w", err)
+	}
+	if err := seedSpaceRefusals(db); err != nil {
+		return fmt.Errorf("seed space refusals: %w", err)
+	}
+	if err := clearConsentOwner(db); err != nil {
+		return fmt.Errorf("clear session consent: %w", err)
+	}
+	return nil
 }
 
 // Existing tables don't gain columns from CREATE TABLE IF NOT EXISTS. Added
