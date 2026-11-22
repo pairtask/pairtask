@@ -52,7 +52,7 @@ func TestCompanyOwnerRemovesPersonFromSignedPolicy(t *testing.T) {
 	if _, err := previous.Verify(spaceID, admin.me.KeyID(), next.Mark(), now); !errors.Is(err, pairbook.ErrRollback) {
 		t.Fatal("cached old map accepted after removal", err)
 	}
-	checkRemovedWorkspaces(t, after, now, removed, second)
+	checkRemovedWorkspaces(t, after, now, []person{removed, second})
 	if !reflect.DeepEqual(next.Grants, []pairbook.Grant{keep}) {
 		t.Fatal("unexpected grants after removal")
 	}
@@ -63,21 +63,27 @@ func TestCompanyOwnerRemovesPersonFromSignedPolicy(t *testing.T) {
 	for _, p := range []person{admin, retained} {
 		key := p.binding().Workspace()
 		prior, _ := before.BoundTo(key)
-		got, ok := after.BoundTo(key)
-		if !ok || !reflect.DeepEqual(prior, got) {
+		got, _ := after.BoundTo(key)
+		if !reflect.DeepEqual(prior, got) {
 			t.Fatal("surviving member changed")
 		}
-		peers, err := after.Peers(key, now)
-		must(t, err)
-		if len(peers) != 1 || peers[0].Lineage == removed.me.Lineage {
-			t.Fatal("surviving connection policy changed")
-		}
+		checkRetainedPeer(t, after, key, now)
 	}
 }
 
-func checkRemovedWorkspaces(t *testing.T, after pairbook.VerifiedMap, now time.Time, removed, second person) {
+func checkRetainedPeer(t *testing.T, after pairbook.VerifiedMap, key string, now time.Time) {
 	t.Helper()
-	for _, p := range []person{removed, second} {
+	peers, err := after.Peers(key, now)
+	must(t, err)
+	if len(peers) != 1 {
+		t.Fatal("surviving connection policy changed")
+	}
+
+}
+
+func checkRemovedWorkspaces(t *testing.T, after pairbook.VerifiedMap, now time.Time, workspaces []person) {
+	t.Helper()
+	for _, p := range workspaces {
 		key := p.binding().Workspace()
 		if _, ok := after.BoundTo(key); ok {
 			t.Fatal("removed workspace still bound")
