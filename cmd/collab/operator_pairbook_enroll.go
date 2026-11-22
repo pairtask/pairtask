@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/pairtask/pairtask/internal/personkey"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/space"
 	"github.com/pairtask/pairtask/internal/spaceowner"
@@ -34,14 +37,17 @@ type enrolling struct {
 	s     *pairbookSession
 	me    spaceowner.Me
 	e     protocol.SpaceEnroll
+	link  string
 	name  string
 	own   pairbook.Binding
 	since time.Time
+	saved enrollSaves
 }
 
-// pairbookEnroll joins the organization space link names.
+// pairbookEnroll joins the organization space link names: it picks up an
+// enrollment this host left waiting for an admin, or starts one.
 func pairbookEnroll(ctx context.Context, s *pairbookSession, a pairbookArgs, link string) (any, error) {
-	name, err := joinName(a.name)
+	l, err := space.ParseOrgLink(link)
 	if err != nil {
 		return nil, err
 	}
@@ -49,19 +55,55 @@ func pairbookEnroll(ctx context.Context, s *pairbookSession, a pairbookArgs, lin
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapEnroll, Link: link, Name: name})
+	en := &enrolling{s: s, me: me, link: link, since: time.Now(), saved: s.enrollSaves()}
+	if kept, ok := en.saved.load(l.Space); ok && kept.Link == link {
+		return en.resume(ctx, kept)
+	}
+	return en.start(ctx, a.name)
+}
+
+// start begins a new enrollment.
+func (en *enrolling) start(ctx context.Context, given string) (any, error) {
+	name, err := joinName(given)
+	if err != nil {
+		return nil, err
+	}
+	res, err := en.s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapEnroll, Link: en.link, Name: name})
 	if err != nil {
 		return nil, err
 	}
 	if res.Enroll == nil {
 		return nil, errors.New("the broker didn't start an enrollment")
 	}
-	en := &enrolling{s: s, me: me, e: *res.Enroll, name: name, since: time.Now()}
-	if en.own, err = s.binding(ctx, me, time.Now().Truncate(time.Millisecond)); err != nil {
+	en.e, en.name = *res.Enroll, name
+	if err := en.bind(ctx); err != nil {
 		return nil, err
 	}
 	en.announce()
-	return en.run(ctx)
+	st, err := en.send(ctx, en.e.Base)
+	return en.follow(ctx, st, err)
+}
+
+// resume follows an enrollment this host started before.
+func (en *enrolling) resume(ctx context.Context, kept savedEnroll) (any, error) {
+	en.e, en.name = kept.Enroll, kept.Name
+	if err := en.bind(ctx); err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(en.s.progressOut(), "Picking up the enrollment started earlier (code %s).\n", en.e.Code)
+	res, err := en.s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapEnrollState, Space: en.e.Space, Enrollment: en.e.Enrollment})
+	st, err := enrollStateOf(res, err)
+	if err != nil {
+		en.saved.drop(en.e.Space) // unknown to the Pairbook now: start afresh next time
+		return nil, err
+	}
+	return en.follow(ctx, st, nil)
+}
+
+func (en *enrolling) bind(ctx context.Context) error {
+	var err error
+	en.own, err = en.s.binding(ctx, en.me, time.Now().Truncate(time.Millisecond))
+	return err
 }
 
 // announce tells the person where to confirm, and which machine.
@@ -73,9 +115,8 @@ func (en *enrolling) announce() {
 	openBrowser(en.e.URL)
 }
 
-// run sends the join and follows the enrollment to its end.
-func (en *enrolling) run(ctx context.Context) (any, error) {
-	st, err := en.send(ctx, en.e.Base)
+// follow follows the enrollment from st to its end.
+func (en *enrolling) follow(ctx context.Context, st protocol.SpaceEnrollState, err error) (any, error) {
 	for err == nil {
 		var out any
 		var finished bool
@@ -87,21 +128,46 @@ func (en *enrolling) run(ctx context.Context) (any, error) {
 	return nil, err
 }
 
-// settled is the command's answer once the enrollment has one.
+// settled is the command's answer once the enrollment has one. Waiting
+// for an admin, the command stops after enrollWait and keeps the
+// enrollment, so running the same join again picks it up: only this host
+// can sign the join again if the space changes meanwhile.
 func (en *enrolling) settled(st protocol.SpaceEnrollState) (any, bool, error) {
 	switch st.State {
 	case space.EnrollAdmitted:
+		en.saved.drop(en.e.Space)
 		return done("Joined " + en.e.Space + " as " + en.name + ". Members connect within minutes: pairtask space status shows it."), true, nil
 	case space.EnrollDenied:
+		en.saved.drop(en.e.Space)
 		return nil, true, errors.New("an admin declined this enrollment")
 	case space.EnrollExpired:
-		return nil, true, errors.New("the enrollment expired before it was confirmed; run pairtask space join again")
-	case space.EnrollAwaitingApproval:
-		if time.Since(en.since) > enrollWait {
-			return done("Confirmed; an admin hasn't approved yet. You join " + en.e.Space + " once they do; pairtask space status shows it."), true, nil
-		}
+		en.saved.drop(en.e.Space)
+		return nil, true, errors.New("the enrollment expired; run pairtask space join again")
+	case space.EnrollAwaitingApproval, space.EnrollStale:
+		return en.waiting()
+	case space.EnrollPendingSignIn:
+		return nil, false, en.confirmInTime()
 	}
-	return nil, false, nil
+	return nil, true, fmt.Errorf("the Pairbook reported an unknown enrollment state %q", st.State)
+}
+
+// waiting keeps waiting for an admin, until enrollWait has passed.
+func (en *enrolling) waiting() (any, bool, error) {
+	if time.Since(en.since) <= enrollWait {
+		return nil, false, nil
+	}
+	if err := en.saved.save(savedEnroll{Link: en.link, Name: en.name, Enroll: en.e}); err != nil {
+		return nil, true, fmt.Errorf("an admin hasn't approved yet, and this enrollment couldn't be kept to resume: %w", err)
+	}
+	return done("Confirmed; an admin hasn't approved yet. After they do, run this same pairtask space join command again to finish."), true, nil
+}
+
+// confirmInTime: the person still has time to confirm in the browser.
+func (en *enrolling) confirmInTime() error {
+	if time.Now().After(en.e.ExpiresAt.Add(time.Minute)) {
+		return errors.New("the enrollment wasn't confirmed in time; run pairtask space join again")
+	}
+	return nil
 }
 
 // next waits a little, then re-signs a stale join or checks again.
@@ -111,7 +177,10 @@ func (en *enrolling) next(ctx context.Context, st protocol.SpaceEnrollState) (pr
 		return st, ctx.Err()
 	case <-time.After(enrollPoll):
 	}
-	if st.State == space.EnrollStale && st.Base != nil {
+	if st.State == space.EnrollStale {
+		if st.Base == nil {
+			return st, errors.New("the Pairbook asked for the join again without saying on which map")
+		}
 		return en.send(ctx, *st.Base)
 	}
 	res, err := en.s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapEnrollState, Space: en.e.Space, Enrollment: en.e.Enrollment})
@@ -182,4 +251,61 @@ func openBrowser(url string) {
 	}
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	_ = cmd.Start()
+}
+
+// savedEnroll is an enrollment kept to resume: the link, the name and what
+// the Pairbook gave when it started.
+type savedEnroll struct {
+	Link   string               `json:"link"`
+	Name   string               `json:"name"`
+	Enroll protocol.SpaceEnroll `json:"enroll"`
+}
+
+// enrollSaves is the folder, beside the person's keys, that keeps
+// enrollments waiting for an admin; "" keeps none.
+type enrollSaves string
+
+func (s *pairbookSession) enrollSaves() enrollSaves {
+	if s.enrollDir != "" {
+		return enrollSaves(s.enrollDir)
+	}
+	dir, err := personkey.ResolveDir()
+	if err != nil {
+		return ""
+	}
+	return enrollSaves(filepath.Join(dir, "enrollments"))
+}
+
+func (d enrollSaves) path(space string) string { return filepath.Join(string(d), space+".json") }
+
+func (d enrollSaves) load(space string) (savedEnroll, bool) {
+	var e savedEnroll
+	if d == "" {
+		return e, false
+	}
+	b, err := os.ReadFile(d.path(space))
+	if err != nil || json.Unmarshal(b, &e) != nil || e.Enroll.Space != space {
+		return e, false
+	}
+	return e, true
+}
+
+func (d enrollSaves) save(e savedEnroll) error {
+	if d == "" {
+		return errors.New("no place to keep it")
+	}
+	if err := os.MkdirAll(string(d), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(d.path(e.Enroll.Space), b, 0o600)
+}
+
+func (d enrollSaves) drop(space string) {
+	if d != "" {
+		_ = os.Remove(d.path(space))
+	}
 }

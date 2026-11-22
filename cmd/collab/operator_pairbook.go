@@ -117,9 +117,10 @@ func writePairbook(out any, asJSON bool, stdout, stderr io.Writer) int {
 // pairbookSession is one command's broker calls and, once a command needs
 // to sign, the person on this host.
 type pairbookSession struct {
-	call     operatorCall
-	me       *spaceowner.Me
-	progress io.Writer // what a long command tells the person meanwhile
+	call      operatorCall
+	me        *spaceowner.Me
+	progress  io.Writer // what a long command tells the person meanwhile
+	enrollDir string    // tests: where enrollments are kept to resume; "" means beside the person's keys
 }
 
 // progressOut is where to tell the person what is happening.
