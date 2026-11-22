@@ -41,10 +41,18 @@ func New(key ed25519.PrivateKey, anchor []byte) (Me, error) {
 	if err != nil {
 		return Me{}, err
 	}
-	if len(key) != ed25519.PrivateKeySize || !a.Person.Equal(key.Public()) || a.Check() != nil {
+	if !anchorOf(a, key) {
 		return Me{}, ErrAnchor
 	}
 	return Me{key: slices.Clone(key), Lineage: pairbook.Lineage(a.Lineage()), Evidence: pairbook.PersonEvidence{Anchor: slices.Clone(anchor)}}, nil
+}
+
+// anchorOf: a is signed by key and names key's public half.
+func anchorOf(a identity.Anchor, key ed25519.PrivateKey) bool {
+	if len(key) != ed25519.PrivateKeySize {
+		return false
+	}
+	return a.Person.Equal(key.Public()) && a.Check() == nil
 }
 
 // NewAnchor is an identity anchor for key made at at, with no recovery
