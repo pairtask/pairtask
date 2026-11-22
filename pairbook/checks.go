@@ -99,6 +99,12 @@ func validName(name string) bool {
 	return name != "" && len(name) <= MaxName && utf8.ValidString(name) && !slices.ContainsFunc([]rune(name), unicode.IsControl)
 }
 
+// ValidAddresses: addrs, once sorted and deduplicated as a record keeps
+// them, are 1 to MaxAddresses entries, each a HOST:PORT.
+func ValidAddresses(addrs []string) bool {
+	return addrList(slices.Compact(slices.Sorted(slices.Values(addrs)))).valid()
+}
+
 // addrList is an address record's HOST:PORT entries.
 type addrList []string
 

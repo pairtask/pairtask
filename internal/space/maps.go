@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"slices"
+	"time"
 
 	"github.com/pairtask/pairtask/pairbook"
 )
@@ -132,6 +134,20 @@ func (c *Client) MapAddress(ctx context.Context, pin Pin, node ed25519.PublicKey
 		return pairbook.SignedAddress{}, ErrUntrusted
 	}
 	return got, nil
+}
+
+// PublishAddress signs this workspace's address record for pin's space,
+// valid for d, and stores it. The directory keeps only the newest record
+// per workspace, so an older one sent late can't replace it.
+func (c *Client) PublishAddress(ctx context.Context, pin Pin, addrs []string, d time.Duration) error {
+	now := c.now()
+	record := pairbook.Address{Space: pin.Space, Node: c.self, Addrs: slices.Compact(slices.Sorted(slices.Values(addrs))), IssuedAt: now.UnixMilli(), ExpiresAt: now.Add(d).UnixMilli()}
+	sig, err := c.sign(record.SigningBytes())
+	if err != nil {
+		return err
+	}
+	signed := pairbook.SignedAddress{Address: record, Sig: sig}
+	return c.v1(ctx, pin, request{method: http.MethodPut, path: mapPath(pin, "/addresses/"+pairbook.KeyID(c.self)), body: signed}, nil)
 }
 
 // v1 sends r to pin's directory, refusing a pin for another one.

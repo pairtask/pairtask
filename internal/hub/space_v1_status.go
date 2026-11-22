@@ -169,6 +169,7 @@ func (r *spaceRefresher) loop(ctx context.Context, h *Hub) {
 // refreshPass resends the outbox, then refreshes every pinned space.
 func (h *Hub) refreshPass(ctx context.Context) {
 	h.resendOutbox(ctx)
+	defer h.renewAddresses(ctx) // after the maps, so a new grant counts
 	pins, err := h.store.SpacePins(ctx)
 	if err != nil {
 		return

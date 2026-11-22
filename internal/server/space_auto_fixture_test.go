@@ -4,48 +4,88 @@ package server
 
 import (
 	"context"
-	"crypto"
-	"crypto/ed25519"
+
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/hub"
 	"github.com/pairtask/pairtask/internal/personkey"
+	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/space"
 	"github.com/pairtask/pairtask/internal/spaceowner"
 	"github.com/pairtask/pairtask/pairbook"
 )
 
 const autoSpaceID = "0123456789abcdef0123456789abcdef"
-const autoBase = "https://directory.example"
 
 type autoDirectory struct {
-	space.MapDirectory
+	server    *httptest.Server
+	mu        sync.Mutex
 	addresses map[string]pairbook.SignedAddress
 	blocked   string
 	entered   chan struct{}
 }
 
-func (d *autoDirectory) MapAddress(ctx context.Context, _ space.Pin, key ed25519.PublicKey) (pairbook.SignedAddress, error) {
-	id := pairbook.KeyID(key)
-	if id == d.blocked {
+func (d *autoDirectory) serve(t *testing.T) {
+	const path = "/v1/spaces/" + autoSpaceID + "/addresses/{key}"
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT "+path, d.putAddress)
+	mux.HandleFunc("GET "+path, d.getAddress)
+	d.server = httptest.NewTLSServer(mux)
+	t.Cleanup(d.server.Close)
+}
+
+func (d *autoDirectory) putAddress(w http.ResponseWriter, r *http.Request) {
+	var a pairbook.SignedAddress
+	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	key := r.PathValue("key")
+	if a.Verify(autoSpaceID, time.Now()) != nil || pairbook.KeyID(a.Node) != key {
+		http.Error(w, "invalid record", http.StatusBadRequest)
+		return
+	}
+	d.mu.Lock()
+	d.addresses[key] = a
+	d.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d *autoDirectory) getAddress(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	d.mu.Lock()
+	a, found := d.addresses[key]
+	blocked := key == d.blocked
+	d.mu.Unlock()
+	if blocked {
 		select {
 		case d.entered <- struct{}{}:
 		default:
 		}
-		<-ctx.Done()
-		return pairbook.SignedAddress{}, ctx.Err()
+		<-r.Context().Done()
+		return
 	}
-	return d.addresses[id], nil
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(a)
 }
 
 type autoNode struct {
 	*redeemOperatorFixture
-	key     string
-	binding pairbook.Binding
+	endpoint string
+	key      string
+	binding  pairbook.Binding
 }
 type autoPair struct {
 	low, high autoNode
@@ -66,12 +106,15 @@ func newAutoPair(t *testing.T) autoPair {
 	me, err := spaceowner.Load(keys)
 	operatorNoError(t, err)
 	d := &autoDirectory{addresses: map[string]pairbook.SignedAddress{}, entered: make(chan struct{}, 1)}
+	d.serve(t)
 	var nodes []autoNode
 	for range 3 {
 		nodes = append(nodes, newAutoNode(t, d, me, now))
 	}
 	slices.SortFunc(nodes, func(a, b autoNode) int { return strings.Compare(a.key, b.key) })
+	d.mu.Lock()
 	d.blocked = nodes[2].key
+	d.mu.Unlock()
 	m, err := spaceowner.NewSpace(me, spaceowner.Genesis{Space: autoSpaceID, Name: "Owner", Own: nodes[0].binding}, now)
 	operatorNoError(t, err)
 	m.Bindings = append(m.Bindings, nodes[1].binding)
@@ -79,6 +122,11 @@ func newAutoPair(t *testing.T) autoPair {
 	p := autoPair{nodes[0], nodes[1], nodes[2], m, keys, d}
 	for _, n := range []autoNode{p.high, p.low} {
 		keepAutoMap(t, n, m)
+		req := protocol.SpaceRequest{Op: protocol.SpaceOpMapAddress, Space: autoSpaceID, Addresses: []string{n.endpoint}, ValidFor: time.Hour.Milliseconds()}
+		out := n.send(protocol.Message{Type: protocol.TypeOperatorSpace, SpaceRequest: &req, MessageID: "publish-address"})
+		if out.SpaceResult == nil {
+			t.Fatalf("publish %s: %s %s", n.key, out.Code, out.Detail)
+		}
 	}
 	waitAutoContact(t, p.low, p.high, true)
 	waitAutoContact(t, p.high, p.low, true)
@@ -88,22 +136,18 @@ func newAutoNode(t *testing.T, d *autoDirectory, me spaceowner.Me, now time.Time
 	t.Helper()
 	cfg := redeemConfig()
 	f := newConfiguredRedeemOperator(t, cfg, "", func(h *hub.Hub) {
-		h.SetSpaces(hub.SpaceConfig{Maps: func(string, crypto.Signer) (space.MapDirectory, error) { return d, nil }})
+		h.SetSpaces(hub.SpaceConfig{HTTP: d.server.Client()})
 	})
 	ep, err := f.h.PairingEndpoint()
 	operatorNoError(t, err)
 	pub := ep.Identity.PublicKey()
 	key := ep.Identity.Fingerprint()
-	address := pairbook.Address{Space: autoSpaceID, Node: pub, Addrs: []string{relayToPairing(t, f)}, IssuedAt: now.UnixMilli(), ExpiresAt: now.Add(time.Hour).UnixMilli()}
-	sig, err := ep.Identity.Sign(nil, address.SigningBytes(), crypto.Hash(0))
-	operatorNoError(t, err)
-	d.addresses[key] = pairbook.SignedAddress{Address: address, Sig: sig}
 	acceptance, err := f.h.AcceptBinding(hub.BindingRequest{Lineage: pairbook.LineageHex(me.Lineage), Epoch: 1, Person: me.KeyID(), At: now})
 	operatorNoError(t, err)
 	b := pairbook.Binding{Claim: me.Claim(pub, 1, now), Acceptance: acceptance.Acceptance, WorkspaceKey: pub}
-	err = f.st.PinSpace(context.Background(), space.Pin{Space: autoSpaceID, Owner: me.KeyID(), Base: autoBase, JoinedAt: now})
+	err = f.st.PinSpace(context.Background(), space.Pin{Space: autoSpaceID, Owner: me.KeyID(), Base: d.server.URL, JoinedAt: now})
 	operatorNoError(t, err)
-	return autoNode{f, key, b}
+	return autoNode{redeemOperatorFixture: f, endpoint: relayToPairing(t, f), key: key, binding: b}
 }
 func keepAutoMap(t *testing.T, n autoNode, m pairbook.SignedSpaceMap) {
 	t.Helper()
