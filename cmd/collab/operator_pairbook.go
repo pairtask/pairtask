@@ -26,9 +26,9 @@ import (
 // keeps and sends the signed records. members and status sign nothing.
 
 const operatorPairbookUsage = `usage: pairtask space COMMAND [--space ID] [--socket PATH] [--json] [--timeout 30s]
-  create NAME --pairbook URL     a new space, owned by you, everyone connects with everyone
+  create --pairbook URL [--name NAME]  a new space, owned by you; everyone in it can connect
   invite [--for 168h]            a one-time invite link (shown once)
-  join LINK [--name NAME]        ask to join; you're in once the owner approves
+  join LINK [--name NAME]        ask to join (named after this machine unless --name); in once the owner approves
   requests                       the requests waiting for the owner
   approve PERSON                 admit a join (lineage or request prefix), and apply members' requests
   sync                           apply members' requests and renew the space's map
@@ -89,7 +89,7 @@ func parsePairbook(args []string, call *operatorCall, stderr io.Writer) (pairboo
 	call.register(flags)
 	flags.StringVar(&a.space, "space", "", "space ID; may be left out when exactly one is pinned")
 	flags.StringVar(&a.directory, "pairbook", "", "create: the Pairbook directory, https://HOST[:PORT]")
-	flags.StringVar(&a.name, "name", "", "join: your name in the space")
+	flags.StringVar(&a.name, "name", "", "create, join: your name in the space (default: this machine's host name)")
 	flags.DurationVar(&a.valid, "for", 7*24*time.Hour, "invite: how long the link is valid")
 	words, rest := leadingWords(args[1:])
 	code := parseFlags(flags, rest, operatorPairbookUsage, stderr, func(more []string) error {
@@ -186,8 +186,12 @@ func (s *pairbookSession) binding(ctx context.Context, me spaceowner.Me, now tim
 
 // pairbookCreate makes a space owned by this person, with this workspace.
 func pairbookCreate(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
-	if len(a.words) != 1 || a.directory == "" {
-		return nil, errors.New("create needs NAME and --pairbook URL")
+	if len(a.words) != 0 || a.directory == "" {
+		return nil, errors.New("create needs --pairbook URL (and --name for your name in it)")
+	}
+	name, err := joinName(a.name)
+	if err != nil {
+		return nil, err
 	}
 	me, err := s.person()
 	if err != nil {
@@ -202,7 +206,7 @@ func pairbookCreate(ctx context.Context, s *pairbookSession, a pairbookArgs) (an
 	if err != nil {
 		return nil, err
 	}
-	m, err := spaceowner.NewSpace(me, spaceowner.Genesis{Space: id, Name: a.words[0], Own: own}, now)
+	m, err := spaceowner.NewSpace(me, spaceowner.Genesis{Space: id, Name: name, Own: own}, now)
 	if err != nil {
 		return nil, err
 	}

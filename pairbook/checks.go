@@ -91,6 +91,10 @@ func (s stamp) from(other stamp) int64 {
 }
 
 // validName: 1 to MaxName bytes of UTF-8 without control characters.
+// ValidName: name is one a record may carry: 1 to MaxName bytes of UTF-8,
+// no control characters.
+func ValidName(name string) bool { return validName(name) }
+
 func validName(name string) bool {
 	return name != "" && len(name) <= MaxName && utf8.ValidString(name) && !slices.ContainsFunc([]rune(name), unicode.IsControl)
 }

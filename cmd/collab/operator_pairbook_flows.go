@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -104,6 +105,10 @@ func pairbookJoin(ctx context.Context, s *pairbookSession, a pairbookArgs) (any,
 	if len(a.words) != 1 {
 		return nil, errors.New("join needs the invite LINK")
 	}
+	name, err := joinName(a.name)
+	if err != nil {
+		return nil, err
+	}
 	inv, err := s.fetchInvite(ctx, a.words[0])
 	if err != nil {
 		return nil, err
@@ -117,12 +122,29 @@ func pairbookJoin(ctx context.Context, s *pairbookSession, a pairbookArgs) (any,
 	if err != nil {
 		return nil, err
 	}
-	ch := me.Change(spaceowner.Request{Space: inv.Space, Action: pairbook.ChangeJoin, Base: inv.Base, Name: a.name, TokenHash: inv.TokenHash, Binding: own}, now)
+	ch := me.Change(spaceowner.Request{Space: inv.Space, Action: pairbook.ChangeJoin, Base: inv.Base, Name: name, TokenHash: inv.TokenHash, Binding: own}, now)
 	r := protocol.SpaceRequest{Op: protocol.SpaceOpMapSubmit, Link: a.words[0], Until: time.UnixMilli(inv.ExpiresAt)}
 	if err := s.send(ctx, r, ch); err != nil {
 		return nil, err
 	}
-	return done("Asked to join space " + inv.Space + ". You're in once the owner approves: pairtask pairbook status shows it."), nil
+	return done("Asked to join space " + inv.Space + " as " + name + ". You're in once the owner approves: pairtask space status shows it."), nil
+}
+
+// joinName is the name a join carries: --name, or this machine's host name
+// when none is given; refused before anything is sent if not valid.
+func joinName(given string) (string, error) {
+	name := given
+	if name == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			return "", errors.New("no --name given and no host name to use; join with --name NAME")
+		}
+		name = strings.TrimSuffix(host, ".local")
+	}
+	if !pairbook.ValidName(name) {
+		return "", fmt.Errorf("%q can't be a name in a space: 1 to %d bytes, no control characters", name, pairbook.MaxName)
+	}
+	return name, nil
 }
 
 func (s *pairbookSession) fetchInvite(ctx context.Context, link string) (pairbook.SignedMapInvite, error) {
