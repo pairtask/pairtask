@@ -90,8 +90,8 @@ func (h *Hub) mapPublish(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 // supplied is applied. A send of that map still waiting in the outbox is
 // finished first, from the record kept.
 func (h *Hub) publishedAlready(ctx context.Context, put space.MapPut) (spaceStep, bool) {
-	_, stored, found, err := h.store.SpaceMap(ctx, put.Map.Space)
-	if err != nil || !found || put.Map.SpaceMap.Mark() != stored {
+	stored, ok := h.keptMark(ctx, put.Map.Space)
+	if !ok || put.Map.SpaceMap.Mark() != stored {
 		return spaceStep{}, false
 	}
 	receipt := &protocol.SpaceResult{Mark: markView(stored)}
@@ -99,6 +99,12 @@ func (h *Hub) publishedAlready(ctx context.Context, put space.MapPut) (spaceStep
 		h.finishWaiting(net, local, "map", hex.EncodeToString(stored.Digest[:]))
 		return receipt, nil
 	}}, true
+}
+
+// keptMark is the mark of the map kept for space, if any.
+func (h *Hub) keptMark(ctx context.Context, space string) (pairbook.Mark, bool) {
+	_, mark, found, err := h.store.SpaceMap(ctx, space)
+	return mark, err == nil && found
 }
 
 // finishWaiting dispatches the outbox record kind/digest, if one waits.
