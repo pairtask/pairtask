@@ -99,31 +99,50 @@ func (s *Store) RetireSpaceContact(ctx context.Context, workspace string, epoch 
 		return false, err
 	}
 	defer tx.Rollback()
-	retired, err := retireManaged(ctx, tx, workspace, epoch, at)
+	retired, err := retireManaged(ctx, tx, retiring{workspace, epoch, at})
 	if err != nil {
 		return false, err
 	}
 	return retired, tx.Commit()
 }
 
-func retireManaged(ctx context.Context, tx *sql.Tx, workspace string, epoch int64, at time.Time) (bool, error) {
-	var marked int64
-	err := tx.QueryRowContext(ctx, `SELECT epoch FROM space_contacts WHERE workspace = ?`, workspace).Scan(&marked)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && marked != epoch {
+// retiring is one retire: the workspace, the epoch it was marked managed
+// at, and when.
+type retiring struct {
+	workspace string
+	epoch     int64
+	at        time.Time
+}
+
+func retireManaged(ctx context.Context, tx *sql.Tx, r retiring) (bool, error) {
+	ours, err := markedAt(ctx, tx, r)
+	if err != nil || !ours {
 		return false, err // not managed, or managed at another epoch: not this retire's
 	}
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM space_contacts WHERE workspace = ?`, r.workspace); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM space_contacts WHERE workspace = ?`, workspace); err != nil {
-		return false, err
-	}
-	c, err := readPairing(ctx, tx, workspace)
-	if err != nil || c.epoch != epoch || c.unpairedAt != "" {
+	c, err := readPairing(ctx, tx, r.workspace)
+	if err != nil || !c.liveAt(r.epoch) {
 		return false, err // a newer pairing, or already ended
 	}
-	_, err = unpairNow(ctx, tx, ContactUnpair{Contact: workspace, At: at}, &c)
+	_, err = unpairNow(ctx, tx, ContactUnpair{Contact: r.workspace, At: r.at}, &c)
 	return err == nil, err
+}
+
+// markedAt: the workspace is marked managed at the retire's epoch.
+func markedAt(ctx context.Context, tx *sql.Tx, r retiring) (bool, error) {
+	var marked int64
+	err := tx.QueryRowContext(ctx, `SELECT epoch FROM space_contacts WHERE workspace = ?`, r.workspace).Scan(&marked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && marked == r.epoch, err
+}
+
+// liveAt: the contact's current pairing is epoch, and not ended.
+func (c pairingRow) liveAt(epoch int64) bool {
+	return c.epoch == epoch && c.unpairedAt == ""
 }
 
 // installSpaceManaged is installSpace for a refused workspace's refusal
