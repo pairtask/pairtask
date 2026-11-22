@@ -113,3 +113,21 @@ func spaceCommandCheck(t *testing.T, ok bool, format string, args ...any) {
 		t.Fatalf(format, args...)
 	}
 }
+
+func TestSpaceCommandAcceptanceV1PublishValidity(t *testing.T) {
+	for _, duration := range []string{"0s", "500us", "-500us", "24h1ns"} {
+		t.Run(duration, func(t *testing.T) {
+			path, requests := pairingCLISocket(t, func(map[string]any) map[string]any { return spaceCLIResult() })
+			var out, stderr bytes.Buffer
+			code := run(context.Background(), []string{"space", "publish", "a.example:7445", "--valid", duration, "--space", commandSpaceID, "--socket", path}, &out, &stderr)
+			if code == 0 {
+				t.Fatalf("accepted invalid validity %s", duration)
+			}
+			select {
+			case <-requests:
+				t.Fatal("invalid validity reached broker")
+			default:
+			}
+		})
+	}
+}
