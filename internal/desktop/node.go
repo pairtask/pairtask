@@ -89,6 +89,7 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		return nil, err
 	}
 	n := &Node{cfg: cfg, base: context.WithoutCancel(ctx)}
+	n.joins.life, n.joins.stop = context.WithCancel(n.base)
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if err := n.reach(ctx); err != nil {
@@ -231,6 +232,7 @@ func unavailable(err error) protocol.Message {
 // Close stops the broker this copy owns, or drops its connection to the
 // owner.
 func (n *Node) Close() error {
+	n.stopJoins() // before mu: a follower may be in a call that needs it
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.fwd != nil {

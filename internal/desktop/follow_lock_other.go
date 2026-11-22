@@ -6,6 +6,6 @@ package desktop
 // this process (enrollments.active) is all that is enforced.
 type followLock struct{}
 
-func takeFollow(string) (*followLock, bool) { return &followLock{}, true }
+func takeFollow(string) (*followLock, error) { return &followLock{}, nil }
 
 func (*followLock) release() {}
