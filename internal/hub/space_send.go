@@ -64,6 +64,11 @@ type sendTo struct {
 // a record was queued for; it is never sent elsewhere.
 var errSendMoved = errors.New("the space's pin changed since the request was queued; it was not sent")
 
+// queuedFor: the record was queued for the pin's owner and directory.
+func queuedFor(it store.SpaceSend, pin space.Pin) bool {
+	return pin.Base == it.Base && pin.Owner == it.Owner
+}
+
 // sendTarget is the pin and client a record goes to: only its space's
 // current pin, and only while that pin names the owner and directory the
 // record was queued for, so a secret never goes to another directory.
@@ -72,7 +77,7 @@ func (h *Hub) sendTarget(ctx context.Context, it store.SpaceSend) (space.Pin, sp
 	if err != nil {
 		return space.Pin{}, nil, err
 	}
-	if !found || pin.Base != it.Base || pin.Owner != it.Owner {
+	if !found || !queuedFor(it, pin) {
 		return space.Pin{}, nil, errSendMoved
 	}
 	dir, err := h.mapDirectory(pin.Base)

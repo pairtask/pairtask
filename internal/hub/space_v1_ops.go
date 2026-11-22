@@ -106,13 +106,22 @@ func (h *Hub) checkPut(ctx context.Context, pin space.Pin, put space.MapPut, pin
 	if err != nil {
 		return spaceRefusal(err.Error())
 	}
-	if put.Base != stored || put.Map.Version != put.Base.Version+1 || (!pinned && put.Base != (pairbook.Mark{})) {
+	if !nextAfter(put, stored, pinned) {
 		return spaceRefusal("the map isn't the next version of the one kept here; fetch and fold again")
 	}
 	if _, err := put.Map.Verify(pin.Space, pin.Owner, put.Base, h.authority.now()); err != nil {
 		return spaceRefusal("the map doesn't verify: " + err.Error())
 	}
 	return nil
+}
+
+// nextAfter: put is the version after the stored mark, and a space not
+// pinned yet starts from nothing.
+func nextAfter(put space.MapPut, stored pairbook.Mark, pinned bool) bool {
+	if put.Base != stored || put.Map.Version != put.Base.Version+1 {
+		return false
+	}
+	return pinned || put.Base == (pairbook.Mark{})
 }
 
 // sendMap checks the directory origin, pins a new space, keeps the put in
@@ -297,32 +306,54 @@ type submission struct {
 }
 
 func (h *Hub) submission(ctx context.Context, r protocol.SpaceRequest, ch pairbook.SignedChange) (submission, *routingError) {
-	if ch.Action != pairbook.ChangeJoin {
-		pin, rerr := h.pinFor(ctx, r.Space)
-		if rerr == nil && pin.Space != ch.Space {
-			rerr = spaceRefusal("the request is for another space")
-		}
-		return submission{pin: pin, ch: ch}, rerr
+	if ch.Action == pairbook.ChangeJoin {
+		return h.joinSubmission(ctx, r, ch)
 	}
+	pin, rerr := h.pinFor(ctx, r.Space)
+	if rerr == nil && pin.Space != ch.Space {
+		rerr = spaceRefusal("the request is for another space")
+	}
+	return submission{pin: pin, ch: ch}, rerr
+}
+
+// joinSubmission is a join checked against its link: the link is this
+// join's invite, the space isn't pinned elsewhere, and the directory is
+// one this broker can use.
+func (h *Hub) joinSubmission(ctx context.Context, r protocol.SpaceRequest, ch pairbook.SignedChange) (submission, *routingError) {
 	inv, err := space.ParseInvite(r.Link)
 	if err != nil {
 		return submission{}, spaceRefusal("a join needs its invite link")
 	}
-	if inv.Space != ch.Space || sha256.Sum256(inv.Token[:]) != ch.TokenHash {
+	if !linkIsJoin(inv, ch) {
 		return submission{}, spaceRefusal("the link isn't this join's invite")
 	}
-	kept, pinned, err := h.store.SpacePin(ctx, inv.Space)
-	if err != nil {
-		return submission{}, spaceRefusal(err.Error())
-	}
-	if pinned && (kept.Owner != inv.Owner || kept.Base != inv.Base) {
-		return submission{}, spaceRefusal("this space is pinned to another owner or directory than the link names")
+	pinned, rerr := h.linkPinned(ctx, inv)
+	if rerr != nil {
+		return submission{}, rerr
 	}
 	pin := space.Pin{Space: inv.Space, Owner: inv.Owner, Base: inv.Base, JoinedAt: time.Now().UTC()}
-	if _, err := h.mapDirectory(pin.Base); err != nil {
-		return submission{}, spaceRefusal("the link names a directory this broker can't use")
-	}
 	return submission{pin: pin, ch: ch, token: &inv.Token, until: r.Until, fresh: !pinned}, nil
+}
+
+// linkIsJoin: the link names the join's space and holds its token.
+func linkIsJoin(inv space.Invite, ch pairbook.SignedChange) bool {
+	return inv.Space == ch.Space && sha256.Sum256(inv.Token[:]) == ch.TokenHash
+}
+
+// linkPinned is whether the link's space is pinned already, refusing a pin
+// to another owner or directory, or a directory this broker can't use.
+func (h *Hub) linkPinned(ctx context.Context, inv space.Invite) (bool, *routingError) {
+	kept, pinned, err := h.store.SpacePin(ctx, inv.Space)
+	if err != nil {
+		return false, spaceRefusal(err.Error())
+	}
+	if pinned && !kept.Names(inv) {
+		return false, spaceRefusal("this space is pinned to another owner or directory than the link names")
+	}
+	if _, err := h.mapDirectory(inv.Base); err != nil {
+		return false, spaceRefusal("the link names a directory this broker can't use")
+	}
+	return pinned, nil
 }
 
 // sendChange pins a join's space, keeps the change (with a join's secret,
@@ -377,8 +408,8 @@ func markView(m pairbook.Mark) *protocol.SpaceMark {
 
 func digestOf(s string) ([32]byte, bool) {
 	var d [32]byte
-	b, err := hex.DecodeString(s)
-	if err != nil || len(b) != len(d) || hex.EncodeToString(b) != s {
+	b, ok := canonicalHex(s)
+	if !ok || len(b) != len(d) {
 		return d, false
 	}
 	copy(d[:], b)

@@ -56,7 +56,7 @@ type SpaceSend struct {
 // QueueSpaceSend keeps item unless the same record is already queued, and
 // returns what is kept: a retry always gets the first bytes.
 func (s *Store) QueueSpaceSend(ctx context.Context, item SpaceSend) (SpaceSend, error) {
-	if item.Kind == "" || item.Digest == "" || len(item.Body) == 0 {
+	if !item.complete() {
 		return SpaceSend{}, errors.New("store: incomplete space send")
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO space_outbox (kind, digest, space, base, owner, body, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -68,6 +68,12 @@ ON CONFLICT DO NOTHING`, item.Kind, item.Digest, item.Space, item.Base, item.Own
 		return SpaceSend{}, errors.Join(err, errors.New("store: space send not kept"))
 	}
 	return rows[0], nil
+}
+
+// complete: the record names what it is and carries a body.
+func (it SpaceSend) complete() bool {
+	named := it.Kind != "" && it.Digest != ""
+	return named && len(it.Body) > 0
 }
 
 // SpaceSends are the records still waiting, oldest first.
@@ -172,10 +178,15 @@ func inviteState(expires, consumed, change string, now time.Time) (InviteState, 
 	if err != nil {
 		return InviteUnknown, err
 	}
-	if !now.Before(at) || consumed != "" && consumed != change {
+	if !now.Before(at) || takenByAnother(consumed, change) {
 		return InviteSpent, nil
 	}
 	return InviteLive, nil
+}
+
+// takenByAnother: the invite went to a change other than change.
+func takenByAnother(consumed, change string) bool {
+	return consumed != "" && consumed != change
 }
 
 // ConsumeSpaceInvite gives the invite to change, once the map that admits
