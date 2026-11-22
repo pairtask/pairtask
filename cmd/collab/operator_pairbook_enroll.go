@@ -284,10 +284,13 @@ func (d enrollSaves) load(space string) (savedEnroll, bool) {
 		return e, false
 	}
 	b, err := os.ReadFile(d.path(space))
-	if err != nil || json.Unmarshal(b, &e) != nil || e.Enroll.Space != space {
+	if err != nil {
 		return e, false
 	}
-	return e, true
+	if json.Unmarshal(b, &e) != nil {
+		return e, false
+	}
+	return e, e.Enroll.Space == space
 }
 
 func (d enrollSaves) save(e savedEnroll) error {
