@@ -34,24 +34,34 @@ type autoDirectory struct {
 	entered   chan struct{}
 }
 
-func (d *autoDirectory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	key, ok := strings.CutPrefix(r.URL.Path, "/v1/spaces/"+autoSpaceID+"/addresses/")
-	if !ok {
-		http.NotFound(w, r)
+func (d *autoDirectory) serve(t *testing.T) {
+	const path = "/v1/spaces/" + autoSpaceID + "/addresses/{key}"
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT "+path, d.putAddress)
+	mux.HandleFunc("GET "+path, d.getAddress)
+	d.server = httptest.NewTLSServer(mux)
+	t.Cleanup(d.server.Close)
+}
+
+func (d *autoDirectory) putAddress(w http.ResponseWriter, r *http.Request) {
+	var a pairbook.SignedAddress
+	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if r.Method == http.MethodPut {
-		var a pairbook.SignedAddress
-		if err := json.NewDecoder(r.Body).Decode(&a); err != nil || a.Verify(autoSpaceID, time.Now()) != nil || pairbook.KeyID(a.Node) != key {
-			http.Error(w, "invalid record", http.StatusBadRequest)
-			return
-		}
-		d.mu.Lock()
-		d.addresses[key] = a
-		d.mu.Unlock()
-		w.WriteHeader(http.StatusNoContent)
+	key := r.PathValue("key")
+	if a.Verify(autoSpaceID, time.Now()) != nil || pairbook.KeyID(a.Node) != key {
+		http.Error(w, "invalid record", http.StatusBadRequest)
 		return
 	}
+	d.mu.Lock()
+	d.addresses[key] = a
+	d.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d *autoDirectory) getAddress(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
 	d.mu.Lock()
 	a, found := d.addresses[key]
 	blocked := key == d.blocked
@@ -96,8 +106,7 @@ func newAutoPair(t *testing.T) autoPair {
 	me, err := spaceowner.Load(keys)
 	operatorNoError(t, err)
 	d := &autoDirectory{addresses: map[string]pairbook.SignedAddress{}, entered: make(chan struct{}, 1)}
-	d.server = httptest.NewTLSServer(d)
-	t.Cleanup(d.server.Close)
+	d.serve(t)
 	var nodes []autoNode
 	for range 3 {
 		nodes = append(nodes, newAutoNode(t, d, me, now))
