@@ -96,7 +96,9 @@ func (h *Hub) publishedAlready(ctx context.Context, put space.MapPut) (spaceStep
 	}
 	receipt := &protocol.SpaceResult{Mark: markView(stored)}
 	return spaceStep{space: put.Map.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
-		h.finishWaiting(net, local, "map", hex.EncodeToString(stored.Digest[:]))
+		if err := h.finishWaiting(net, local, "map", hex.EncodeToString(stored.Digest[:])); err != nil {
+			return nil, err // the first send isn't finished: its record stays for the next try
+		}
 		return receipt, nil
 	}}, true
 }
@@ -107,17 +109,20 @@ func (h *Hub) keptMark(ctx context.Context, space string) (pairbook.Mark, bool) 
 	return mark, err == nil && found
 }
 
-// finishWaiting dispatches the outbox record kind/digest, if one waits.
-func (h *Hub) finishWaiting(net, local context.Context, kind, digest string) {
+// finishWaiting dispatches the outbox record kind/digest, if one waits,
+// and reports whether that left it finished.
+func (h *Hub) finishWaiting(net, local context.Context, kind, digest string) error {
 	items, err := h.store.SpaceSends(local)
 	if err != nil {
-		return
+		return err
 	}
 	for _, it := range items {
 		if it.Kind == kind && it.Digest == digest {
-			_, _ = h.dispatch(net, local, it)
+			_, err := h.dispatch(net, local, it)
+			return err
 		}
 	}
+	return nil
 }
 
 // publishPin is the pin a put goes under, checked locally first: the pin
