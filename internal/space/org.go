@@ -30,12 +30,15 @@ const orgJoinPath = "/join"
 // ParseOrgLink reads an organization join link, exactly as String writes it.
 func ParseOrgLink(link string) (OrgLink, error) {
 	head, fragment, _ := strings.Cut(link, "#")
-	base, ok := strings.CutSuffix(head, orgJoinPath)
 	spaceField, ownerField, _ := strings.Cut(fragment, "&")
-	id, idOK := strings.CutPrefix(spaceField, "space=")
-	owner, ownerOK := strings.CutPrefix(ownerField, "owner=")
-	l := OrgLink{Base: base, Space: id, Owner: owner}
-	if !ok || !idOK || !ownerOK || !l.valid() || l.String() != link {
+	l := OrgLink{
+		Base:  strings.TrimSuffix(head, orgJoinPath),
+		Space: strings.TrimPrefix(spaceField, "space="),
+		Owner: strings.TrimPrefix(ownerField, "owner="),
+	}
+	// Canonical: only a link exactly as String writes it, so a missing
+	// path, field name or a field out of order never reads as a link.
+	if !l.valid() || l.String() != link {
 		return OrgLink{}, ErrOrgLink
 	}
 	return l, nil

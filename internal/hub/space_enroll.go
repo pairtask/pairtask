@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
@@ -81,11 +82,11 @@ func (h *Hub) mapEnrollSend(ctx context.Context, r protocol.SpaceRequest) (space
 		return spaceStep{}, rerr
 	}
 	pin, rerr := h.enrollPin(ctx, r)
-	if rerr == nil && (ch.Action != pairbook.ChangeJoin || ch.Space != pin.Space) {
-		rerr = spaceRefusal("the request isn't a join of this space")
-	}
 	if rerr != nil {
 		return spaceStep{}, rerr
+	}
+	if !joinOf(ch, pin.Space) {
+		return spaceStep{}, spaceRefusal("the request isn't a join of this space")
 	}
 	return spaceStep{space: pin.Space, job: func(net, _ context.Context) (*protocol.SpaceResult, error) {
 		enr, err := h.enroller(pin)
@@ -113,6 +114,11 @@ func (h *Hub) mapEnrollState(ctx context.Context, r protocol.SpaceRequest) (spac
 	}}, nil
 }
 
+// joinOf: ch is a join of space.
+func joinOf(ch pairbook.SignedChange, space string) bool {
+	return ch.Action == pairbook.ChangeJoin && ch.Space == space
+}
+
 func (h *Hub) enrollPin(ctx context.Context, r protocol.SpaceRequest) (space.Pin, *routingError) {
 	if !validEnrollment(r.Enrollment) {
 		return space.Pin{}, spaceRefusal("not an enrollment ID")
@@ -121,15 +127,7 @@ func (h *Hub) enrollPin(ctx context.Context, r protocol.SpaceRequest) (space.Pin
 }
 
 func validEnrollment(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	for _, c := range id {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
+	return len(id) == 32 && strings.Trim(id, "0123456789abcdef") == ""
 }
 
 // enrollResult reports a state, and asks for a refresh once admitted so
