@@ -36,16 +36,18 @@ const operatorPairbookUsage = `usage: pairtask space COMMAND [--space ID] [--soc
   status                         each space: pending, active, expired or refused, and until when
   leave                          leave the space
   unbind WORKSPACE               take one of your workspaces out of the space
+  publish HOST:PORT... [--valid 24h]  where other members reach this workspace; renewed while you're in
 --space may be left out when exactly one space is pinned.
 v0 spaces: pairtask space v0 COMMAND (list, publish, revoke and delete also work without v0).`
 
 // pairbookArgs are a pairbook command's words and flags.
 type pairbookArgs struct {
-	words     []string
-	space     string
-	directory string
-	name      string
-	valid     time.Duration
+	words        []string
+	space        string
+	directory    string
+	name         string
+	valid        time.Duration
+	addressValid time.Duration
 }
 
 // pairbookCommand is one command's run.
@@ -62,6 +64,7 @@ var pairbookCommands = map[string]pairbookCommand{
 	"status":   pairbookStatus,
 	"leave":    pairbookLeave,
 	"unbind":   pairbookUnbind,
+	"publish":  pairbookPublish,
 }
 
 // runOperatorPairbook runs one pairbook command.
@@ -91,6 +94,7 @@ func parsePairbook(args []string, call *operatorCall, stderr io.Writer) (pairboo
 	flags.StringVar(&a.directory, "pairbook", "", "create: the Pairbook directory, https://HOST[:PORT]")
 	flags.StringVar(&a.name, "name", "", "create, join: your name in the space (default: this machine's host name)")
 	flags.DurationVar(&a.valid, "for", 7*24*time.Hour, "invite: how long the link is valid")
+	flags.DurationVar(&a.addressValid, "valid", 24*time.Hour, "publish: how long each address record is valid (at most 24h)")
 	words, rest := leadingWords(args[1:])
 	code := parseFlags(flags, rest, operatorPairbookUsage, stderr, func(more []string) error {
 		a.words = append(words, more...)

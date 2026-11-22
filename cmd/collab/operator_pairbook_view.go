@@ -95,6 +95,23 @@ func pairbookStatus(ctx context.Context, s *pairbookSession, _ pairbookArgs) (an
 	return statusList(res.Maps), nil
 }
 
+// pairbookPublish names the addresses other members reach this workspace
+// at; the broker signs and renews the record.
+func pairbookPublish(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
+	if len(a.words) == 0 {
+		return nil, errors.New("publish needs at least one HOST:PORT")
+	}
+	pin, err := s.pin(ctx, a.space)
+	if err != nil {
+		return nil, err
+	}
+	r := protocol.SpaceRequest{Op: protocol.SpaceOpMapAddress, Space: pin.Space, Addresses: a.words, ValidFor: a.addressValid.Milliseconds()}
+	if _, err := s.space(ctx, r); err != nil {
+		return nil, err
+	}
+	return done("Published; renewed while this workspace is in the space."), nil
+}
+
 // pairbookLeave asks the owner to take this person out of the space.
 func pairbookLeave(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
 	return s.request(ctx, a.space, spaceowner.Request{Action: pairbook.ChangeLeave})

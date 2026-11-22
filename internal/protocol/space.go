@@ -37,6 +37,7 @@ const (
 	SpaceOpMapSubmit      = "map_submit"       // space or link, record (SignedChange), token for a join
 	SpaceOpMapRefresh     = "map_refresh"      // space → mark
 	SpaceOpMapStatus      = "map_status"       // → maps
+	SpaceOpMapAddress     = "map_address"      // space, addresses, valid_for_ms (≤ 24h): publish this workspace's address, kept and renewed
 
 	// ErrSpace is a refused space operation; the detail names why.
 	ErrSpace = "space_refused"
