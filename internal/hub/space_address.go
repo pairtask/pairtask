@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/space"
@@ -21,15 +22,9 @@ func init() {
 
 // mapAddress keeps the addresses for the space and publishes them now.
 func (h *Hub) mapAddress(ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError) {
-	valid, rerr := addressValidity.of(r.ValidFor)
-	if rerr == nil && len(r.Addresses) == 0 {
-		rerr = &routingError{protocol.ErrMalformedFrame, "publish needs at least one HOST:PORT"}
-	}
+	valid, rerr := publishRequest(r)
 	if rerr != nil {
 		return spaceStep{}, rerr
-	}
-	if !pairbook.ValidAddresses(r.Addresses) {
-		return spaceStep{}, &routingError{protocol.ErrMalformedFrame, "addresses must be 1 to 8 HOST:PORT"}
 	}
 	pin, rerr := h.pinFor(ctx, r.Space)
 	if rerr != nil {
@@ -37,20 +32,38 @@ func (h *Hub) mapAddress(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 	}
 	keep := store.SpaceAddress{Space: pin.Space, Addrs: r.Addresses, Valid: valid}
 	return spaceStep{space: pin.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
-		unlock := h.authority.lockSpace(spaceKey(keep.Space))
-		defer unlock()
-		current, err := h.addressTarget(local, keep.Space)
-		if err != nil {
-			return nil, err
-		}
-		if !sameTrust(pin, current) {
-			return nil, errors.New("space " + keep.Space + " was pinned again since; publish again")
-		}
-		if err := h.store.KeepSpaceAddress(local, keep); err != nil {
-			return nil, err
-		}
-		return nil, h.publishAddress(net, local, current, keep)
+		return nil, h.setAddress(net, local, pin, keep)
 	}}, nil
+}
+
+// publishRequest checks a publish request's addresses and validity.
+func publishRequest(r protocol.SpaceRequest) (time.Duration, *routingError) {
+	valid, rerr := addressValidity.of(r.ValidFor)
+	switch {
+	case rerr != nil:
+		return 0, rerr
+	case !pairbook.ValidAddresses(r.Addresses):
+		return 0, &routingError{protocol.ErrMalformedFrame, "publish needs 1 to 8 HOST:PORT addresses"}
+	}
+	return valid, nil
+}
+
+// setAddress keeps and publishes keep under the space's lock, only if the
+// space is still pinned as requested and binds this workspace.
+func (h *Hub) setAddress(net, local context.Context, requested space.Pin, keep store.SpaceAddress) error {
+	unlock := h.authority.lockSpace(spaceKey(keep.Space))
+	defer unlock()
+	current, err := h.addressTarget(local, keep.Space)
+	if err != nil {
+		return err
+	}
+	if !sameTrust(requested, current) {
+		return errors.New("space " + keep.Space + " was pinned again since; publish again")
+	}
+	if err := h.store.KeepSpaceAddress(local, keep); err != nil {
+		return err
+	}
+	return h.publishAddress(net, local, current, keep)
 }
 
 // addressTarget is space's pin as kept now, under the space's lock, when

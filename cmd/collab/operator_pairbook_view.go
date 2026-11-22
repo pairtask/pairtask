@@ -101,6 +101,9 @@ func pairbookPublish(ctx context.Context, s *pairbookSession, a pairbookArgs) (a
 	if len(a.words) == 0 {
 		return nil, errors.New("publish needs at least one HOST:PORT")
 	}
+	if a.addressValid < time.Millisecond || a.addressValid > pairbook.AddressValidity {
+		return nil, fmt.Errorf("--valid must be between 1ms and %s", pairbook.AddressValidity)
+	}
 	pin, err := s.pin(ctx, a.space)
 	if err != nil {
 		return nil, err
