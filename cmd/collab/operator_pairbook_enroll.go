@@ -56,10 +56,10 @@ func announce(w io.Writer, f *enroll.Flow) {
 	fmt.Fprintf(w, "To join, open %s\n", f.Enroll.URL)
 	fmt.Fprintf(w, "sign in with your company account, and check this machine's fingerprint: %s\n", f.Fingerprint())
 	fmt.Fprintf(w, "Code: %s (valid until %s)\n", f.Enroll.Code, f.Enroll.ExpiresAt.Local().Format("15:04"))
-	openBrowser(f.Enroll.URL)
+	openBrowser(f)
 }
 
-func enrollAnswer(f *enroll.Flow, out string, err error) (any, error) {
+func enrollAnswer(f *enroll.Flow, out enroll.Outcome, err error) (any, error) {
 	switch {
 	case errors.Is(err, enroll.ErrExpired):
 		return nil, errors.New("the enrollment expired; run pairtask space join again")
@@ -71,12 +71,10 @@ func enrollAnswer(f *enroll.Flow, out string, err error) (any, error) {
 	return done("Joined " + f.Enroll.Space + " as " + f.Name + ". Members connect within minutes: pairtask space status shows it."), nil
 }
 
-// fingerprintOf is a key ID as people compare it.
-func fingerprintOf(keyID string) string { return enroll.Fingerprint(keyID) }
-
-// openBrowser opens url on a desktop, best effort; the URL is printed
-// either way.
-func openBrowser(url string) {
+// openBrowser opens the enrollment's URL on a desktop, best effort; the
+// URL is printed either way.
+func openBrowser(f *enroll.Flow) {
+	url := f.Enroll.URL
 	if !strings.HasPrefix(url, "https://") {
 		return
 	}

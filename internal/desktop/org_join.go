@@ -64,31 +64,51 @@ type enrollments struct {
 	follow map[string]*PairbookJoinResult // by space
 }
 
-// pairbookOrigin is the Pairbook setting as an origin, https://HOST[:PORT],
-// or "" when unset or unusable.
-func pairbookOrigin(setting string) string {
+// origin is a Pairbook's address, https://HOST[:PORT]; "" for none.
+type origin string
+
+// joinLink is a space's join link, https://HOST/join#space=...&owner=...
+type joinLink string
+
+// enrollState is where an enrollment stands, as pairbook_join_status says.
+type enrollState string
+
+// pairbookOrigin is the Pairbook setting as an origin, or "" when unset or
+// not just an https address.
+func pairbookOrigin(setting string) origin {
 	u, err := url.Parse(setting)
-	if err != nil || u.Scheme != "https" || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || !bareHTTPS(u) {
 		return ""
 	}
-	return "https://" + u.Host
+	return origin("https://" + u.Host)
+}
+
+// bareHTTPS: u is https://HOST[:PORT] and nothing more but a trailing /.
+func bareHTTPS(u *url.URL) bool {
+	switch {
+	case u.Scheme != "https", u.Host == "":
+		return false
+	case u.Path != "" && u.Path != "/":
+		return false
+	}
+	return u.RawQuery == "" && u.Fragment == ""
 }
 
 // pairbookJoin starts or picks up an enrollment and leaves a follower to
 // finish it.
 func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (PairbookJoinResult, error) {
-	origin := pairbookOrigin(n.cfg.Pairbook)
+	set := pairbookOrigin(n.cfg.Pairbook)
 	if args.Link == "" {
-		return joinGuidance(origin), nil
+		return joinGuidance(set), nil
 	}
 	l, err := space.ParseOrgLink(args.Link)
 	if err != nil {
 		return PairbookJoinResult{}, errors.New("that isn't a Pairbook join link; it looks like https://HOST/join#space=...&owner=..., from the admin's space page")
 	}
-	if origin != "" && l.Base != origin {
-		return PairbookJoinResult{}, errors.New("that link is for " + l.Base + ", not the Pairbook set for this extension (" + origin + ")")
+	if set != "" && origin(l.Base) != set {
+		return PairbookJoinResult{}, errors.New("that link is for " + l.Base + ", not the Pairbook set for this extension (" + string(set) + ")")
 	}
-	f, err := n.flow(args.Link)
+	f, err := n.flow(joinLink(args.Link))
 	if err != nil {
 		return PairbookJoinResult{}, err
 	}
@@ -99,16 +119,16 @@ func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (Pairboo
 	if err := f.Saves.Save(enroll.Saved{Link: f.Link, Name: f.Name, Enroll: f.Enroll}); err != nil {
 		return PairbookJoinResult{}, err
 	}
-	out := n.track(f, st.State)
+	out := n.track(f, enrollState(st.State))
 	go n.finish(f, st)
 	return out, nil
 }
 
-func joinGuidance(origin string) PairbookJoinResult {
-	if origin == "" {
+func joinGuidance(o origin) PairbookJoinResult {
+	if o == "" {
 		return PairbookJoinResult{Guidance: "Ask the company's Pairbook admin for the space's join link, then call pairbook_join with it."}
 	}
-	return PairbookJoinResult{Guidance: "Open " + origin + "/join and sign in with the company account to see the spaces you can join, " +
+	return PairbookJoinResult{Guidance: "Open " + string(o) + "/join and sign in with the company account to see the spaces you can join, " +
 		"or ask the admin for the space's join link; then call pairbook_join with that link."}
 }
 
@@ -120,7 +140,7 @@ func (n *Node) joinName() string {
 }
 
 // flow is an enrollment flow for link as this node's person.
-func (n *Node) flow(link string) (*enroll.Flow, error) {
+func (n *Node) flow(link joinLink) (*enroll.Flow, error) {
 	me, err := n.person()
 	if err != nil {
 		return nil, err
@@ -128,7 +148,7 @@ func (n *Node) flow(link string) (*enroll.Flow, error) {
 	call := func(ctx context.Context, r protocol.SpaceRequest) (*protocol.SpaceResult, error) {
 		return n.space(ctx, r)
 	}
-	return &enroll.Flow{Call: call, Me: me, Link: link, Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
+	return &enroll.Flow{Call: call, Me: me, Link: string(link), Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
 		Poll: desktopEnrollPoll, Wait: desktopEnrollWait}, nil
 }
 
@@ -172,8 +192,8 @@ func ensureAnchor(dir string, keys *personkey.Keys) error {
 }
 
 // track records where f stands and returns it.
-func (n *Node) track(f *enroll.Flow, state string) PairbookJoinResult {
-	r := PairbookJoinResult{Space: f.Enroll.Space, URL: f.Enroll.URL, Code: f.Enroll.Code, Fingerprint: f.Fingerprint(), ExpiresAt: f.Enroll.ExpiresAt, State: state,
+func (n *Node) track(f *enroll.Flow, state enrollState) PairbookJoinResult {
+	r := PairbookJoinResult{Space: f.Enroll.Space, URL: f.Enroll.URL, Code: f.Enroll.Code, Fingerprint: f.Fingerprint(), ExpiresAt: f.Enroll.ExpiresAt, State: string(state),
 		Guidance: "Show the person the URL and this machine's fingerprint. They open it, sign in with the company account and confirm the fingerprint matches."}
 	n.joins.mu.Lock()
 	defer n.joins.mu.Unlock()
@@ -187,16 +207,19 @@ func (n *Node) track(f *enroll.Flow, state string) PairbookJoinResult {
 // finish follows f in the background until it ends, then records how.
 func (n *Node) finish(f *enroll.Flow, st protocol.SpaceEnrollState) {
 	out, err := f.Follow(n.base, st)
-	state := out
+	n.track(f, finalState(out, err))
+}
+
+func finalState(out enroll.Outcome, err error) enrollState {
 	switch {
 	case errors.Is(err, enroll.ErrDenied):
-		state = space.EnrollDenied
+		return space.EnrollDenied
 	case errors.Is(err, enroll.ErrExpired):
-		state = space.EnrollExpired
+		return space.EnrollExpired
 	case err != nil:
-		state = "interrupted: " + err.Error()
+		return enrollState("interrupted: " + err.Error())
 	}
-	n.track(f, state)
+	return enrollState(out)
 }
 
 // resumeJoins picks up the enrollments kept in the data directory, at start.
@@ -208,7 +231,7 @@ func (n *Node) resumeJoins() {
 		if !ok {
 			continue
 		}
-		go n.resumeJoin(s.Link)
+		go n.resumeJoin(joinLink(s.Link))
 	}
 }
 
@@ -217,7 +240,7 @@ func spaceOfSave(path string) string {
 	return base[:len(base)-len(filepath.Ext(base))]
 }
 
-func (n *Node) resumeJoin(link string) {
+func (n *Node) resumeJoin(link joinLink) {
 	f, err := n.flow(link)
 	if err != nil {
 		return
@@ -227,7 +250,7 @@ func (n *Node) resumeJoin(link string) {
 		n.cfg.Log.Info("pairbook enrollment not picked up", "err", err)
 		return
 	}
-	n.track(f, st.State)
+	n.track(f, enrollState(st.State))
 	n.finish(f, st)
 }
 

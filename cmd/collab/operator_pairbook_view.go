@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pairtask/pairtask/internal/enroll"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/spaceowner"
 	"github.com/pairtask/pairtask/pairbook"
@@ -31,7 +32,7 @@ func (l memberList) String() string {
 	for _, m := range l {
 		fmt.Fprintf(&b, "%-20s %-6s %s\n", m.Name, m.Role, m.Person[:12])
 		for _, w := range m.statusOf() {
-			fmt.Fprintf(&b, "  %s  %s%s\n", fingerprintOf(w.Workspace), presence(w, m.Status != nil), agentNote(w.Agents))
+			fmt.Fprintf(&b, "  %s  %s%s\n", enroll.Fingerprint(w.Workspace), presence(w, m.Status != nil), agentNote(w.Agents))
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

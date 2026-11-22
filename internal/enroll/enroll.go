@@ -43,10 +43,12 @@ type Flow struct {
 	since  time.Time
 }
 
-// Outcomes Follow ends with besides an error.
+// Outcome is how Follow ended, besides an error.
+type Outcome string
+
 const (
-	Admitted = space.EnrollAdmitted
-	Waiting  = "waiting" // confirmed, still waiting for an admin after Wait; kept to resume
+	Admitted Outcome = space.EnrollAdmitted
+	Waiting  Outcome = "waiting" // confirmed, still waiting for an admin after Wait; kept to resume
 )
 
 var (
@@ -118,7 +120,7 @@ func (f *Flow) Fingerprint() string { return Fingerprint(pairbook.KeyID(f.own.Wo
 // Follow follows the enrollment from st until it is admitted (Admitted),
 // waiting for an admin past Wait (Waiting, kept to resume), or ends with
 // ErrDenied or ErrExpired.
-func (f *Flow) Follow(ctx context.Context, st protocol.SpaceEnrollState) (string, error) {
+func (f *Flow) Follow(ctx context.Context, st protocol.SpaceEnrollState) (Outcome, error) {
 	for {
 		out, done, err := f.settled(st)
 		if done || err != nil {
@@ -130,7 +132,7 @@ func (f *Flow) Follow(ctx context.Context, st protocol.SpaceEnrollState) (string
 	}
 }
 
-func (f *Flow) settled(st protocol.SpaceEnrollState) (string, bool, error) {
+func (f *Flow) settled(st protocol.SpaceEnrollState) (Outcome, bool, error) {
 	switch st.State {
 	case space.EnrollAdmitted:
 		f.Saves.Drop(f.Enroll.Space)
@@ -151,7 +153,7 @@ func (f *Flow) settled(st protocol.SpaceEnrollState) (string, bool, error) {
 
 // waiting keeps waiting for an admin until Wait has passed, then keeps the
 // enrollment to resume.
-func (f *Flow) waiting() (string, bool, error) {
+func (f *Flow) waiting() (Outcome, bool, error) {
 	if time.Since(f.since) <= f.Wait {
 		return "", false, nil
 	}
