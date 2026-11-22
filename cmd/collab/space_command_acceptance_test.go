@@ -33,7 +33,7 @@ func TestSpaceCommandAcceptanceTopLevelAndOperatorAlias(t *testing.T) {
 	for _, prefix := range [][]string{{"space"}, {"operator", "space"}} {
 		t.Run(strings.Join(prefix, "-"), func(t *testing.T) {
 			path, requests := pairingCLISocket(t, func(map[string]any) map[string]any { return spaceCLIResult() })
-			args := append(append([]string{}, prefix...), "create", "--pairbook", "https://directory.example", "--id", commandSpaceID, "--name", "Office", "--socket", path, "--json")
+			args := append(append([]string{}, prefix...), "v0", "create", "--pairbook", "https://directory.example", "--id", commandSpaceID, "--name", "Office", "--socket", path, "--json")
 			var out, stderr bytes.Buffer
 			code := run(context.Background(), args, &out, &stderr)
 			spaceCommandCheck(t, code == 0, "space create failed: %d %q %q", code, out.String(), stderr.String())
@@ -53,7 +53,7 @@ func TestSpaceCommandAcceptanceInviteAndPublishArguments(t *testing.T) {
 		return map[string]any{"type": protocol.TypeOperatorSpaceResult, "space_result": map[string]any{"invite": link}}
 	})
 	var out, stderr bytes.Buffer
-	code := run(context.Background(), []string{"space", "invite", "--space", commandSpaceID, "--valid", "2h", "--socket", path}, &out, &stderr)
+	code := run(context.Background(), []string{"space", "v0", "invite", "--space", commandSpaceID, "--valid", "2h", "--socket", path}, &out, &stderr)
 	spaceCommandCheck(t, code == 0, "invite not printed: %d %q %q", code, out.String(), stderr.String())
 	spaceCommandCheck(t, strings.Contains(out.String(), link), "invite not printed: %d %q %q", code, out.String(), stderr.String())
 	req := decodeSpaceCLI(t, roomCLIRequest(t, requests))
@@ -76,7 +76,7 @@ func TestSpaceCommandAcceptanceJoinAndBrokerRefusal(t *testing.T) {
 		return map[string]any{"type": protocol.TypeError, "code": protocol.ErrSpace, "detail": "space owner conflicts with saved pin"}
 	})
 	var out, stderr bytes.Buffer
-	code := run(context.Background(), []string{"space", "join", link, "--name", "Alice", "--socket", path}, &out, &stderr)
+	code := run(context.Background(), []string{"space", "v0", "join", link, "--name", "Alice", "--socket", path}, &out, &stderr)
 	spaceCommandCheck(t, code != 0, "broker refusal lost: %d %q %q", code, out.String(), stderr.String())
 	spaceCommandCheck(t, strings.Contains(stderr.String(), "conflicts"), "broker refusal lost: %d %q %q", code, out.String(), stderr.String())
 	req := decodeSpaceCLI(t, roomCLIRequest(t, requests))
