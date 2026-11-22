@@ -6,6 +6,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/space"
 	"github.com/pairtask/pairtask/internal/store"
+	"github.com/pairtask/pairtask/pairbook"
 )
 
 // Publishing this workspace's address in a Pairbook v1 space: the
@@ -26,12 +27,20 @@ func (h *Hub) mapAddress(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
+	if !pairbook.ValidAddresses(r.Addresses) {
+		return spaceStep{}, &routingError{protocol.ErrMalformedFrame, "addresses must be 1 to 8 HOST:PORT"}
+	}
 	pin, rerr := h.pinFor(ctx, r.Space)
 	if rerr != nil {
 		return spaceStep{}, rerr
 	}
+	if !h.boundHere(pin.Space) {
+		return spaceStep{}, spaceRefusal("this workspace isn't in space " + pin.Space + " yet; publish once the owner has admitted it")
+	}
 	keep := store.SpaceAddress{Space: pin.Space, Addrs: r.Addresses, Valid: valid}
 	return spaceStep{space: pin.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
+		unlock := h.authority.lockSpace(spaceKey(pin.Space))
+		defer unlock()
 		if err := h.store.KeepSpaceAddress(local, keep); err != nil {
 			return nil, err
 		}
@@ -59,19 +68,25 @@ func (h *Hub) renewAddresses(ctx context.Context) {
 		return
 	}
 	for _, a := range kept {
-		if h.addressDue(a) && h.boundHere(a.Space) {
-			h.renewAddress(ctx, a)
-		}
+		h.renewAddress(ctx, a.Space)
 	}
 }
 
-func (h *Hub) renewAddress(ctx context.Context, a store.SpaceAddress) {
-	pin, found, err := h.store.SpacePin(ctx, a.Space)
+// renewAddress renews space's address under its lock, from the setting
+// kept now (not a copy read before the lock), if due and still bound.
+func (h *Hub) renewAddress(ctx context.Context, id string) {
+	unlock := h.authority.lockSpace(spaceKey(id))
+	defer unlock()
+	a, found, err := h.store.SpaceAddressOf(ctx, id)
+	if err != nil || !found || !h.addressDue(a) || !h.boundHere(id) {
+		return
+	}
+	pin, found, err := h.store.SpacePin(ctx, id)
 	if err != nil || !found {
 		return
 	}
 	if err := h.publishAddress(ctx, ctx, pin, a); err != nil {
-		h.log.Info("space address not renewed", "space", a.Space, "err", err)
+		h.log.Info("space address not renewed", "space", id, "err", err)
 	}
 }
 

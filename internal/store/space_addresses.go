@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -41,6 +43,16 @@ ON CONFLICT (space) DO UPDATE SET addrs = ?2, valid_ms = ?3, published_at = ''`,
 func (s *Store) PublishedSpaceAddress(ctx context.Context, space string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE space_addresses SET published_at = ? WHERE space = ?`, msgStamp(at), space)
 	return err
+}
+
+// SpaceAddressOf is the address setting kept for space.
+func (s *Store) SpaceAddressOf(ctx context.Context, space string) (SpaceAddress, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT space, addrs, valid_ms, published_at FROM space_addresses WHERE space = ?`, space)
+	a, err := scanSpaceAddress(row.Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, false, nil
+	}
+	return a, err == nil, err
 }
 
 // SpaceAddresses are the addresses kept for every space.
