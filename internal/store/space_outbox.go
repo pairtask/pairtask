@@ -161,32 +161,39 @@ const (
 // SpaceInviteFor is the state of space's invite tokenHash, issued under
 // owner, for the change digest at now.
 func (s *Store) SpaceInviteFor(ctx context.Context, key SpaceInvite, change string, now time.Time) (InviteState, error) {
-	var expires, consumed string
+	var expires string
+	var row inviteRow
 	err := s.db.QueryRowContext(ctx, `SELECT expires_at, consumed_by FROM space_invites WHERE space = ? AND owner = ? AND token_hash = ?`,
-		key.Space, key.Owner, key.TokenHash).Scan(&expires, &consumed)
+		key.Space, key.Owner, key.TokenHash).Scan(&expires, &row.consumed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return InviteUnknown, nil
 	}
 	if err != nil {
 		return InviteUnknown, err
 	}
-	return inviteState(expires, consumed, change, now)
-}
-
-func inviteState(expires, consumed, change string, now time.Time) (InviteState, error) {
-	at, err := time.Parse(time.RFC3339Nano, expires)
-	if err != nil {
+	if row.expires, err = time.Parse(time.RFC3339Nano, expires); err != nil {
 		return InviteUnknown, err
 	}
-	if !now.Before(at) || takenByAnother(consumed, change) {
-		return InviteSpent, nil
+	return row.state(change, now), nil
+}
+
+// inviteRow is an issued invite as the ledger holds it.
+type inviteRow struct {
+	expires  time.Time
+	consumed string
+}
+
+// state is the invite's state for change at now.
+func (r inviteRow) state(change string, now time.Time) InviteState {
+	if !now.Before(r.expires) || r.takenByAnother(change) {
+		return InviteSpent
 	}
-	return InviteLive, nil
+	return InviteLive
 }
 
 // takenByAnother: the invite went to a change other than change.
-func takenByAnother(consumed, change string) bool {
-	return consumed != "" && consumed != change
+func (r inviteRow) takenByAnother(change string) bool {
+	return r.consumed != "" && r.consumed != change
 }
 
 // ConsumeSpaceInvite gives the invite to change, once the map that admits
