@@ -95,8 +95,8 @@ func (h *Hub) renewAddresses(ctx context.Context) {
 func (h *Hub) renewAddress(ctx context.Context, id string) {
 	unlock := h.authority.lockSpace(spaceKey(id))
 	defer unlock()
-	a, found, err := h.store.SpaceAddressOf(ctx, id)
-	if err != nil || !found || !h.addressDue(a) {
+	a, due := h.dueAddress(ctx, id)
+	if !due {
 		return
 	}
 	pin, err := h.addressTarget(ctx, id)
@@ -106,6 +106,15 @@ func (h *Hub) renewAddress(ctx context.Context, id string) {
 	if err := h.publishAddress(ctx, ctx, pin, a); err != nil {
 		h.log.Info("space address not renewed", "space", id, "err", err)
 	}
+}
+
+// dueAddress is the address setting kept for space now, if it is due.
+func (h *Hub) dueAddress(ctx context.Context, id string) (store.SpaceAddress, bool) {
+	a, found, err := h.store.SpaceAddressOf(ctx, id)
+	if err != nil || !found {
+		return a, false
+	}
+	return a, h.addressDue(a)
 }
 
 // addressDue: never published, or half its validity has passed.
