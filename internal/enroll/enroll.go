@@ -35,6 +35,8 @@ type Flow struct {
 	Saves Saves
 	Poll  time.Duration // between checks
 	Wait  time.Duration // waiting for an admin, before Follow returns Waiting
+	// OnState, when set, hears every state Follow sees.
+	OnState func(protocol.SpaceEnrollState)
 
 	Enroll protocol.SpaceEnroll
 	Name   string
@@ -122,6 +124,9 @@ func (f *Flow) Fingerprint() string { return Fingerprint(pairbook.KeyID(f.own.Wo
 // ErrDenied or ErrExpired.
 func (f *Flow) Follow(ctx context.Context, st protocol.SpaceEnrollState) (Outcome, error) {
 	for {
+		if f.OnState != nil {
+			f.OnState(st)
+		}
 		out, done, err := f.settled(st)
 		if done || err != nil {
 			return out, err

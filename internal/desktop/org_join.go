@@ -57,12 +57,16 @@ const (
 	pairbookStatusDescription = "Where this machine's joins to company Pairbook spaces stand: waiting for sign-in, waiting for an admin, joined, declined or expired."
 )
 
-// enrollments follows this node's enrollments.
+// enrollments follows this node's enrollments: at most one follower per
+// space in this process, and, by a lock file, across Desktop processes.
 type enrollments struct {
 	mu     sync.Mutex
 	person *spaceowner.Me
-	follow map[string]*PairbookJoinResult // by space
+	follow map[string]*PairbookJoinResult // by space: the last state seen
+	active map[string]bool                // by space: a follower runs here
 }
+
+const resumeRetry = 30 * time.Second
 
 // origin is a Pairbook's address, https://HOST[:PORT]; "" for none.
 type origin string
@@ -86,7 +90,7 @@ func pairbookOrigin(setting string) origin {
 // bareHTTPS: u is https://HOST[:PORT] and nothing more but a trailing /.
 func bareHTTPS(u *url.URL) bool {
 	switch {
-	case u.Scheme != "https", u.Host == "":
+	case u.Scheme != "https", u.Host == "", u.User != nil:
 		return false
 	case u.Path != "" && u.Path != "/":
 		return false
@@ -108,7 +112,24 @@ func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (Pairboo
 	if set != "" && origin(l.Base) != set {
 		return PairbookJoinResult{}, errors.New("that link is for " + l.Base + ", not the Pairbook set for this extension (" + string(set) + ")")
 	}
-	f, err := n.flow(joinLink(args.Link))
+	if cur, ok := n.following(l.Space); ok {
+		return cur, nil // one enrollment per space: this is where it stands
+	}
+	lock, ok := takeFollow(n.lockPath(l.Space))
+	if !ok {
+		return PairbookJoinResult{Space: l.Space, State: "followed by another Claude Desktop window", Guidance: "Ask in that window, or call pairbook_join_status there."}, nil
+	}
+	out, err := n.beginJoin(ctx, joinLink(args.Link), lock)
+	if err != nil {
+		n.stopFollowing(l.Space, lock)
+	}
+	return out, err
+}
+
+// beginJoin starts or picks up the enrollment, keeps it, and leaves a
+// follower holding lock to finish it.
+func (n *Node) beginJoin(ctx context.Context, link joinLink, lock *followLock) (PairbookJoinResult, error) {
+	f, err := n.flow(link)
 	if err != nil {
 		return PairbookJoinResult{}, err
 	}
@@ -120,8 +141,37 @@ func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (Pairboo
 		return PairbookJoinResult{}, err
 	}
 	out := n.track(f, enrollState(st.State))
-	go n.finish(f, st)
+	go n.finish(f, st, lock)
 	return out, nil
+}
+
+// following is where space's enrollment stands, if a follower runs here;
+// otherwise it marks one as starting.
+func (n *Node) following(space string) (PairbookJoinResult, bool) {
+	n.joins.mu.Lock()
+	defer n.joins.mu.Unlock()
+	if n.joins.active[space] {
+		if r := n.joins.follow[space]; r != nil {
+			return *r, true
+		}
+		return PairbookJoinResult{Space: space, State: "starting", Guidance: "Call pairbook_join_status in a moment."}, true
+	}
+	if n.joins.active == nil {
+		n.joins.active = map[string]bool{}
+	}
+	n.joins.active[space] = true
+	return PairbookJoinResult{}, false
+}
+
+func (n *Node) stopFollowing(space string, lock *followLock) {
+	lock.release()
+	n.joins.mu.Lock()
+	defer n.joins.mu.Unlock()
+	delete(n.joins.active, space)
+}
+
+func (n *Node) lockPath(space string) string {
+	return filepath.Join(n.cfg.Dir, "enrollments", space+".lock")
 }
 
 func joinGuidance(o origin) PairbookJoinResult {
@@ -148,8 +198,10 @@ func (n *Node) flow(link joinLink) (*enroll.Flow, error) {
 	call := func(ctx context.Context, r protocol.SpaceRequest) (*protocol.SpaceResult, error) {
 		return n.space(ctx, r)
 	}
-	return &enroll.Flow{Call: call, Me: me, Link: string(link), Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
-		Poll: desktopEnrollPoll, Wait: desktopEnrollWait}, nil
+	f := &enroll.Flow{Call: call, Me: me, Link: string(link), Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
+		Poll: desktopEnrollPoll, Wait: desktopEnrollWait}
+	f.OnState = func(st protocol.SpaceEnrollState) { n.track(f, enrollState(st.State)) }
+	return f, nil
 }
 
 // person is this node's person, made on first use: keys and an anchor
@@ -204,8 +256,10 @@ func (n *Node) track(f *enroll.Flow, state enrollState) PairbookJoinResult {
 	return r
 }
 
-// finish follows f in the background until it ends, then records how.
-func (n *Node) finish(f *enroll.Flow, st protocol.SpaceEnrollState) {
+// finish follows f in the background until it ends, records how, and
+// lets go of the space.
+func (n *Node) finish(f *enroll.Flow, st protocol.SpaceEnrollState, lock *followLock) {
+	defer n.stopFollowing(f.Enroll.Space, lock)
 	out, err := f.Follow(n.base, st)
 	n.track(f, finalState(out, err))
 }
@@ -231,7 +285,7 @@ func (n *Node) resumeJoins() {
 		if !ok {
 			continue
 		}
-		go n.resumeJoin(joinLink(s.Link))
+		go n.resumeJoin(s)
 	}
 }
 
@@ -240,18 +294,42 @@ func spaceOfSave(path string) string {
 	return base[:len(base)-len(filepath.Ext(base))]
 }
 
-func (n *Node) resumeJoin(link joinLink) {
-	f, err := n.flow(link)
-	if err != nil {
+// resumeJoin follows a kept enrollment again, unless another follower has
+// it, retrying while the broker or Pairbook can't be reached; meanwhile its
+// status says it is retrying.
+func (n *Node) resumeJoin(s enroll.Saved) {
+	if _, ok := n.following(s.Enroll.Space); ok {
 		return
 	}
-	st, err := f.Begin(n.base, n.joinName())
-	if err != nil {
-		n.cfg.Log.Info("pairbook enrollment not picked up", "err", err)
+	lock, ok := takeFollow(n.lockPath(s.Enroll.Space))
+	if !ok {
+		n.stopFollowing(s.Enroll.Space, nil)
 		return
 	}
-	n.track(f, enrollState(st.State))
-	n.finish(f, st)
+	for {
+		_, err := n.beginJoin(n.base, joinLink(s.Link), lock)
+		if err == nil {
+			return
+		}
+		n.trackSaved(s, enrollState("retrying: "+err.Error()))
+		select {
+		case <-n.base.Done():
+			n.stopFollowing(s.Enroll.Space, lock)
+			return
+		case <-time.After(resumeRetry):
+		}
+	}
+}
+
+// trackSaved records a kept enrollment's state before it is followed.
+func (n *Node) trackSaved(s enroll.Saved, state enrollState) {
+	r := PairbookJoinResult{Space: s.Enroll.Space, URL: s.Enroll.URL, Code: s.Enroll.Code, ExpiresAt: s.Enroll.ExpiresAt, State: string(state)}
+	n.joins.mu.Lock()
+	defer n.joins.mu.Unlock()
+	if n.joins.follow == nil {
+		n.joins.follow = map[string]*PairbookJoinResult{}
+	}
+	n.joins.follow[r.Space] = &r
 }
 
 // pairbookStatus is every enrollment this node follows.
