@@ -62,8 +62,16 @@ func pairbookAdmin(ctx context.Context, s *pairbookSession, a pairbookArgs) (any
 	if err != nil {
 		return nil, err
 	}
-	return adminVerb(ctx, s, adminInvocation{tok: tok, verb: verb, words: words})
+	out, err := adminVerb(ctx, s, adminInvocation{tok: tok, verb: verb, words: words})
+	if errors.Is(err, errAdminSignedOut) {
+		s.adminTokens().drop(tok.Origin) // the Pairbook said so: the kept sign-in is no good
+	}
+	return out, err
 }
+
+// errAdminSignedOut: the Pairbook refused the token (401); a network
+// failure is never this.
+var errAdminSignedOut = errors.New("not signed in, or the sign-in expired")
 
 // adminInvocation is one admin verb with its words, signed in as tok.
 type adminInvocation struct {
@@ -192,7 +200,7 @@ func adminDo(req *http.Request, out any) error {
 		return err
 	}
 	if res.StatusCode == http.StatusUnauthorized {
-		return errors.New("not signed in, or the sign-in expired: pairtask space admin login " + req.URL.Scheme + "://" + req.URL.Host)
+		return fmt.Errorf("%w: pairtask space admin login %s://%s", errAdminSignedOut, req.URL.Scheme, req.URL.Host)
 	}
 	if res.StatusCode/100 != 2 {
 		return fmt.Errorf("the Pairbook refused: %s %s", res.Status, strings.TrimSpace(string(b)))
