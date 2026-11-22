@@ -47,6 +47,11 @@ func redeemConfig() hub.PairingConfig {
 }
 func newRedeemOperator(t *testing.T, cfg hub.PairingConfig, database string) *redeemOperatorFixture {
 	t.Helper()
+	return newConfiguredRedeemOperator(t, cfg, database, func(*hub.Hub) {})
+}
+
+func newConfiguredRedeemOperator(t *testing.T, cfg hub.PairingConfig, database string, configure func(*hub.Hub)) *redeemOperatorFixture {
+	t.Helper()
 	if database == "" {
 		database = filepath.Join(t.TempDir(), "redeem.db")
 	}
@@ -58,6 +63,7 @@ func newRedeemOperator(t *testing.T, cfg hub.PairingConfig, database string) *re
 	operatorNoError(t, err)
 	h := hub.New(st, seq, log)
 	h.SetPairing(cfg)
+	configure(h)
 	_, err = h.RecoverJoins(context.Background())
 	operatorNoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
