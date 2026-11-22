@@ -44,6 +44,20 @@ func Load(keys *personkey.Keys) (Me, error) {
 	return Me{key: keys.PersonKey(), Lineage: pairbook.Lineage(a.Lineage()), Evidence: pairbook.PersonEvidence{Anchor: anchor}}, nil
 }
 
+// Epoch is the person's current identity epoch, from their evidence: what
+// a binding they make now names.
+func (m Me) Epoch() (uint64, error) {
+	a, err := identity.ParseAnchor(m.Evidence.Anchor)
+	if err != nil {
+		return 0, err
+	}
+	h, _, err := identity.Held{}.Apply(a, time.UnixMilli(0))
+	if err != nil {
+		return 0, err
+	}
+	return h.Epoch, nil
+}
+
 // Public is the person key.
 func (m Me) Public() ed25519.PublicKey { return m.key.Public().(ed25519.PublicKey) }
 
