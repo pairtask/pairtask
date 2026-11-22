@@ -65,3 +65,26 @@ func TestSpaceAddressRenewalStopsAfterUnpin(t *testing.T) {
 		t.Fatal("unpinning left address publication active")
 	}
 }
+
+func TestSpaceAddressUnpinBetweenRequestAndWorker(t *testing.T) {
+	f := newRetryFixture(t)
+	directory := &addressRecorder{retryDirectory: f.d, current: f.m}
+	f.h.SetSpaces(SpaceConfig{Maps: func(string, crypto.Signer) (space.MapDirectory, error) { return directory, nil }})
+	ctx := context.Background()
+	messageWorkerOK(t, f.h.store.PinSpace(ctx, f.pin))
+	messageWorkerOK(t, f.h.KeepSpaceMap(ctx, f.pin.Space, f.m))
+	req := protocol.SpaceRequest{Op: protocol.SpaceOpMapAddress, Space: f.pin.Space, Addresses: []string{"mac.example:9443"}}
+	step, refusal := spaceOps[req.Op](f.h, ctx, req)
+	if refusal != nil || step.job == nil {
+		t.Fatalf("bound address request refused at dispatch: %v", refusal)
+	}
+	messageWorkerOK(t, f.h.unpinSpace(ctx, spaceKey(f.pin.Space)))
+	if _, err := step.job(ctx, ctx); err == nil {
+		t.Fatal("unpin before worker still allowed publication")
+	}
+	_, found, err := f.h.store.SpaceAddressOf(ctx, f.pin.Space)
+	messageWorkerOK(t, err)
+	if found {
+		t.Fatal("unpin before worker left address configured")
+	}
+}
