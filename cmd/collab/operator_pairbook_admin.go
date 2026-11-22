@@ -62,7 +62,20 @@ func pairbookAdmin(ctx context.Context, s *pairbookSession, a pairbookArgs) (any
 	if err != nil {
 		return nil, err
 	}
-	return adminVerb(ctx, s, tok, verb, words)
+	return adminVerb(ctx, s, adminInvocation{tok: tok, verb: verb, words: words})
+}
+
+// adminInvocation is one admin verb with its words, signed in as tok.
+type adminInvocation struct {
+	tok   adminToken
+	verb  string
+	words []string
+}
+
+// adminRequest is one admin API call.
+type adminRequest struct {
+	method, path string
+	body         any
 }
 
 type adminRun struct {
@@ -103,7 +116,7 @@ func shownEnrollment(ctx context.Context, tok adminToken, w []string) (any, erro
 			ID, Person, Workspace string
 		} `json:"pending"`
 	}
-	if err := adminCall(ctx, tok, http.MethodGet, "spaces/"+url.PathEscape(w[0]), nil, &detail); err != nil {
+	if err := adminCall(ctx, tok, adminRequest{method: http.MethodGet, path: "spaces/" + url.PathEscape(w[0])}, &detail); err != nil {
 		return nil, err
 	}
 	for _, p := range detail.Pending {
@@ -114,23 +127,23 @@ func shownEnrollment(ctx context.Context, tok adminToken, w []string) (any, erro
 	return nil, errors.New("no enrollment " + w[1] + " is waiting in that space; pairtask space admin show SPACE lists them")
 }
 
-func adminVerb(ctx context.Context, s *pairbookSession, tok adminToken, verb string, words []string) (any, error) {
-	if verb == "logout" {
-		return adminLogout(ctx, s, tok)
+func adminVerb(ctx context.Context, s *pairbookSession, in adminInvocation) (any, error) {
+	if in.verb == "logout" {
+		return adminLogout(ctx, s, in.tok)
 	}
-	run, ok := adminVerbs[verb]
-	if !ok || len(words) != run.words {
+	run, ok := adminVerbs[in.verb]
+	if !ok || len(in.words) != run.words {
 		return nil, errors.New(adminUsage)
 	}
-	var body any
+	req := adminRequest{method: run.method, path: run.path(in.words)}
 	if run.body != nil {
 		var err error
-		if body, err = run.body(ctx, tok, words); err != nil {
+		if req.body, err = run.body(ctx, in.tok, in.words); err != nil {
 			return nil, err
 		}
 	}
 	var out json.RawMessage
-	if err := adminCall(ctx, tok, run.method, run.path(words), body, &out); err != nil {
+	if err := adminCall(ctx, in.tok, req, &out); err != nil {
 		return nil, err
 	}
 	return adminAnswer(out), nil
@@ -150,16 +163,16 @@ func (a adminAnswer) String() string {
 func (a adminAnswer) MarshalJSON() ([]byte, error) { return a, nil }
 
 // adminCall makes one admin API call with tok.
-func adminCall(ctx context.Context, tok adminToken, method, path string, body, out any) error {
+func adminCall(ctx context.Context, tok adminToken, call adminRequest, out any) error {
 	var rd io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
+	if call.body != nil {
+		b, err := json.Marshal(call.body)
 		if err != nil {
 			return err
 		}
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, tok.Origin+"/admin/api/"+path, rd)
+	req, err := http.NewRequestWithContext(ctx, call.method, tok.Origin+"/admin/api/"+call.path, rd)
 	if err != nil {
 		return err
 	}
@@ -244,15 +257,15 @@ func newPKCE() (pkce, error) {
 func awaitCode(ctx context.Context, ln net.Listener, state string) (string, error) {
 	got := make(chan string, 1)
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if r.URL.Path != "/done" || q.Get("state") != state || q.Get("code") == "" {
+		code, ok := callbackCode(r, state)
+		if !ok {
 			http.Error(w, "this isn't the sign-in this terminal started", http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintln(w, "Signed in. You can close this tab and go back to your terminal.")
 		select {
-		case got <- q.Get("code"):
+		case got <- code:
 		default:
 		}
 	})}
@@ -266,6 +279,16 @@ func awaitCode(ctx context.Context, ln net.Listener, state string) (string, erro
 	case <-wait.Done():
 		return "", errors.New("no sign-in came back in time; run pairtask space admin login again")
 	}
+}
+
+// callbackCode is the loopback callback's code, if it carries our state.
+func callbackCode(r *http.Request, state string) (string, bool) {
+	q := r.URL.Query()
+	switch {
+	case r.URL.Path != "/done", q.Get("state") != state:
+		return "", false
+	}
+	return q.Get("code"), q.Get("code") != ""
 }
 
 type tokenRequest struct {
@@ -308,10 +331,21 @@ func adminLogout(ctx context.Context, s *pairbookSession, tok adminToken) (any, 
 // pairbookOriginOf is s as https://HOST[:PORT], or "".
 func pairbookOriginOf(s string) string {
 	u, err := url.Parse(strings.TrimRight(s, "/"))
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || !bareOrigin(u) {
 		return ""
 	}
 	return "https://" + u.Host
+}
+
+// bareOrigin: u is https://HOST[:PORT] and nothing more.
+func bareOrigin(u *url.URL) bool {
+	switch {
+	case u.Scheme != "https", u.Host == "", u.User != nil:
+		return false
+	case u.Path != "", u.RawQuery != "", u.Fragment != "":
+		return false
+	}
+	return true
 }
 
 // adminTokens is the folder of kept admin tokens, one file per Pairbook.
