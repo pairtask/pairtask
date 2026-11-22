@@ -116,7 +116,20 @@ func policyPath(w []string) string { return "spaces/" + url.PathEscape(w[0]) + "
 // policyFile is the policy to set, as JSON from the file named: groups,
 // grants and the base_version it was edited from.
 func policyFile(_ context.Context, _ adminToken, w []string) (any, error) {
-	b, err := os.ReadFile(w[1])
+	input := os.Stdin
+	if w[1] != "-" {
+		f, err := os.Open(w[1])
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		input = f
+	}
+	const maxPolicyBytes = 64 << 10
+	b, err := io.ReadAll(io.LimitReader(input, maxPolicyBytes+1))
+	if len(b) > maxPolicyBytes {
+		return nil, errors.New("policy exceeds the 64 KiB Pairbook request limit")
+	}
 	if err != nil {
 		return nil, err
 	}

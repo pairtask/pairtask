@@ -127,6 +127,8 @@ def plan(argv, system=None, instances=None):
     name, rest = ALIASES.get(argv[0], argv[0]), list(argv[1:])
     if name == "space" and rest[:2] == ["admin", "login"]:
         return [script("sandbox-pairbook-login.py", *rest[2:])]
+    if name == "space" and rest[:2] == ["admin", "policy-set"]:
+        return [script("sandbox-pairbook-policy.py", *rest[2:])]
     if name in SCRIPTED:
         file, leading, _ = SCRIPTED[name]
         return [script(file, *leading, *rest)]
