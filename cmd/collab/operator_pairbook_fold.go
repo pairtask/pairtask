@@ -210,7 +210,25 @@ func (s *pairbookSession) applyFold(ctx context.Context, f foldRun) (foldReport,
 		return rep, stale, err
 	}
 	rep.Dropped, err = s.dropDead(ctx, f, outcomes)
-	return rep, false, err
+	if err != nil {
+		return rep, false, err
+	}
+	return rep, false, approvedOutcome(f.plan.approved, outcomes)
+}
+
+// approvedOutcome is an error when the join the operator approved wasn't
+// admitted (stale after another map won, say): it has to be sent again.
+func approvedOutcome(approved string, outcomes []spaceowner.Outcome) error {
+	if approved == "" {
+		return nil
+	}
+	for _, o := range outcomes {
+		d := o.Change.Digest()
+		if hex.EncodeToString(d[:]) == approved && o.Result != spaceowner.Applied {
+			return fmt.Errorf("the approved join wasn't admitted (%s); ask them to join again", o.Result)
+		}
+	}
+	return nil
 }
 
 // renewWhenDue is next, or, when nothing else changed and half the map's
