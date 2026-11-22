@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"errors"
+	"net/http"
 
 	"github.com/pairtask/pairtask/internal/space"
 )
@@ -65,9 +66,21 @@ func (a *spaceAuthority) noteRefresh(k spaceKey, err error) {
 	defer a.mu.Unlock()
 	if err == nil {
 		delete(a.refused, k)
+		delete(a.forbidden, k)
 		return
 	}
 	a.refused[k] = err.Error()
+	var r *space.Refusal
+	if errors.As(err, &r) && r.Status == http.StatusForbidden {
+		a.forbidden[k] = true
+	}
+}
+
+// refusedByDirectory: k's last refresh was answered 403.
+func (a *spaceAuthority) refusedByDirectory(k spaceKey) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.forbidden[k]
 }
 
 func (a *spaceAuthority) refreshError(k spaceKey) string {

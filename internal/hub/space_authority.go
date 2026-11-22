@@ -42,6 +42,7 @@ type spaceAuthority struct {
 	// space lock, never before one, and never while calling listeners.
 	contactsMu sync.Mutex
 	refused    map[spaceKey]string // why the last refresh failed, for status
+	forbidden  map[spaceKey]bool   // the last refresh was a 403
 	notify     []func(space string)
 	closed     bool       // Run ended: no timer, no activation, no callback
 	calls      int        // listener calls running now
@@ -55,7 +56,7 @@ type activeMap struct {
 }
 
 func newSpaceAuthority() *spaceAuthority {
-	a := &spaceAuthority{timing: realSpaceTiming(), active: map[spaceKey]activeMap{}, writing: map[spaceKey]*sync.Mutex{}, refused: map[spaceKey]string{}}
+	a := &spaceAuthority{timing: realSpaceTiming(), active: map[spaceKey]activeMap{}, writing: map[spaceKey]*sync.Mutex{}, refused: map[spaceKey]string{}, forbidden: map[spaceKey]bool{}}
 	a.drained = sync.NewCond(&a.mu)
 	return a
 }

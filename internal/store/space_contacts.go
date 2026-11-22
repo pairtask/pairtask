@@ -75,6 +75,24 @@ ON CONFLICT DO NOTHING`); err != nil {
 	return tx.Commit()
 }
 
+// SpaceRefusals are the workspaces the operator refused, sorted.
+func (s *Store) SpaceRefusals(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT workspace FROM space_refusals ORDER BY workspace`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // refuseSpace records the operator's refusal of workspace.
 func refuseSpace(ctx context.Context, tx *sql.Tx, workspace string, at time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO space_refusals (workspace, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, workspace, msgStamp(at))

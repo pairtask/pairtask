@@ -54,6 +54,7 @@ type Hub struct {
 	spaceBusy  map[string]bool  // spaces with a change in flight; owned by Run
 	authority  *spaceAuthority  // the active map of each Pairbook v1 space
 	reconciler *spaceReconciler // connects what the active maps grant; nil until Run
+	refresher  *spaceRefresher  // fetches pinned spaces' maps and resends the outbox; nil until Run
 	store      *store.Store
 	seq        uint64
 	log        *slog.Logger
@@ -154,11 +155,13 @@ func (h *Hub) Run(ctx context.Context) {
 	defer close(h.done)
 	defer h.authority.close()
 	defer h.stopSpaceReconciler() // runs first: dials end before authority closes
+	defer h.stopSpaceRefresher()
 	defer h.settleBackground()
 	defer h.disconnectAll(clients)
 	h.beginBackground(ctx)
 	h.restoreSpaceMaps(ctx)
 	h.startSpaceReconciler(ctx)
+	h.startSpaceRefresher(ctx)
 	h.drainImports(ctx, clients) // what was staged before a restart
 
 	for {
