@@ -43,6 +43,9 @@ func (h *Hub) mapAddress(ctx context.Context, r protocol.SpaceRequest) (spaceSte
 		if err != nil {
 			return nil, err
 		}
+		if !sameTrust(pin, current) {
+			return nil, errors.New("space " + keep.Space + " was pinned again since; publish again")
+		}
 		if err := h.store.KeepSpaceAddress(local, keep); err != nil {
 			return nil, err
 		}
