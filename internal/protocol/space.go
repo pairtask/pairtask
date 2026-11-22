@@ -38,6 +38,9 @@ const (
 	SpaceOpMapRefresh     = "map_refresh"      // space → mark
 	SpaceOpMapStatus      = "map_status"       // → maps
 	SpaceOpMapAddress     = "map_address"      // space, addresses, valid_for_ms (≤ 24h): publish this workspace's address, kept and renewed
+	SpaceOpMapEnroll      = "map_enroll"       // link (an organization join link), name → enroll: pins the space, starts enrolling this workspace
+	SpaceOpMapEnrollSend  = "map_enroll_send"  // space, enrollment, record (the person's join) → enroll_state
+	SpaceOpMapEnrollState = "map_enroll_state" // space, enrollment → enroll_state
 
 	// ErrSpace is a refused space operation; the detail names why.
 	ErrSpace = "space_refused"
@@ -68,6 +71,8 @@ type SpaceRequest struct {
 	Person  string          `json:"person,omitempty"`  // map_accept: person key ID
 	At      time.Time       `json:"at,omitempty"`      // map_accept
 	Until   time.Time       `json:"until,omitempty"`   // map_submit (join): the invite's expiry; the join isn't retried after it
+
+	Enrollment string `json:"enrollment,omitempty"` // map_enroll_send, map_enroll_state
 }
 
 // SpaceResult answers a space operation.
@@ -86,6 +91,29 @@ type SpaceResult struct {
 	WorkspaceKey []byte            `json:"workspace_key,omitempty"` // map_accept
 	Maps         []SpaceMapStatus  `json:"maps,omitempty"`          // map_status
 	Stale        bool              `json:"stale,omitempty"`         // map_publish: another map won; fetch and fold again
+
+	Enroll      *SpaceEnroll      `json:"enroll,omitempty"`       // map_enroll
+	EnrollState *SpaceEnrollState `json:"enroll_state,omitempty"` // map_enroll_send, map_enroll_state
+}
+
+// SpaceEnroll is a started enrollment: what the host signs the join with
+// (the space, the map to base it on, the challenge whose SHA-256 is its
+// token hash) and where the person confirms it.
+type SpaceEnroll struct {
+	Space      string    `json:"space"`
+	Enrollment string    `json:"enrollment"`
+	Challenge  []byte    `json:"challenge"`
+	Base       SpaceMark `json:"base"`
+	Code       string    `json:"code"`
+	URL        string    `json:"url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+// SpaceEnrollState is an enrollment's state; Base, when stale, is the map
+// the join is signed on again.
+type SpaceEnrollState struct {
+	State string     `json:"state"`
+	Base  *SpaceMark `json:"base,omitempty"`
 }
 
 // Invite states map_changes gives a join: issued here and live; expired or

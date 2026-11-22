@@ -33,6 +33,13 @@ type flowNode struct {
 
 func startFlowNode(t *testing.T, d *flowDirectory) *flowNode {
 	t.Helper()
+	return startConfiguredFlowNode(t, hub.SpaceConfig{Maps: func(_ string, s crypto.Signer) (space.MapDirectory, error) {
+		return flowClient{d: d, key: s.Public().(ed25519.PublicKey)}, nil
+	}})
+}
+
+func startConfiguredFlowNode(t *testing.T, cfg hub.SpaceConfig) *flowNode {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "space-cli-")
 	offlineOK(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })
@@ -48,9 +55,7 @@ func startFlowNode(t *testing.T, d *flowDirectory) *flowNode {
 	n.h.SetPairing(hub.PairingConfig{Exchanger: pake.New(), Name: "test workspace", Dial: func(ctx context.Context, addr string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 	}})
-	n.h.SetSpaces(hub.SpaceConfig{Maps: func(_ string, s crypto.Signer) (space.MapDirectory, error) {
-		return flowClient{d: d, key: s.Public().(ed25519.PublicKey)}, nil
-	}})
+	n.h.SetSpaces(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	go n.h.Run(ctx)
 	op := server.NewOperator(n.socket, n.h, os.Getuid(), log)

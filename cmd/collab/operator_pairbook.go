@@ -73,7 +73,7 @@ func runOperatorPairbook(ctx context.Context, args []string, stdout, stderr io.W
 		fmt.Fprintln(stderr, operatorPairbookUsage)
 		return 2
 	}
-	s := &pairbookSession{}
+	s := &pairbookSession{progress: stderr}
 	a, code := parsePairbook(args, &s.call, stderr)
 	if code != -1 {
 		return code
@@ -117,8 +117,18 @@ func writePairbook(out any, asJSON bool, stdout, stderr io.Writer) int {
 // pairbookSession is one command's broker calls and, once a command needs
 // to sign, the person on this host.
 type pairbookSession struct {
-	call operatorCall
-	me   *spaceowner.Me
+	call      operatorCall
+	me        *spaceowner.Me
+	progress  io.Writer // what a long command tells the person meanwhile
+	enrollDir string    // tests: where enrollments are kept to resume; "" means beside the person's keys
+}
+
+// progressOut is where to tell the person what is happening.
+func (s *pairbookSession) progressOut() io.Writer {
+	if s.progress == nil {
+		return io.Discard
+	}
+	return s.progress
 }
 
 // person is this host's person, from the keys and their anchor.

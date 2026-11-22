@@ -105,6 +105,9 @@ func pairbookJoin(ctx context.Context, s *pairbookSession, a pairbookArgs) (any,
 	if len(a.words) != 1 {
 		return nil, errors.New("join needs the invite LINK")
 	}
+	if _, err := space.ParseOrgLink(a.words[0]); err == nil {
+		return pairbookEnroll(ctx, s, a, a.words[0])
+	}
 	name, err := joinName(a.name)
 	if err != nil {
 		return nil, err
