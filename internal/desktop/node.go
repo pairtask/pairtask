@@ -37,6 +37,9 @@ type Config struct {
 	// Address is the extension's Workspace address setting (#388): where
 	// paired workspaces are now.
 	Address string
+	// Pairbook is the extension's optional Pairbook setting: the company's
+	// Pairbook, https://HOST. Join links must be for it; "" accepts any.
+	Pairbook string
 }
 
 // Node is this copy's way to the broker: the broker itself while it owns
@@ -52,6 +55,8 @@ type Node struct {
 	addresses addressSetting
 	// told is the sync failures this copy already reported, per consumer.
 	told syncNotices
+	// joins follows this node's Pairbook enrollments.
+	joins enrollments
 }
 
 // ErrUnsafeDataDir: the data directory isn't a private directory of ours.
@@ -88,6 +93,12 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	defer n.mu.Unlock()
 	if err := n.reach(ctx); err != nil {
 		return nil, err
+	}
+	if cfg.Pairbook != "" && pairbookOrigin(cfg.Pairbook) == "" {
+		cfg.Log.Warn("the Pairbook setting isn't an https://HOST address; ignored", "setting", cfg.Pairbook)
+	}
+	if n.own != nil {
+		go n.resumeJoins() // runs once Start has returned and released mu
 	}
 	return n, nil
 }

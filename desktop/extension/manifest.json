@@ -27,7 +27,7 @@
     "entry_point": "server/pairtask-desktop",
     "mcp_config": {
       "command": "${__dirname}/server/pairtask-desktop",
-      "args": ["--name", "${user_config.name}", "--notify=${user_config.notify}", "--address=${user_config.address}"],
+      "args": ["--name", "${user_config.name}", "--notify=${user_config.notify}", "--address=${user_config.address}", "--pairbook=${user_config.pairbook}"],
       "env": {}
     }
   },
@@ -48,6 +48,13 @@
       "type": "string",
       "title": "Workspace address",
       "description": "Where a paired workspace is now, if its address changed: HOST:PORT, or NAME=HOST:PORT, NAME2=HOST:PORT for several. It moves only when that workspace's own key answers there; leave empty otherwise.",
+      "required": false,
+      "default": ""
+    },
+    "pairbook": {
+      "type": "string",
+      "title": "Pairbook",
+      "description": "Your company's Pairbook, such as https://pairbook.example.com, if it runs one. Join links are then checked against it, and pairbook_join can point you to its join page. Leave empty otherwise; nothing else changes.",
       "required": false,
       "default": ""
     }
