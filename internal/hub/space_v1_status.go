@@ -155,21 +155,28 @@ func (r *spaceRefresher) loop(ctx context.Context, h *Hub) {
 	defer r.wg.Done()
 	tick := time.NewTicker(refreshEvery)
 	defer tick.Stop()
+	beat := time.NewTicker(presenceEvery)
+	defer beat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-beat.C:
+			h.presencePass(ctx)
+			continue
 		case <-r.kick:
 		case <-tick.C:
 		}
 		h.refreshPass(ctx)
+		h.presencePass(ctx)
 	}
 }
 
 // refreshPass resends the outbox, then refreshes every pinned space.
 func (h *Hub) refreshPass(ctx context.Context) {
 	h.resendOutbox(ctx)
-	defer h.renewAddresses(ctx) // after the maps, so a new grant counts
+	defer h.publishAllAgents(ctx) // after the maps, so a new binding counts
+	defer h.renewAddresses(ctx)   // after the maps, so a new grant counts
 	pins, err := h.store.SpacePins(ctx)
 	if err != nil {
 		return
