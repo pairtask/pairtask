@@ -57,6 +57,9 @@ func pairbookAdmin(ctx context.Context, s *pairbookSession, a pairbookArgs) (any
 		return nil, errors.New(adminUsage)
 	}
 	verb, words := a.words[0], a.words[1:]
+	if verb == "login-from-host" {
+		return adminHostLogin(ctx, s, words, os.Stdin)
+	}
 	if verb == "login" {
 		return adminLogin(ctx, s, words)
 	}
@@ -257,7 +260,28 @@ func adminLogin(ctx context.Context, s *pairbookSession, words []string) (any, e
 	if err != nil {
 		return nil, err
 	}
-	tok, err := exchangeCode(ctx, origin, tokenRequest{Code: code, Verifier: p.verifier, Port: port})
+	return finishAdminLogin(ctx, s, origin, tokenRequest{Code: code, Verifier: p.verifier, Port: port})
+}
+
+// adminHostLogin accepts a single-use exchange from the installed host launcher's
+// private stdin pipe. The access token stays inside the secured runtime.
+func adminHostLogin(ctx context.Context, s *pairbookSession, words []string, input io.Reader) (any, error) {
+	if len(words) != 1 {
+		return nil, errors.New(adminUsage)
+	}
+	origin := pairbookOriginOf(words[0])
+	if origin == "" {
+		return nil, errors.New("give the Pairbook as https://HOST")
+	}
+	var in tokenRequest
+	if err := json.NewDecoder(io.LimitReader(input, 8192)).Decode(&in); err != nil {
+		return nil, errors.New("could not read the host sign-in response")
+	}
+	return finishAdminLogin(ctx, s, origin, in)
+}
+
+func finishAdminLogin(ctx context.Context, s *pairbookSession, origin string, in tokenRequest) (any, error) {
+	tok, err := exchangeCode(ctx, origin, in)
 	if err != nil {
 		return nil, err
 	}
