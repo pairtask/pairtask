@@ -8,6 +8,8 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,22 +21,31 @@ import (
 
 type enrollmentDirectory struct {
 	flowClient
-	link   space.OrgLink
-	start  space.Enrollment
-	newer  pairbook.Mark
-	sent   []pairbook.SignedChange
-	polled bool
+	link    space.OrgLink
+	start   space.Enrollment
+	newer   pairbook.Mark
+	sent    []pairbook.SignedChange
+	started int
+	states  []space.EnrollState
 }
 
 func (d *enrollmentDirectory) StartEnroll(_ context.Context, pin space.Pin, name string) (space.Enrollment, error) {
-	if pin.Space != d.link.Space || pin.Owner != d.link.Owner || pin.Base != d.link.Base || name != "Ada" {
+	d.started++
+	got := space.OrgLink{Space: pin.Space, Owner: pin.Owner, Base: pin.Base}
+	if got != d.link || name != "Ada" {
 		return space.Enrollment{}, errors.New("incorrect enrollment pin or name")
 	}
 	return d.start, nil
 }
 
 func (d *enrollmentDirectory) SubmitEnroll(_ context.Context, pin space.Pin, id string, ch pairbook.SignedChange) (space.EnrollState, error) {
-	if id != d.start.ID || ch.Space != pin.Space || ch.Name != "Ada" || ch.Action != pairbook.ChangeJoin || ch.TokenHash != sha256.Sum256(d.start.Challenge) {
+	if id != d.start.ID || pin.Space != ch.Space {
+		return space.EnrollState{}, errors.New("wrong enrollment target")
+	}
+	if ch.Name != "Ada" || ch.Action != pairbook.ChangeJoin {
+		return space.EnrollState{}, errors.New("incorrect join")
+	}
+	if ch.TokenHash != sha256.Sum256(d.start.Challenge) {
 		return space.EnrollState{}, errors.New("incorrect enrollment change")
 	}
 	if !ed25519.Verify(ch.Person, ch.SigningBytes(), ch.Sig) {
@@ -48,14 +59,16 @@ func (d *enrollmentDirectory) EnrollState(_ context.Context, pin space.Pin, id s
 	if id != d.start.ID || pin.Space != d.link.Space {
 		return space.EnrollState{}, errors.New("incorrect enrollment poll")
 	}
-	if !d.polled {
-		d.polled = true
-		return space.EnrollState{State: space.EnrollStale, Base: &d.newer}, nil
+	if len(d.states) == 0 {
+		return space.EnrollState{}, errors.New("unexpected extra poll")
 	}
-	return space.EnrollState{State: space.EnrollAdmitted}, nil
+	state := d.states[0]
+	d.states = d.states[1:]
+	return state, nil
 }
 
-func TestOrgJoinCLIResignsStaleEnrollmentThroughBroker(t *testing.T) {
+func newEnrollmentFlow(t *testing.T) (*enrollmentDirectory, *flowNode) {
+	t.Helper()
 	t.Setenv("PATH", t.TempDir())
 	poll := enrollPoll
 	enrollPoll = time.Millisecond
@@ -63,12 +76,73 @@ func TestOrgJoinCLIResignsStaleEnrollmentThroughBroker(t *testing.T) {
 	d := &enrollmentDirectory{flowClient: flowClient{d: &flowDirectory{}}, link: space.OrgLink{Base: "https://directory.example", Space: strings.Repeat("a", 32), Owner: "sha256:" + strings.Repeat("b", 64)},
 		start: space.Enrollment{ID: strings.Repeat("c", 32), Challenge: []byte("enrollment challenge"), Base: pairbook.Mark{Version: 1}, Code: "ABCD-EFGH", URL: "https://directory.example/e/ABCD-EFGH", ExpiresAt: time.Now().Add(time.Minute).UnixMilli()}, newer: pairbook.Mark{Version: 2}}
 	node := startConfiguredFlowNode(t, hub.SpaceConfig{Maps: func(_ string, _ crypto.Signer) (space.MapDirectory, error) { return d, nil }})
-	result := node.command(t, "join", d.link.String(), "--name", "Ada")
-	if !strings.Contains(result, "Joined") || len(d.sent) != 2 {
-		t.Fatalf("join result %q, %d changes", result, len(d.sent))
+	return d, node
+}
+
+func expectEnrollValue[T comparable](t *testing.T, label string, got, want T) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s: got %v, want %v", label, got, want)
 	}
+}
+
+func (d *enrollmentDirectory) verifyRetry(t *testing.T, node *flowNode) {
+	t.Helper()
+	expectEnrollValue(t, "signed changes", len(d.sent), 2)
 	first, next := d.sent[0], d.sent[1]
-	if first.Base != d.start.Base || next.Base != d.newer || first.Lineage != next.Lineage || first.Binding.Workspace() != next.Binding.Workspace() || next.Binding.Workspace() != node.id.Fingerprint() {
-		t.Fatal("retry failed to keep the person and workspace bound to the new base")
+	expectEnrollValue(t, "first base", first.Base, d.start.Base)
+	expectEnrollValue(t, "new base", next.Base, d.newer)
+	expectEnrollValue(t, "person lineage", next.Lineage, first.Lineage)
+	expectEnrollValue(t, "initial workspace", first.Binding.Workspace(), node.id.Fingerprint())
+	expectEnrollValue(t, "resumed workspace", next.Binding.Workspace(), node.id.Fingerprint())
+}
+
+func TestOrgJoinCLIResignsStaleEnrollmentThroughBroker(t *testing.T) {
+	d, node := newEnrollmentFlow(t)
+	d.states = []space.EnrollState{{State: space.EnrollStale, Base: &d.newer}, {State: space.EnrollAdmitted}}
+	result := node.command(t, "join", d.link.String(), "--name", "Ada")
+	if !strings.Contains(result, "Joined") {
+		t.Fatal(result)
+	}
+	d.verifyRetry(t, node)
+}
+
+func TestOrgJoinCLIResumesAfterLateApproval(t *testing.T) {
+	for _, state := range []string{space.EnrollAdmitted, space.EnrollStale} {
+		t.Run(state, func(t *testing.T) {
+			d, node := newEnrollmentFlow(t)
+			d.states = []space.EnrollState{{State: space.EnrollAwaitingApproval}}
+			wait := enrollWait
+			t.Cleanup(func() { enrollWait = wait })
+			enrollWait = 0
+			args := []string{"join", d.link.String(), "--name", "Ada"}
+			result := node.command(t, args...)
+			if !strings.Contains(result, "same pairtask space join") {
+				t.Fatal(result)
+			}
+			folder := enrollSaves(filepath.Join(node.keyDir, "enrollments"))
+			saved, ok := folder.load(d.link.Space)
+			expectEnrollValue(t, "saved enrollment exists", ok, true)
+			expectEnrollValue(t, "saved enrollment ID", saved.Enroll.Enrollment, d.start.ID)
+			info, err := os.Stat(folder.path(d.link.Space))
+			offlineOK(t, err)
+			expectEnrollValue(t, "file permissions", info.Mode().Perm(), os.FileMode(0600))
+			enrollWait = wait
+			d.states = []space.EnrollState{{State: state, Base: &d.newer}, {State: space.EnrollAdmitted}}
+			result = node.command(t, args...)
+			if !strings.Contains(result, "Joined") {
+				t.Fatal(result)
+			}
+			expectEnrollValue(t, "enrollments started", d.started, 1)
+			if state == space.EnrollStale {
+				d.verifyRetry(t, node)
+			} else {
+				expectEnrollValue(t, "signed changes", len(d.sent), 1)
+			}
+			_, err = os.Stat(folder.path(d.link.Space))
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("settled enrollment file: %v", err)
+			}
+		})
 	}
 }
