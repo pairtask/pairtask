@@ -96,7 +96,7 @@ class DesktopExtensionAcceptance(unittest.TestCase):
                 self.assertEqual(
                     server["mcp_config"]["args"],
                     ["--name", "${user_config.name}", "--notify=${user_config.notify}",
-                     "--address=${user_config.address}"],
+                     "--address=${user_config.address}", "--pairbook=${user_config.pairbook}"],
                 )
                 self.assertEqual(manifest["user_config"]["name"]["type"], "string")
                 self.assertTrue(manifest["user_config"]["name"]["required"])

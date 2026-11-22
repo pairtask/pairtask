@@ -20,5 +20,15 @@ class DesktopAddressSettingAcceptance(unittest.TestCase):
         self.assertIn("--address=${user_config.address}", manifest["server"]["mcp_config"]["args"])
 
 
+    def test_pairbook_server_is_optional_and_empty_by_default(self):
+        manifest = json.loads((ROOT / "desktop" / "extension" / "manifest.json").read_text())
+        setting = manifest["user_config"]["pairbook"]
+        self.assertEqual(setting["type"], "string")
+        self.assertFalse(setting["required"])
+        self.assertEqual(setting["default"], "")
+        self.assertIn("https://", setting["description"])
+        self.assertIn("--pairbook=${user_config.pairbook}", manifest["server"]["mcp_config"]["args"])
+
+
 if __name__ == "__main__":
     unittest.main()
