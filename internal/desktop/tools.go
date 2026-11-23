@@ -147,7 +147,11 @@ const (
 
 // NewServer is the MCP server for node n, named pairtask at version.
 func NewServer(n *Node, version string) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "pairtask", Version: version}, nil)
+	var options mcp.ServerOptions
+	if pairbookOrigin(n.cfg.Pairbook) != "" {
+		options.Instructions = "A company Pairbook is configured. When the person wants to connect, call pairbook_join without arguments to show their configured join page. When they provide a company /join#space= link, pass that link directly to pairbook_join. Ask them to complete sign-in and confirm this machine."
+	}
+	s := mcp.NewServer(&mcp.Implementation{Name: "pairtask", Version: version}, &options)
 	readOnly, additive, openWorld := true, false, true
 	mcp.AddTool(s, &mcp.Tool{Name: "whoami", Description: whoamiDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, WhoamiResult, error) {
