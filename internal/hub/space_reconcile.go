@@ -39,6 +39,7 @@ type spaceReconciler struct {
 	mu      sync.Mutex
 	retry   map[string]dialWait // per target: when to dial again
 	dialing map[string]bool     // targets with a dial running
+	start   int                 // where the next pass starts in the targets, so all get a turn
 }
 
 type dialWait struct {
@@ -109,10 +110,23 @@ func (r *spaceReconciler) pass(ctx context.Context, h *Hub) error {
 	if err != nil {
 		return err
 	}
-	for _, target := range sortedKeys(desired) {
+	for _, target := range r.inTurn(sortedKeys(desired)) {
 		r.maybeDial(ctx, h, spaceDialer{h: h, id: ep.Identity, target: target, peer: desired[target]})
 	}
 	return nil
+}
+
+// inTurn is targets starting one further each pass, so with more targets
+// than dial slots, the same first few can't take every slot every time.
+func (r *spaceReconciler) inTurn(targets []string) []string {
+	if len(targets) == 0 {
+		return targets
+	}
+	r.mu.Lock()
+	from := r.start % len(targets)
+	r.start++
+	r.mu.Unlock()
+	return append(slices.Clone(targets[from:]), targets[:from]...)
 }
 
 // dials: this workspace is the one of the pair that dials, judged by both
