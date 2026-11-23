@@ -53,6 +53,11 @@ func TestMapPeopleWithoutStatusKeepsOrgWorkspacesWithTheirAccounts(t *testing.T)
 	}
 	out, err := step.job(ctx, ctx)
 	messageWorkerOK(t, err)
+	requireOrgRoster(t, out, want)
+}
+
+func requireOrgRoster(t *testing.T, out *protocol.SpaceResult, want map[string]string) {
+	t.Helper()
 	if out.StatusKnown || len(out.People) != len(want) {
 		t.Fatal("unexpected roster from map-only directory", out)
 	}
