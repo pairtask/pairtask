@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompanyJoinGuidanceLeavesIdentityUncreated(t *testing.T) {
@@ -56,5 +57,47 @@ func TestCompanyPersonIsReusedAfterDesktopRestart(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0700 {
 		t.Fatalf("person directory permissions: %v", info.Mode())
+	}
+}
+
+func TestConfiguredDesktopPromptsOnce(t *testing.T) {
+	seen := make(chan string, 2)
+	dir, err := os.MkdirTemp("", "pt-onboard-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	cfg := Config{Dir: dir, Pairbook: "https://company.example", Notify: func(_ context.Context, title, body string) error { seen <- title + " " + body; return nil }}
+	n, err := Start(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	requirePairbookPrompt(t, seen, cfg.Pairbook)
+	if err := n.notifyPairbook(context.Background(), pairbookOrigin(cfg.Pairbook+"/")); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 0 {
+		t.Fatal("prompt repeated for the same Pairbook")
+	}
+}
+
+func TestConfiguredDesktopExplainsCompanyLinks(t *testing.T) {
+	n := &Node{cfg: Config{Pairbook: "https://example.com"}}
+	client := desktopSpaceMCP(t, n)
+	if !strings.Contains(client.InitializeResult().Instructions, "pairbook_join") {
+		t.Fatal("MCP initialization didn't explain company join links")
+	}
+}
+
+func requirePairbookPrompt(t *testing.T, seen <-chan string, company string) {
+	t.Helper()
+	select {
+	case notice := <-seen:
+		if !strings.Contains(notice, company) {
+			t.Fatalf("prompt missing configured origin: %s", notice)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("no first-use prompt")
 	}
 }
