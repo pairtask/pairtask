@@ -131,19 +131,22 @@ func (r *spaceReconciler) inTurn(targets []string) []string {
 
 // dials: this workspace is the one of the pair that dials, judged by both
 // sides from the same records, the Pairbook's addresses of the two:
-//   - only a target that can be dialed is dialed;
-//   - of two that can, the lower key dials;
-//   - a workspace that can't be dialed itself (the Pairbook holds no
-//     address of it; Claude Desktop never publishes one) dials a higher
-//     key that can, since that side can't reach it.
+//   - of two that host (publish an address), the lower key dials;
+//   - one that doesn't host dials one that does, whatever the order,
+//     since that side can't reach it;
+//   - of two that don't host, the lower key dials through a relay the
+//     other listens on: the default case.
 //
 // Two workspaces neither of which can be dialed don't connect directly.
 func (h *Hub) dials(ctx context.Context, self *peer.WorkspaceIdentity, target string, g grantedPeer) bool {
 	space := g.spaces[0]
-	if !h.dialable(ctx, space, g.key) {
-		return false // no one can reach the target directly
+	lower := self.Fingerprint() < target
+	if h.dialable(ctx, space, g.key) {
+		return lower || !h.dialable(ctx, space, self.PublicKey())
 	}
-	return self.Fingerprint() < target || !h.dialable(ctx, space, self.PublicKey())
+	// Neither hosts (else the one that doesn't would dial the one that does):
+	// the lower key dials, through a relay the target listens on.
+	return lower && !h.dialable(ctx, space, self.PublicKey()) && h.relayReachable(ctx, space, g.key)
 }
 
 // dialable: the Pairbook holds an address of node in space. When it can't

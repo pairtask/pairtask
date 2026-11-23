@@ -95,18 +95,32 @@ func (s spaceDialer) connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	addr, err := dir.MapAddress(ctx, pin, s.peer.key)
-	if errors.Is(err, space.ErrNoAddress) {
-		return errUndialable // not now: the next refresh tries again
-	}
+	dests, err := s.destinations(ctx, dir, pin)
 	if err != nil {
 		return err
 	}
-	reached, err := s.knock(ctx, addr.Addrs, req)
+	reached, err := s.knock(ctx, dests, req)
 	if err != nil {
 		return s.forgetEnded(ctx, err)
 	}
 	return s.install(ctx, req, reached)
+}
+
+// destinations are where target can be reached in pin's space: its
+// published addresses when it hosts, else the relays it listens on.
+func (s spaceDialer) destinations(ctx context.Context, dir space.MapDirectory, pin space.Pin) ([]string, error) {
+	addr, err := dir.MapAddress(ctx, pin, s.peer.key)
+	if err == nil {
+		return addr.Addrs, nil
+	}
+	if !errors.Is(err, space.ErrNoAddress) {
+		return nil, err
+	}
+	dests, err := relayDestinations(ctx, dir, pin, s.peer.key)
+	if errors.Is(err, space.ErrNoRelayReach) {
+		return nil, errUndialable // not now: the next refresh tries again
+	}
+	return dests, err
 }
 
 // attempt is the one attempt kept for target, made in the lowest granting

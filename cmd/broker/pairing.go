@@ -202,6 +202,7 @@ func (p pairingEndpoint) start(ctx context.Context, stop func()) <-chan error {
 	if p.cfg.PairingSocketGID >= 0 {
 		srv = server.NewSharedPairing(p.cfg.PairingSocketPath, p.cfg.PairingSocketGID, p.h, p.log)
 	}
+	go p.h.ServeRelays(ctx, srv.ServeConn) // relayed connections are served like the socket's
 	go func() {
 		defer srv.Close()
 		err := srv.Listen(ctx)
