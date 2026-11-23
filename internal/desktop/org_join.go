@@ -239,14 +239,10 @@ func (n *Node) joinName() string {
 
 // flow is an enrollment flow for link as this node's person.
 func (n *Node) flow(link joinLink) (*enroll.Flow, error) {
-	me, err := n.person()
-	if err != nil {
-		return nil, err
-	}
 	call := func(ctx context.Context, r protocol.SpaceRequest) (*protocol.SpaceResult, error) {
 		return n.space(ctx, r)
 	}
-	f := &enroll.Flow{Call: call, Me: me, Link: string(link), Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
+	f := &enroll.Flow{Call: call, Person: n.person, Link: string(link), Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
 		Poll: desktopEnrollPoll, Wait: desktopEnrollWait}
 	f.OnState = func(st protocol.SpaceEnrollState) { n.track(f, enrollState(st.State)) }
 	return f, nil

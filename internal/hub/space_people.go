@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"sync"
@@ -80,10 +81,54 @@ func (h *Hub) presencePass(ctx context.Context) {
 			continue
 		}
 		if st, ok := h.statuser(pin); ok {
-			h.noStatus.note(pin.Base, st.Heartbeat(ctx, pin), h.authority.now())
+			h.noStatus.note(pin.Base, h.heartbeat(ctx, pin, st), h.authority.now())
 			h.fetchStatus(ctx, pin, st)
 		}
 	}
+}
+
+// heartbeat tells pin's Pairbook this workspace is online, with its
+// version and the map it holds; when the Pairbook asks for a proof (to
+// carry this workspace over to an account-based map), it answers at once.
+func (h *Hub) heartbeat(ctx context.Context, pin space.Pin, st space.Statuser) error {
+	p, ok := st.(space.Presencer)
+	if !ok {
+		return st.Heartbeat(ctx, pin)
+	}
+	presence := space.Presence{ClientVersion: space.ClientVersion()}
+	if mark, kept := h.keptMark(ctx, pin.Space); kept {
+		presence.Mark = &space.MarkView{Version: mark.Version, Digest: hex.EncodeToString(mark.Digest[:])}
+	}
+	reply, err := p.Presence(ctx, pin, presence)
+	if err != nil || reply.Prove == "" {
+		return err
+	}
+	proof, err := h.carryProof(pin, reply.Prove)
+	if err != nil {
+		h.log.Info("space carryover proof not given", "space", pin.Space, "err", err)
+		return nil
+	}
+	presence.Proof = &proof
+	_, err = p.Presence(ctx, pin, presence)
+	return err
+}
+
+// carryProof is this workspace's proof over the Pairbook's carryover
+// challenge (16 bytes, lowercase hex).
+func (h *Hub) carryProof(pin space.Pin, challenge string) (pairbook.SignedOrgProof, error) {
+	b, err := hex.DecodeString(challenge)
+	if err != nil || len(b) != 16 || hex.EncodeToString(b) != challenge {
+		return pairbook.SignedOrgProof{}, errors.New("malformed carryover challenge")
+	}
+	dir, err := h.mapDirectory(pin.Base)
+	if err != nil {
+		return pairbook.SignedOrgProof{}, err
+	}
+	prover, ok := dir.(space.OrgProver)
+	if !ok {
+		return pairbook.SignedOrgProof{}, errors.New("no workspace proofs with this directory")
+	}
+	return prover.OrgProof(pin, [16]byte(b))
 }
 
 // publishAllAgents sends each bound space its listed agents.

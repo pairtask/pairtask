@@ -29,18 +29,21 @@ type Caller func(context.Context, protocol.SpaceRequest) (*protocol.SpaceResult,
 
 // Flow is one enrollment as this host follows it.
 type Flow struct {
-	Call  Caller
-	Me    spaceowner.Me
-	Link  string
-	Saves Saves
-	Poll  time.Duration // between checks
-	Wait  time.Duration // waiting for an admin, before Follow returns Waiting
+	Call Caller
+	// Person is this host's person, asked for only when the space needs a
+	// person's join; a space whose people are accounts never asks.
+	Person func() (spaceowner.Me, error)
+	Link   string
+	Saves  Saves
+	Poll   time.Duration // between checks
+	Wait   time.Duration // waiting for an admin, before Follow returns Waiting
 	// OnState, when set, hears every state Follow sees.
 	OnState func(protocol.SpaceEnrollState)
 
 	Enroll protocol.SpaceEnroll
 	Name   string
 	Resume bool // picked up from Saves
+	me     spaceowner.Me
 	own    pairbook.Binding
 	since  time.Time
 }
@@ -81,6 +84,9 @@ func (f *Flow) start(ctx context.Context, name string) (protocol.SpaceEnrollStat
 		return protocol.SpaceEnrollState{}, errors.New("the broker didn't start an enrollment")
 	}
 	f.Enroll, f.Name = *res.Enroll, name
+	if f.Enroll.Proved {
+		return f.state(ctx) // the broker sent this workspace's own proof: no person signs
+	}
 	if err := f.bind(ctx); err != nil {
 		return protocol.SpaceEnrollState{}, err
 	}
@@ -91,8 +97,10 @@ func (f *Flow) start(ctx context.Context, name string) (protocol.SpaceEnrollStat
 // check it keeps it: the Pairbook or broker may only be unreachable now.
 func (f *Flow) resume(ctx context.Context, kept Saved) (protocol.SpaceEnrollState, error) {
 	f.Enroll, f.Name, f.Resume = kept.Enroll, kept.Name, true
-	if err := f.bind(ctx); err != nil {
-		return protocol.SpaceEnrollState{}, err
+	if !f.Enroll.Proved {
+		if err := f.bind(ctx); err != nil {
+			return protocol.SpaceEnrollState{}, err
+		}
 	}
 	st, err := f.state(ctx)
 	if err != nil {
@@ -103,21 +111,31 @@ func (f *Flow) resume(ctx context.Context, kept Saved) (protocol.SpaceEnrollStat
 
 // bind gets this workspace's acceptance of the person's binding.
 func (f *Flow) bind(ctx context.Context) error {
-	epoch, err := f.Me.Epoch()
+	me, err := f.Person()
+	if err != nil {
+		return err
+	}
+	f.me = me
+	epoch, err := f.me.Epoch()
 	if err != nil {
 		return err
 	}
 	now := time.Now().Truncate(time.Millisecond)
-	res, err := f.Call(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapAccept, Lineage: pairbook.LineageHex(f.Me.Lineage), Epoch: epoch, Person: f.Me.KeyID(), At: now})
+	res, err := f.Call(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapAccept, Lineage: pairbook.LineageHex(f.me.Lineage), Epoch: epoch, Person: f.me.KeyID(), At: now})
 	if err != nil {
 		return err
 	}
-	f.own = pairbook.Binding{Claim: f.Me.Claim(res.WorkspaceKey, epoch, now), Acceptance: res.Acceptance, WorkspaceKey: res.WorkspaceKey}
+	f.own = pairbook.Binding{Claim: f.me.Claim(res.WorkspaceKey, epoch, now), Acceptance: res.Acceptance, WorkspaceKey: res.WorkspaceKey}
 	return nil
 }
 
 // Fingerprint is this workspace's key as the person compares it.
-func (f *Flow) Fingerprint() string { return Fingerprint(pairbook.KeyID(f.own.WorkspaceKey)) }
+func (f *Flow) Fingerprint() string {
+	if f.Enroll.Proved {
+		return Fingerprint(f.Enroll.Workspace)
+	}
+	return Fingerprint(pairbook.KeyID(f.own.WorkspaceKey))
+}
 
 // Follow follows the enrollment from st until it is admitted (Admitted),
 // waiting for an admin past Wait (Waiting, kept to resume), or ends with
@@ -182,8 +200,8 @@ func (f *Flow) next(ctx context.Context, st protocol.SpaceEnrollState) (protocol
 		return st, ctx.Err()
 	case <-time.After(f.Poll):
 	}
-	if st.State != space.EnrollStale {
-		return f.state(ctx)
+	if st.State != space.EnrollStale || f.Enroll.Proved {
+		return f.state(ctx) // a proof is never stale: it names no map
 	}
 	if st.Base == nil {
 		return st, errors.New("the Pairbook asked for the join again without saying on which map")
@@ -202,7 +220,7 @@ func (f *Flow) Send(ctx context.Context, base protocol.SpaceMark) (protocol.Spac
 	if err != nil {
 		return protocol.SpaceEnrollState{}, err
 	}
-	ch := f.Me.Change(spaceowner.Request{Space: f.Enroll.Space, Action: pairbook.ChangeJoin, Base: mark, Name: f.Name,
+	ch := f.me.Change(spaceowner.Request{Space: f.Enroll.Space, Action: pairbook.ChangeJoin, Base: mark, Name: f.Name,
 		TokenHash: sha256.Sum256(f.Enroll.Challenge), Binding: f.own}, time.Now().Truncate(time.Millisecond))
 	record, err := json.Marshal(ch)
 	if err != nil {

@@ -58,8 +58,42 @@ func (h *Hub) startEnroll(ctx context.Context, pin space.Pin, name string) (*pro
 	if err != nil {
 		return nil, err
 	}
-	return &protocol.SpaceResult{Enroll: &protocol.SpaceEnroll{Space: pin.Space, Enrollment: e.ID, Challenge: e.Challenge, Base: *markView(e.Base),
-		Code: e.Code, URL: e.URL, ExpiresAt: time.UnixMilli(e.ExpiresAt).UTC()}}, nil
+	res := &protocol.SpaceResult{Enroll: &protocol.SpaceEnroll{Space: pin.Space, Enrollment: e.ID, Challenge: e.Challenge, Base: *markView(e.Base),
+		Code: e.Code, URL: e.URL, ExpiresAt: time.UnixMilli(e.ExpiresAt).UTC()}}
+	if e.Mode != space.ModeAccount {
+		return res, nil
+	}
+	st, err := h.proveEnroll(ctx, pin, e)
+	if err != nil {
+		return nil, err
+	}
+	res.Enroll.Proved, res.Enroll.Workspace = true, st.workspace
+	res.EnrollState = &protocol.SpaceEnrollState{State: st.state.State}
+	return res, nil
+}
+
+type proved struct {
+	workspace string
+	state     space.EnrollState
+}
+
+// proveEnroll answers a format-3 enrollment with this workspace's own
+// proof over the challenge: no person signs anything.
+func (h *Hub) proveEnroll(ctx context.Context, pin space.Pin, e space.Enrollment) (proved, error) {
+	dir, err := h.mapDirectory(pin.Base)
+	if err != nil {
+		return proved{}, err
+	}
+	prover, ok := dir.(space.OrgProver)
+	if !ok || len(e.Challenge) != 16 {
+		return proved{}, errors.New("this Pairbook asked for a workspace proof this broker can't give")
+	}
+	proof, err := prover.OrgProof(pin, [16]byte(e.Challenge))
+	if err != nil {
+		return proved{}, err
+	}
+	st, err := prover.SubmitEnrollProof(ctx, pin, e.ID, proof)
+	return proved{workspace: proof.Workspace, state: st}, err
 }
 
 func (h *Hub) enroller(pin space.Pin) (space.Enroller, error) {
