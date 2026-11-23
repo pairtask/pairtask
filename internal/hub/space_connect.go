@@ -96,6 +96,9 @@ func (s spaceDialer) connect(ctx context.Context) error {
 		return err
 	}
 	addr, err := dir.MapAddress(ctx, pin, s.peer.key)
+	if errors.Is(err, space.ErrNoAddress) {
+		return errUndialable // not now: the next refresh tries again
+	}
 	if err != nil {
 		return err
 	}
@@ -223,7 +226,11 @@ func installSpace(ctx context.Context, h *Hub, in spaceInstall) error {
 	if err != nil {
 		return err
 	}
-	result, err := h.store.InstallSpaceContact(ctx, peer.SpaceInstall{Contact: in.contact, Space: in.req.Space, ConnectID: in.req.ConnectID, PairingID: id, Role: in.role})
+	record := peer.SpaceInstall{Contact: in.contact, Space: in.req.Space, ConnectID: in.req.ConnectID, PairingID: id, Role: in.role}
+	result, err := h.installRecord(ctx, in, record)
+	if errors.Is(err, store.ErrSpaceSuperseded) {
+		return nil // the peer's dial already paired us, and both ends keep that pairing
+	}
 	if err != nil {
 		return err
 	}
@@ -232,6 +239,15 @@ func installSpace(ctx context.Context, h *Hub, in spaceInstall) error {
 	}
 	h.PairingChanged()
 	return nil
+}
+
+// installRecord installs a responder's connect as before; a dialer's goes
+// through the crossing rule, where the lower key's dial wins.
+func (h *Hub) installRecord(ctx context.Context, in spaceInstall, record peer.SpaceInstall) (peer.InstallResult, error) {
+	if in.role != "joiner" {
+		return h.store.InstallSpaceContact(ctx, record)
+	}
+	return h.store.InstallSpaceDial(ctx, record, in.own < in.contact.IdentityKey)
 }
 
 // errRetiredAttempt is an attempt whose pairing was installed, then ended.
@@ -262,17 +278,86 @@ func (r spaceResponder) answer(ctx context.Context, peerLeaf string, req space.C
 
 // accept installs the pairing as the side that answered, if this side's
 // own active map lets the dialer connect, and the dialer is the side the
-// rule says dials (the lower key ID).
+// rule says dials: the lower key ID, or a dialer that can't be dialed in
+// the request's space because it publishes no address there.
 func (r spaceResponder) accept(ctx context.Context, peerLeaf string, req space.ConnectRequest) error {
 	own := r.id.Fingerprint()
 	if r.h.spaces == nil || r.h.store == nil {
 		return errors.New("spaces are not configured")
 	}
-	if peerLeaf >= own {
-		return errors.New("the other workspace dials")
+	if err := r.dialerMayDial(ctx, peerLeaf, own, req.Space); err != nil {
+		return err
 	}
 	contact := peer.Contact{IdentityKey: peerLeaf, EstablishedAt: time.Now(), Invited: true}
 	return r.h.installGranted(ctx, spaceInstall{contact: contact, req: req, own: own, role: "inviter"})
+}
+
+var (
+	errSelfDial   = errors.New("a workspace can't connect to itself")
+	errOtherDials = errors.New("the other workspace dials")
+	errUndialable = errors.New("the workspace publishes no address yet")
+	errNotSettled = errors.New("can't tell yet whether the dialer can be reached; try later")
+	errCrossing   = errors.New("both sides are dialing; try later")
+)
+
+// dialerMayDial: peer is the side that dials. A lower key always is. A
+// higher key is only when its grant here holds and the Pairbook itself says
+// it publishes no address in space; any doubt (a timeout, a refusal, an
+// unreadable answer) refuses for now.
+func (r spaceResponder) dialerMayDial(ctx context.Context, peerLeaf, own, spaceID string) error {
+	switch {
+	case peerLeaf == own:
+		return errSelfDial
+	case peerLeaf < own:
+		return nil
+	}
+	key, ok := r.h.grantedKey(spaceID, own, peerLeaf)
+	if !ok {
+		return errNotGranted
+	}
+	if r.h.dialingTo(ctx, peerLeaf) {
+		return errCrossing // this side is dialing it: one of the two must win, and the lower key's dial does
+	}
+	_, err := r.h.addressOf(ctx, spaceID, key)
+	switch {
+	case errors.Is(err, space.ErrNoAddress):
+		return nil
+	case err == nil:
+		return errOtherDials
+	}
+	return errNotSettled
+}
+
+// grantedKey is peer's key, if space's active map lets self and peer
+// connect now.
+func (h *Hub) grantedKey(spaceID, self, peerLeaf string) (ed25519.PublicKey, bool) {
+	v, ok := h.SpaceAuthority(spaceID)
+	if !ok {
+		return nil, false
+	}
+	peers, err := v.Peers(self, h.authority.now())
+	if err != nil {
+		return nil, false
+	}
+	for _, p := range peers {
+		if p.Workspace == peerLeaf {
+			return p.Key, true
+		}
+	}
+	return nil, false
+}
+
+// addressOf is node's address record in space, from its Pairbook.
+func (h *Hub) addressOf(ctx context.Context, spaceID string, node ed25519.PublicKey) (pairbook.SignedAddress, error) {
+	pin, ok, err := h.store.SpacePin(ctx, spaceID)
+	if err != nil || !ok {
+		return pairbook.SignedAddress{}, errors.Join(err, errNotSettled)
+	}
+	dir, err := h.mapDirectory(pin.Base)
+	if err != nil {
+		return pairbook.SignedAddress{}, err
+	}
+	return dir.MapAddress(ctx, pin, node)
 }
 
 // refusalReason is what a dialer is told, without internals.
