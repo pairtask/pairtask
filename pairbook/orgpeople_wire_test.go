@@ -47,7 +47,10 @@ func TestOrgMapGrantsOrgPeople(t *testing.T) {
 		t.Fatalf("Dana's machine reaches %v, want Sam's machine", peers)
 	}
 	p, ok := v.BoundTo(dana)
-	if !ok || p.Kind != pairbook.KindOrg || p.PersonID != danaID || p.Selector() != "org:"+danaID.String() {
+	if !ok {
+		t.Fatal("Dana's machine is bound to no one")
+	}
+	if got, want := p.Selector(), "org:"+danaID.String(); got != want || p.Kind != pairbook.KindOrg {
 		t.Fatalf("Dana's machine is bound to %+v", p)
 	}
 	if p.Lineage == (pairbook.Lineage{}) {

@@ -29,15 +29,11 @@ var (
 // pairbookEnroll joins the organization space link names: it picks up an
 // enrollment this host left waiting for an admin, or starts one.
 func pairbookEnroll(ctx context.Context, s *pairbookSession, a pairbookArgs, link string) (any, error) {
-	me, err := s.person()
-	if err != nil {
-		return nil, err
-	}
 	name, err := joinName(a.name) // a kept enrollment keeps its own name
 	if err != nil {
 		return nil, err
 	}
-	f := &enroll.Flow{Call: s.space, Me: me, Link: link, Saves: enroll.Saves(s.enrollSaves()), Poll: enrollPoll, Wait: enrollWait}
+	f := &enroll.Flow{Call: s.space, Person: s.person, Link: link, Saves: enroll.Saves(s.enrollSaves()), Poll: enrollPoll, Wait: enrollWait}
 	st, err := f.Begin(ctx, name)
 	if err != nil {
 		return nil, err

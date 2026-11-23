@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"runtime/debug"
 	"time"
+
+	"github.com/pairtask/pairtask/pairbook"
 )
 
 // Status in a v1 space: this workspace's heartbeat, the agents it lists in
@@ -51,6 +54,54 @@ var _ Statuser = (*Client)(nil)
 // Heartbeat tells pin's Pairbook this workspace is online.
 func (c *Client) Heartbeat(ctx context.Context, pin Pin) error {
 	return statusErr(c.v1(ctx, pin, request{method: http.MethodPut, path: mapPath(pin, "/presence")}, nil))
+}
+
+// Presence is what a heartbeat tells the Pairbook besides being online:
+// the client's version, the map it holds, and the proof a Pairbook asked
+// for. All of it is signed with the request.
+type Presence struct {
+	ClientVersion string                   `json:"client_version,omitempty"`
+	Mark          *MarkView                `json:"mark,omitempty"`
+	Proof         *pairbook.SignedOrgProof `json:"proof,omitempty"`
+}
+
+// MarkView is a map mark as the heartbeat names it.
+type MarkView struct {
+	Version uint64 `json:"version"`
+	Digest  string `json:"digest"` // lowercase hex
+}
+
+// PresenceReply is what a Pairbook may ask back: a proof over Prove (hex
+// of 16 bytes), to carry this workspace over to a format-3 map.
+type PresenceReply struct {
+	Prove string `json:"prove,omitempty"`
+}
+
+// Presencer is a Pairbook that takes a heartbeat with Presence.
+type Presencer interface {
+	Presence(ctx context.Context, pin Pin, p Presence) (PresenceReply, error)
+}
+
+var _ Presencer = (*Client)(nil)
+
+// Presence sends a heartbeat carrying p.
+func (c *Client) Presence(ctx context.Context, pin Pin, p Presence) (PresenceReply, error) {
+	var out PresenceReply
+	err := c.v1(ctx, pin, request{method: http.MethodPut, path: mapPath(pin, "/presence"), body: p}, &out)
+	return out, statusErr(err)
+}
+
+// ClientVersion is the version this binary was built as, or "dev".
+func ClientVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	switch info.Main.Version {
+	case "", "(devel)":
+		return "dev"
+	}
+	return info.Main.Version
 }
 
 // PublishAgents replaces the agents this workspace lists in pin's space.
