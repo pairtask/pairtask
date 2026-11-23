@@ -1,4 +1,5 @@
 """The operator's browser callback is received on the host that opened it."""
+import argparse
 import base64
 import hashlib
 from pathlib import Path
@@ -13,6 +14,14 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 
 
 class CompanyAdminHostLogin(unittest.TestCase):
+    def test_sign_in_requires_an_https_origin(self):
+        origin = runpy.run_path(str(SCRIPTS / "sandbox-pairbook-login.py"))["origin"]
+        self.assertEqual(origin("https://[::1]:8443/"), "https://[::1]:8443")
+        for value in ("http://example.com", "https://user@example.com", "https://example.com:abc",
+                      "https://example.com:65536", "https://example.com/path", "https://a b"):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                origin(value)
+
     def test_browser_callback_matches_the_secured_exchange(self):
         login = runpy.run_path(str(SCRIPTS / "sandbox-pairbook-login.py"))
         challenge = []
