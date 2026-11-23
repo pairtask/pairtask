@@ -16,6 +16,7 @@ type VerifiedMap struct {
 	Mark      Mark
 	ExpiresAt int64
 
+	org        bool // format 3: may hold org people
 	people     map[Lineage]Person
 	workspaces map[string]bound
 	groups     map[string]map[Lineage]bool
@@ -24,6 +25,10 @@ type VerifiedMap struct {
 
 // Person is a verified member: lineage, current key, name, role, current
 // epoch and the workspaces bound to them, sorted.
+//
+// An org person (Kind KindOrg) has a PersonID and no key or epoch; its
+// Lineage is the map's own index for it, derived from the space and the
+// PersonID, never a real lineage. Name people by Selector.
 type Person struct {
 	Lineage    Lineage
 	Person     ed25519.PublicKey
@@ -31,6 +36,17 @@ type Person struct {
 	Role       string
 	Epoch      uint64
 	Workspaces []string
+	Kind       string
+	PersonID   PersonID
+}
+
+// Selector names p for status and policy: "org:<hex>" for an org person,
+// the lineage hex for a key person.
+func (p Person) Selector() string {
+	if p.Kind == KindOrg {
+		return p.PersonID.Selector()
+	}
+	return LineageHex(p.Lineage)
 }
 
 // Peer is a workspace a given workspace may connect to under the map.
@@ -49,11 +65,10 @@ type bound struct {
 // bind adds a binding: valid for its person, and the only binding of its
 // workspace (one workspace never belongs to two people, nor twice).
 func (v *VerifiedMap) bind(b Binding, states map[Lineage]personState, issued time.Time) error {
-	st, ok := bindingState(b, states)
-	if !ok || b.check(st, issued) != nil {
-		return ErrInvalid
+	l, err := v.bindingOwner(b, states, issued)
+	if err != nil {
+		return err
 	}
-	l := st.lineage
 	w := b.Workspace()
 	if _, dup := v.workspaces[w]; dup {
 		return ErrInvalid
@@ -64,6 +79,38 @@ func (v *VerifiedMap) bind(b Binding, states map[Lineage]personState, issued tim
 	slices.Sort(p.Workspaces)
 	v.people[l] = p
 	return nil
+}
+
+// bindingOwner checks b and is the key of the person it binds: by the
+// person's claim for a key person, by the workspace's OrgProof for an org
+// person (format 3).
+func (v *VerifiedMap) bindingOwner(b Binding, states map[Lineage]personState, issued time.Time) (Lineage, error) {
+	if b.Kind == KindOrg && v.org {
+		return v.orgBindingOwner(b, issued)
+	}
+	if b.Kind != "" || b.PersonID != (PersonID{}) || len(b.Proof) > 0 {
+		return Lineage{}, ErrInvalid
+	}
+	st, ok := bindingState(b, states)
+	if !ok || b.check(st, issued) != nil {
+		return Lineage{}, ErrInvalid
+	}
+	return st.lineage, nil
+}
+
+// orgBindingOwner: an org binding names an org person in the map, carries
+// no person claim, and its workspace's proof is for this space, names the
+// workspace, is signed by it and isn't dated after the map.
+func (v *VerifiedMap) orgBindingOwner(b Binding, issued time.Time) (Lineage, error) {
+	key := orgKey(v.Space, b.PersonID)
+	if p, ok := v.people[key]; !ok || p.Kind != KindOrg || len(b.Claim)+len(b.Acceptance) > 0 {
+		return Lineage{}, ErrInvalid
+	}
+	proof, err := ParseOrgProof(b.Proof)
+	if err != nil || proof.Verify(v.Space, b.WorkspaceKey) != nil || proof.At > Millis(issued) {
+		return Lineage{}, ErrInvalid
+	}
+	return key, nil
 }
 
 // bindingState is the state of the person b's claim names, if in the map.
@@ -155,11 +202,9 @@ func (v VerifiedMap) selects(s Selector, l Lineage) bool {
 		return true
 	case SelectGroup:
 		return v.groups[s.Name][l]
-	case SelectPerson:
-		named, ok := lineageOf(s.Name)
-		return ok && named == l
 	}
-	return false
+	named, _, ok := v.selectedPerson(s)
+	return ok && named == l
 }
 
 // LineageHex is l as a person selector names it.
