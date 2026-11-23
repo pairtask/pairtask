@@ -43,6 +43,10 @@ SCRIPTED = {
               "Pairbook spaces of people: create [NAME] --pairbook URL | invite | join LINK | requests | approve PERSON | sync | members | status | leave"),
     "version": ("sandbox-version.py", [], "the app and host releases, the latest one and the command to update; changes nothing"),
 }
+HOST_SUBCOMMANDS = {
+    ("space", "admin", "login"): "sandbox-pairbook-login.py",
+    ("space", "admin", "policy-set"): "sandbox-pairbook-policy.py",
+}
 ACTIONS = {
     "vm": ("sandbox-host.py", {"plan": "plan", "apply": "apply", "incus-plan": "incus-plan", "incus-apply": "incus-apply"},
            "the macOS Colima VM: plan | apply | incus-plan --manifest FILE | incus-apply --manifest FILE --yes"),
@@ -125,8 +129,9 @@ def plan(argv, system=None, instances=None):
     `secured` exists; None defers that to run time."""
     system = system or platform.system()
     name, rest = ALIASES.get(argv[0], argv[0]), list(argv[1:])
-    if name == "space" and rest[:2] == ["admin", "login"]:
-        return [script("sandbox-pairbook-login.py", *rest[2:])]
+    host_script = HOST_SUBCOMMANDS.get((name, *rest[:2]))
+    if host_script:
+        return [script(host_script, *rest[2:])]
     if name in SCRIPTED:
         file, leading, _ = SCRIPTED[name]
         return [script(file, *leading, *rest)]

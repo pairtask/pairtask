@@ -171,7 +171,7 @@ func spaceFlags(call *operatorCall, req *protocol.SpaceRequest) *flag.FlagSet {
 // leadingWords splits off the arguments before the first flag.
 func leadingWords(args []string) ([]string, []string) {
 	for i, a := range args {
-		if strings.HasPrefix(a, "-") {
+		if a != "-" && strings.HasPrefix(a, "-") {
 			return args[:i], args[i:]
 		}
 	}
