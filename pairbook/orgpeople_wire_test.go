@@ -89,8 +89,8 @@ func TestOrgMapRefusals(t *testing.T) {
 			m.Bindings[0] = orgBinding("another space", danaID, "dana laptop", contractNow.Add(-time.Minute))
 		}},
 		{"proof by another machine", func(m *pairbook.SpaceMap) { m.Bindings[0].WorkspaceKey = public(contractKey("someone else")) }},
-		{"proof dated after the map", func(m *pairbook.SpaceMap) {
-			m.Bindings[0] = orgBinding(m.Space, danaID, "dana laptop", contractNow.Add(time.Minute))
+		{"proof dated after the map beyond clock skew", func(m *pairbook.SpaceMap) {
+			m.Bindings[0] = orgBinding(m.Space, danaID, "dana laptop", contractNow.Add(pairbook.RequestSkew+time.Second))
 		}},
 		{"truncated proof", func(m *pairbook.SpaceMap) { m.Bindings[0].Proof = m.Bindings[0].Proof[:20] }},
 		{"org selector naming no one", func(m *pairbook.SpaceMap) { m.Grants[0].A.Name = pairbook.PersonID{6}.String() }},
@@ -155,4 +155,33 @@ func TestOrgProofRoundTrip(t *testing.T) {
 	marshalled := pairbook.SignOrgProof(w, p).Marshal()
 	_, err = pairbook.ParseOrgProof(append([]byte{0}, marshalled...))
 	bad(t, err)
+}
+
+// A binding names its person exactly as the person entry does, for both
+// kinds, so a roster keyed by selector puts each machine under its person.
+func TestBindingAndPersonSelectorsAgree(t *testing.T) {
+	m := orgMap()
+	for i, b := range m.Bindings {
+		got, ok := b.Selector()
+		if want := m.People[i+1].Selector(); !ok || got != want {
+			t.Fatalf("org binding %d names %q, its person %q", i, got, want)
+		}
+	}
+	f := newBindingFixture("space owner")
+	got, ok := f.binding().Selector()
+	if want := f.entry(pairbook.RoleOwner).Selector(); !ok || got != want {
+		t.Fatalf("key binding names %q, its person %q", got, want)
+	}
+	if m.People[1].Selector() == m.People[2].Selector() {
+		t.Fatal("two org people share a selector")
+	}
+}
+
+// A machine whose clock runs a little ahead still binds: its proof may be
+// dated after the map by up to the request skew.
+func TestOrgProofWithinClockSkewBinds(t *testing.T) {
+	m := orgMap()
+	m.Bindings[0] = orgBinding(m.Space, danaID, "dana laptop", contractNow.Add(time.Minute))
+	_, err := verifyMap(m)
+	good(t, err)
 }

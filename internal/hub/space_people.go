@@ -307,15 +307,16 @@ func (h *Hub) mapOnlyPeople(ctx context.Context, id string, shown map[string]boo
 	if err != nil || !found {
 		return nil, errors.Join(err, errNotInSpace)
 	}
-	bound := map[pairbook.Lineage][]space.WorkspaceStatus{}
+	bound := map[string][]space.WorkspaceStatus{} // by person selector: org people share no lineage
 	for _, b := range m.Bindings {
-		if l, ok := b.ClaimedLineage(); ok {
-			bound[l] = append(bound[l], space.WorkspaceStatus{Workspace: b.Workspace()})
+		if who, ok := b.Selector(); ok {
+			bound[who] = append(bound[who], space.WorkspaceStatus{Workspace: b.Workspace()})
 		}
 	}
 	people := make([]space.PersonStatus, 0, len(m.People))
 	for _, p := range m.People {
-		people = append(people, space.PersonStatus{Person: pairbook.LineageHex(p.Lineage), Name: p.Name, Role: p.Role, Workspaces: bound[p.Lineage]})
+		who := p.Selector()
+		people = append(people, space.PersonStatus{Person: who, Name: p.Name, Role: p.Role, Workspaces: bound[who]})
 	}
 	return &protocol.SpaceResult{People: peopleView(people, shown)}, nil
 }
