@@ -39,6 +39,12 @@ ON CONFLICT (space) DO UPDATE SET addrs = ?2, valid_ms = ?3, published_at = ''`,
 	return err
 }
 
+// ForgetSpaceAddress drops the address setting of space: nothing renews it.
+func (s *Store) ForgetSpaceAddress(ctx context.Context, space string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM space_addresses WHERE space = ?`, space)
+	return err
+}
+
 // PublishedSpaceAddress records when the address of space was published.
 func (s *Store) PublishedSpaceAddress(ctx context.Context, space string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE space_addresses SET published_at = ? WHERE space = ?`, msgStamp(at), space)

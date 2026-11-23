@@ -120,6 +120,7 @@ func (h *Hub) SetPairing(cfg PairingConfig) {
 	if cfg.Name == "" {
 		cfg.Name = peer.DefaultPairingName
 	}
+	cfg.Dial = h.relayAware(cfg.Dial)
 	h.pair.cfg = cfg
 }
 

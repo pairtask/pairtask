@@ -18,6 +18,37 @@ import (
 
 func init() {
 	spaceOps[protocol.SpaceOpMapAddress] = (*Hub).mapAddress
+	spaceOps[protocol.SpaceOpMapUnpublish] = (*Hub).mapUnpublish
+}
+
+// mapUnpublish stops hosting in the space: the setting is forgotten first,
+// so nothing renews the record, then the record is deleted at the Pairbook.
+// A Pairbook that can't delete leaves it to lapse within its validity.
+func (h *Hub) mapUnpublish(ctx context.Context, r protocol.SpaceRequest) (spaceStep, *routingError) {
+	pin, rerr := h.pinFor(ctx, r.Space)
+	if rerr != nil {
+		return spaceStep{}, rerr
+	}
+	return spaceStep{space: pin.Space, job: func(net, local context.Context) (*protocol.SpaceResult, error) {
+		return nil, h.unpublish(net, local, pin)
+	}}, nil
+}
+
+func (h *Hub) unpublish(net, local context.Context, pin space.Pin) error {
+	unlock := h.authority.lockSpace(spaceKey(pin.Space))
+	defer unlock()
+	if err := h.store.ForgetSpaceAddress(local, pin.Space); err != nil {
+		return err
+	}
+	dir, err := h.mapDirectory(pin.Base)
+	if err != nil {
+		return err
+	}
+	rd, ok := dir.(space.RelayDirectory)
+	if !ok {
+		return errors.New("no longer renewed; this Pairbook can't delete the record, so it lapses within its validity")
+	}
+	return rd.Unpublish(net, pin)
 }
 
 // mapAddress keeps the addresses for the space and publishes them now.

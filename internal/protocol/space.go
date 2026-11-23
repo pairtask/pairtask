@@ -38,6 +38,7 @@ const (
 	SpaceOpMapRefresh     = "map_refresh"      // space → mark
 	SpaceOpMapStatus      = "map_status"       // → maps
 	SpaceOpMapAddress     = "map_address"      // space, addresses, valid_for_ms (≤ 24h): publish this workspace's address, kept and renewed
+	SpaceOpMapUnpublish   = "map_unpublish"    // space: stop hosting: forget the kept address and delete the record
 	SpaceOpMapEnroll      = "map_enroll"       // link (an organization join link), name → enroll: pins the space, starts enrolling this workspace
 	SpaceOpMapEnrollSend  = "map_enroll_send"  // space, enrollment, record (the person's join) → enroll_state
 	SpaceOpMapEnrollState = "map_enroll_state" // space, enrollment → enroll_state
