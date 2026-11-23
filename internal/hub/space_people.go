@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"sync"
@@ -80,10 +81,68 @@ func (h *Hub) presencePass(ctx context.Context) {
 			continue
 		}
 		if st, ok := h.statuser(pin); ok {
-			h.noStatus.note(pin.Base, st.Heartbeat(ctx, pin), h.authority.now())
+			h.noStatus.note(pin.Base, h.heartbeat(ctx, pin, st), h.authority.now())
 			h.fetchStatus(ctx, pin, st)
 		}
 	}
+}
+
+// heartbeat tells pin's Pairbook this workspace is online, with its
+// version and the map it holds; when the Pairbook asks for a proof (to
+// carry this workspace over to an account-based map), it answers at once.
+func (h *Hub) heartbeat(ctx context.Context, pin space.Pin, st space.Statuser) error {
+	p, ok := st.(space.Presencer)
+	if !ok {
+		return st.Heartbeat(ctx, pin)
+	}
+	presence := space.Presence{ClientVersion: space.ClientVersion()}
+	if mark, kept := h.keptMark(ctx, pin.Space); kept {
+		presence.Mark = &space.MarkView{Version: mark.Version, Digest: hex.EncodeToString(mark.Digest[:])}
+	}
+	reply, err := p.Presence(ctx, pin, presence)
+	if err != nil || reply.Prove == "" {
+		return err
+	}
+	proof, err := h.carryProof(pin, reply.Prove)
+	if err != nil {
+		h.log.Info("space carryover proof not given", "space", pin.Space, "err", err)
+		return nil
+	}
+	presence.Proof = &proof
+	_, err = p.Presence(ctx, pin, presence)
+	return err
+}
+
+// carryProof is this workspace's proof over the Pairbook's carryover
+// challenge (16 bytes, lowercase hex).
+func (h *Hub) carryProof(pin space.Pin, challenge string) (pairbook.SignedOrgProof, error) {
+	nonce, ok := parseChallenge(challenge)
+	if !ok {
+		return pairbook.SignedOrgProof{}, errors.New("malformed carryover challenge")
+	}
+	dir, err := h.mapDirectory(pin.Base)
+	if err != nil {
+		return pairbook.SignedOrgProof{}, err
+	}
+	prover, ok := dir.(space.OrgProver)
+	if !ok {
+		return pairbook.SignedOrgProof{}, errors.New("no workspace proofs with this directory")
+	}
+	return prover.OrgProof(pin, nonce)
+}
+
+// parseChallenge reads 16 bytes in lowercase hex, exactly.
+func parseChallenge(s string) ([16]byte, bool) {
+	var nonce [16]byte
+	if len(s) != 2*len(nonce) {
+		return nonce, false
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return nonce, false
+	}
+	copy(nonce[:], b)
+	return nonce, hex.EncodeToString(b) == s
 }
 
 // publishAllAgents sends each bound space its listed agents.
@@ -248,15 +307,16 @@ func (h *Hub) mapOnlyPeople(ctx context.Context, id string, shown map[string]boo
 	if err != nil || !found {
 		return nil, errors.Join(err, errNotInSpace)
 	}
-	bound := map[pairbook.Lineage][]space.WorkspaceStatus{}
+	bound := map[string][]space.WorkspaceStatus{} // by person selector: org people share no lineage
 	for _, b := range m.Bindings {
-		if l, ok := b.ClaimedLineage(); ok {
-			bound[l] = append(bound[l], space.WorkspaceStatus{Workspace: b.Workspace()})
+		if who, ok := b.Selector(); ok {
+			bound[who] = append(bound[who], space.WorkspaceStatus{Workspace: b.Workspace()})
 		}
 	}
 	people := make([]space.PersonStatus, 0, len(m.People))
 	for _, p := range m.People {
-		people = append(people, space.PersonStatus{Person: pairbook.LineageHex(p.Lineage), Name: p.Name, Role: p.Role, Workspaces: bound[p.Lineage]})
+		who := p.Selector()
+		people = append(people, space.PersonStatus{Person: who, Name: p.Name, Role: p.Role, Workspaces: bound[who]})
 	}
 	return &protocol.SpaceResult{People: peopleView(people, shown)}, nil
 }

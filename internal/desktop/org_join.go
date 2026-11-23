@@ -15,13 +15,15 @@ import (
 	"github.com/pairtask/pairtask/internal/spaceowner"
 )
 
-// Joining an organization's Pairbook space from Desktop. Desktop is its own
-// person here: a person key made in its data directory on the first join,
+// Joining an organization's Pairbook space from Desktop. In a space whose
+// people are accounts, the person is the company account the browser signs
+// in with: every machine of that account (Desktop, a Box) joins under that
+// one person, each with its own machine key, and the broker proves this
+// machine's key itself. Only a space still on person keys asks for a
+// person: then Desktop uses one made in its data directory on first need,
 // with no recovery code (none ever passes through a conversation), kept
-// across restarts. It is separate from the person on any Box until binding
-// another machine is supported. The join is confirmed by the person in a
-// browser; a follower here finishes it, and picks it up again after a
-// restart.
+// across restarts. The join is confirmed by the person in a browser; a
+// follower here finishes it, and picks it up again after a restart.
 
 const (
 	desktopEnrollPoll = 5 * time.Second
@@ -53,7 +55,7 @@ const (
 	pairbookJoinDescription = "Join a space in the company's Pairbook with its join link (the admin's space page shows it). " +
 		"Answers at once with a URL, a code and this machine's fingerprint: show them to the person, who opens the URL, signs in with the company account " +
 		"and confirms the fingerprint. Joining then finishes by itself; pairbook_join_status shows where it stands. " +
-		"Desktop joins as its own identity, separate from the person's other machines."
+		"The person is the company account they sign in with: this machine joins under it with its own machine key, alongside their other machines."
 	pairbookStatusDescription = "Where this machine's joins to company Pairbook spaces stand: waiting for sign-in, waiting for an admin, joined, declined or expired."
 )
 
@@ -239,14 +241,10 @@ func (n *Node) joinName() string {
 
 // flow is an enrollment flow for link as this node's person.
 func (n *Node) flow(link joinLink) (*enroll.Flow, error) {
-	me, err := n.person()
-	if err != nil {
-		return nil, err
-	}
 	call := func(ctx context.Context, r protocol.SpaceRequest) (*protocol.SpaceResult, error) {
 		return n.space(ctx, r)
 	}
-	f := &enroll.Flow{Call: call, Me: me, Link: string(link), Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
+	f := &enroll.Flow{Call: call, Person: n.person, Link: string(link), Saves: enroll.Saves(filepath.Join(n.cfg.Dir, "enrollments")),
 		Poll: desktopEnrollPoll, Wait: desktopEnrollWait}
 	f.OnState = func(st protocol.SpaceEnrollState) { n.track(f, enrollState(st.State)) }
 	return f, nil

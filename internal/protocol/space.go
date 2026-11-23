@@ -139,6 +139,11 @@ type SpaceEnroll struct {
 	Code       string    `json:"code"`
 	URL        string    `json:"url"`
 	ExpiresAt  time.Time `json:"expires_at"`
+	// Proved: the broker already sent this workspace's own proof (an
+	// organization space whose people are accounts): no person's join is
+	// needed, only the browser confirmation. Workspace is the key it proved.
+	Proved    bool   `json:"proved,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // SpaceEnrollState is an enrollment's state; Base, when stale, is the map

@@ -89,10 +89,18 @@ func applyEvidence(h identity.Held, b []byte, at time.Time) (identity.Held, erro
 // Binding says workspace W belongs to a person: the person's signed claim
 // and W's signed acceptance of the same lineage, epoch, workspace and time,
 // with W's public key (its ID must be the W both name).
+//
+// An org binding (Kind KindOrg, format 3 only) has no claim or acceptance:
+// it names the org person by PersonID and carries the workspace's own
+// signed OrgProof; the map's signature is the organization's word that the
+// account confirmed this workspace.
 type Binding struct {
 	Claim        []byte
 	Acceptance   []byte
 	WorkspaceKey ed25519.PublicKey
+	Kind         string   `json:",omitzero"`
+	PersonID     PersonID `json:",omitzero"`
+	Proof        []byte   `json:",omitzero"`
 }
 
 // BindingOf is what a binding names besides the two keys: the person's
@@ -113,6 +121,23 @@ func NewBinding(person, workspace ed25519.PrivateKey, of BindingOf) Binding {
 	claim := identity.Claim{Lineage: l, Epoch: of.Epoch, Workspace: w, At: of.At}.Signed(person)
 	accept := identity.Acceptance{Lineage: l, Epoch: of.Epoch, Person: KeyID(publicOf(person)), Workspace: w, At: of.At}.Signed(workspace)
 	return Binding{Claim: claim.Marshal(), Acceptance: accept.Marshal(), WorkspaceKey: wpub}
+}
+
+// Selector names the person b binds, as MapPerson.Selector names them:
+// "org:<hex>" for an org binding, the claim's lineage hex for a key
+// binding (false when the claim doesn't parse). Says nothing about
+// validity: a map's Verify checks that.
+func (b Binding) Selector() (string, bool) {
+	if b.Kind == KindOrg {
+		return b.PersonID.Selector(), true
+	}
+	l, ok := claimedLineage(b)
+	return LineageHex(l), ok
+}
+
+// keyOnly: none of an org binding's fields are set.
+func (b Binding) keyOnly() bool {
+	return b.Kind == "" && b.PersonID == (PersonID{}) && len(b.Proof) == 0
 }
 
 // Workspace is the bound workspace's key ID ("" for a malformed binding).

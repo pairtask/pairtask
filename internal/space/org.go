@@ -65,7 +65,13 @@ type Enrollment struct {
 	URL       string        `json:"url"`
 	Base      pairbook.Mark `json:"base"`
 	ExpiresAt int64         `json:"expires_at"`
+	// Mode "account": people in this space are accounts, so this workspace
+	// enrolls with its own OrgProof over Challenge, and no person signs.
+	Mode string `json:"mode,omitempty"`
 }
+
+// ModeAccount is an enrollment answered by the workspace's own proof.
+const ModeAccount = "account"
 
 // Enrollment states, as the Pairbook reports them.
 const (
@@ -114,6 +120,35 @@ func (c *Client) SubmitEnroll(ctx context.Context, pin Pin, id string, ch pairbo
 	}{ch}
 	return out, c.v1(ctx, pin, request{method: http.MethodPut, path: enrollPath(pin, id), body: body}, &out)
 }
+
+// OrgProof signs this workspace's proof that it joins pin's space, over
+// nonce: an enrollment's challenge or a carryover challenge.
+func (c *Client) OrgProof(pin Pin, nonce [16]byte) (pairbook.SignedOrgProof, error) {
+	p := pairbook.OrgProof{Space: pin.Space, Workspace: pairbook.KeyID(c.self), Nonce: nonce, At: c.now().UnixMilli()}
+	sig, err := c.sign(p.SigningBytes())
+	if err != nil {
+		return pairbook.SignedOrgProof{}, err
+	}
+	return pairbook.SignedOrgProof{OrgProof: p, Sig: sig}, nil
+}
+
+// SubmitEnrollProof sends this workspace's proof for enrollment id of a
+// format-3 space, in place of a person's join.
+func (c *Client) SubmitEnrollProof(ctx context.Context, pin Pin, id string, proof pairbook.SignedOrgProof) (EnrollState, error) {
+	var out EnrollState
+	body := struct {
+		Proof pairbook.SignedOrgProof `json:"proof"`
+	}{proof}
+	return out, c.v1(ctx, pin, request{method: http.MethodPut, path: enrollPath(pin, id), body: body}, &out)
+}
+
+// OrgProver is a Pairbook client that enrolls workspaces by their own proof.
+type OrgProver interface {
+	OrgProof(pin Pin, nonce [16]byte) (pairbook.SignedOrgProof, error)
+	SubmitEnrollProof(ctx context.Context, pin Pin, id string, proof pairbook.SignedOrgProof) (EnrollState, error)
+}
+
+var _ OrgProver = (*Client)(nil)
 
 // EnrollState is enrollment id's state now. One the Pairbook itself says
 // it doesn't have (its own not_found: purged, or never this workspace's) is
