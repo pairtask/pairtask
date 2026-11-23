@@ -98,6 +98,9 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if cfg.Pairbook != "" && pairbookOrigin(cfg.Pairbook) == "" {
 		cfg.Log.Warn("the Pairbook setting isn't an https://HOST address; ignored", "setting", cfg.Pairbook)
 	}
+	if company := pairbookOrigin(cfg.Pairbook); company != "" && cfg.Notify != nil {
+		n.spawn(func() { n.promptPairbook(company) })
+	}
 	if n.own != nil {
 		go n.resumeJoins() // runs once Start has returned and released mu
 	}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompanyJoinGuidanceLeavesIdentityUncreated(t *testing.T) {
@@ -56,5 +57,38 @@ func TestCompanyPersonIsReusedAfterDesktopRestart(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0700 {
 		t.Fatalf("person directory permissions: %v", info.Mode())
+	}
+}
+
+func TestConfiguredDesktopPromptsOnceAndExplainsCompanyLinks(t *testing.T) {
+	seen := make(chan string, 2)
+	dir, err := os.MkdirTemp("", "pt-onboard-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	cfg := Config{Dir: dir, Pairbook: "https://company.example", Notify: func(_ context.Context, title, body string) error { seen <- title + " " + body; return nil }}
+	n, err := Start(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	select {
+	case notice := <-seen:
+		if !strings.Contains(notice, cfg.Pairbook) {
+			t.Fatalf("prompt missing configured origin: %s", notice)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("no first-use prompt")
+	}
+	if err := n.notifyPairbook(context.Background(), pairbookOrigin(cfg.Pairbook+"/")); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 0 {
+		t.Fatal("prompt repeated for the same Pairbook")
+	}
+	client := desktopSpaceMCP(t, n)
+	if !strings.Contains(client.InitializeResult().Instructions, "pairbook_join") {
+		t.Fatal("MCP initialization didn't explain company join links")
 	}
 }
