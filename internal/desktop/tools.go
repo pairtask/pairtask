@@ -195,6 +195,15 @@ func NewServer(n *Node, version string) *mcp.Server {
 			members, err := n.spaceMembers(ctx, args)
 			return nil, SpaceMembersResult{Members: members}, err
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_join", Description: pairbookJoinDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive, OpenWorldHint: &openWorld}},
+		func(ctx context.Context, _ *mcp.CallToolRequest, args PairbookJoinArgs) (*mcp.CallToolResult, PairbookJoinResult, error) {
+			out, err := n.pairbookJoin(ctx, args)
+			return nil, out, err
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_join_status", Description: pairbookStatusDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
+		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, PairbookStatusResult, error) {
+			return nil, n.pairbookStatus(), nil
+		})
 	mcp.AddTool(s, &mcp.Tool{Name: "mark_read", Description: readDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args ReadArgs) (*mcp.CallToolResult, ReadResult, error) {
 			marked, err := n.markRead(ctx, args)

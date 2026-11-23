@@ -27,7 +27,7 @@
     "entry_point": "server/pairtask-desktop",
     "mcp_config": {
       "command": "${__dirname}/server/pairtask-desktop",
-      "args": ["--name", "${user_config.name}", "--notify=${user_config.notify}", "--address=${user_config.address}"],
+      "args": ["--name", "${user_config.name}", "--notify=${user_config.notify}", "--address=${user_config.address}", "--pairbook=${user_config.pairbook}"],
       "env": {}
     }
   },
@@ -50,6 +50,13 @@
       "description": "Where a paired workspace is now, if its address changed: HOST:PORT, or NAME=HOST:PORT, NAME2=HOST:PORT for several. It moves only when that workspace's own key answers there; leave empty otherwise.",
       "required": false,
       "default": ""
+    },
+    "pairbook": {
+      "type": "string",
+      "title": "Pairbook",
+      "description": "Your company's Pairbook, such as https://pairbook.example.com, if it runs one. Join links are then checked against it, and pairbook_join can point you to its join page. Leave empty otherwise; nothing else changes.",
+      "required": false,
+      "default": ""
     }
   },
   "tools": [
@@ -60,7 +67,9 @@
     {"name": "check_inbox", "description": "The newest messages with paired workspaces, and which are unread; or only the ones not shown yet."},
     {"name": "wait_inbox", "description": "Wait until a paired workspace has sent a message not shown yet, or until the timeout."},
     {"name": "mark_read", "description": "Mark received messages read; the sender sees the receipt."},
-    {"name": "pair_address", "description": "Move a paired workspace to its new HOST:PORT once the same workspace answers there."}
+    {"name": "pair_address", "description": "Move a paired workspace to its new HOST:PORT once the same workspace answers there."},
+    {"name": "pairbook_join", "description": "Join a space in your company's Pairbook with its join link; you confirm this machine in the browser."},
+    {"name": "pairbook_join_status", "description": "Where this machine's joins to company Pairbook spaces stand."}
   ],
   "compatibility": {
     "platforms": ["darwin", "linux"]

@@ -107,6 +107,7 @@ func parseFlags(args []string) (desktop.Config, error) {
 	fs.StringVar(&cfg.Name, "name", "", "the name this node pairs under")
 	notify := fs.Bool("notify", true, "show a system notification when a paired workspace sends a message")
 	fs.StringVar(&cfg.Address, "address", "", "where paired workspaces are now: HOST:PORT, or NAME=HOST:PORT, comma-separated")
+	fs.StringVar(&cfg.Pairbook, "pairbook", "", "the company's Pairbook, https://HOST; empty for none")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}

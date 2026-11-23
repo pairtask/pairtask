@@ -37,6 +37,9 @@ type Config struct {
 	// Address is the extension's Workspace address setting (#388): where
 	// paired workspaces are now.
 	Address string
+	// Pairbook is the extension's optional Pairbook setting: the company's
+	// Pairbook, https://HOST. Join links must be for it; "" accepts any.
+	Pairbook string
 }
 
 // Node is this copy's way to the broker: the broker itself while it owns
@@ -52,6 +55,8 @@ type Node struct {
 	addresses addressSetting
 	// told is the sync failures this copy already reported, per consumer.
 	told syncNotices
+	// joins follows this node's Pairbook enrollments.
+	joins enrollments
 }
 
 // ErrUnsafeDataDir: the data directory isn't a private directory of ours.
@@ -84,10 +89,17 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 		return nil, err
 	}
 	n := &Node{cfg: cfg, base: context.WithoutCancel(ctx)}
+	n.joins.life, n.joins.stop = context.WithCancel(n.base)
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if err := n.reach(ctx); err != nil {
 		return nil, err
+	}
+	if cfg.Pairbook != "" && pairbookOrigin(cfg.Pairbook) == "" {
+		cfg.Log.Warn("the Pairbook setting isn't an https://HOST address; ignored", "setting", cfg.Pairbook)
+	}
+	if n.own != nil {
+		go n.resumeJoins() // runs once Start has returned and released mu
 	}
 	return n, nil
 }
@@ -220,6 +232,7 @@ func unavailable(err error) protocol.Message {
 // Close stops the broker this copy owns, or drops its connection to the
 // owner.
 func (n *Node) Close() error {
+	n.stopJoins() // before mu: a follower may be in a call that needs it
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.fwd != nil {
