@@ -78,9 +78,11 @@ var (
 
 // stopJoins ends every follower and retry and waits for them.
 func (n *Node) stopJoins() {
+	n.joins.mu.Lock()
 	if n.joins.stop != nil {
 		n.joins.stop()
 	}
+	n.joins.mu.Unlock()
 	n.joins.running.Wait()
 }
 
@@ -148,20 +150,24 @@ func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (Pairboo
 	if set != "" && origin(l.Base) != set {
 		return PairbookJoinResult{}, errors.New("that link is for " + l.Base + ", not the Pairbook set for this extension (" + string(set) + ")")
 	}
-	if cur, ok := n.following(l.Space); ok {
+	return n.startJoin(ctx, joinLink(args.Link), l.Space)
+}
+
+func (n *Node) startJoin(ctx context.Context, link joinLink, spaceID string) (PairbookJoinResult, error) {
+	if cur, ok := n.following(spaceID); ok {
 		return cur, nil // one enrollment per space: this is where it stands
 	}
-	lock, err := takeFollow(n.lockPath(l.Space))
+	lock, err := takeFollow(n.lockPath(spaceID))
 	if err != nil {
-		n.stopFollowing(l.Space, nil) // no lock taken: nothing follows it here
+		n.stopFollowing(spaceID, nil) // no lock taken: nothing follows it here
 		if errors.Is(err, errFollowedElsewhere) {
-			return PairbookJoinResult{Space: l.Space, State: "followed by another Claude Desktop window", Guidance: "Ask in that window, or call pairbook_join_status there."}, nil
+			return PairbookJoinResult{Space: spaceID, State: "followed by another Claude Desktop window", Guidance: "Ask in that window, or call pairbook_join_status there."}, nil
 		}
 		return PairbookJoinResult{}, err
 	}
-	out, err := n.beginJoin(ctx, joinLink(args.Link), lock)
+	out, err := n.beginJoin(ctx, link, lock)
 	if err != nil {
-		n.stopFollowing(l.Space, lock)
+		n.stopFollowing(spaceID, lock)
 	}
 	return out, err
 }
@@ -351,6 +357,11 @@ func (n *Node) resumeJoin(s enroll.Saved) {
 		}
 		return
 	}
+	n.resumeLocked(s, lock)
+}
+
+// resumeLocked retains the enrollment lock across retries until Close or a successful handoff.
+func (n *Node) resumeLocked(s enroll.Saved, lock *followLock) {
 	for {
 		_, err := n.beginJoin(n.joins.life, joinLink(s.Link), lock)
 		if err == nil {
