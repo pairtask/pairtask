@@ -100,52 +100,64 @@ type Mark struct {
 }
 
 // SigningBytes are the bytes a map's signature covers: format 2's exactly
-// as before, format 3's under their own domain.
+// as before; format 3's under their own domain, with the org fields beside
+// each entry's.
 func (m SpaceMap) SigningBytes() []byte {
-	if m.Format == MapFormatOrg {
-		return m.orgSigningBytes()
+	org := m.org()
+	domain := mapDomain
+	if org {
+		domain = mapDomainV3
 	}
-	e := newEncoder(mapDomain).str(m.Space).count(m.Version).time(m.IssuedAt).time(m.ExpiresAt)
-	e.count(uint64(len(m.People)))
-	for _, p := range m.People {
-		e.bytes(p.Lineage[:]).bytes(p.Person).str(p.Name).str(p.Role).evidence(p.Evidence)
-	}
-	e.count(uint64(len(m.Bindings)))
-	for _, b := range m.Bindings {
-		e.bytes(b.Claim).bytes(b.Acceptance).bytes(b.WorkspaceKey)
-	}
-	e.count(uint64(len(m.Groups)))
-	for _, g := range m.Groups {
-		e.str(g.Name).lineages(g.Members)
-	}
-	e.count(uint64(len(m.Grants)))
-	for _, g := range m.Grants {
-		e.str(g.A.Kind).str(g.A.Name).str(g.B.Kind).str(g.B.Name)
-	}
+	e := newEncoder(domain).str(m.Space).count(m.Version).time(m.IssuedAt).time(m.ExpiresAt)
+	e.people(m.People, org).bindings(m.Bindings, org).groups(m.Groups, org).grants(m.Grants)
 	return e.b
 }
 
-// orgSigningBytes are a format-3 map's: every field of format 2, and the
-// org fields beside them.
-func (m SpaceMap) orgSigningBytes() []byte {
-	e := newEncoder(mapDomainV3).str(m.Space).count(m.Version).time(m.IssuedAt).time(m.ExpiresAt)
-	e.count(uint64(len(m.People)))
-	for _, p := range m.People {
-		e.str(p.Kind).bytes(p.PersonID[:]).bytes(p.Lineage[:]).bytes(p.Person).str(p.Name).str(p.Role).evidence(p.Evidence)
+func (e *encoder) people(people []MapPerson, org bool) *encoder {
+	e.count(uint64(len(people)))
+	for _, p := range people {
+		e.orgFields(org, p.Kind, p.PersonID)
+		e.bytes(p.Lineage[:]).bytes(p.Person).str(p.Name).str(p.Role).evidence(p.Evidence)
 	}
-	e.count(uint64(len(m.Bindings)))
-	for _, b := range m.Bindings {
-		e.str(b.Kind).bytes(b.PersonID[:]).bytes(b.Proof).bytes(b.Claim).bytes(b.Acceptance).bytes(b.WorkspaceKey)
+	return e
+}
+
+func (e *encoder) bindings(bindings []Binding, org bool) *encoder {
+	e.count(uint64(len(bindings)))
+	for _, b := range bindings {
+		e.orgFields(org, b.Kind, b.PersonID)
+		if org {
+			e.bytes(b.Proof)
+		}
+		e.bytes(b.Claim).bytes(b.Acceptance).bytes(b.WorkspaceKey)
 	}
-	e.count(uint64(len(m.Groups)))
-	for _, g := range m.Groups {
-		e.str(g.Name).lineages(g.Members).personIDs(g.OrgMembers)
+	return e
+}
+
+func (e *encoder) groups(groups []Group, org bool) *encoder {
+	e.count(uint64(len(groups)))
+	for _, g := range groups {
+		e.str(g.Name).lineages(g.Members)
+		if org {
+			e.personIDs(g.OrgMembers)
+		}
 	}
-	e.count(uint64(len(m.Grants)))
-	for _, g := range m.Grants {
+	return e
+}
+
+func (e *encoder) grants(grants []Grant) *encoder {
+	e.count(uint64(len(grants)))
+	for _, g := range grants {
 		e.str(g.A.Kind).str(g.A.Name).str(g.B.Kind).str(g.B.Name)
 	}
-	return e.b
+	return e
+}
+
+// orgFields writes an entry's kind and PersonID, in format 3 only.
+func (e *encoder) orgFields(org bool, kind string, id PersonID) {
+	if org {
+		e.str(kind).bytes(id[:])
+	}
 }
 
 // knownFormat: a format this client verifies.
@@ -251,11 +263,10 @@ func (s SignedSpaceMap) people(at time.Time) (map[Lineage]Person, map[Lineage]pe
 // person checks one entry and is the key the map indexes it by: its
 // lineage for a key person, orgKey for an org person.
 func (s SignedSpaceMap) person(p MapPerson, at time.Time) (Lineage, Person, personState, error) {
-	switch {
-	case p.Kind == KindOrg && s.org() && orgEntryValid(p):
-		key := orgKey(s.Space, p.PersonID)
-		return key, Person{Lineage: key, Name: p.Name, Role: p.Role, Kind: KindOrg, PersonID: p.PersonID}, personState{}, nil
-	case p.Kind != "" || p.PersonID != PersonID{}:
+	if p.Kind == KindOrg {
+		return s.orgPerson(p)
+	}
+	if p.Kind != "" || p.PersonID != (PersonID{}) {
 		return Lineage{}, Person{}, personState{}, ErrInvalid
 	}
 	st, err := p.Evidence.state(at)
@@ -265,14 +276,29 @@ func (s SignedSpaceMap) person(p MapPerson, at time.Time) (Lineage, Person, pers
 	return p.Lineage, Person{Lineage: p.Lineage, Person: slices.Clone(p.Person), Name: p.Name, Role: p.Role, Epoch: st.epoch}, st, nil
 }
 
+// orgPerson checks an org entry (format 3 only) and indexes it by orgKey.
+func (s SignedSpaceMap) orgPerson(p MapPerson) (Lineage, Person, personState, error) {
+	if !s.org() || !orgEntryValid(p) {
+		return Lineage{}, Person{}, personState{}, ErrInvalid
+	}
+	key := orgKey(s.Space, p.PersonID)
+	return key, Person{Lineage: key, Name: p.Name, Role: p.Role, Kind: KindOrg, PersonID: p.PersonID}, personState{}, nil
+}
+
 // orgEntryValid: an org person has a PersonID, a valid name and the member
 // role, and none of a key person's fields: a zero lineage never stands for
 // anyone.
 func orgEntryValid(p MapPerson) bool {
-	if p.PersonID == (PersonID{}) || !validName(p.Name) || p.Role != RoleMember {
+	if p.PersonID == (PersonID{}) || p.Role != RoleMember {
 		return false
 	}
-	return p.Lineage == (Lineage{}) && len(p.Person) == 0 && p.Evidence.empty()
+	if !validName(p.Name) {
+		return false
+	}
+	if p.Lineage != (Lineage{}) || len(p.Person) != 0 {
+		return false
+	}
+	return p.Evidence.empty()
 }
 
 // entryValid: p's fields agree with its evidence, and the owner role sits
@@ -313,27 +339,34 @@ func (v VerifiedMap) groupMembers(g Group) (map[Lineage]bool, error) {
 		return nil, ErrInvalid
 	}
 	members := map[Lineage]bool{}
-	for _, l := range g.Members {
-		if !v.addMember(members, l, "") {
-			return nil, ErrInvalid
-		}
-	}
-	for _, id := range g.OrgMembers {
-		if !v.addMember(members, orgKey(v.Space, id), KindOrg) {
-			return nil, ErrInvalid
-		}
+	if !v.addMembers(members, g.Members, "") || !v.addMembers(members, v.orgKeys(g.OrgMembers), KindOrg) {
+		return nil, ErrInvalid
 	}
 	return members, nil
 }
 
-// addMember adds key once, when it is a person of kind in the map.
-func (v VerifiedMap) addMember(members map[Lineage]bool, key Lineage, kind string) bool {
-	p, ok := v.people[key]
-	if !ok || p.Kind != kind || members[key] {
-		return false
+// addMembers adds each key once, when each is a person of kind in the map.
+func (v VerifiedMap) addMembers(members map[Lineage]bool, keys []Lineage, kind string) bool {
+	for _, key := range keys {
+		if !v.isPerson(key, kind) || members[key] {
+			return false
+		}
+		members[key] = true
 	}
-	members[key] = true
 	return true
+}
+
+func (v VerifiedMap) isPerson(key Lineage, kind string) bool {
+	p, ok := v.people[key]
+	return ok && p.Kind == kind
+}
+
+func (v VerifiedMap) orgKeys(ids []PersonID) []Lineage {
+	keys := make([]Lineage, len(ids))
+	for i, id := range ids {
+		keys[i] = orgKey(v.Space, id)
+	}
+	return keys
 }
 
 // grantsValid: every selector is well formed and names something in the

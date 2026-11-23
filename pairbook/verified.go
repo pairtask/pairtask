@@ -85,10 +85,10 @@ func (v *VerifiedMap) bind(b Binding, states map[Lineage]personState, issued tim
 // person's claim for a key person, by the workspace's OrgProof for an org
 // person (format 3).
 func (v *VerifiedMap) bindingOwner(b Binding, states map[Lineage]personState, issued time.Time) (Lineage, error) {
-	if b.Kind == KindOrg && v.org {
+	if b.Kind == KindOrg {
 		return v.orgBindingOwner(b, issued)
 	}
-	if b.Kind != "" || b.PersonID != (PersonID{}) || len(b.Proof) > 0 {
+	if !b.keyOnly() {
 		return Lineage{}, ErrInvalid
 	}
 	st, ok := bindingState(b, states)
@@ -103,14 +103,26 @@ func (v *VerifiedMap) bindingOwner(b Binding, states map[Lineage]personState, is
 // workspace, is signed by it and isn't dated after the map.
 func (v *VerifiedMap) orgBindingOwner(b Binding, issued time.Time) (Lineage, error) {
 	key := orgKey(v.Space, b.PersonID)
-	if p, ok := v.people[key]; !ok || p.Kind != KindOrg || len(b.Claim)+len(b.Acceptance) > 0 {
+	if !v.org || !v.isPerson(key, KindOrg) {
 		return Lineage{}, ErrInvalid
 	}
-	proof, err := ParseOrgProof(b.Proof)
-	if err != nil || proof.Verify(v.Space, b.WorkspaceKey) != nil || proof.At > Millis(issued) {
+	if len(b.Claim)+len(b.Acceptance) > 0 {
+		return Lineage{}, ErrInvalid
+	}
+	if !v.proves(b, issued) {
 		return Lineage{}, ErrInvalid
 	}
 	return key, nil
+}
+
+// proves: b's proof is its workspace's own, for this space, not dated
+// after the map.
+func (v *VerifiedMap) proves(b Binding, issued time.Time) bool {
+	proof, err := ParseOrgProof(b.Proof)
+	if err != nil {
+		return false
+	}
+	return proof.Verify(v.Space, b.WorkspaceKey) == nil && proof.At <= Millis(issued)
 }
 
 // bindingState is the state of the person b's claim names, if in the map.

@@ -123,6 +123,11 @@ func NewBinding(person, workspace ed25519.PrivateKey, of BindingOf) Binding {
 	return Binding{Claim: claim.Marshal(), Acceptance: accept.Marshal(), WorkspaceKey: wpub}
 }
 
+// keyOnly: none of an org binding's fields are set.
+func (b Binding) keyOnly() bool {
+	return b.Kind == "" && b.PersonID == (PersonID{}) && len(b.Proof) == 0
+}
+
 // Workspace is the bound workspace's key ID ("" for a malformed binding).
 func (b Binding) Workspace() string { return KeyID(b.WorkspaceKey) }
 

@@ -94,7 +94,11 @@ func (c *Client) Presence(ctx context.Context, pin Pin, p Presence) (PresenceRep
 // ClientVersion is the version this binary was built as, or "dev".
 func ClientVersion() string {
 	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+	if !ok {
+		return "dev"
+	}
+	switch info.Main.Version {
+	case "", "(devel)":
 		return "dev"
 	}
 	return info.Main.Version

@@ -116,8 +116,8 @@ func (h *Hub) heartbeat(ctx context.Context, pin space.Pin, st space.Statuser) e
 // carryProof is this workspace's proof over the Pairbook's carryover
 // challenge (16 bytes, lowercase hex).
 func (h *Hub) carryProof(pin space.Pin, challenge string) (pairbook.SignedOrgProof, error) {
-	b, err := hex.DecodeString(challenge)
-	if err != nil || len(b) != 16 || hex.EncodeToString(b) != challenge {
+	nonce, ok := parseChallenge(challenge)
+	if !ok {
 		return pairbook.SignedOrgProof{}, errors.New("malformed carryover challenge")
 	}
 	dir, err := h.mapDirectory(pin.Base)
@@ -128,7 +128,21 @@ func (h *Hub) carryProof(pin space.Pin, challenge string) (pairbook.SignedOrgPro
 	if !ok {
 		return pairbook.SignedOrgProof{}, errors.New("no workspace proofs with this directory")
 	}
-	return prover.OrgProof(pin, [16]byte(b))
+	return prover.OrgProof(pin, nonce)
+}
+
+// parseChallenge reads 16 bytes in lowercase hex, exactly.
+func parseChallenge(s string) ([16]byte, bool) {
+	var nonce [16]byte
+	if len(s) != 2*len(nonce) {
+		return nonce, false
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return nonce, false
+	}
+	copy(nonce[:], b)
+	return nonce, hex.EncodeToString(b) == s
 }
 
 // publishAllAgents sends each bound space its listed agents.

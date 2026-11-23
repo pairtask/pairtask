@@ -139,7 +139,10 @@ func decodeOrgProof(b []byte) (OrgProof, bool) {
 	p.Space, p.Workspace = d.str(), d.str()
 	nonce := d.field()
 	p.At = int64(d.u64())
-	if !d.ok || len(d.b) != 0 || domain != orgProofDomain || len(nonce) != len(p.Nonce) {
+	if !d.ok || len(d.b) != 0 {
+		return OrgProof{}, false
+	}
+	if domain != orgProofDomain || len(nonce) != len(p.Nonce) {
 		return OrgProof{}, false
 	}
 	copy(p.Nonce[:], nonce)
