@@ -118,7 +118,13 @@ func requireMatchingPairing(t *testing.T, req space.ConnectRequest, a, b dialOrd
 		op := peer.SpaceOperationPrefix + req.Space + ":" + hex.EncodeToString(req.ConnectID[:])
 		x, ok, err := n.dialer.h.store.Exchange(ctx, op)
 		messageWorkerOK(t, err)
-		if !ok || x.State != peer.ExchangeInstalled || !bytes.Equal(x.SpacePairingID, want[:]) {
+		if !ok {
+			t.Fatalf("workspace %s has no exchange", n.dialer.id.Fingerprint())
+		}
+		if x.State != peer.ExchangeInstalled {
+			t.Fatalf("exchange state = %v, want installed", x.State)
+		}
+		if !bytes.Equal(x.SpacePairingID, want[:]) {
 			t.Fatalf("workspace %s has no matching installed exchange", n.dialer.id.Fingerprint())
 		}
 	}
@@ -177,7 +183,6 @@ func TestPendingSpaceAttemptAfterIncomingInstall(t *testing.T) {
 
 func TestSpaceDialSelectionByReachability(t *testing.T) {
 	low, high := newDialOrderPair(t)
-	ctx := context.Background()
 	d := &dialOrderDirectory{}
 	factory := func(string, crypto.Signer) (space.MapDirectory, error) { return d, nil }
 	low.dialer.h.SetSpaces(SpaceConfig{Maps: factory})
@@ -195,16 +200,16 @@ func TestSpaceDialSelectionByReachability(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d.byKey = map[string]error{lowKey: tc.lowAddr, highKey: tc.highAddr}
-			checkDialChoice(t, ctx, low, high, tc.fromLow)
-			checkDialChoice(t, ctx, high, low, tc.fromHigh)
+			checkDialChoice(t, low, high, tc.fromLow)
+			checkDialChoice(t, high, low, tc.fromHigh)
 		})
 	}
 }
 
-func checkDialChoice(t *testing.T, ctx context.Context, from, to dialOrderNode, want bool) {
+func checkDialChoice(t *testing.T, from, to dialOrderNode, want bool) {
 	t.Helper()
 	target := grantedPeer{key: to.dialer.id.PublicKey(), spaces: []string{hubSpaceID}}
-	if got := from.dialer.h.dials(ctx, from.dialer.id, to.dialer.id.Fingerprint(), target); got != want {
+	if got := from.dialer.h.dials(context.Background(), from.dialer.id, to.dialer.id.Fingerprint(), target); got != want {
 		t.Errorf("dial decision %v, want %v", got, want)
 	}
 }
