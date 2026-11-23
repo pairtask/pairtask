@@ -16,12 +16,19 @@ import webbrowser
 
 
 def origin(value):
-    address = urlsplit(value)
-    if address.scheme != "https" or not address.hostname or address.username is not None:
-        raise argparse.ArgumentTypeError("give the Pairbook as https://HOST")
+    invalid = argparse.ArgumentTypeError("give the Pairbook as https://HOST")
+    try:
+        address = urlsplit(value)
+        port = address.port
+    except ValueError as error:
+        raise invalid from error
+    if not address.hostname or address.username is not None:
+        raise invalid
+    if port == 0 or any(char.isspace() for char in address.netloc):
+        raise invalid
     result = "https://" + address.netloc
     if value not in (result, result + "/"):
-        raise argparse.ArgumentTypeError("give the Pairbook as https://HOST")
+        raise invalid
     return result
 
 
