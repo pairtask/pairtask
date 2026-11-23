@@ -37,6 +37,8 @@ const operatorPairbookUsage = `usage: pairtask space COMMAND [--space ID] [--soc
   leave                          leave the space
   unbind WORKSPACE               take one of your workspaces out of the space
   publish HOST:PORT... [--valid 24h]  where other members reach this workspace; renewed while you're in
+  admin VERB ...                  an organization's Pairbook admin: login https://PAIRBOOK, spaces, create,
+                                 show, remove, approve, deny, admission, audit, logout
   share AGENT / unshare AGENT     list an agent in the space, or stop; listing only advertises it,
                                  who may message it is still your contact sharing (/pair share)
 --space may be left out when exactly one space is pinned.
@@ -68,6 +70,7 @@ var pairbookCommands = map[string]pairbookCommand{
 	"unbind":   pairbookUnbind,
 	"publish":  pairbookPublish,
 	"share":    pairbookShare,
+	"admin":    pairbookAdmin,
 	"unshare":  pairbookUnshare,
 }
 
@@ -125,6 +128,7 @@ type pairbookSession struct {
 	me        *spaceowner.Me
 	progress  io.Writer // what a long command tells the person meanwhile
 	enrollDir string    // tests: where enrollments are kept to resume; "" means beside the person's keys
+	adminDir  string    // tests: where admin sign-ins are kept; "" means beside the person's keys
 }
 
 // progressOut is where to tell the person what is happening.

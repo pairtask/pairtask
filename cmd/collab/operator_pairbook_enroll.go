@@ -73,8 +73,10 @@ func enrollAnswer(f *enroll.Flow, out enroll.Outcome, err error) (any, error) {
 
 // openBrowser opens the enrollment's URL on a desktop, best effort; the
 // URL is printed either way.
-func openBrowser(f *enroll.Flow) {
-	url := f.Enroll.URL
+func openBrowser(f *enroll.Flow) { openBrowserURL(f.Enroll.URL) }
+
+// openBrowserURL opens an https URL on a desktop, best effort.
+func openBrowserURL(url string) {
 	if !strings.HasPrefix(url, "https://") {
 		return
 	}
