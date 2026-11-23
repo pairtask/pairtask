@@ -77,7 +77,11 @@ func (f *spaceRelayFixture) record(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var record pairbook.SignedRelayReach
-	if json.NewDecoder(r.Body).Decode(&record) != nil || record.Verify(autoSpaceID, time.Now()) != nil || pairbook.KeyID(record.Node) != key {
+	if json.NewDecoder(r.Body).Decode(&record) != nil {
+		w.WriteHeader(400)
+		return
+	}
+	if record.Verify(autoSpaceID, time.Now()) != nil || pairbook.KeyID(record.Node) != key {
 		w.WriteHeader(400)
 		return
 	}
@@ -92,40 +96,55 @@ func (f *spaceRelayFixture) socket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 	ctx := r.Context()
-	if wsjson.Write(ctx, conn, map[string]string{"kind": "challenge", "nonce": "fixture"}) != nil {
+	key, token, ok := fixtureCredentials(ctx, conn)
+	if !ok {
 		return
+	}
+	switch r.URL.Path {
+	case "/relay/listen":
+		f.listen(ctx, conn, key)
+	case "/relay/dial":
+		f.splice(ctx, conn, key, token)
+	case "/relay/accept":
+		f.accept(ctx, conn, r.URL.Query().Get("splice"))
+	}
+}
+
+func fixtureCredentials(ctx context.Context, conn *websocket.Conn) (string, string, bool) {
+	if wsjson.Write(ctx, conn, map[string]string{"kind": "challenge", "nonce": "fixture"}) != nil {
+		return "", "", false
 	}
 	var auth struct{ Key, Token string }
 	if wsjson.Read(ctx, conn, &auth) != nil {
-		return
+		return "", "", false
 	}
 	pub, err := base64.RawURLEncoding.DecodeString(auth.Key)
 	if err != nil {
+		return "", "", false
+	}
+	return pairbook.KeyID(pub), auth.Token, true
+}
+
+func (f *spaceRelayFixture) listen(ctx context.Context, conn *websocket.Conn, key string) {
+	f.mu.Lock()
+	f.slots[key] = conn
+	f.mu.Unlock()
+	if wsjson.Write(ctx, conn, map[string]string{"kind": "ready"}) != nil {
 		return
 	}
-	key := pairbook.KeyID(pub)
-	switch r.URL.Path {
-	case "/relay/listen":
-		f.mu.Lock()
-		f.slots[key] = conn
-		f.mu.Unlock()
-		if wsjson.Write(ctx, conn, map[string]string{"kind": "ready"}) != nil {
-			return
-		}
-		<-conn.CloseRead(ctx).Done()
-	case "/relay/dial":
-		f.splice(ctx, conn, key, auth.Token)
-	case "/relay/accept":
-		f.mu.Lock()
-		p := f.offers[r.URL.Query().Get("splice")]
-		f.mu.Unlock()
-		if p != nil {
-			select {
-			case p.accepted <- conn:
-				<-p.done
-			case <-p.done:
-			case <-ctx.Done():
-			}
+	<-conn.CloseRead(ctx).Done()
+}
+
+func (f *spaceRelayFixture) accept(ctx context.Context, conn *websocket.Conn, id string) {
+	f.mu.Lock()
+	p := f.offers[id]
+	f.mu.Unlock()
+	if p != nil {
+		select {
+		case p.accepted <- conn:
+			<-p.done
+		case <-p.done:
+		case <-ctx.Done():
 		}
 	}
 }
