@@ -200,17 +200,30 @@ func crossingInviter(ctx context.Context, tx *sql.Tx, workspace string) (int64, 
 	if err != nil || !c.active() {
 		return 0, false, err
 	}
+	managed, err := managedAt(ctx, tx, workspace, c.epoch)
+	if err != nil || !managed {
+		return 0, false, err // a manual pairing is never touched
+	}
+	inviter, err := installedAsInviter(ctx, tx, c.pairingOp)
+	return c.epoch, inviter, err
+}
+
+// managedAt: workspace's pairing at epoch is space-managed.
+func managedAt(ctx context.Context, tx *sql.Tx, workspace string, epoch int64) (bool, error) {
 	var marked int64
-	err = tx.QueryRowContext(ctx, `SELECT epoch FROM space_contacts WHERE workspace = ?`, workspace).Scan(&marked)
+	err := tx.QueryRowContext(ctx, `SELECT epoch FROM space_contacts WHERE workspace = ?`, workspace).Scan(&marked)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil // a manual pairing: never touched
+		return false, nil
 	}
-	if err != nil || marked != c.epoch {
-		return 0, false, err
-	}
-	x, found, err := exchangeRow(ctx, tx, c.pairingOp)
+	return err == nil && marked == epoch, err
+}
+
+// installedAsInviter: the pairing operation was a space connect answered
+// here, from the other side's dial.
+func installedAsInviter(ctx context.Context, tx *sql.Tx, op string) (bool, error) {
+	x, found, err := exchangeRow(ctx, tx, op)
 	if err != nil || !found {
-		return 0, false, err
+		return false, err
 	}
-	return c.epoch, x.Role == "inviter" && x.SpacePairingID != nil, nil
+	return x.Role == "inviter" && x.SpacePairingID != nil, nil
 }
