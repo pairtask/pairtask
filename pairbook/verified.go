@@ -115,14 +115,15 @@ func (v *VerifiedMap) orgBindingOwner(b Binding, issued time.Time) (Lineage, err
 	return key, nil
 }
 
-// proves: b's proof is its workspace's own, for this space, not dated
-// after the map.
+// proves: b's proof is its workspace's own, for this space, and not dated
+// after the map by more than the clock skew a request may have: At is the
+// machine's own clock, the map's IssuedAt the Pairbook's.
 func (v *VerifiedMap) proves(b Binding, issued time.Time) bool {
 	proof, err := ParseOrgProof(b.Proof)
 	if err != nil {
 		return false
 	}
-	return proof.Verify(v.Space, b.WorkspaceKey) == nil && proof.At <= Millis(issued)
+	return proof.Verify(v.Space, b.WorkspaceKey) == nil && proof.At <= Millis(issued.Add(RequestSkew))
 }
 
 // bindingState is the state of the person b's claim names, if in the map.
