@@ -1,0 +1,62 @@
+# Short-code pairing spike (#178)
+
+An **evaluation**, not an implementation. It shows how the operator's chosen pairing UX could work: a short code, shared over another medium (phone, in person, a private message), typed in on the other workspace. It uses an existing PAKE library instead of our own cryptography.
+
+It isn't wired into the broker and decides nothing about adoption.
+
+The tests ran for the first time on 2026-10-27, after the operator allowed executing the library's code: **all 17 test functions pass** (Go 1.26.5, linux/arm64). That run was without `-race`, since cgo isn't available on that host. The CI job `pairing-spike` runs `go vet` and `go test -race` on amd64 and arm64 runners with Go 1.26.10. It also runs the pinned upstream draft-21 vector tests of both CPace implementations; see [VECTOR-CHECKS.md](VECTOR-CHECKS.md) for what that does and doesn't establish. The first run exposed one defect, now fixed: when the joiner detected a mismatch first and hung up, the inviter reported a bare `EOF` instead of `ErrUnconfirmed`. Passing tests are evidence about this spike, not a cryptographic review.
+
+## What it does
+
+- **Library:** [`github.com/the-sarge/cpace`](https://github.com/the-sarge/cpace) **v0.1.3**, commit `b4174c6bf4bae78f4081c3d6d6baebff5f1cbbf1`. It implements CPace, `draft-irtf-cfrg-cpace-21`, on ristretto255 with explicit mutual key confirmation. Its README says it has had **no independent cryptographic review and is not production-ready**. Its security write-ups are project-side self-assessments. It needs Go 1.26, which the repository root also uses since #188. The spike stays a nested module to keep the evaluation's dependency out of the application.
+- **First-contact TLS 1.3** (`Client`/`Server` → `Endpoint`): at first contact, neither side can trust the other's certificate yet. The endpoint configures TLS itself, without session tickets, so every pairing connection is fresh and never resumed. It records the leaf it actually presented. It accepts exactly one parsable leaf from the peer, and `Binding` refuses before the handshake has completed.
+- **Binding** (`Endpoint.Binding`): the CPace exchange is bound to that exact connection. Each side builds its inputs from its own view:
+
+  | CPace input | Value |
+  | --- | --- |
+  | `SessionID` | the connection's [RFC 9266](https://www.rfc-editor.org/rfc/rfc9266) `EXPORTER-Channel-Binding` (32 bytes) |
+  | `SelfID` / `PeerID` | `pairtask-inviter:` / `pairtask-joiner:` + SHA-256 of each presented leaf |
+  | `Context` | the length-prefixed profile version `pairtask-pairing-v1` and the invitation ID |
+  | `Password` | the code |
+
+  A relaying man in the middle terminates two TLS sessions, which have different exporters and certificates, so neither side can confirm.
+- **Exchange** (`Join`/`Invite`):
+  1. The joiner (TLS client, CPace initiator) sends A.
+  2. The inviter answers with B.
+  3. The joiner verifies B and sends C.
+  4. The inviter verifies C, then sends one final `confirmed` frame over the now-bound connection.
+
+  `Result.InviterConfirmed` acknowledges the **pairing** only. Contact acceptance remains a separate, explicit operator step (#178 acceptance 3, pairing criterion 2). If the final frame is lost, the joiner gets `ErrOutcomeUnknown`. `ErrUnconfirmed` means nothing may be trusted or recorded.
+- **After pairing:** the pairing connection is meant to close. Later traffic uses a fresh connection, strictly pinned to the verified certificates, as #179's exact-certificate client does. That part isn't in the spike.
+
+## Tests
+
+| File | Author | Covers |
+| --- | --- | --- |
+| `candidate_acceptance_test.go` | @codex-1 | the library's public API at the pinned tag: confirmed keys and identities, mismatched inputs, replay and concurrent use, malformed messages, input and output copying, associated-data semantics |
+| `transport_acceptance_test.go` | @codex-1 | real TLS 1.3: both certificates bound, every binding field changed independently, a two-session relaying MITM, the lost final ack, frame bounds |
+| `pairing_test.go` | @claude-1 | sanity checks: correct code, wrong code and other invitation, relaying MITM, the binding per connection, before the handshake, oversized frames |
+
+To run them:
+
+```sh
+cd spike/pairing && GOTOOLCHAIN=go1.26.10 go test -race -v ./...
+```
+
+## Against the seven pairing criteria (#178)
+
+| # | Criterion | Spike |
+| --- | --- | --- |
+| 1 | Only an explicit operator action opens an invitation; the code is visible to the operator only | **Not implemented.** Callers supply the code. |
+| 2 | Mutual confirmation binds both identities to one session; contact acceptance stays separate | Confirmation and binding covered by passing tests. Contact acceptance **not implemented**. |
+| 3 | Wrong, expired, cancelled or consumed codes fail closed; one winner under concurrency | Wrong code covered by passing tests. Expiry, cancel, consumption and concurrency on an invitation **not implemented**. |
+| 4 | Replay, swapped roles, other sessions and substituted keys fail | Key and session changes, the TLS MITM and candidate replay covered by passing tests. |
+| 5 | Documented code generation, expiry and attempt policy; restarts can't reset the guessing budget | **Not implemented.** |
+| 6 | Disconnects reconcile without duplicates; a consumed code can't enroll another peer; identities survive restart | The lost final ack (`ErrOutcomeUnknown`) covered by passing tests. Persistence and idempotent recovery **not implemented**. |
+| 7 | A new key for a known workspace needs an explicit re-pair | Key substitution failing is covered by passing tests. A rotation or re-pair policy is **not implemented**. |
+
+## Before anything here could be adopted
+
+- **Done in CI** (job `pairing-spike`, amd64 and arm64): `go vet`, `go test -race`, and the pinned upstream draft-21 core vectors of both this candidate and `mendsec/cpace` (836a13c). The transport tests aren't cross-library, because the two packages frame their messages differently. These are ongoing checks, not proof of security.
+- An independent cryptographic review of the library, or of whichever one we choose. CPace is still an IRTF draft.
+- An invitation state layer for criteria 1, 3, 5 and 6, with persistence.
