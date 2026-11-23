@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/pairtask/pairtask/pairbook"
@@ -125,7 +126,10 @@ func (r RelayInfo) valid() bool {
 // usable: a token, the relay asked for (any when none was), and an expiry
 // in the future no further than the longest grant.
 func (g RelayGrant) usable(relay string, now time.Time) bool {
-	if g.Token == "" || (relay != "" && g.RelayID != relay) || !(RelayInfo{g.RelayID, g.URL}).valid() {
+	if g.Token == "" || !(RelayInfo{g.RelayID, g.URL}).valid() {
+		return false
+	}
+	if relay != "" && g.RelayID != relay {
 		return false
 	}
 	left := time.UnixMilli(g.ExpiresAt).Sub(now)
@@ -138,12 +142,16 @@ const (
 	GrantSkew        = 30 * time.Second
 )
 
+// validOrigin: raw is exactly https://HOST[:PORT], with at most a trailing
+// slash: anything else (user, path, query, fragment) changes the canonical
+// form and is refused.
 func validOrigin(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+	if err != nil || u.Hostname() == "" {
 		return false
 	}
-	return u.User == nil && (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == "" && !u.ForceQuery && u.Opaque == ""
+	bare := url.URL{Scheme: "https", Host: u.Host}
+	return strings.TrimSuffix(raw, "/") == bare.String()
 }
 
 // RelayDirectory is a Pairbook client that also serves relays. A directory

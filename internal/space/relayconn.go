@@ -43,6 +43,8 @@ var (
 	ErrRelayRefused  = errors.New("space: the relay refused the grant")              // 1008
 )
 
+var errMalformedControl = errors.New("space: malformed relay control message")
+
 // GrantFunc gets a fresh grant on one relay for to (ListenGrant or a key ID).
 type GrantFunc func(ctx context.Context, to string) (RelayGrant, error)
 
@@ -121,8 +123,11 @@ func (s *relaySocket) authenticate(ctx context.Context, g RelayGrant, target str
 		return fmt.Errorf("space: relay spoke %q, not %s", s.ws.Subprotocol(), relaySubprotocol)
 	}
 	c, err := s.control(ctx)
-	if err != nil || c.Kind != "challenge" || c.Nonce == "" {
-		return errors.Join(err, errors.New("space: the relay sent no challenge"))
+	if err != nil {
+		return err
+	}
+	if c.Kind != "challenge" || c.Nonce == "" {
+		return errors.New("space: the relay sent no challenge")
 	}
 	sig, err := self.Sign([]byte(relayProof(g, target, c.Nonce)))
 	if err != nil {
@@ -151,8 +156,11 @@ func (s *relaySocket) control(ctx context.Context) (relayControl, error) {
 
 func parseControl(data []byte) (relayControl, error) {
 	var c relayControl
-	if len(data) > maxRelayControl || json.Unmarshal(data, &c) != nil || c.Kind == "" {
-		return c, errors.New("space: malformed relay control message")
+	if len(data) > maxRelayControl {
+		return c, errMalformedControl
+	}
+	if json.Unmarshal(data, &c) != nil || c.Kind == "" {
+		return c, errMalformedControl
 	}
 	return c, nil
 }

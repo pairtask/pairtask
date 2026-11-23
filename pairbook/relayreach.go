@@ -3,6 +3,7 @@ package pairbook
 import (
 	"crypto/ed25519"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -52,7 +53,10 @@ func SignRelayReach(node ed25519.PrivateKey, r RelayReach) SignedRelayReach {
 // signed by its Node, lists 1 to MaxRelays distinct relay IDs, and is valid
 // at now. Whether Node is a member is the caller's check.
 func (s SignedRelayReach) Verify(space string, now time.Time) error {
-	if s.Version != RelayReachVersion || s.Space != space || !s.wellFormed() {
+	if s.Version != RelayReachVersion || s.Space != space {
+		return ErrInvalid
+	}
+	if !s.wellFormed() {
 		return ErrInvalid
 	}
 	return period{s.IssuedAt, s.ExpiresAt}.check(RelayReachValidity, now)
@@ -66,7 +70,10 @@ type relayIDs []string
 
 // valid: 1 to MaxRelays entries, each a relay ID, none repeated.
 func (l relayIDs) valid() bool {
-	if len(l) == 0 || len(l) > MaxRelays || slices.ContainsFunc(l, func(id string) bool { return !ValidRelayID(id) }) {
+	if len(l) == 0 || len(l) > MaxRelays {
+		return false
+	}
+	if slices.ContainsFunc(l, func(id string) bool { return !ValidRelayID(id) }) {
 		return false
 	}
 	return len(slices.Compact(slices.Sorted(slices.Values(l)))) == len(l)
@@ -74,13 +81,5 @@ func (l relayIDs) valid() bool {
 
 // ValidRelayID: 16 bytes as 32 lowercase hex characters.
 func ValidRelayID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	for i := 0; i < len(id); i++ {
-		if (id[i] < '0' || id[i] > '9') && (id[i] < 'a' || id[i] > 'f') {
-			return false
-		}
-	}
-	return true
+	return len(id) == 32 && strings.Trim(id, "0123456789abcdef") == ""
 }

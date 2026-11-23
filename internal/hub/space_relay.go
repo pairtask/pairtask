@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"maps"
 	"net"
 	"strings"
 	"time"
@@ -30,23 +31,34 @@ const (
 
 var errNoRelays = errors.New("this Pairbook serves no relays")
 
-// relayDestination names target on relay in space.
-func relayDestination(spaceID, relay, target string) string {
-	return relayDestPrefix + spaceID + "/" + relay + "/" + target
+// relayRoute is target (a key ID) through relay, in space.
+type relayRoute struct{ space, relay, target string }
+
+// destination is the route as a contact keeps it.
+func (r relayRoute) destination() string {
+	return relayDestPrefix + r.space + "/" + r.relay + "/" + r.target
 }
 
-// parseRelayDestination splits a relay destination; ok is false for any
+// parseRelayDestination reads a relay destination; ok is false for any
 // other destination.
-func parseRelayDestination(d string) (spaceID, relay, target string, ok bool) {
+func parseRelayDestination(d string) (relayRoute, bool) {
 	rest, found := strings.CutPrefix(d, relayDestPrefix)
 	if !found {
-		return "", "", "", false
+		return relayRoute{}, false
 	}
 	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) != 3 || parts[0] == "" || !pairbook.ValidRelayID(parts[1]) || !strings.HasPrefix(parts[2], "sha256:") {
-		return "", "", "", false
+	if len(parts) != 3 {
+		return relayRoute{}, false
 	}
-	return parts[0], parts[1], parts[2], true
+	r := relayRoute{parts[0], parts[1], parts[2]}
+	return r, r.valid()
+}
+
+func (r relayRoute) valid() bool {
+	if r.space == "" || !pairbook.ValidRelayID(r.relay) {
+		return false
+	}
+	return strings.HasPrefix(r.target, "sha256:")
 }
 
 // relayAware dials relay destinations through the relay, and every other
@@ -56,19 +68,19 @@ func (h *Hub) relayAware(base func(context.Context, string) (net.Conn, error)) f
 		return nil
 	}
 	return func(ctx context.Context, d string) (net.Conn, error) {
-		if spaceID, relay, target, ok := parseRelayDestination(d); ok {
-			return h.dialRelay(ctx, spaceID, relay, target)
+		if route, ok := parseRelayDestination(d); ok {
+			return h.dialRelay(ctx, route)
 		}
 		return base(ctx, d)
 	}
 }
 
-func (h *Hub) dialRelay(ctx context.Context, spaceID, relay, target string) (net.Conn, error) {
-	pin, rd, err := h.relayDirectory(ctx, spaceID)
+func (h *Hub) dialRelay(ctx context.Context, r relayRoute) (net.Conn, error) {
+	pin, rd, err := h.relayDirectory(ctx, r.space)
 	if err != nil {
 		return nil, err
 	}
-	return space.DialRelay(ctx, rd.RelayEnd(pin, relay), target)
+	return space.DialRelay(ctx, rd.RelayEnd(pin, r.relay), r.target)
 }
 
 // relayDirectory is space's pin and its Pairbook, when that serves relays.
@@ -93,7 +105,7 @@ func (h *Hub) relayDirectory(ctx context.Context, spaceID string) (space.Pin, sp
 
 // relayDestinations are target's relay destinations in pin's space, in the
 // order its record lists them; ErrNoRelayReach when it listens on none.
-func relayDestinations(ctx context.Context, dir space.MapDirectory, pin space.Pin, target string, key ed25519.PublicKey) ([]string, error) {
+func relayDestinations(ctx context.Context, dir space.MapDirectory, pin space.Pin, key ed25519.PublicKey) ([]string, error) {
 	rd, ok := dir.(space.RelayDirectory)
 	if !ok {
 		return nil, space.ErrNoRelayReach
@@ -104,7 +116,7 @@ func relayDestinations(ctx context.Context, dir space.MapDirectory, pin space.Pi
 	}
 	dests := make([]string, len(reach.Relays))
 	for i, relay := range reach.Relays {
-		dests[i] = relayDestination(pin.Space, relay, target)
+		dests[i] = relayRoute{pin.Space, relay, pairbook.KeyID(key)}.destination()
 	}
 	return dests, nil
 }
@@ -120,7 +132,7 @@ func (h *Hub) relayReachable(ctx context.Context, spaceID string, node ed25519.P
 	if err != nil {
 		return false
 	}
-	_, err = relayDestinations(ctx, dir, pin, pairbook.KeyID(node), node)
+	_, err = relayDestinations(ctx, dir, pin, node)
 	return err == nil
 }
 
@@ -166,17 +178,33 @@ func (s relaySlots) pass(ctx context.Context) {
 	if s.h.spaces == nil {
 		return // spaces aren't configured: nothing to listen for
 	}
-	pins, err := s.h.store.SpacePins(ctx)
+	wanted, err := s.wanted(ctx)
 	if err != nil {
 		return
 	}
+	for id := range wanted {
+		s.keep(ctx, id)
+	}
+	s.dropUnwanted(wanted)
+}
+
+// wanted are the spaces this workspace is bound in and doesn't host.
+func (s relaySlots) wanted(ctx context.Context) (map[string]bool, error) {
+	pins, err := s.h.store.SpacePins(ctx)
+	if err != nil {
+		return nil, err
+	}
 	wanted := map[string]bool{}
 	for _, pin := range pins {
-		if s.h.boundHere(pin.Space) && !s.h.hosting(ctx, pin.Space) {
-			wanted[pin.Space] = true
-			s.keep(ctx, pin.Space)
-		}
+		wanted[pin.Space] = s.h.boundHere(pin.Space) && !s.h.hosting(ctx, pin.Space)
 	}
+	maps.DeleteFunc(wanted, func(_ string, want bool) bool { return !want })
+	return wanted, nil
+}
+
+// dropUnwanted closes the slots of spaces no longer wanted: left, unbound,
+// or hosting now.
+func (s relaySlots) dropUnwanted(wanted map[string]bool) {
 	for id, slot := range s.live {
 		if !wanted[id] {
 			slot.close()
@@ -205,7 +233,7 @@ func (s relaySlots) keep(ctx context.Context, spaceID string) {
 
 // open registers on the Pairbook's first relay and publishes RelayReach.
 func (s relaySlots) open(ctx context.Context, spaceID string, prev *relaySlot) (*relaySlot, error) {
-	if prev != nil && errors.Is(prev.l.Err(), space.ErrRelayReplaced) && prev.waitUntil.IsZero() {
+	if prev.justReplaced() {
 		prev.waitUntil = time.Now().Add(replacedBackoff)
 		return prev, nil
 	}
@@ -282,3 +310,11 @@ func (r *relaySlot) open() bool {
 }
 
 func (r *relaySlot) close() { _ = r.l.Close() }
+
+// justReplaced: another registration took this slot, and no backoff ran yet.
+func (r *relaySlot) justReplaced() bool {
+	if r == nil || !r.waitUntil.IsZero() {
+		return false
+	}
+	return errors.Is(r.l.Err(), space.ErrRelayReplaced)
+}

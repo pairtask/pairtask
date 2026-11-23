@@ -116,7 +116,7 @@ func (s spaceDialer) destinations(ctx context.Context, dir space.MapDirectory, p
 	if !errors.Is(err, space.ErrNoAddress) {
 		return nil, err
 	}
-	dests, err := relayDestinations(ctx, dir, pin, s.target, s.peer.key)
+	dests, err := relayDestinations(ctx, dir, pin, s.peer.key)
 	if errors.Is(err, space.ErrNoRelayReach) {
 		return nil, errUndialable // not now: the next refresh tries again
 	}
