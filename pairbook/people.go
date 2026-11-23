@@ -123,6 +123,18 @@ func NewBinding(person, workspace ed25519.PrivateKey, of BindingOf) Binding {
 	return Binding{Claim: claim.Marshal(), Acceptance: accept.Marshal(), WorkspaceKey: wpub}
 }
 
+// Selector names the person b binds, as MapPerson.Selector names them:
+// "org:<hex>" for an org binding, the claim's lineage hex for a key
+// binding (false when the claim doesn't parse). Says nothing about
+// validity: a map's Verify checks that.
+func (b Binding) Selector() (string, bool) {
+	if b.Kind == KindOrg {
+		return b.PersonID.Selector(), true
+	}
+	l, ok := claimedLineage(b)
+	return LineageHex(l), ok
+}
+
 // keyOnly: none of an org binding's fields are set.
 func (b Binding) keyOnly() bool {
 	return b.Kind == "" && b.PersonID == (PersonID{}) && len(b.Proof) == 0

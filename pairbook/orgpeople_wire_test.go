@@ -156,3 +156,23 @@ func TestOrgProofRoundTrip(t *testing.T) {
 	_, err = pairbook.ParseOrgProof(append([]byte{0}, marshalled...))
 	bad(t, err)
 }
+
+// A binding names its person exactly as the person entry does, for both
+// kinds, so a roster keyed by selector puts each machine under its person.
+func TestBindingAndPersonSelectorsAgree(t *testing.T) {
+	m := orgMap()
+	for i, b := range m.Bindings {
+		got, ok := b.Selector()
+		if want := m.People[i+1].Selector(); !ok || got != want {
+			t.Fatalf("org binding %d names %q, its person %q", i, got, want)
+		}
+	}
+	f := newBindingFixture("space owner")
+	got, ok := f.binding().Selector()
+	if want := f.entry(pairbook.RoleOwner).Selector(); !ok || got != want {
+		t.Fatalf("key binding names %q, its person %q", got, want)
+	}
+	if m.People[1].Selector() == m.People[2].Selector() {
+		t.Fatal("two org people share a selector")
+	}
+}
