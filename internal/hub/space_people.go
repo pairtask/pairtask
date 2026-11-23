@@ -81,6 +81,7 @@ func (h *Hub) presencePass(ctx context.Context) {
 		}
 		if st, ok := h.statuser(pin); ok {
 			h.noStatus.note(pin.Base, st.Heartbeat(ctx, pin), h.authority.now())
+			h.fetchStatus(ctx, pin, st)
 		}
 	}
 }

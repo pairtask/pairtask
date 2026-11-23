@@ -42,27 +42,28 @@ type Inbound struct {
 // Hub routes messages between connected clients. All state mutations happen
 // in the single Run goroutine, so no locking is required.
 type Hub struct {
-	membership chan membership
-	inbound    chan Inbound
-	importAt   int64            // where the next import pass goes on; owned by Run
-	rescan     atomic.Bool      // an import pass was asked for since the scan began
-	importDue  atomic.Bool      // an import pass is due; signalled on pair.changed (#222)
-	consent    hubConsent       // held requests and session authority (#293)
-	classify   hubClassifier    // shadow predictions for untagged operator sends (#339)
-	notifier   hubNotifier      // decision requests told to the operator outside the chat (#352)
-	spaces     *SpaceConfig     // Pairbook spaces; nil until SetSpaces
-	spaceBusy  map[string]bool  // spaces with a change in flight; owned by Run
-	authority  *spaceAuthority  // the active map of each Pairbook v1 space
-	reconciler *spaceReconciler // connects what the active maps grant; nil until Run
-	refresher  *spaceRefresher  // fetches pinned spaces' maps and resends the outbox; nil until Run
-	noStatus   statusless       // Pairbooks that keep no status, asked again later
-	store      *store.Store
-	seq        uint64
-	log        *slog.Logger
-	done       chan struct{}
-	status     chan statusRequest
-	operator   chan operatorRequest
-	startedAt  time.Time
+	membership  chan membership
+	inbound     chan Inbound
+	importAt    int64            // where the next import pass goes on; owned by Run
+	rescan      atomic.Bool      // an import pass was asked for since the scan began
+	importDue   atomic.Bool      // an import pass is due; signalled on pair.changed (#222)
+	consent     hubConsent       // held requests and session authority (#293)
+	classify    hubClassifier    // shadow predictions for untagged operator sends (#339)
+	notifier    hubNotifier      // decision requests told to the operator outside the chat (#352)
+	spaces      *SpaceConfig     // Pairbook spaces; nil until SetSpaces
+	spaceBusy   map[string]bool  // spaces with a change in flight; owned by Run
+	authority   *spaceAuthority  // the active map of each Pairbook v1 space
+	reconciler  *spaceReconciler // connects what the active maps grant; nil until Run
+	refresher   *spaceRefresher  // fetches pinned spaces' maps and resends the outbox; nil until Run
+	noStatus    statusless       // Pairbooks that keep no status, asked again later
+	statusCache statusCache      // each space's last status, for agents
+	store       *store.Store
+	seq         uint64
+	log         *slog.Logger
+	done        chan struct{}
+	status      chan statusRequest
+	operator    chan operatorRequest
+	startedAt   time.Time
 	// Live operator session state, owned by the Run goroutine.
 	owner *OperatorSession
 	// updateNotice is the host's last update report (#78); memory only.

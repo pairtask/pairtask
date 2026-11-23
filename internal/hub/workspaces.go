@@ -13,6 +13,7 @@ import (
 var workspaceFrames = map[string]func(*Hub, context.Context, Inbound) protocol.Message{
 	protocol.TypeWorkspacesGet:   (*Hub).workspaces,
 	protocol.TypeReviewsAskedGet: (*Hub).reviewsAsked,
+	protocol.TypeSpacePeopleGet:  (*Hub).spacePeople,
 }
 
 // workspaces answers an agent's workspaces_get (#222): the paired
