@@ -12,6 +12,19 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
+// startPairbook schedules startup work while Start still holds the node lock.
+func (n *Node) startPairbook() {
+	if n.cfg.Pairbook != "" && pairbookOrigin(n.cfg.Pairbook) == "" {
+		n.cfg.Log.Warn("the Pairbook setting isn't an https://HOST address; ignored", "setting", n.cfg.Pairbook)
+	}
+	if company := pairbookOrigin(n.cfg.Pairbook); company != "" && n.cfg.Notify != nil {
+		n.spawn(func() { n.promptPairbook(company) })
+	}
+	if n.own != nil {
+		go n.resumeJoins() // runs once Start has returned and released mu
+	}
+}
+
 // promptPairbook is local onboarding. The user chooses whether to start enrollment.
 func (n *Node) promptPairbook(company origin) {
 	ctx, cancel := context.WithTimeout(n.joins.life, 5*time.Second)

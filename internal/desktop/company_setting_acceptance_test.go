@@ -60,7 +60,7 @@ func TestCompanyPersonIsReusedAfterDesktopRestart(t *testing.T) {
 	}
 }
 
-func TestConfiguredDesktopPromptsOnceAndExplainsCompanyLinks(t *testing.T) {
+func TestConfiguredDesktopPromptsOnce(t *testing.T) {
 	seen := make(chan string, 2)
 	dir, err := os.MkdirTemp("", "pt-onboard-")
 	if err != nil {
@@ -73,22 +73,31 @@ func TestConfiguredDesktopPromptsOnceAndExplainsCompanyLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer n.Close()
-	select {
-	case notice := <-seen:
-		if !strings.Contains(notice, cfg.Pairbook) {
-			t.Fatalf("prompt missing configured origin: %s", notice)
-		}
-	case <-time.After(4 * time.Second):
-		t.Fatal("no first-use prompt")
-	}
+	requirePairbookPrompt(t, seen, cfg.Pairbook)
 	if err := n.notifyPairbook(context.Background(), pairbookOrigin(cfg.Pairbook+"/")); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 0 {
 		t.Fatal("prompt repeated for the same Pairbook")
 	}
+}
+
+func TestConfiguredDesktopExplainsCompanyLinks(t *testing.T) {
+	n := &Node{cfg: Config{Pairbook: "https://example.com"}}
 	client := desktopSpaceMCP(t, n)
 	if !strings.Contains(client.InitializeResult().Instructions, "pairbook_join") {
 		t.Fatal("MCP initialization didn't explain company join links")
+	}
+}
+
+func requirePairbookPrompt(t *testing.T, seen <-chan string, company string) {
+	t.Helper()
+	select {
+	case notice := <-seen:
+		if !strings.Contains(notice, company) {
+			t.Fatalf("prompt missing configured origin: %s", notice)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("no first-use prompt")
 	}
 }
