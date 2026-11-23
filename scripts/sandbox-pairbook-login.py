@@ -6,6 +6,7 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import sys
@@ -15,21 +16,21 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import webbrowser
 
 
+def valid_authority(address):
+    return all((address.hostname, address.username is None, address.port != 0,
+                re.search(r"\s", address.netloc) is None))
+
+
 def origin(value):
     invalid = argparse.ArgumentTypeError("give the Pairbook as https://HOST")
     try:
         address = urlsplit(value)
-        port = address.port
+        result = "https://" + address.netloc
+        if valid_authority(address) and value in (result, result + "/"):
+            return result
     except ValueError as error:
         raise invalid from error
-    if not address.hostname or address.username is not None:
-        raise invalid
-    if port == 0 or any(char.isspace() for char in address.netloc):
-        raise invalid
-    result = "https://" + address.netloc
-    if value not in (result, result + "/"):
-        raise invalid
-    return result
+    raise invalid
 
 
 class Callback(BaseHTTPRequestHandler):
