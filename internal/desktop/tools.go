@@ -200,6 +200,11 @@ func NewServer(n *Node, version string) *mcp.Server {
 			out, err := n.pairbookJoin(ctx, args)
 			return nil, out, err
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_members", Description: pairbookMembersDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &openWorld}},
+		func(ctx context.Context, _ *mcp.CallToolRequest, args PairbookMembersArgs) (*mcp.CallToolResult, PairbookMembersResult, error) {
+			out, err := n.pairbookMembers(ctx, args)
+			return nil, out, err
+		})
 	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_join_status", Description: pairbookStatusDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, PairbookStatusResult, error) {
 			return nil, n.pairbookStatus(), nil
