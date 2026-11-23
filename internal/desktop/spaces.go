@@ -5,7 +5,12 @@ import (
 	"errors"
 
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/space"
 )
+
+// errCompanyLink: space_join was given a company Pairbook join link, which
+// pairbook_join takes.
+var errCompanyLink = errors.New("this is a company Pairbook join link (https://HOST/join#space=…&owner=…): join it with pairbook_join, not space_join")
 
 // SpaceJoinArgs are space_join's arguments.
 type SpaceJoinArgs struct {
@@ -29,7 +34,7 @@ type SpaceMembersResult struct {
 }
 
 const (
-	spaceJoinDescription = "Join a Pairbook space with the invite link its owner shared. The link's owner fingerprint is pinned here and never sent; " +
+	spaceJoinDescription = "Join a Pairbook space with the invite link its owner shared (https://HOST/v0/spaces/ID#token=...&owner=...); for a company Pairbook's join link (https://HOST/join#space=...) use pairbook_join instead. The link's owner fingerprint is pinned here and never sent; " +
 		"the request waits until the owner approves it. Joining shares nothing and creates no contact."
 	spaceMembersDescription = "List a Pairbook space's members, only those the pinned owner vouches for now, to pick one to connect to."
 )
@@ -37,6 +42,9 @@ const (
 // spaceJoin is the same operator_space join the CLI sends; the answer
 // carries the pin, never the link or its token.
 func (n *Node) spaceJoin(ctx context.Context, args SpaceJoinArgs) (protocol.SpacePin, error) {
+	if _, err := space.ParseOrgLink(args.Link); err == nil {
+		return protocol.SpacePin{}, errCompanyLink
+	}
 	out, err := n.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpJoin, Link: args.Link, Name: args.Name})
 	if err != nil {
 		return protocol.SpacePin{}, err

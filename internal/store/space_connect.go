@@ -114,6 +114,12 @@ func recordSpace(ctx context.Context, tx *sql.Tx, in peer.SpaceInstall, at time.
 // space and connect ID already kept, or space and fresh, kept now. A retry,
 // even after a restart, repeats it; the caller ends it first if its space
 // no longer grants target.
+// HasSpaceAttempt: an attempt to connect to target is kept.
+func (s *Store) HasSpaceAttempt(ctx context.Context, target string) bool {
+	var one int
+	return s.db.QueryRowContext(ctx, `SELECT 1 FROM space_attempts WHERE target = ?`, target).Scan(&one) == nil
+}
+
 func (s *Store) SpaceAttempt(ctx context.Context, target, space string, fresh [16]byte) (string, [16]byte, error) {
 	var id [16]byte
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO space_attempts (target, space, connect_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -136,4 +142,88 @@ func (s *Store) SpaceAttempt(ctx context.Context, target, space string, fresh [1
 func (s *Store) EndSpaceAttempt(ctx context.Context, target string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM space_attempts WHERE target = ?`, target)
 	return err
+}
+
+// ErrSpaceSuperseded: the dialer's own install lost to the pairing the other
+// side's dial already installed here, which both ends keep.
+var ErrSpaceSuperseded = errors.New("store: the other side's connect already paired these workspaces")
+
+// InstallSpaceDial installs a dialer's connect. When both sides dialed and
+// each already installed the other's connect as responder, the two must
+// end with the same pairing: the lower key's dial wins. So if a
+// space-managed pairing with the peer is already active here, installed as
+// the inviter (from the peer's dial), then
+//   - self lower: it is retired and this dial's pairing installed, in one
+//     transaction, only while that same pairing is still the active one;
+//   - self higher: it is kept, and the answer is ErrSpaceSuperseded.
+//
+// Anything else conflicts as before.
+func (s *Store) InstallSpaceDial(ctx context.Context, in peer.SpaceInstall, selfLower bool) (peer.InstallResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return peer.InstallResult{}, err
+	}
+	defer tx.Rollback()
+	result, err := installSpaceManaged(ctx, tx, in, time.Now())
+	if !errors.Is(err, peer.ErrSpaceConflict) {
+		if err != nil {
+			return result, err
+		}
+		return result, tx.Commit()
+	}
+	result, err = s.resolveCrossing(ctx, tx, in, selfLower)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
+}
+
+func (s *Store) resolveCrossing(ctx context.Context, tx *sql.Tx, in peer.SpaceInstall, selfLower bool) (peer.InstallResult, error) {
+	epoch, crossing, err := crossingInviter(ctx, tx, in.Contact.IdentityKey)
+	if err != nil || !crossing {
+		return peer.InstallResult{}, errors.Join(err, peer.ErrSpaceConflict)
+	}
+	if !selfLower {
+		return peer.InstallResult{}, ErrSpaceSuperseded
+	}
+	now := time.Now()
+	if retired, err := retireManaged(ctx, tx, retiring{in.Contact.IdentityKey, epoch, now}); err != nil || !retired {
+		return peer.InstallResult{}, errors.Join(err, peer.ErrSpaceConflict)
+	}
+	return installSpaceManaged(ctx, tx, in, now)
+}
+
+// crossingInviter is the epoch of workspace's active pairing when it is
+// space-managed and was installed here as the inviter: from its own dial.
+func crossingInviter(ctx context.Context, tx *sql.Tx, workspace string) (int64, bool, error) {
+	c, err := readAuthority(ctx, tx, workspace)
+	if err != nil || !c.active() {
+		return 0, false, err
+	}
+	managed, err := managedAt(ctx, tx, workspace, c.epoch)
+	if err != nil || !managed {
+		return 0, false, err // a manual pairing is never touched
+	}
+	inviter, err := installedAsInviter(ctx, tx, c.pairingOp)
+	return c.epoch, inviter, err
+}
+
+// managedAt: workspace's pairing at epoch is space-managed.
+func managedAt(ctx context.Context, tx *sql.Tx, workspace string, epoch int64) (bool, error) {
+	var marked int64
+	err := tx.QueryRowContext(ctx, `SELECT epoch FROM space_contacts WHERE workspace = ?`, workspace).Scan(&marked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && marked == epoch, err
+}
+
+// installedAsInviter: the pairing operation was a space connect answered
+// here, from the other side's dial.
+func installedAsInviter(ctx context.Context, tx *sql.Tx, op string) (bool, error) {
+	x, found, err := exchangeRow(ctx, tx, op)
+	if err != nil || !found {
+		return false, err
+	}
+	return x.Role == "inviter" && x.SpacePairingID != nil, nil
 }

@@ -124,9 +124,17 @@ func (c *Client) DropChange(ctx context.Context, pin Pin, digest [32]byte) error
 // MapAddress fetches the signed address record of the workspace whose key
 // is node, and returns it only if node signed it for this space and it is
 // valid now: a record signed by another key is never used to reach node.
+// ErrNoAddress: the Pairbook itself says node has no live address in the
+// space (its own not_found): node can't be dialed there, as Claude
+// Desktop never can. Any other failure is not this.
+var ErrNoAddress = errors.New("space: the workspace publishes no address in this space")
+
 func (c *Client) MapAddress(ctx context.Context, pin Pin, node ed25519.PublicKey) (pairbook.SignedAddress, error) {
 	var got pairbook.SignedAddress
 	err := c.v1(ctx, pin, request{method: http.MethodGet, path: mapPath(pin, "/addresses/"+pairbook.KeyID(node))}, &got)
+	if notFound(err) {
+		return got, ErrNoAddress
+	}
 	if err != nil {
 		return got, err
 	}

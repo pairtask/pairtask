@@ -2,9 +2,15 @@ package hub
 
 import (
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/pairtask/pairtask/internal/peer"
+
+	spacepkg "github.com/pairtask/pairtask/internal/space"
 )
 
 // The space reconciler (Pairbook v1) makes this workspace's contacts match
@@ -33,6 +39,7 @@ type spaceReconciler struct {
 	mu      sync.Mutex
 	retry   map[string]dialWait // per target: when to dial again
 	dialing map[string]bool     // targets with a dial running
+	start   int                 // where the next pass starts in the targets, so all get a turn
 }
 
 type dialWait struct {
@@ -103,12 +110,61 @@ func (r *spaceReconciler) pass(ctx context.Context, h *Hub) error {
 	if err != nil {
 		return err
 	}
-	for _, target := range sortedKeys(desired) {
-		if self < target {
-			r.maybeDial(ctx, h, spaceDialer{h: h, id: ep.Identity, target: target, peer: desired[target]})
-		}
+	for _, target := range r.inTurn(sortedKeys(desired)) {
+		r.maybeDial(ctx, h, spaceDialer{h: h, id: ep.Identity, target: target, peer: desired[target]})
 	}
 	return nil
+}
+
+// inTurn is targets starting one further each pass, so with more targets
+// than dial slots, the same first few can't take every slot every time.
+func (r *spaceReconciler) inTurn(targets []string) []string {
+	if len(targets) == 0 {
+		return targets
+	}
+	r.mu.Lock()
+	from := r.start % len(targets)
+	r.start++
+	r.mu.Unlock()
+	return append(slices.Clone(targets[from:]), targets[:from]...)
+}
+
+// dials: this workspace is the one of the pair that dials, judged by both
+// sides from the same records, the Pairbook's addresses of the two:
+//   - only a target that can be dialed is dialed;
+//   - of two that can, the lower key dials;
+//   - a workspace that can't be dialed itself (the Pairbook holds no
+//     address of it; Claude Desktop never publishes one) dials a higher
+//     key that can, since that side can't reach it.
+//
+// Two workspaces neither of which can be dialed don't connect directly.
+func (h *Hub) dials(ctx context.Context, self *peer.WorkspaceIdentity, target string, g grantedPeer) bool {
+	space := g.spaces[0]
+	if !h.dialable(ctx, space, g.key) {
+		return false // no one can reach the target directly
+	}
+	return self.Fingerprint() < target || !h.dialable(ctx, space, self.PublicKey())
+}
+
+// dialable: the Pairbook holds an address of node in space. When it can't
+// be told, node counts as dialable: the lower key tries, as before, and a
+// higher key waits.
+func (h *Hub) dialable(ctx context.Context, space string, node ed25519.PublicKey) bool {
+	_, err := h.addressOf(ctx, space, node)
+	return !errors.Is(err, spacepkg.ErrNoAddress)
+}
+
+// dialingTo: a dial to target is running here, or an attempt is kept.
+func (h *Hub) dialingTo(ctx context.Context, target string) bool {
+	if r := h.reconciler; r != nil {
+		r.mu.Lock()
+		running := r.dialing[target]
+		r.mu.Unlock()
+		if running {
+			return true
+		}
+	}
+	return h.store.HasSpaceAttempt(ctx, target)
 }
 
 // retireUngranted ends each space-managed contact no active map grants. The
@@ -159,7 +215,10 @@ func (r *spaceReconciler) maybeDial(ctx context.Context, h *Hub, d spaceDialer) 
 	go func() {
 		defer r.wg.Done()
 		dialCtx, cancel := context.WithTimeout(ctx, dialBudget)
-		err := d.connect(dialCtx)
+		var err error
+		if h.dials(dialCtx, d.id, d.target, d.peer) { // the directory lookups run here, bounded, after the local checks
+			err = d.connect(dialCtx)
+		}
 		cancel()
 		if err != nil {
 			h.log.Info("space connect failed", "target", d.target, "err", err)
@@ -201,7 +260,10 @@ func (r *spaceReconciler) release(h *Hub, target string, err error) {
 func (h *Hub) skipDial(ctx context.Context, target string) (bool, error) {
 	refused, err := h.store.SpaceRefused(ctx, target)
 	if err != nil || refused {
-		return true, err
+		return true, err // the operator's refusal comes first, always
+	}
+	if h.store.HasSpaceAttempt(ctx, target) {
+		return false, nil // an outbound attempt is kept: finish it, so a crossing settles on one pairing
 	}
 	return h.paired(ctx, target)
 }
