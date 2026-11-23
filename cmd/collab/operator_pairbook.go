@@ -36,7 +36,9 @@ const operatorPairbookUsage = `usage: pairtask space COMMAND [--space ID] [--soc
   status                         each space: pending, active, expired or refused, and until when
   leave                          leave the space
   unbind WORKSPACE               take one of your workspaces out of the space
-  publish HOST:PORT... [--valid 24h]  where other members reach this workspace; renewed while you're in
+  publish HOST:PORT... [--valid 24h]  host: other members reach this workspace directly here; renewed
+                                 while you're in. Without it, they reach it through the relay
+  unpublish                       stop hosting: the address record is deleted and no longer renewed
   admin VERB ...                  an organization's Pairbook admin: login https://PAIRBOOK, spaces, create,
                                  show, remove, approve, deny, admission, audit, logout
   share AGENT / unshare AGENT     list an agent in the space, or stop; listing only advertises it,
@@ -58,20 +60,21 @@ type pairbookArgs struct {
 type pairbookCommand func(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error)
 
 var pairbookCommands = map[string]pairbookCommand{
-	"create":   pairbookCreate,
-	"invite":   pairbookInvite,
-	"join":     pairbookJoin,
-	"requests": pairbookRequests,
-	"approve":  pairbookApprove,
-	"sync":     pairbookSync,
-	"members":  pairbookMembers,
-	"status":   pairbookStatus,
-	"leave":    pairbookLeave,
-	"unbind":   pairbookUnbind,
-	"publish":  pairbookPublish,
-	"share":    pairbookShare,
-	"admin":    pairbookAdmin,
-	"unshare":  pairbookUnshare,
+	"create":    pairbookCreate,
+	"invite":    pairbookInvite,
+	"join":      pairbookJoin,
+	"requests":  pairbookRequests,
+	"approve":   pairbookApprove,
+	"sync":      pairbookSync,
+	"members":   pairbookMembers,
+	"status":    pairbookStatus,
+	"leave":     pairbookLeave,
+	"unbind":    pairbookUnbind,
+	"publish":   pairbookPublish,
+	"unpublish": pairbookUnpublish,
+	"share":     pairbookShare,
+	"admin":     pairbookAdmin,
+	"unshare":   pairbookUnshare,
 }
 
 // runOperatorPairbook runs one pairbook command.

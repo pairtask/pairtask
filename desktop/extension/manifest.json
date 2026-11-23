@@ -41,7 +41,7 @@
     "notify": {
       "type": "boolean",
       "title": "Notifications",
-      "description": "Show a system notification when a paired workspace sends you a message: who sent it and how many are unread, never the text.",
+      "description": "Show a first-use Pairbook connection prompt and notify when a paired workspace sends you a message: who sent it and how many are unread, never the text.",
       "default": true
     },
     "address": {
@@ -54,7 +54,7 @@
     "pairbook": {
       "type": "string",
       "title": "Pairbook",
-      "description": "Your company's Pairbook, such as https://pairbook.example.com, if it runs one. Join links are then checked against it, and pairbook_join can point you to its join page. Leave empty otherwise; nothing else changes.",
+      "description": "Your company's Pairbook, such as https://pairbook.example.com, if it runs one. After saving, ask Claude to connect to Pairbook or paste a company join link. With notifications enabled, Pairtask prompts you the first time. Leave empty otherwise; nothing else changes.",
       "required": false,
       "default": ""
     }
@@ -69,7 +69,8 @@
     {"name": "mark_read", "description": "Mark received messages read; the sender sees the receipt."},
     {"name": "pair_address", "description": "Move a paired workspace to its new HOST:PORT once the same workspace answers there."},
     {"name": "pairbook_join", "description": "Join a space in your company's Pairbook with its join link; you confirm this machine in the browser."},
-    {"name": "pairbook_join_status", "description": "Where this machine's joins to company Pairbook spaces stand."}
+    {"name": "pairbook_join_status", "description": "Where this machine's joins to company Pairbook spaces stand."},
+    {"name": "pairbook_members", "description": "Who is in a company Pairbook space this machine joined: online state and listed agents."}
   ],
   "compatibility": {
     "platforms": ["darwin", "linux"]

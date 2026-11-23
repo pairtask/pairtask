@@ -189,6 +189,22 @@ func pairbookPublish(ctx context.Context, s *pairbookSession, a pairbookArgs) (a
 	return done("Published; renewed while this workspace is in the space."), nil
 }
 
+// pairbookUnpublish stops hosting: the broker forgets the address setting
+// and deletes the record, so members reach this workspace through the relay.
+func pairbookUnpublish(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
+	if len(a.words) != 0 {
+		return nil, errors.New("unpublish takes no words; name the space with --space")
+	}
+	pin, err := s.pin(ctx, a.space)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapUnpublish, Space: pin.Space}); err != nil {
+		return nil, err
+	}
+	return done("No longer hosting; members reach this workspace through the relay from their next connect."), nil
+}
+
 // pairbookLeave asks the owner to take this person out of the space.
 func pairbookLeave(ctx context.Context, s *pairbookSession, a pairbookArgs) (any, error) {
 	return s.request(ctx, a.space, spaceowner.Request{Action: pairbook.ChangeLeave})

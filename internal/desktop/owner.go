@@ -17,6 +17,7 @@ import (
 	"github.com/pairtask/pairtask/internal/hub"
 	"github.com/pairtask/pairtask/internal/peer/pake"
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/server"
 	"github.com/pairtask/pairtask/internal/store"
 )
 
@@ -107,6 +108,15 @@ func (o *owner) run(ctx, base context.Context, cfg Config) error {
 	o.ctx, o.cancel = context.WithCancel(base)
 	o.hub = h
 	go h.Run(o.ctx)
+	// Claude Desktop listens on nothing: other workspaces reach it through
+	// a relay of its spaces, and each relayed connection is served as a
+	// broker's pairing socket would serve it.
+	relayed := server.NewPairing("", h, cfg.Log)
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		h.ServeRelays(o.ctx, relayed.ServeConn)
+	}()
 	return nil
 }
 

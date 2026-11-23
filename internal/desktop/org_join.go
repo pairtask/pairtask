@@ -396,3 +396,31 @@ func (n *Node) pairbookStatus() PairbookStatusResult {
 	}
 	return out
 }
+
+// PairbookMembersArgs are pairbook_members' arguments.
+type PairbookMembersArgs struct {
+	Space string `json:"space,omitempty" jsonschema:"The company space's ID; may be left out when this machine is in exactly one space"`
+}
+
+// PairbookMembersResult is who this machine may see in a company space.
+type PairbookMembersResult struct {
+	People      []protocol.SpacePerson `json:"people"`
+	StatusKnown bool                   `json:"status_known"`
+}
+
+const pairbookMembersDescription = "List the people in a company Pairbook space this machine joined: only itself and the members its access lets it see, " +
+	"each machine online or not and the agents it lists there. status_known is false when the Pairbook keeps no status. " +
+	"A listed agent is advertised, not reachable by that alone; members connect as contacts on their own once both are in."
+
+// pairbookMembers is the space's people as this machine may see them.
+func (n *Node) pairbookMembers(ctx context.Context, args PairbookMembersArgs) (PairbookMembersResult, error) {
+	out, err := n.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpMapPeople, Space: args.Space})
+	if err != nil {
+		return PairbookMembersResult{}, err
+	}
+	people := out.People
+	if people == nil {
+		people = []protocol.SpacePerson{}
+	}
+	return PairbookMembersResult{People: people, StatusKnown: out.StatusKnown}, nil
+}

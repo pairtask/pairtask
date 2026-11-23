@@ -147,7 +147,11 @@ const (
 
 // NewServer is the MCP server for node n, named pairtask at version.
 func NewServer(n *Node, version string) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "pairtask", Version: version}, nil)
+	var options mcp.ServerOptions
+	if pairbookOrigin(n.cfg.Pairbook) != "" {
+		options.Instructions = "A company Pairbook is configured. When the person wants to connect, call pairbook_join without arguments to show their configured join page. When they provide a company /join#space= link, pass that link directly to pairbook_join. Ask them to complete sign-in and confirm this machine."
+	}
+	s := mcp.NewServer(&mcp.Implementation{Name: "pairtask", Version: version}, &options)
 	readOnly, additive, openWorld := true, false, true
 	mcp.AddTool(s, &mcp.Tool{Name: "whoami", Description: whoamiDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, WhoamiResult, error) {
@@ -198,6 +202,11 @@ func NewServer(n *Node, version string) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_join", Description: pairbookJoinDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive, OpenWorldHint: &openWorld}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args PairbookJoinArgs) (*mcp.CallToolResult, PairbookJoinResult, error) {
 			out, err := n.pairbookJoin(ctx, args)
+			return nil, out, err
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_members", Description: pairbookMembersDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, OpenWorldHint: &openWorld}},
+		func(ctx context.Context, _ *mcp.CallToolRequest, args PairbookMembersArgs) (*mcp.CallToolResult, PairbookMembersResult, error) {
+			out, err := n.pairbookMembers(ctx, args)
 			return nil, out, err
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_join_status", Description: pairbookStatusDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},

@@ -90,6 +90,11 @@ func ownerOnly(path string) error {
 // bound, then pairing, settlement or a message session by its protocol, each
 // under its own bound. The network work is bounded and cancelled with the
 // server; the store writes are not, so an attempt's outcome always settles.
+// ServeConn serves one connection that arrived some other way than the
+// socket, such as a relay splice, exactly as an accepted one: the same
+// handshake bound and slots apply.
+func (p *PairingServer) ServeConn(ctx context.Context, raw net.Conn) { p.handle(ctx, raw) }
+
 func (p *PairingServer) serve(ctx context.Context, raw net.Conn) {
 	ep, err := p.hub.PairingEndpoint()
 	if err != nil {
