@@ -30,11 +30,21 @@ func redialHub(t *testing.T) (*Hub, *fakeTimers) {
 	return h, f
 }
 
-func redialState(h *Hub, c string) (failures int, pending bool) {
+// redialWant is the redial state a test expects for the contact.
+type redialWant struct {
+	failures, timers int
+	pending          bool
+}
+
+func wantRedial(t *testing.T, h *Hub, f *fakeTimers, want redialWant) {
+	t.Helper()
 	h.live.mu.Lock()
-	defer h.live.mu.Unlock()
-	_, pending = h.live.pending[c]
-	return h.live.failures[c], pending
+	_, pending := h.live.pending[redialContact]
+	got := redialWant{failures: h.live.failures[redialContact], timers: len(f.fns), pending: pending}
+	h.live.mu.Unlock()
+	if got != want {
+		t.Fatalf("redial state %+v, want %+v", got, want)
+	}
 }
 
 const redialContact = "sha256:contact"
@@ -45,9 +55,7 @@ func TestScheduleRedialOnePending(t *testing.T) {
 	for range 20 {
 		h.scheduleRedial(redialContact)
 	}
-	if failures, pending := redialState(h, redialContact); failures != 1 || !pending || len(f.fns) != 1 {
-		t.Fatalf("20 triggers: failures %d, pending %v, timers %d; want 1, true, 1", failures, pending, len(f.fns))
-	}
+	wantRedial(t, h, f, redialWant{failures: 1, timers: 1, pending: true})
 }
 
 // Each fired redial that fails schedules the next, up to the cap; then the
@@ -60,9 +68,7 @@ func TestScheduleRedialStopsAtTheCap(t *testing.T) {
 			f.fns[i]() // fires: the redial runs (and, here, fails again)
 		}
 	}
-	if failures, pending := redialState(h, redialContact); failures != liveRetriesMax || pending || len(f.fns) != liveRetriesMax {
-		t.Fatalf("failures %d, pending %v, timers %d; want %d, false, %d", failures, pending, len(f.fns), liveRetriesMax, liveRetriesMax)
-	}
+	wantRedial(t, h, f, redialWant{failures: liveRetriesMax, timers: liveRetriesMax})
 }
 
 // A reconnect cancels the outage's pending redial: a drop right after gets
@@ -77,11 +83,7 @@ func TestReconnectCancelsTheOldRedial(t *testing.T) {
 	h.live.mu.Unlock()
 
 	h.scheduleRedial(redialContact) // the new link drops at once
-	if failures, pending := redialState(h, redialContact); failures != 1 || !pending || len(f.fns) != 2 {
-		t.Fatalf("after reconnect and drop: failures %d, pending %v, timers %d; want 1, true, 2", failures, pending, len(f.fns))
-	}
-	f.fns[0]() // the old outage's timer fires late
-	if _, pending := redialState(h, redialContact); !pending {
-		t.Fatal("a stale timer cleared the newer scheduled redial")
-	}
+	wantRedial(t, h, f, redialWant{failures: 1, timers: 2, pending: true})
+	f.fns[0]() // the old outage's timer fires late: it must not clear the newer one
+	wantRedial(t, h, f, redialWant{failures: 1, timers: 2, pending: true})
 }
