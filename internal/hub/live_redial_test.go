@@ -87,3 +87,28 @@ func TestReconnectCancelsTheOldRedial(t *testing.T) {
 	f.fns[0]() // the old outage's timer fires late: it must not clear the newer one
 	wantRedial(t, h, f, redialWant{failures: 1, timers: 2, pending: true})
 }
+
+// A timer that fires before scheduleRedial returns (a zero delay) still runs
+// exactly the redial it was made for, with no data race: run under -race.
+func TestImmediateTimerRunsItsRedial(t *testing.T) {
+	h := newTestHub(t)
+	h.msgs.init()
+	h.live.mu.Lock()
+	h.live.ready()
+	h.live.after = func(_ time.Duration, fn func()) stopper {
+		go fn() // fires at once, racing the bookkeeping
+		return fakeTimer{new(bool)}
+	}
+	h.live.mu.Unlock()
+	h.scheduleRedial(redialContact)
+	for range 100 {
+		h.live.mu.Lock()
+		_, pending := h.live.pending[redialContact]
+		h.live.mu.Unlock()
+		if !pending {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("an immediate timer never ran its redial")
+}

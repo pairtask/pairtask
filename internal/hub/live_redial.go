@@ -10,11 +10,17 @@ import (
 // coming back cancels the one scheduled; a stale timer firing late finds
 // itself replaced and does nothing.
 
-// scheduled is one quick redial waiting: which, and how to cancel it.
-type scheduled struct {
+// redialID names one scheduled redial: never changed once made, so a timer
+// callback can hold it without racing anything.
+type redialID struct {
 	contact string
 	gen     uint64
-	timer   stopper
+}
+
+// scheduled is one quick redial waiting: which, and how to cancel it.
+type scheduled struct {
+	id    redialID
+	timer stopper
 }
 
 type stopper interface{ Stop() bool }
@@ -46,23 +52,23 @@ func (h *Hub) scheduleRedial(contact string) {
 	if after == nil {
 		after = func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }
 	}
-	ticket := scheduled{contact: contact, gen: gen}
-	ticket.timer = after(redialWait(w.failures[contact]), func() { h.firedRedial(ticket) })
-	w.pending[contact] = ticket
+	id := redialID{contact: contact, gen: gen}
+	timer := after(redialWait(w.failures[contact]), func() { h.firedRedial(id) })
+	w.pending[contact] = scheduled{id: id, timer: timer}
 }
 
-// firedRedial runs the scheduled redial t, unless it was cancelled or
+// firedRedial runs the scheduled redial id, unless it was cancelled or
 // replaced meanwhile.
-func (h *Hub) firedRedial(t scheduled) {
+func (h *Hub) firedRedial(id redialID) {
 	w := &h.live
 	w.mu.Lock()
-	current := w.pending[t.contact].gen == t.gen
+	current := w.pending[id.contact].id == id
 	if current {
-		delete(w.pending, t.contact)
+		delete(w.pending, id.contact)
 	}
 	w.mu.Unlock()
 	if current {
-		h.SyncMessages(t.contact)
+		h.SyncMessages(id.contact)
 	}
 }
 
