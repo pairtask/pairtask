@@ -31,6 +31,11 @@ const (
 	liveMaxAge     = time.Hour
 	liveFirstRetry = time.Second // a link that drops is redialled within this
 	liveBackoffMax = time.Minute
+	// liveRetriesMax bounds the quick redials of a link that dropped (about
+	// three minutes of them); after that the contact waits for the poll,
+	// whose backoff grows to an hour, so an unreachable contact or relay is
+	// never hammered.
+	liveRetriesMax = 8
 )
 
 func liveTiming() messaging.LinkTiming {
@@ -58,11 +63,12 @@ type liveWiring struct {
 	dialing  int
 	serving  int
 	failures map[string]int
+	pending  map[string]bool // contacts with a quick redial scheduled: at most one each
 }
 
 func (w *liveWiring) ready() {
 	if w.links == nil {
-		w.links, w.failures = map[string]*liveLink{}, map[string]int{}
+		w.links, w.failures, w.pending = map[string]*liveLink{}, map[string]int{}, map[string]bool{}
 	}
 }
 
@@ -288,11 +294,34 @@ func (h *Hub) afterLink(ctx context.Context, l *liveLink, err error) {
 		h.SyncMessages(contact) // halted or fenced by a pairing change: redial at once, where the contact is now
 		return
 	}
-	time.AfterFunc(h.liveDelay(contact), func() { h.SyncMessages(contact) })
+	h.scheduleRedial(contact)
 }
 
-// liveDelay is the wait before redialling after failures in a row, with up
-// to a fifth of jitter either way after the first, never above the maximum.
+// scheduleRedial schedules one quick redial of contact, backing off, unless
+// one is already scheduled or the quick redials are spent; then the poll's
+// own backoff decides when to dial again.
+func (h *Hub) scheduleRedial(contact string) {
+	w := &h.live
+	w.mu.Lock()
+	w.ready()
+	if w.pending[contact] || w.failures[contact] >= liveRetriesMax {
+		w.mu.Unlock()
+		return
+	}
+	w.failures[contact]++
+	w.pending[contact] = true
+	delay := redialWait(w.failures[contact])
+	w.mu.Unlock()
+	time.AfterFunc(delay, func() {
+		w.mu.Lock()
+		delete(w.pending, contact)
+		w.mu.Unlock()
+		h.SyncMessages(contact)
+	})
+}
+
+// liveDelay counts one more failure for contact and is the wait before
+// redialling it.
 func (h *Hub) liveDelay(contact string) time.Duration {
 	w := &h.live
 	w.mu.Lock()
@@ -300,6 +329,12 @@ func (h *Hub) liveDelay(contact string) time.Duration {
 	w.failures[contact]++
 	failures := w.failures[contact]
 	w.mu.Unlock()
+	return redialWait(failures)
+}
+
+// redialWait is the wait before redialling after failures in a row, with up
+// to a fifth of jitter either way after the first, never above the maximum.
+func redialWait(failures int) time.Duration {
 	if failures == 1 {
 		return time.Duration(rand.Int64N(int64(liveFirstRetry)))
 	}
