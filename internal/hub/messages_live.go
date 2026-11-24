@@ -63,12 +63,32 @@ type liveWiring struct {
 	dialing  int
 	serving  int
 	failures map[string]int
-	pending  map[string]bool // contacts with a quick redial scheduled: at most one each
+	pending  map[string]scheduled // contacts with a quick redial scheduled: at most one each
+	gen      uint64               // numbers each scheduled redial, so a stale one is told apart
+	// after schedules a quick redial; nil is time.AfterFunc. Tests replace it.
+	after func(time.Duration, func()) stopper
+}
+
+// scheduled is one quick redial waiting: which, and how to cancel it.
+type scheduled struct {
+	gen   uint64
+	timer stopper
+}
+
+type stopper interface{ Stop() bool }
+
+// cancelRedial cancels contact's scheduled quick redial, if any: a link
+// came back, or the contact moved. Called with w.mu held.
+func (w *liveWiring) cancelRedial(contact string) {
+	if s, ok := w.pending[contact]; ok {
+		s.timer.Stop()
+		delete(w.pending, contact)
+	}
 }
 
 func (w *liveWiring) ready() {
 	if w.links == nil {
-		w.links, w.failures, w.pending = map[string]*liveLink{}, map[string]int{}, map[string]bool{}
+		w.links, w.failures, w.pending = map[string]*liveLink{}, map[string]int{}, map[string]scheduled{}
 	}
 }
 
@@ -266,6 +286,7 @@ func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
 	w.mu.Lock()
 	w.ready()
 	delete(w.failures, d.link.contact)
+	w.cancelRedial(d.link.contact) // back up: the old outage's timer is moot
 	w.mu.Unlock()
 	h.pair.workers.Add(1)
 	go func() {
@@ -303,21 +324,36 @@ func (h *Hub) afterLink(ctx context.Context, l *liveLink, err error) {
 func (h *Hub) scheduleRedial(contact string) {
 	w := &h.live
 	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.ready()
-	if w.pending[contact] || w.failures[contact] >= liveRetriesMax {
-		w.mu.Unlock()
+	if _, waiting := w.pending[contact]; waiting || w.failures[contact] >= liveRetriesMax {
 		return
 	}
 	w.failures[contact]++
-	w.pending[contact] = true
-	delay := redialWait(w.failures[contact])
-	w.mu.Unlock()
-	time.AfterFunc(delay, func() {
-		w.mu.Lock()
+	w.gen++
+	gen := w.gen
+	after := w.after
+	if after == nil {
+		after = func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }
+	}
+	timer := after(redialWait(w.failures[contact]), func() { h.firedRedial(contact, gen) })
+	w.pending[contact] = scheduled{gen: gen, timer: timer}
+}
+
+// firedRedial runs scheduled redial gen of contact, unless it was cancelled
+// or replaced meanwhile.
+func (h *Hub) firedRedial(contact string, gen uint64) {
+	w := &h.live
+	w.mu.Lock()
+	s, ok := w.pending[contact]
+	current := ok && s.gen == gen
+	if current {
 		delete(w.pending, contact)
-		w.mu.Unlock()
+	}
+	w.mu.Unlock()
+	if current {
 		h.SyncMessages(contact)
-	})
+	}
 }
 
 // liveDelay counts one more failure for contact and is the wait before

@@ -192,6 +192,7 @@ func (h *Hub) dropAddress(c peer.Contact) bool {
 	defer w.mu.Unlock()
 	w.ready()
 	delete(w.failures, c.IdentityKey)
+	w.cancelRedial(c.IdentityKey)
 	l := w.links[c.IdentityKey]
 	if l == nil || l.serving {
 		return false
