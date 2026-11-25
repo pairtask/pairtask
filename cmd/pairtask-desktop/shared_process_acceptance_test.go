@@ -26,7 +26,11 @@ const sharedProcessDirEnv = "PAIRTASK_DESKTOP_SHARED_PROCESS_DIR"
 func TestDesktopSharedNodeProcess(t *testing.T) {
 	if dir := os.Getenv(sharedProcessDirEnv); dir != "" {
 		log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-		if err := run([]string{"--dir", dir, "--name", "Claude Mac"}, log); err != nil {
+		args := []string{"--dir", dir, "--name", "Claude Mac", "--notify=false"}
+		if mode := os.Getenv("PAIRTASK_TEST_DESKTOP_MODE"); mode != "" {
+			args = append([]string{mode}, args...)
+		}
+		if err := run(args, log); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
@@ -70,14 +74,25 @@ func (b *lockedBuffer) String() string {
 	return b.b.String()
 }
 
-func startDesktopProcess(t *testing.T, dir string) *desktopProcess {
+func desktopTestCommand(t *testing.T, dir, mode string) *exec.Cmd {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe, "-test.run=^TestDesktopSharedNodeProcess$")
-	cmd.Env = append(os.Environ(), sharedProcessDirEnv+"="+dir)
+	cmd.Env = append(os.Environ(), sharedProcessDirEnv+"="+dir, "PAIRTASK_TEST_DESKTOP_MODE="+mode)
+	return cmd
+}
+
+func startDesktopProcess(t *testing.T, dir string) *desktopProcess {
+	t.Helper()
+	return startMCPProcess(t, dir, "")
+}
+
+func startMCPProcess(t *testing.T, dir, mode string) *desktopProcess {
+	t.Helper()
+	cmd := desktopTestCommand(t, dir, mode)
 	logs := &lockedBuffer{}
 	cmd.Stderr = logs
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
