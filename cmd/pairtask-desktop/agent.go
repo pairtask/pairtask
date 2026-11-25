@@ -90,6 +90,9 @@ func (e agentEnv) install(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if dir, err = filepath.Abs(dir); err != nil { // launchd starts it elsewhere
+		return err
+	}
 	if err := e.writePlist(dir); err != nil {
 		return err
 	}
@@ -117,12 +120,27 @@ func (e agentEnv) writePlist(dir string) error {
 }
 
 func (e agentEnv) uninstall(out io.Writer) error {
-	_, _ = e.launchctl("bootout", e.domain()+"/"+agentLabel) // not loaded is fine
+	if err := e.stop(); err != nil {
+		return err // the plist stays, so the state remains the one status reports
+	}
 	if err := os.Remove(e.plistPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	fmt.Fprintln(out, "Removed: pairtask no longer runs in the background; Claude Desktop's extension runs it while open.")
 	return nil
+}
+
+// stop unloads the agent. Not loaded already is fine; still loaded after a
+// failed bootout is an error.
+func (e agentEnv) stop() error {
+	b, err := e.launchctl("bootout", e.domain()+"/"+agentLabel)
+	if err == nil {
+		return nil
+	}
+	if _, loaded := e.launchctl("print", e.domain()+"/"+agentLabel); loaded != nil {
+		return nil // it wasn't loaded
+	}
+	return fmt.Errorf("agent: couldn't stop the background agent: %s", strings.TrimSpace(string(b)))
 }
 
 func (e agentEnv) status(out io.Writer) error {
