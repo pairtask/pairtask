@@ -46,6 +46,18 @@ func readInstalledPlist(t *testing.T, file string) plistElement {
 	return p.Dict
 }
 
+func (p plistElement) strings(t *testing.T) []string {
+	t.Helper()
+	var values []string
+	for _, child := range p.Children {
+		if child.XMLName.Local != "string" {
+			t.Fatalf("expected string in plist array, got %q", child.XMLName.Local)
+		}
+		values = append(values, child.Text)
+	}
+	return values
+}
+
 type agentFixture struct {
 	file, exe, dir, log string
 	loaded              bool
@@ -60,10 +72,7 @@ func (f *agentFixture) checkInstalledPlist(t *testing.T) {
 			t.Fatalf("%s: got %+v, want %q", k, got, want)
 		}
 	}
-	var args []string
-	for _, a := range dict.field(t, "ProgramArguments").Children {
-		args = append(args, a.Text)
-	}
+	args := dict.field(t, "ProgramArguments").strings(t)
 	if !slices.Equal(args, []string{f.exe, "daemon", "--dir", f.dir}) {
 		t.Fatalf("ProgramArguments = %q", args)
 	}
