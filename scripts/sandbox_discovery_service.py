@@ -53,11 +53,12 @@ Host = namedtuple("Host", "system home run", defaults=(None, None, None))
 
 
 # The programs the helper runs, beyond the system's own: its interpreter,
-# the Box's incus client and, where installed, tailscale. The service's
+# the Box's incus client, git (finding the deployment's worktrees when the
+# project isn't registered) and, where installed, tailscale. The service's
 # PATH holds only their folders and the system folders, never a copy of the
 # installing shell's PATH, which would carry the machine's whole tool
 # layout into the service and break when it changes.
-HELPER_TOOLS = ("python3", "incus", "tailscale")
+HELPER_TOOLS = ("python3", "incus", "git", "tailscale")
 SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 
 

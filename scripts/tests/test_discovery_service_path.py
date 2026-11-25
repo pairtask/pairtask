@@ -13,9 +13,10 @@ import sandbox_discovery_service as service  # noqa: E402
 
 class ServicePathTests(unittest.TestCase):
     def test_path_holds_only_the_tools_folders_and_the_system(self):
-        found = {"python3": "/opt/homebrew/bin/python3", "incus": "/opt/homebrew/bin/incus", "tailscale": "/usr/local/bin/tailscale"}
+        found = {"python3": "/opt/homebrew/bin/python3", "incus": "/opt/homebrew/bin/incus",
+                 "git": "/opt/git/bin/git", "tailscale": "/usr/local/bin/tailscale"}
         path = service.service_path(which=found.get)
-        self.assertEqual(path, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+        self.assertEqual(path, "/opt/homebrew/bin:/opt/git/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
 
     def test_missing_tools_leave_the_system_path(self):
         self.assertEqual(service.service_path(which=lambda tool: None), "/usr/bin:/bin:/usr/sbin:/sbin")
