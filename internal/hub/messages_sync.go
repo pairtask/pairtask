@@ -177,7 +177,7 @@ func (h *Hub) retryLive(ctx context.Context, contact string) {
 	linked := w.failures[contact] > 0
 	w.mu.Unlock()
 	if linked && ctx.Err() == nil {
-		time.AfterFunc(h.liveDelay(contact), func() { h.SyncMessages(contact) })
+		h.scheduleRedial(contact)
 	}
 }
 

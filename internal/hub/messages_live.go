@@ -3,7 +3,6 @@ package hub
 import (
 	"context"
 	"errors"
-	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -31,6 +30,11 @@ const (
 	liveMaxAge     = time.Hour
 	liveFirstRetry = time.Second // a link that drops is redialled within this
 	liveBackoffMax = time.Minute
+	// liveRetriesMax bounds the quick redials of a link that dropped (about
+	// three minutes of them); after that the contact waits for the poll,
+	// whose backoff grows to an hour, so an unreachable contact or relay is
+	// never hammered.
+	liveRetriesMax = 8
 )
 
 func liveTiming() messaging.LinkTiming {
@@ -58,11 +62,15 @@ type liveWiring struct {
 	dialing  int
 	serving  int
 	failures map[string]int
+	pending  map[string]scheduled // contacts with a quick redial scheduled: at most one each
+	gen      uint64               // numbers each scheduled redial, so a stale one is told apart
+	// after schedules a quick redial; nil is time.AfterFunc. Tests replace it.
+	after func(time.Duration, func()) stopper
 }
 
 func (w *liveWiring) ready() {
 	if w.links == nil {
-		w.links, w.failures = map[string]*liveLink{}, map[string]int{}
+		w.links, w.failures, w.pending = map[string]*liveLink{}, map[string]int{}, map[string]scheduled{}
 	}
 }
 
@@ -260,6 +268,7 @@ func (h *Hub) goLive(ctx context.Context, d *dialedLink) {
 	w.mu.Lock()
 	w.ready()
 	delete(w.failures, d.link.contact)
+	w.cancelRedial(d.link.contact) // back up: the old outage's timer is moot
 	w.mu.Unlock()
 	h.pair.workers.Add(1)
 	go func() {
@@ -288,11 +297,11 @@ func (h *Hub) afterLink(ctx context.Context, l *liveLink, err error) {
 		h.SyncMessages(contact) // halted or fenced by a pairing change: redial at once, where the contact is now
 		return
 	}
-	time.AfterFunc(h.liveDelay(contact), func() { h.SyncMessages(contact) })
+	h.scheduleRedial(contact)
 }
 
-// liveDelay is the wait before redialling after failures in a row, with up
-// to a fifth of jitter either way after the first, never above the maximum.
+// liveDelay counts one more failure for contact and is the wait before
+// redialling it.
 func (h *Hub) liveDelay(contact string) time.Duration {
 	w := &h.live
 	w.mu.Lock()
@@ -300,9 +309,5 @@ func (h *Hub) liveDelay(contact string) time.Duration {
 	w.failures[contact]++
 	failures := w.failures[contact]
 	w.mu.Unlock()
-	if failures == 1 {
-		return time.Duration(rand.Int64N(int64(liveFirstRetry)))
-	}
-	wait := min(liveFirstRetry<<min(failures-1, 6), liveBackoffMax)
-	return min(wait+time.Duration(rand.Int64N(int64(wait)/5*2+1))-wait/5, liveBackoffMax)
+	return redialWait(failures)
 }
