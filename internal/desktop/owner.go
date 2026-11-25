@@ -90,7 +90,7 @@ func startOwner(ctx, base context.Context, cfg Config) (*owner, error) {
 	if err := o.share(cfg.Dir); err != nil {
 		return nil, errors.Join(err, o.stop())
 	}
-	if err := recordOwner(cfg.Dir, cfg); err != nil {
+	if err := (nodeFiles{cfg.Dir}).recordOwner(cfg); err != nil {
 		o.log.Warn("couldn't record this copy as the node's owner", "error", err)
 	}
 	o.notify.Store(true)
@@ -292,7 +292,7 @@ func (o *owner) close() error {
 		o.ln.Close()
 		os.Remove(o.sock)
 	}
-	clearOwner(o.dir)
+	nodeFiles{o.dir}.clearOwner()
 	o.mu.Lock()
 	for c := range o.conns {
 		c.Close()

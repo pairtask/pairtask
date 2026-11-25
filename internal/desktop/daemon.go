@@ -45,25 +45,36 @@ func own(ctx context.Context, cfg Config, retry time.Duration) (*Node, error) {
 	if err := MarkAgentInstalled(cfg.Dir); err != nil {
 		return nil, err
 	}
-	defer clearAgentWaiting(cfg.Dir)
-	for waited := false; ; waited = true {
+	files := nodeFiles{cfg.Dir}
+	defer files.clearWaiting()
+	for asked := false; ; asked = true {
 		n, err := tryOwn(ctx, cfg)
 		if !errors.Is(err, store.ErrDatabaseInUse) {
-			if n != nil {
-				n.problem = problem
-			}
-			return n, err
+			return withProblem(n, problem), err
 		}
-		if !waited {
-			cfg.Log.Info("another copy runs the broker; the agent asks for it and takes over when it's handed over", "dir", cfg.Dir)
-		}
-		if err := markAgentWaiting(cfg.Dir); err != nil {
-			cfg.Log.Warn("couldn't ask for the node", "error", err)
-		}
+		askForNode(cfg, files, asked)
 		if err := pause(ctx, retry); err != nil {
 			return nil, err
 		}
 	}
+}
+
+// askForNode refreshes the agent's request for the node another copy runs.
+func askForNode(cfg Config, files nodeFiles, asked bool) {
+	if !asked {
+		cfg.Log.Info("another copy runs the broker; the agent asks for it and takes over when it's handed over", "dir", cfg.Dir)
+	}
+	if err := files.markWaiting(); err != nil {
+		cfg.Log.Warn("couldn't ask for the node", "error", err)
+	}
+}
+
+// withProblem is n, noting a setting it couldn't keep.
+func withProblem(n *Node, problem error) *Node {
+	if n != nil {
+		n.problem = problem
+	}
+	return n
 }
 
 // daemonConfig is cfg ready for the agent: a logger, and a data directory

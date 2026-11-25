@@ -2,15 +2,12 @@ package desktop
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 )
 
@@ -62,80 +59,29 @@ func AgentInstalled(dir string) bool {
 	return err == nil
 }
 
-// markAgentWaiting refreshes the agent's request for the node.
-func markAgentWaiting(dir string) error {
-	path := filepath.Join(dir, agentWaitingName)
+// nodeFiles are the files in a data directory that say who runs its node.
+type nodeFiles struct{ dir string }
+
+func (f nodeFiles) path(name string) string { return filepath.Join(f.dir, name) }
+
+// markWaiting refreshes the agent's request for the node.
+func (f nodeFiles) markWaiting() error {
 	now := time.Now()
-	if err := os.Chtimes(path, now, now); err == nil {
+	if err := os.Chtimes(f.path(agentWaitingName), now, now); err == nil {
 		return nil
 	}
-	return os.WriteFile(path, nil, 0o600)
+	return os.WriteFile(f.path(agentWaitingName), nil, 0o600)
 }
 
-// clearAgentWaiting removes the request, once the agent runs the node or
-// stops.
-func clearAgentWaiting(dir string) {
-	_ = os.Remove(filepath.Join(dir, agentWaitingName))
+// clearWaiting removes the request, once the agent runs the node or stops.
+func (f nodeFiles) clearWaiting() {
+	_ = os.Remove(f.path(agentWaitingName))
 }
 
-// agentWaiting: the agent asked for the node recently.
-func agentWaiting(dir string) bool {
-	info, err := os.Stat(filepath.Join(dir, agentWaitingName))
+// waiting: the agent asked for the node recently.
+func (f nodeFiles) waiting() bool {
+	info, err := os.Stat(f.path(agentWaitingName))
 	return err == nil && time.Since(info.ModTime()) < agentWaitingFresh
-}
-
-// OwnerInfo is who runs the node now, as that copy recorded it.
-type OwnerInfo struct {
-	PID     int       `json:"pid"`
-	Role    string    `json:"role"` // "agent", or "client" for any other copy
-	Version string    `json:"version,omitempty"`
-	Since   time.Time `json:"since"`
-}
-
-// Running: the recorded process is alive.
-func (o OwnerInfo) Running() bool {
-	if o.PID <= 0 {
-		return false
-	}
-	err := syscall.Kill(o.PID, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-// ReadOwnerInfo is the recorded owner of dir's node; ok is false when no
-// copy recorded one.
-func ReadOwnerInfo(dir string) (OwnerInfo, bool, error) {
-	var o OwnerInfo
-	data, err := os.ReadFile(filepath.Join(dir, ownerInfoName))
-	if errors.Is(err, fs.ErrNotExist) {
-		return o, false, nil
-	}
-	if err != nil {
-		return o, false, err
-	}
-	if err := json.Unmarshal(data, &o); err != nil {
-		return o, false, fmt.Errorf("%s can't be read: %w", ownerInfoName, err)
-	}
-	return o, true, nil
-}
-
-// recordOwner notes this process as the node's owner.
-func recordOwner(dir string, cfg Config) error {
-	role := cfg.Role
-	if role == "" {
-		role = "client"
-	}
-	data, err := json.Marshal(OwnerInfo{PID: os.Getpid(), Role: role, Version: cfg.Version, Since: time.Now().UTC()})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, ownerInfoName), data, 0o600)
-}
-
-// clearOwner removes the note, if it is still this process's.
-func clearOwner(dir string) {
-	if o, ok, _ := ReadOwnerInfo(dir); ok && o.PID == os.Getpid() {
-		_ = os.Remove(filepath.Join(dir, ownerInfoName))
-	}
 }
 
 // prefersAgent: this copy should leave the node to the agent.
@@ -169,23 +115,27 @@ func (n *Node) yieldToAgent() {
 	if n.cfg.Role == RoleAgent || !n.yielding.CompareAndSwap(false, true) {
 		return
 	}
-	started := n.spawn(func() {
-		defer n.yielding.Store(false)
-		t := time.NewTicker(yieldPoll)
-		defer t.Stop()
-		for {
-			select {
-			case <-n.joins.life.Done():
-				return
-			case <-t.C:
-			}
-			if agentWaiting(n.cfg.Dir) && n.yield(n.joins.life) {
-				return
-			}
-		}
-	})
-	if !started {
+	if !n.spawn(n.watchForAgent) {
 		n.yielding.Store(false)
+	}
+}
+
+// watchForAgent hands the node to the agent when it asks, until this copy
+// no longer runs the node or closes.
+func (n *Node) watchForAgent() {
+	defer n.yielding.Store(false)
+	files := nodeFiles{n.cfg.Dir}
+	t := time.NewTicker(yieldPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-n.joins.life.Done():
+			return
+		case <-t.C:
+		}
+		if files.waiting() && n.yield(n.joins.life) {
+			return
+		}
 	}
 }
 
