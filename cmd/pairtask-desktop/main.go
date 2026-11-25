@@ -63,6 +63,9 @@ func runDaemon(args []string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Address != "" {
+		return errors.New("daemon: --address is a setting of the MCP mode (Claude Desktop's Workspace address); the agent doesn't take it")
+	}
 	cfg.Log = log
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -94,14 +94,50 @@ func (e agentEnv) install(args []string, out io.Writer) error {
 	if dir, err = filepath.Abs(dir); err != nil { // launchd starts it elsewhere
 		return err
 	}
-	if err := e.writePlist(dir); err != nil {
+	if err := e.replace(dir); err != nil {
 		return err
 	}
-	_, _ = e.launchctl("bootout", e.domain()+"/"+agentLabel) // a loaded older one; none is fine
-	if b, err := e.launchctl("bootstrap", e.domain(), e.plistPath()); err != nil {
-		return fmt.Errorf("agent: launchctl bootstrap: %s", strings.TrimSpace(string(b)))
-	}
 	fmt.Fprintf(out, "Installed: pairtask runs in the background from now on, also after login (%s).\n", e.plistPath())
+	return nil
+}
+
+// replace installs the agent for dir in place of any installed one. The
+// old job is stopped before its plist changes (if it can't be, nothing
+// changes); if the new one doesn't start, the old plist and job come back.
+func (e agentEnv) replace(dir string) error {
+	previous, err := os.ReadFile(e.plistPath())
+	had := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := e.stop(); err != nil {
+		return err
+	}
+	if err := e.writePlist(dir); err != nil {
+		return errors.Join(err, e.restore(previous, had))
+	}
+	if b, err := e.launchctl("bootstrap", e.domain(), e.plistPath()); err != nil {
+		failed := fmt.Errorf("agent: launchctl bootstrap: %s", strings.TrimSpace(string(b)))
+		return errors.Join(failed, e.restore(previous, had))
+	}
+	return nil
+}
+
+// restore puts back the plist that was installed before, and starts it
+// again; with none before, it removes the new one.
+func (e agentEnv) restore(previous []byte, had bool) error {
+	if !had {
+		if err := os.Remove(e.plistPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	if err := os.WriteFile(e.plistPath(), previous, 0o644); err != nil {
+		return err
+	}
+	if b, err := e.launchctl("bootstrap", e.domain(), e.plistPath()); err != nil {
+		return fmt.Errorf("agent: the previous agent didn't start again either: %s", strings.TrimSpace(string(b)))
+	}
 	return nil
 }
 
