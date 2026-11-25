@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import shutil
 import subprocess
 
 LABEL = "ai.pairtask.discovery"
@@ -51,6 +52,26 @@ def systemd_word(value):
 Host = namedtuple("Host", "system home run", defaults=(None, None, None))
 
 
+# The programs the helper runs, beyond the system's own: its interpreter,
+# the Box's incus client and, where installed, tailscale. The service's
+# PATH holds only their folders and the system folders, never a copy of the
+# installing shell's PATH, which would carry the machine's whole tool
+# layout into the service and break when it changes.
+HELPER_TOOLS = ("python3", "incus", "tailscale")
+SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+
+
+def service_path(which=shutil.which):
+    """The PATH for the helper's service: the folders of the tools it runs, then the system's."""
+    folders = []
+    for tool in HELPER_TOOLS:
+        found = which(tool)
+        if found:
+            folders.append(os.path.dirname(os.path.abspath(found)))
+    folders.extend(SYSTEM_PATH)
+    return ":".join(dict.fromkeys(folders))
+
+
 class Manager:
     """Writes, starts, restarts and removes the unit for this user."""
 
@@ -66,7 +87,7 @@ class Manager:
                 "--project", self.project, "--remote", self.remote]
 
     def environment(self):
-        values = {"PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")}
+        values = {"PATH": service_path()}
         if os.environ.get("PAIRTASK_HOME"):
             values["PAIRTASK_HOME"] = str(pairtask_home())
         return values
