@@ -88,8 +88,7 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if err := ensureDataDir(cfg.Dir); err != nil {
 		return nil, err
 	}
-	n := &Node{cfg: cfg, base: context.WithoutCancel(ctx)}
-	n.joins.life, n.joins.stop = context.WithCancel(n.base)
+	n := newNode(ctx, cfg)
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if err := n.reach(ctx); err != nil {
@@ -97,6 +96,13 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	}
 	n.startPairbook()
 	return n, nil
+}
+
+// newNode is a node for cfg, reaching nothing yet.
+func newNode(ctx context.Context, cfg Config) *Node {
+	n := &Node{cfg: cfg, base: context.WithoutCancel(ctx)}
+	n.joins.life, n.joins.stop = context.WithCancel(n.base)
+	return n
 }
 
 // Owner: this copy runs the broker.
