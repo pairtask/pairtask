@@ -14,7 +14,7 @@ import (
 
 // startPairbook schedules startup work while Start still holds the node lock.
 func (n *Node) startPairbook() {
-	if company := pairbookOrigin(n.cfg.Pairbook); company != "" && n.cfg.Notify != nil {
+	if company := pairbookOrigin(n.pairbookSetting()); company != "" && n.cfg.Notify != nil {
 		n.spawn(func() { n.promptPairbook(company) })
 	}
 	if n.own != nil {

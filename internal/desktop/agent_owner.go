@@ -170,6 +170,7 @@ var ErrNotRunning = errors.New("no copy runs this node now")
 // runs it itself: for status and other read-only callers.
 func Connect(ctx context.Context, dir string) (*Node, error) {
 	n := newNode(ctx, Config{Dir: dir, Log: slog.New(slog.DiscardHandler)})
+	n.clientOnly = true
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if !n.reachAgent(ctx, 2*time.Second) {

@@ -73,6 +73,11 @@ var errBadPairbook = errors.New("the Pairbook setting must be the company's Pair
 // https://HOST address is not stored: problem says so, and the stored one
 // stays. err is a settings file that couldn't be read or written.
 func storeSettings(dir string, given Settings) (now Settings, problem, err error) {
+	unlock, err := lockSettings(dir)
+	if err != nil {
+		return given, nil, err
+	}
+	defer unlock()
 	stored, err := ReadSettings(dir)
 	if err != nil {
 		return given, nil, err
@@ -143,4 +148,21 @@ func (n *Node) settingsProblem() string {
 		return ""
 	}
 	return n.problem.Error()
+}
+
+// pairbookSetting is the node's Pairbook setting now: the stored one, which
+// another copy may have changed since this one started.
+func (n *Node) pairbookSetting() string {
+	if s, err := ReadSettings(n.cfg.Dir); err == nil && s.Pairbook != "" {
+		return s.Pairbook
+	}
+	return n.cfg.Pairbook
+}
+
+// nameSetting is the node's name setting now, as pairbookSetting.
+func (n *Node) nameSetting() string {
+	if s, err := ReadSettings(n.cfg.Dir); err == nil && s.Name != "" {
+		return s.Name
+	}
+	return n.cfg.Name
 }

@@ -138,7 +138,7 @@ func bareHTTPS(u *url.URL) bool {
 // pairbookJoin starts or picks up an enrollment and leaves a follower to
 // finish it.
 func (n *Node) pairbookJoin(ctx context.Context, args PairbookJoinArgs) (PairbookJoinResult, error) {
-	set := pairbookOrigin(n.cfg.Pairbook)
+	set := pairbookOrigin(n.pairbookSetting())
 	if args.Link == "" {
 		return joinGuidance(set), nil
 	}
@@ -233,8 +233,8 @@ func joinGuidance(o origin) PairbookJoinResult {
 }
 
 func (n *Node) joinName() string {
-	if n.cfg.Name != "" {
-		return n.cfg.Name
+	if name := n.nameSetting(); name != "" {
+		return name
 	}
 	return "Desktop"
 }

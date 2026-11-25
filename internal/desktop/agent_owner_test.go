@@ -170,3 +170,28 @@ func TestStatusReachesTheRunningNodeWithoutRunningIt(t *testing.T) {
 		t.Fatalf("name %q, want box", got)
 	}
 }
+
+func TestStatusNeverRunsTheNodeWhenItsOwnerStops(t *testing.T) {
+	dir := shortDir(t)
+	owner, err := desktop.Start(context.Background(), desktop.Config{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := desktop.Connect(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer status.Close()
+	if err := owner.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out := status.Call(ctx, protocol.Message{Type: protocol.TypeOperatorPairing, PairingOp: protocol.PairingOpList})
+	if status.Owner() {
+		t.Fatal("status took over the node")
+	}
+	if out.Type != protocol.TypeError {
+		t.Fatalf("status answered %+v with no node running", out)
+	}
+}

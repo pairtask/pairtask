@@ -69,6 +69,9 @@ type Node struct {
 	problem error
 	// yielding: a watch for the agent runs.
 	yielding atomic.Bool
+	// clientOnly: this copy never runs the node, even when its owner goes
+	// (status and other read-only callers).
+	clientOnly bool
 }
 
 // ErrUnsafeDataDir: the data directory isn't a private directory of ours.
@@ -116,6 +119,12 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 // in time, else as reach does; a client that ends up running the node
 // hands it to the agent when the agent asks. Called with mu held.
 func (n *Node) connect(ctx context.Context) error {
+	if n.clientOnly {
+		if n.reachAgent(ctx, takeoverWait) {
+			return nil
+		}
+		return ErrNotRunning
+	}
 	if n.prefersAgent() {
 		if n.reachAgent(ctx, agentWait) {
 			return nil
