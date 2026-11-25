@@ -29,7 +29,7 @@ func TestSettingsGivenTogetherAreAllKept(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s.Name != "Box" || s.Pairbook != "https://book.example" || s.Address != "box:7445" {
+		if want := (Settings{Name: "Box", Pairbook: "https://book.example", Address: "box:7445"}); !sameSettings(s, want) {
 			t.Fatalf("round %d kept %+v", i, s)
 		}
 	}

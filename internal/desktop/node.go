@@ -120,15 +120,12 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 // hands it to the agent when the agent asks. Called with mu held.
 func (n *Node) connect(ctx context.Context) error {
 	if n.clientOnly {
-		if n.reachAgent(ctx, takeoverWait) {
-			return nil
-		}
-		return ErrNotRunning
+		return n.connectClientOnly(ctx)
+	}
+	if n.prefersAgent() && n.reachAgent(ctx, agentWait) {
+		return nil
 	}
 	if n.prefersAgent() {
-		if n.reachAgent(ctx, agentWait) {
-			return nil
-		}
 		n.cfg.Log.Warn("the agent is installed but didn't answer; this copy runs the node until it does", "dir", n.cfg.Dir)
 	}
 	if err := n.reach(ctx); err != nil {
@@ -138,6 +135,15 @@ func (n *Node) connect(ctx context.Context) error {
 		n.yieldToAgent()
 	}
 	return nil
+}
+
+// connectClientOnly forwards to whichever copy runs the node, never
+// running it. Called with mu held.
+func (n *Node) connectClientOnly(ctx context.Context) error {
+	if n.reachAgent(ctx, takeoverWait) {
+		return nil
+	}
+	return ErrNotRunning
 }
 
 // settled is cfg with the node's stored settings: the ones this copy was
