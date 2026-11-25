@@ -34,38 +34,50 @@ func RunDaemon(ctx context.Context, cfg Config, retry time.Duration) error {
 
 // own takes the data directory's lock as soon as it is free.
 func own(ctx context.Context, cfg Config, retry time.Duration) (*Node, error) {
-	if cfg.Log == nil {
-		cfg.Log = slog.New(slog.DiscardHandler)
-	}
-	if err := ensureDataDir(cfg.Dir); err != nil {
+	cfg, err := daemonConfig(cfg)
+	if err != nil {
 		return nil, err
 	}
-	// An agent that can't share its node would hold the directory while no
-	// client could reach it: refuse before taking the lock.
-	if _, err := socketPath(cfg.Dir); err != nil {
-		return nil, err
-	}
-	waiting := false
-	for {
-		n := newNode(ctx, cfg)
-		o, err := startOwner(ctx, n.base, cfg)
-		if err == nil {
-			n.mu.Lock()
-			n.own = o
-			n.startPairbook()
-			n.mu.Unlock()
-			return n, nil
-		}
-		n.stopJoins()
+	for waited := false; ; waited = true {
+		n, err := tryOwn(ctx, cfg)
 		if !errors.Is(err, store.ErrDatabaseInUse) {
-			return nil, err
+			return n, err
 		}
-		if !waiting {
+		if !waited {
 			cfg.Log.Info("another copy runs the broker; the agent takes over when it exits", "dir", cfg.Dir)
-			waiting = true
 		}
 		if err := pause(ctx, retry); err != nil {
 			return nil, err
 		}
 	}
+}
+
+// daemonConfig is cfg ready for the agent: a logger, and a data directory
+// the agent can share. An agent that couldn't share its node would hold
+// the directory while no client could reach it, so that is refused before
+// any lock is taken.
+func daemonConfig(cfg Config) (Config, error) {
+	if cfg.Log == nil {
+		cfg.Log = slog.New(slog.DiscardHandler)
+	}
+	if err := ensureDataDir(cfg.Dir); err != nil {
+		return cfg, err
+	}
+	_, err := socketPath(cfg.Dir)
+	return cfg, err
+}
+
+// tryOwn takes the lock once: a running node, or the reason it couldn't.
+func tryOwn(ctx context.Context, cfg Config) (*Node, error) {
+	n := newNode(ctx, cfg)
+	o, err := startOwner(ctx, n.base, cfg)
+	if err != nil {
+		n.stopJoins()
+		return nil, err
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.own = o
+	n.startPairbook()
+	return n, nil
 }

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"text/template"
 )
 
 // The always-on agent as a macOS login item: a per-user LaunchAgent that
@@ -112,7 +113,7 @@ func (e agentEnv) writePlist(dir string) error {
 	if err := os.MkdirAll(logs, 0o755); err != nil {
 		return err
 	}
-	plist, err := agentPlist(e.exe, dir, filepath.Join(logs, "pairtask-desktop.log"))
+	plist, err := agentPlist(agentSpec{Exe: e.exe, Dir: dir, Log: filepath.Join(logs, "pairtask-desktop.log")})
 	if err != nil {
 		return err
 	}
@@ -160,33 +161,52 @@ func (e agentEnv) status(out io.Writer) error {
 	return nil
 }
 
-// agentPlist is the LaunchAgent for exe, owning dir, logging to logPath.
-func agentPlist(exe, dir, logPath string) ([]byte, error) {
-	var b bytes.Buffer
-	b.WriteString(xml.Header)
-	b.WriteString(`<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` + "\n")
-	b.WriteString(`<plist version="1.0">` + "\n<dict>\n")
-	key(&b, "Label", agentLabel)
-	b.WriteString("\t<key>ProgramArguments</key>\n\t<array>\n")
-	for _, a := range []string{exe, "daemon", "--dir", dir} {
-		b.WriteString("\t\t<string>")
-		if err := xml.EscapeText(&b, []byte(a)); err != nil {
-			return nil, err
-		}
-		b.WriteString("</string>\n")
-	}
-	b.WriteString("\t</array>\n")
-	b.WriteString("\t<key>RunAtLoad</key>\n\t<true/>\n")
-	b.WriteString("\t<key>KeepAlive</key>\n\t<dict>\n\t\t<key>SuccessfulExit</key>\n\t\t<false/>\n\t</dict>\n")
-	key(&b, "ProcessType", "Standard")
-	key(&b, "StandardOutPath", logPath)
-	key(&b, "StandardErrorPath", logPath)
-	b.WriteString("</dict>\n</plist>\n")
-	return b.Bytes(), nil
+// agentSpec is what the LaunchAgent runs: this program as the agent for
+// a data directory, logging to a file.
+type agentSpec struct {
+	Exe, Dir, Log string
 }
 
-func key(b *bytes.Buffer, k, v string) {
-	b.WriteString("\t<key>" + k + "</key>\n\t<string>")
-	_ = xml.EscapeText(b, []byte(v))
-	b.WriteString("</string>\n")
+var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{{.Label}}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{.Exe}}</string>
+		<string>daemon</string>
+		<string>--dir</string>
+		<string>{{.Dir}}</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ProcessType</key>
+	<string>Standard</string>
+	<key>StandardOutPath</key>
+	<string>{{.Log}}</string>
+	<key>StandardErrorPath</key>
+	<string>{{.Log}}</string>
+</dict>
+</plist>
+`))
+
+// agentPlist is the LaunchAgent for s, every value XML-escaped.
+func agentPlist(s agentSpec) ([]byte, error) {
+	var b bytes.Buffer
+	err := plistTemplate.Execute(&b, struct{ Label, Exe, Dir, Log string }{
+		xmlText(agentLabel), xmlText(s.Exe), xmlText(s.Dir), xmlText(s.Log)})
+	return b.Bytes(), err
+}
+
+func xmlText(v string) string {
+	var b bytes.Buffer
+	_ = xml.EscapeText(&b, []byte(v))
+	return b.String()
 }
