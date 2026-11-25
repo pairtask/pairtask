@@ -2,6 +2,9 @@ package desktop_test
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,5 +73,16 @@ func TestDaemonStoppedWhileWaiting(t *testing.T) {
 	}
 	if !client.n.Owner() {
 		t.Fatal("the client's copy lost the directory")
+	}
+}
+
+// An agent whose data directory is too long to share refuses at once, so
+// it never holds a directory no client can reach.
+func TestDaemonRefusesAnUnshareableDirectory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, strings.Repeat("d", 120))
+	err := desktop.RunDaemon(context.Background(), desktop.Config{Dir: dir, Name: "agent"}, 20*time.Millisecond)
+	if !errors.Is(err, desktop.ErrSocketPathTooLong) {
+		t.Fatalf("got %v, want ErrSocketPathTooLong", err)
 	}
 }

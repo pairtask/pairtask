@@ -40,6 +40,11 @@ func own(ctx context.Context, cfg Config, retry time.Duration) (*Node, error) {
 	if err := ensureDataDir(cfg.Dir); err != nil {
 		return nil, err
 	}
+	// An agent that can't share its node would hold the directory while no
+	// client could reach it: refuse before taking the lock.
+	if _, err := socketPath(cfg.Dir); err != nil {
+		return nil, err
+	}
 	waiting := false
 	for {
 		n := newNode(ctx, cfg)
