@@ -98,6 +98,14 @@ func (f *agentFixture) launchctl(t *testing.T, args []string) ([]byte, error) {
 	return nil, nil
 }
 
+func checkAgentRunning(t *testing.T, env agentEnv) {
+	t.Helper()
+	var status bytes.Buffer
+	if err := runAgent([]string{"status"}, env, &status); err != nil || strings.TrimSpace(status.String()) != "running" {
+		t.Fatalf("status %q: %v", status.String(), err)
+	}
+}
+
 func TestAgentInstallReplaceStatusAndUninstall(t *testing.T) {
 	home := t.TempDir()
 	f := agentFixture{
@@ -117,10 +125,7 @@ func TestAgentInstallReplaceStatusAndUninstall(t *testing.T) {
 			t.Fatal("install didn't load the agent")
 		}
 	}
-	var status bytes.Buffer
-	if err := runAgent([]string{"status"}, env, &status); err != nil || strings.TrimSpace(status.String()) != "running" {
-		t.Fatalf("status %q: %v", status.String(), err)
-	}
+	checkAgentRunning(t, env)
 	if err := runAgent([]string{"uninstall"}, env, io.Discard); err != nil {
 		t.Fatal(err)
 	}

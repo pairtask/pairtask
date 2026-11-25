@@ -67,17 +67,8 @@ func seedDaemonSpace(t *testing.T, dir, base string) pairbook.SignedSpaceMap {
 	return signed
 }
 
-func TestDaemonPublishesPresenceAfterMCPClientExits(t *testing.T) {
-	dir := sharedProcessDir(t)
-	mux := http.NewServeMux()
-	site := httptest.NewTLSServer(mux)
-	t.Cleanup(site.Close)
-	cert := filepath.Join(t.TempDir(), "root.pem")
-	requireDaemonOK(t, os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: site.Certificate().Raw}), 0600))
-	t.Setenv("SSL_CERT_FILE", cert)
-	m := seedDaemonSpace(t, dir, site.URL)
-	allowRefresh := make(chan struct{})
-	presence := make(chan space.Presence, 1)
+// Delay map refresh until the last client exits, then observe the heartbeat.
+func serveDaemonPresence(mux *http.ServeMux, m pairbook.SignedSpaceMap, allowRefresh <-chan struct{}, presence chan<- space.Presence) {
 	mux.HandleFunc("GET /v1/spaces/"+m.Space+"/map", func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-allowRefresh:
@@ -98,6 +89,20 @@ func TestDaemonPublishesPresenceAfterMCPClientExits(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("{}"))
 	})
+}
+
+func TestDaemonPublishesPresenceAfterMCPClientExits(t *testing.T) {
+	dir := sharedProcessDir(t)
+	mux := http.NewServeMux()
+	site := httptest.NewTLSServer(mux)
+	t.Cleanup(site.Close)
+	cert := filepath.Join(t.TempDir(), "root.pem")
+	requireDaemonOK(t, os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: site.Certificate().Raw}), 0600))
+	t.Setenv("SSL_CERT_FILE", cert)
+	m := seedDaemonSpace(t, dir, site.URL)
+	allowRefresh := make(chan struct{})
+	presence := make(chan space.Presence, 1)
+	serveDaemonPresence(mux, m, allowRefresh, presence)
 	d := startDaemonProcess(t, dir)
 	d.waitOwner(t, dir)
 	client := startMCPProcess(t, dir, "mcp")
