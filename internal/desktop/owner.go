@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pairtask/pairtask/internal/hub"
 	"github.com/pairtask/pairtask/internal/peer/pake"
@@ -64,6 +66,8 @@ type owner struct {
 	mu     sync.Mutex
 	conns  map[net.Conn]struct{} // nil once closing
 	wg     sync.WaitGroup
+	dir    string
+	notify atomic.Bool // the stored notifications setting, followed while running
 }
 
 // startOwner takes the lock, opens the database, runs the broker under
@@ -79,18 +83,71 @@ func startOwner(ctx, base context.Context, cfg Config) (*owner, error) {
 		lock.Close()
 		return nil, err
 	}
-	o := &owner{st: st, lock: lock, log: cfg.Log, conns: map[net.Conn]struct{}{}}
+	o := &owner{st: st, lock: lock, log: cfg.Log, conns: map[net.Conn]struct{}{}, dir: cfg.Dir}
 	if err := o.run(ctx, base, cfg); err != nil {
 		return nil, errors.Join(err, st.Close(), lock.Close())
 	}
 	if err := o.share(cfg.Dir); err != nil {
 		return nil, errors.Join(err, o.stop())
 	}
+	if err := recordOwner(cfg.Dir, cfg); err != nil {
+		o.log.Warn("couldn't record this copy as the node's owner", "error", err)
+	}
+	o.notify.Store(true)
+	o.apply()
+	o.wg.Add(1)
+	go o.followSettings()
 	if cfg.Notify != nil {
 		o.wg.Add(1)
-		go o.watch(cfg.Notify)
+		go o.watch(o.gated(cfg.Notify))
 	}
 	return o, nil
+}
+
+// settingsPoll is how often the owner looks for changed settings.
+const settingsPoll = 2 * time.Second
+
+// followSettings applies the stored settings while the broker runs: the
+// name it pairs under and whether it notifies. Another copy stores them
+// when it starts with new ones.
+func (o *owner) followSettings() {
+	defer o.wg.Done()
+	w := settingsWatch{dir: o.dir}
+	t := time.NewTicker(settingsPoll)
+	defer t.Stop()
+	for {
+		if w.changed() {
+			o.apply()
+		}
+		select {
+		case <-o.ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// apply runs with the stored settings.
+func (o *owner) apply() {
+	s, err := ReadSettings(o.dir)
+	if err != nil {
+		o.log.Warn("the node's settings file isn't usable", "error", err)
+		return
+	}
+	o.notify.Store(s.notifies())
+	if s.Name != "" {
+		o.hub.SetPairingName(s.Name)
+	}
+}
+
+// gated is notify, showing nothing while notifications are off.
+func (o *owner) gated(notify Notifier) Notifier {
+	return func(ctx context.Context, title, text string) error {
+		if !o.notify.Load() {
+			return nil
+		}
+		return notify(ctx, title, text)
+	}
 }
 
 // run builds the hub over the open store and starts it.
@@ -235,6 +292,7 @@ func (o *owner) close() error {
 		o.ln.Close()
 		os.Remove(o.sock)
 	}
+	clearOwner(o.dir)
 	o.mu.Lock()
 	for c := range o.conns {
 		c.Close()

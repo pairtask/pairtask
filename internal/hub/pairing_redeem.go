@@ -104,8 +104,9 @@ type pairingWiring struct {
 	workers   sync.WaitGroup
 	runCtx    context.Context
 	settle    settleState
-	changed   chan struct{} // one pending background announcement, coalescing the rest
-	dirty     atomic.Bool   // pairing state changed since the last pairing_changed
+	changed   chan struct{}          // one pending background announcement, coalescing the rest
+	dirty     atomic.Bool            // pairing state changed since the last pairing_changed
+	name      atomic.Pointer[string] // the name we pair under now; cfg.Name until renamed
 }
 
 func defaultPairingConfig() PairingConfig {
@@ -122,6 +123,24 @@ func (h *Hub) SetPairing(cfg PairingConfig) {
 	}
 	cfg.Dial = h.relayAware(cfg.Dial)
 	h.pair.cfg = cfg
+	h.pair.name.Store(&cfg.Name)
+}
+
+// SetPairingName renames this workspace for what it pairs and announces
+// from now on; an empty name is the default. Safe from any goroutine.
+func (h *Hub) SetPairingName(name string) {
+	if name == "" {
+		name = peer.DefaultPairingName
+	}
+	h.pair.name.Store(&name)
+}
+
+// pairingName is the name this workspace pairs under now.
+func (h *Hub) pairingName() string {
+	if name := h.pair.name.Load(); name != nil {
+		return *name
+	}
+	return h.pair.cfg.Name
 }
 
 // PairingEndpoint is the identity and inviter for an inbound pairing
@@ -250,7 +269,7 @@ func (h *Hub) redeemRequest(msg protocol.Message) (peer.JoinRequest, *routingErr
 	req := peer.JoinRequest{OperationID: msg.MessageID, Destination: msg.PairingDestination, Name: msg.PairingName, Code: []byte(msg.PairingCode),
 		Repair: msg.PairingRepair}
 	if req.Name == "" {
-		req.Name = h.pair.cfg.Name
+		req.Name = h.pairingName()
 	}
 	if msg.MessageID == "" {
 		return req, &routingError{protocol.ErrMalformedFrame, "redeem needs a message_id"}

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,13 @@ type Config struct {
 	// Pairbook is the extension's optional Pairbook setting: the company's
 	// Pairbook, https://HOST. Join links must be for it; "" accepts any.
 	Pairbook string
+	// NotifyGiven is a notifications setting this copy was started with;
+	// nil keeps the stored one. Notify is how to show them either way.
+	NotifyGiven *bool
+	// Role is "agent" for the always-on agent; "" for any other copy.
+	Role string
+	// Version is this build's, recorded for status.
+	Version string
 }
 
 // Node is this copy's way to the broker: the broker itself while it owns
@@ -57,6 +65,10 @@ type Node struct {
 	told syncNotices
 	// joins follows this node's Pairbook enrollments.
 	joins enrollments
+	// problem is a setting this copy was given and couldn't keep.
+	problem error
+	// yielding: a watch for the agent runs.
+	yielding atomic.Bool
 }
 
 // ErrUnsafeDataDir: the data directory isn't a private directory of ours.
@@ -88,14 +100,51 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if err := ensureDataDir(cfg.Dir); err != nil {
 		return nil, err
 	}
+	cfg, problem := settled(cfg)
 	n := newNode(ctx, cfg)
+	n.problem = problem
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if err := n.reach(ctx); err != nil {
+	if err := n.connect(ctx); err != nil {
 		return nil, err
 	}
 	n.startPairbook()
 	return n, nil
+}
+
+// connect reaches the node: through the installed agent when it answers
+// in time, else as reach does; a client that ends up running the node
+// hands it to the agent when the agent asks. Called with mu held.
+func (n *Node) connect(ctx context.Context) error {
+	if n.prefersAgent() {
+		if n.reachAgent(ctx, agentWait) {
+			return nil
+		}
+		n.cfg.Log.Warn("the agent is installed but didn't answer; this copy runs the node until it does", "dir", n.cfg.Dir)
+	}
+	if err := n.reach(ctx); err != nil {
+		return err
+	}
+	if n.own != nil {
+		n.yieldToAgent()
+	}
+	return nil
+}
+
+// settled is cfg with the node's stored settings: the ones this copy was
+// given are stored first, so every copy runs with the same. problem is a
+// given setting that couldn't be kept.
+func settled(cfg Config) (Config, error) {
+	given := Settings{Name: cfg.Name, Pairbook: cfg.Pairbook, Address: cfg.Address, Notify: cfg.NotifyGiven}
+	now, problem, err := storeSettings(cfg.Dir, given)
+	if err != nil {
+		cfg.Log.Warn("the node's settings file isn't usable; using this copy's own", "error", err)
+	}
+	if problem != nil {
+		cfg.Log.Warn("a setting was not kept", "error", problem)
+	}
+	cfg.Name, cfg.Pairbook = now.Name, now.Pairbook
+	return cfg, problem
 }
 
 // newNode is a node for cfg, reaching nothing yet.
@@ -221,7 +270,7 @@ func (n *Node) replace(ctx context.Context, gone *forwarder) error {
 		gone.close()
 	}
 	n.fwd = nil
-	return n.reach(ctx)
+	return n.connect(ctx)
 }
 
 // unavailable is a call that reached no broker, as the broker's own errors

@@ -20,6 +20,9 @@ import (
 type WhoamiResult struct {
 	Identity string `json:"identity"` // this node's key, to compare by phone
 	Name     string `json:"name"`     // the name it pairs under
+	// SettingsProblem is a setting this copy was started with and didn't
+	// keep, and why: tell the person.
+	SettingsProblem string `json:"settings_problem,omitempty"`
 	InboxNotice
 }
 
@@ -44,6 +47,9 @@ type StatusResult struct {
 	Contacts []protocol.PairingContactView `json:"contacts"`
 	// AddressSetting is what the Workspace address setting did at start.
 	AddressSetting []AddressOutcome `json:"address_setting,omitempty"`
+	// SettingsProblem is a setting this copy was started with and didn't
+	// keep, and why: tell the person.
+	SettingsProblem string `json:"settings_problem,omitempty"`
 	InboxNotice
 }
 
@@ -156,7 +162,7 @@ func NewServer(n *Node, version string) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "whoami", Description: whoamiDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, WhoamiResult, error) {
 			snap, err := n.pairing(ctx)
-			return nil, WhoamiResult{Identity: snap.SelfIdentity, Name: snap.SelfName, InboxNotice: n.notice(ctx, snap.Contacts)}, err
+			return nil, WhoamiResult{Identity: snap.SelfIdentity, Name: snap.SelfName, SettingsProblem: n.settingsProblem(), InboxNotice: n.notice(ctx, snap.Contacts)}, err
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "pair_redeem", Description: redeemDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive, OpenWorldHint: &openWorld}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args RedeemArgs) (*mcp.CallToolResult, RedeemResult, error) {
@@ -167,7 +173,7 @@ func NewServer(n *Node, version string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, StatusResult, error) {
 			snap, err := n.pairing(ctx)
 			return nil, StatusResult{Identity: snap.SelfIdentity, Name: snap.SelfName, Joins: snap.Joins, Contacts: snap.Contacts,
-				AddressSetting: n.addresses.get(), InboxNotice: n.notice(ctx, snap.Contacts)}, err
+				AddressSetting: n.addresses.get(), SettingsProblem: n.settingsProblem(), InboxNotice: n.notice(ctx, snap.Contacts)}, err
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "send", Description: sendDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive, OpenWorldHint: &openWorld}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args SendArgs) (*mcp.CallToolResult, SendResult, error) {

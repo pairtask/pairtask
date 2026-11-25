@@ -32,19 +32,33 @@ func RunDaemon(ctx context.Context, cfg Config, retry time.Duration) error {
 	return n.Close()
 }
 
-// own takes the data directory's lock as soon as it is free.
+// own takes the data directory's lock as soon as it is free. While
+// another copy holds it, the agent asks for the node, and a client copy
+// hands it over.
 func own(ctx context.Context, cfg Config, retry time.Duration) (*Node, error) {
 	cfg, err := daemonConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
+	cfg.Role = RoleAgent
+	cfg, problem := settled(cfg)
+	if err := MarkAgentInstalled(cfg.Dir); err != nil {
+		return nil, err
+	}
+	defer clearAgentWaiting(cfg.Dir)
 	for waited := false; ; waited = true {
 		n, err := tryOwn(ctx, cfg)
 		if !errors.Is(err, store.ErrDatabaseInUse) {
+			if n != nil {
+				n.problem = problem
+			}
 			return n, err
 		}
 		if !waited {
-			cfg.Log.Info("another copy runs the broker; the agent takes over when it exits", "dir", cfg.Dir)
+			cfg.Log.Info("another copy runs the broker; the agent asks for it and takes over when it's handed over", "dir", cfg.Dir)
+		}
+		if err := markAgentWaiting(cfg.Dir); err != nil {
+			cfg.Log.Warn("couldn't ask for the node", "error", err)
 		}
 		if err := pause(ctx, retry); err != nil {
 			return nil, err

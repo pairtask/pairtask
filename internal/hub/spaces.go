@@ -226,8 +226,8 @@ func (h *Hub) spaceName(name string) string {
 	if name != "" {
 		return name
 	}
-	if h.pair.cfg.Name != "" {
-		return h.pair.cfg.Name
+	if name := h.pairingName(); name != "" {
+		return name
 	}
 	return peer.DefaultPairingName
 }
