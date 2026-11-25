@@ -17,6 +17,7 @@ import (
 	"runtime/debug"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -31,9 +32,47 @@ func main() {
 	}
 }
 
-// run starts the node in its data directory and serves MCP on stdio until
-// Desktop closes it or a signal arrives.
+// run dispatches the subcommand: daemon (the always-on agent), agent
+// (install it as a login item), or mcp, which is also what no subcommand
+// means, so Claude Desktop's extension keeps working as it is.
 func run(args []string, log *slog.Logger) error {
+	switch first(args) {
+	case "daemon":
+		return runDaemon(args[1:], log)
+	case "agent":
+		return runAgent(args[1:], hostAgentEnv(), os.Stdout)
+	case "mcp":
+		args = args[1:]
+	}
+	return runMCP(args, log)
+}
+
+func first(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
+// daemonRetry is how often a waiting agent tries to take the data directory.
+const daemonRetry = 2 * time.Second
+
+// runDaemon runs the always-on agent until a signal stops it.
+func runDaemon(args []string, log *slog.Logger) error {
+	cfg, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
+	cfg.Log = log
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return desktop.RunDaemon(ctx, cfg, daemonRetry)
+}
+
+// runMCP starts the node in its data directory and serves MCP on stdio
+// until the client closes it or a signal arrives: as the owner, or
+// forwarding to the agent or another copy that owns the directory.
+func runMCP(args []string, log *slog.Logger) error {
 	cfg, err := parseFlags(args)
 	if err != nil {
 		return err
