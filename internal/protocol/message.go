@@ -223,7 +223,7 @@ type Message struct {
 	ReviewsAskedNext    string              `json:"reviews_asked_next,omitempty"`   // reviews_asked_result: the review_before that reads them
 	Workspaces          []WorkspaceView     `json:"workspaces,omitempty"`           // workspaces_result (v13)
 	Group               []string            `json:"group,omitempty"`                // operator_send: explicit recipient set
-	Excluded            []string            `json:"excluded,omitempty"`             // operator accepted: connected agents left out of "*"
+	Excluded            []string            `json:"excluded,omitempty"`             // accepted: connected agents left out of "*"
 	Room                string              `json:"room,omitempty"`                 // v9: a "*" message's room ("" is the Square); room_join/leave; operator_room
 	Mentions            []string            `json:"mentions,omitempty"`             // operator msg to a room or group: the members it addresses (#164); attention, not routing
 	Assignment          *AssignmentView     `json:"assignment,omitempty"`           // operator msg to an agent its tag assigned (#278); set by the broker only

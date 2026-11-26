@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS durable_inbox (
  acknowledged_at TIMESTAMP,
  PRIMARY KEY (message_id, agent_id)
 );
+CREATE TABLE IF NOT EXISTS broadcast_exclusions (message_id TEXT PRIMARY KEY, agents TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS forget_broadcast_exclusions AFTER DELETE ON durable_messages BEGIN
+ DELETE FROM broadcast_exclusions WHERE message_id = OLD.message_id;
+END;
 CREATE INDEX IF NOT EXISTS durable_pending ON durable_inbox(agent_id) WHERE acknowledged_at IS NULL;
 `
 
@@ -47,7 +51,8 @@ func (s *Store) KnownDurableAgent(ctx context.Context, id string) (bool, error) 
 	return count != 0, err
 }
 
-func persistDurable(ctx context.Context, tx *sql.Tx, msg protocol.Message, recipients []protocol.Recipient) error {
+func persistDurable(ctx context.Context, tx *sql.Tx, routed routedMessage) error {
+	msg, recipients := routed.msg, routed.recipients
 	if !msg.Durable {
 		return nil
 	}
@@ -55,12 +60,19 @@ func persistDurable(ctx context.Context, tx *sql.Tx, msg protocol.Message, recip
 	if err != nil {
 		return err
 	}
-	if err := checkDurableCapacity(ctx, tx, durableSize{bytes, recipients, msg.From}); err != nil {
+	excluded := nullList(routed.excluded)
+	size := durableSize{bytes: bytes, recipients: recipients, sender: msg.From, retained: bytes + len(recipients)*1024 + len(excluded.String)}
+	if err := checkDurableCapacity(ctx, tx, size); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO durable_messages VALUES (?, ?, ?)`, msg.MessageID, bytes, bytes+len(recipients)*1024)
+	_, err = tx.ExecContext(ctx, `INSERT INTO durable_messages VALUES (?, ?, ?)`, msg.MessageID, bytes, size.retained)
 	if err != nil {
 		return err
+	}
+	if excluded.Valid {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO broadcast_exclusions VALUES (?,?)", msg.MessageID, excluded.String); err != nil {
+			return err
+		}
 	}
 	for _, r := range recipients {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO durable_inbox (message_id, agent_id, session_id) VALUES (?, ?, ?)`, msg.MessageID, r.AgentID, r.SessionID); err != nil {
@@ -78,6 +90,7 @@ func DurableWireBytes(msg protocol.Message) (int, error) {
 }
 
 type durableSize struct {
+	retained   int
 	bytes      int
 	recipients []protocol.Recipient
 	sender     string
@@ -91,8 +104,8 @@ func checkDurableCapacity(ctx context.Context, tx *sql.Tx, size durableSize) err
 	if count >= MaxRetainedMessages {
 		return inboxFull("retained messages", count, MaxRetainedMessages, "messages")
 	}
-	if bytes+size.bytes+len(size.recipients)*1024 > MaxRetainedBytes {
-		return inboxFull("retained bytes", bytes+size.bytes+len(size.recipients)*1024, MaxRetainedBytes, "bytes")
+	if bytes+size.retained > MaxRetainedBytes {
+		return inboxFull("retained bytes", bytes+size.retained, MaxRetainedBytes, "bytes")
 	}
 	query := `SELECT COUNT(*), COALESCE(SUM(d.wire_bytes),0) FROM durable_inbox i JOIN durable_messages d USING(message_id) WHERE i.acknowledged_at IS NULL`
 	if err := tx.QueryRowContext(ctx, query).Scan(&count, &bytes); err != nil {

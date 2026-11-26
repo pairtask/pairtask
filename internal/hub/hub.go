@@ -427,7 +427,8 @@ func (c *Client) identity() protocol.Recipient {
 	return protocol.Recipient{AgentID: c.ID, SessionID: c.SessionID}
 }
 
-func (h *Hub) persistRoute(ctx context.Context, in Inbound, recipients []protocol.Recipient) (protocol.Message, *routingError) {
+func (h *Hub) persistRoute(ctx context.Context, in Inbound, recipients []protocol.Recipient) (protocol.Message, store.BroadcastAudience, *routingError) {
+	audience := store.BroadcastAudience{Recipients: recipients}
 	h.seq++
 	ts := time.Now().UTC()
 	msg := in.Msg
@@ -442,12 +443,17 @@ func (h *Hub) persistRoute(ctx context.Context, in Inbound, recipients []protoco
 	sized.Replayed = out.Durable
 	encoded, err := json.Marshal(sized)
 	if err != nil || len(encoded)+1 > protocol.MaxFrameBytes {
-		return out, &routingError{protocol.ErrMalformedFrame, "routed message exceeds the 1 MiB frame limit"}
+		return out, audience, &routingError{protocol.ErrMalformedFrame, "routed message exceeds the 1 MiB frame limit"}
 	}
-	if err := h.store.PersistMessage(ctx, out, in.From.SessionID, recipients); err != nil {
-		return out, h.refusedSend(ctx, in, recipients, err)
+	if isPublic(msg.To, in.From.ProtocolVersion) {
+		audience, err = h.store.PersistPublicBroadcast(ctx, out, recipients)
+	} else {
+		err = h.store.PersistMessage(ctx, out, in.From.SessionID, recipients)
 	}
-	return out, nil
+	if err != nil {
+		return out, audience, h.refusedSend(ctx, in, recipients, err)
+	}
+	return out, audience, nil
 }
 
 // refusedSend maps a persistence failure; when an inbox bound refused a

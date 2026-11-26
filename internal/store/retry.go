@@ -11,6 +11,7 @@ import (
 )
 
 type RetrySnapshot struct {
+	Excluded   []string
 	Message    protocol.Message
 	Recipients []protocol.Recipient
 	Receipts   []protocol.ReceiptState
@@ -33,6 +34,16 @@ func (s *Store) LookupRetry(ctx context.Context, request protocol.Message) (*Ret
 	out := &RetrySnapshot{Message: msg}
 	if err := s.retryReceipts(ctx, out); err != nil {
 		return nil, err
+	}
+	if msg.To == protocol.Broadcast {
+		var encoded string
+		err := s.db.QueryRowContext(ctx, "SELECT agents FROM broadcast_exclusions WHERE message_id=?", msg.MessageID).Scan(&encoded)
+		if err == nil {
+			err = json.Unmarshal([]byte(encoded), &out.Excluded)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
 	}
 	return out, nil
 }

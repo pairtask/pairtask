@@ -21,13 +21,14 @@ func (h *Hub) sendAsAgent(ctx context.Context, clients map[string]*Client, in In
 	if err != nil {
 		return err
 	}
-	out, err := h.persistRoute(ctx, in, recipients)
+	out, audience, err := h.persistRoute(ctx, in, recipients)
 	if err != nil {
 		return err
 	}
+	recipients = audience.Recipients
 	h.noteRouted(ctx, out, recipients)
 	if out.AckRequested {
-		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: h.advised(ctx, clients, out, publicRecipients(recipients)), Durable: out.Durable})
+		h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: out.MessageID, Stage: protocol.StageAccepted, Seq: out.Seq, Recipients: h.advised(ctx, clients, out, publicRecipients(recipients)), Excluded: audience.Excluded, Durable: out.Durable})
 	}
 	h.deliver(clients, in.From, out, recipients)
 	return nil

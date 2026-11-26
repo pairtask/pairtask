@@ -278,9 +278,12 @@ func nonNil(values []string) []string {
 // RecipientCapacity reports whether one more durable message of the given wire
 // size fits the recipient's own pending limits.
 func (s *Store) RecipientCapacity(ctx context.Context, agentID string, wireBytes int) (bool, error) {
+	return recipientCapacity(ctx, s.db, agentID, wireBytes)
+}
+func recipientCapacity(ctx context.Context, q rowQuerier, agentID string, wireBytes int) (bool, error) {
 	var count, bytes int
 	query := `SELECT COUNT(*), COALESCE(SUM(d.wire_bytes),0) FROM durable_inbox i JOIN durable_messages d USING(message_id) WHERE i.agent_id = ? AND i.acknowledged_at IS NULL`
-	if err := s.db.QueryRowContext(ctx, query, agentID).Scan(&count, &bytes); err != nil {
+	if err := q.QueryRowContext(ctx, query, agentID).Scan(&count, &bytes); err != nil {
 		return false, err
 	}
 	return count < MaxPendingMessages && bytes+wireBytes <= MaxPendingBytes, nil

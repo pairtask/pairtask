@@ -89,7 +89,8 @@ pre-existing/non-durable history. The filesystem can still run out of space;
 storage errors are reported without claiming acceptance or acknowledgment.
 
 There is **no automatic expiry or eviction**, including for acknowledged history.
-Reaching a bound rejects new durable sends atomically with `inbox_full`, whose
+For public broadcasts, a full agent inbox excludes that agent from the accepted audience. The accepted receipt names excluded agents.
+Otherwise, reaching a bound rejects new durable sends atomically with `inbox_full`, whose
 detail names the bound (`<bound>: <count>/<limit> <unit>`); a refused send to
 the operator also raises `send_refused` on the operator session. An
 acknowledgment frees pending capacity; it does not free retained-history
