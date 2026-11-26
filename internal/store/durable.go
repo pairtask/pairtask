@@ -69,11 +69,13 @@ func persistDurable(ctx context.Context, tx *sql.Tx, routed routedMessage) error
 	if err != nil {
 		return err
 	}
-	if excluded.Valid {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO broadcast_exclusions VALUES (?,?)", msg.MessageID, excluded.String); err != nil {
-			return err
-		}
+	if err := recordBroadcastExclusions(ctx, tx, msg.MessageID, excluded); err != nil {
+		return err
 	}
+	return enrollDurableRecipients(ctx, tx, msg, recipients)
+}
+
+func enrollDurableRecipients(ctx context.Context, tx *sql.Tx, msg protocol.Message, recipients []protocol.Recipient) error {
 	for _, r := range recipients {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO durable_inbox (message_id, agent_id, session_id) VALUES (?, ?, ?)`, msg.MessageID, r.AgentID, r.SessionID); err != nil {
 			return err

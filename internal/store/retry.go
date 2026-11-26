@@ -35,15 +35,8 @@ func (s *Store) LookupRetry(ctx context.Context, request protocol.Message) (*Ret
 	if err := s.retryReceipts(ctx, out); err != nil {
 		return nil, err
 	}
-	if msg.To == protocol.Broadcast {
-		var encoded string
-		err := s.db.QueryRowContext(ctx, "SELECT agents FROM broadcast_exclusions WHERE message_id=?", msg.MessageID).Scan(&encoded)
-		if err == nil {
-			err = json.Unmarshal([]byte(encoded), &out.Excluded)
-		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
+	if err := s.loadBroadcastExclusions(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

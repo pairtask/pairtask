@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 
 	"github.com/pairtask/pairtask/internal/protocol"
 )
@@ -53,4 +55,26 @@ func publicAudience(ctx context.Context, tx *sql.Tx, msg protocol.Message, candi
 		audience.Recipients = append(audience.Recipients, r)
 	}
 	return audience, nil
+}
+
+func recordBroadcastExclusions(ctx context.Context, tx *sql.Tx, id string, excluded sql.NullString) error {
+	if !excluded.Valid {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "INSERT INTO broadcast_exclusions VALUES (?,?)", id, excluded.String)
+	return err
+}
+func (s *Store) loadBroadcastExclusions(ctx context.Context, out *RetrySnapshot) error {
+	if out.Message.To != protocol.Broadcast {
+		return nil
+	}
+	var encoded string
+	err := s.db.QueryRowContext(ctx, "SELECT agents FROM broadcast_exclusions WHERE message_id=?", out.Message.MessageID).Scan(&encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(encoded), &out.Excluded)
 }
