@@ -296,7 +296,7 @@ func (h *Hub) applyPairing(ctx context.Context, op pairingOp, args pairingArgs) 
 	if code != "" {
 		snapshot.Invitation.Code = code
 	}
-	snapshot.IdentityError, snapshot.SelfName, snapshot.NamesAvailable = problem, h.pair.cfg.Name, true
+	snapshot.IdentityError, snapshot.SelfName, snapshot.NamesAvailable = problem, h.pairingName(), true
 	snapshot.PauseAvailable, snapshot.AcksAvailable = true, true
 	snapshot.UnpairAvailable, snapshot.RepairAvailable = true, true
 	if h.identity != nil {

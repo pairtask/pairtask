@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/pairtask/pairtask/internal/desktop"
 )
 
 // The always-on agent as a macOS login item: a per-user LaunchAgent that
@@ -157,14 +160,35 @@ func (e agentEnv) writePlist(dir string) error {
 }
 
 func (e agentEnv) uninstall(out io.Writer) error {
+	previous, _ := os.ReadFile(e.plistPath())
 	if err := e.stop(); err != nil {
 		return err // the plist stays, so the state remains the one status reports
 	}
 	if err := os.Remove(e.plistPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if dir := installedDir(previous); dir != "" {
+		if err := desktop.UnmarkAgentInstalled(dir); err != nil {
+			return fmt.Errorf("agent: removed, but the data folder still says it's installed: %w", err)
+		}
+	}
 	fmt.Fprintln(out, "Removed: pairtask no longer runs in the background; Claude Desktop's extension runs it while open.")
 	return nil
+}
+
+// installedDir is the data directory an installed agent's plist serves.
+func installedDir(plist []byte) string {
+	const key = "<string>--dir</string>"
+	i := bytes.Index(plist, []byte(key))
+	if i < 0 {
+		return ""
+	}
+	rest := plist[i+len(key):]
+	open, end := bytes.Index(rest, []byte("<string>")), bytes.Index(rest, []byte("</string>"))
+	if open < 0 || end < open {
+		return ""
+	}
+	return html.UnescapeString(strings.TrimSpace(string(rest[open+len("<string>") : end])))
 }
 
 // stop unloads the agent. Not loaded already is fine; still loaded after a
@@ -181,20 +205,23 @@ func (e agentEnv) stop() error {
 }
 
 func (e agentEnv) status(out io.Writer) error {
+	fmt.Fprintln(out, e.state())
+	return nil
+}
+
+// state is the login item's state, in a line.
+func (e agentEnv) state() string {
 	if _, err := os.Stat(e.plistPath()); errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintln(out, "not installed")
-		return nil
+		return "not installed"
 	}
 	b, err := e.launchctl("print", e.domain()+"/"+agentLabel)
 	switch {
 	case err != nil:
-		fmt.Fprintln(out, "installed, not loaded: run `pairtask-desktop agent install` again")
+		return "installed, not loaded: run `pairtask-desktop agent install` again"
 	case bytes.Contains(b, []byte("state = running")):
-		fmt.Fprintln(out, "running")
-	default:
-		fmt.Fprintln(out, "installed, not running")
+		return "running"
 	}
-	return nil
+	return "installed, not running"
 }
 
 // agentSpec is what the LaunchAgent runs: this program as the agent for

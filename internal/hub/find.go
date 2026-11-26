@@ -138,7 +138,7 @@ func (h *Hub) discoverableInvitation() *protocol.DiscoveryInvitation {
 	if !ok || !announceable(status) {
 		return nil
 	}
-	return &protocol.DiscoveryInvitation{ID: status.ID, Name: h.pair.cfg.Name, ExpiresAt: status.ExpiresAt}
+	return &protocol.DiscoveryInvitation{ID: status.ID, Name: h.pairingName(), ExpiresAt: status.ExpiresAt}
 }
 
 // announceable: a discoverable invitation still open for a code.
@@ -153,7 +153,7 @@ func (h *Hub) discoverableRefusal(msg protocol.Message) *routingError {
 	if !msg.PairingDiscoverable {
 		return nil
 	}
-	if rerr := announceNameRefusal(h.pair.cfg.Name); rerr != nil {
+	if rerr := announceNameRefusal(h.pairingName()); rerr != nil {
 		return rerr
 	}
 	if !h.find.helperLive(h.contactNow()) {
@@ -180,7 +180,7 @@ func (h *Hub) invitationView(view *protocol.InvitationView, discoverable bool) {
 	if !discoverable {
 		return
 	}
-	view.Discoverable, view.PublicName = true, h.pair.cfg.Name
+	view.Discoverable, view.PublicName = true, h.pairingName()
 	if !view.Consumed && !view.Expired {
 		view.AnnounceState = h.find.announceState(view.ID, h.contactNow())
 	}

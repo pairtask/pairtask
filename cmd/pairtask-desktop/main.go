@@ -32,7 +32,8 @@ func main() {
 	}
 }
 
-// run dispatches the subcommand: daemon (the always-on agent), agent
+// run dispatches the subcommand: daemon (the always-on agent), status
+// (who runs the node, and its settings), agent
 // (install it as a login item), or mcp, which is also what no subcommand
 // means, so Claude Desktop's extension keeps working as it is.
 func run(args []string, log *slog.Logger) error {
@@ -41,6 +42,8 @@ func run(args []string, log *slog.Logger) error {
 		return runDaemon(args[1:], log)
 	case "agent":
 		return runAgent(args[1:], hostAgentEnv(), os.Stdout)
+	case "status":
+		return runStatus(args[1:], hostAgentEnv(), os.Stdout)
 	case "mcp":
 		args = args[1:]
 	}
@@ -147,15 +150,21 @@ func parseFlags(args []string) (desktop.Config, error) {
 	var cfg desktop.Config
 	fs.StringVar(&cfg.Dir, "dir", "", "private data directory (default: the user config directory's pairtask-desktop)")
 	fs.StringVar(&cfg.Name, "name", "", "the name this node pairs under")
-	notify := fs.Bool("notify", true, "show a system notification when a paired workspace sends a message")
+	notify := fs.Bool("notify", true, "show a system notification when a paired workspace sends a message (kept for the node)")
 	fs.StringVar(&cfg.Address, "address", "", "where paired workspaces are now: HOST:PORT, or NAME=HOST:PORT, comma-separated")
 	fs.StringVar(&cfg.Pairbook, "pairbook", "", "the company's Pairbook, https://HOST; empty for none")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}
 	if *notify {
-		cfg.Notify = desktop.SystemNotifier()
+		cfg.Notify = desktop.SystemNotifier() // shown while the stored setting is on
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "notify" {
+			cfg.NotifyGiven = notify // kept for every copy of the node
+		}
+	})
+	cfg.Version = version()
 	if fs.NArg() > 0 {
 		return cfg, fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}

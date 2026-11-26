@@ -32,24 +32,49 @@ func RunDaemon(ctx context.Context, cfg Config, retry time.Duration) error {
 	return n.Close()
 }
 
-// own takes the data directory's lock as soon as it is free.
+// own takes the data directory's lock as soon as it is free. While
+// another copy holds it, the agent asks for the node, and a client copy
+// hands it over.
 func own(ctx context.Context, cfg Config, retry time.Duration) (*Node, error) {
 	cfg, err := daemonConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	for waited := false; ; waited = true {
+	cfg.Role = RoleAgent
+	cfg, problem := settled(cfg)
+	if err := MarkAgentInstalled(cfg.Dir); err != nil {
+		return nil, err
+	}
+	files := nodeFiles{cfg.Dir}
+	defer files.clearWaiting()
+	for asked := false; ; asked = true {
 		n, err := tryOwn(ctx, cfg)
 		if !errors.Is(err, store.ErrDatabaseInUse) {
-			return n, err
+			return withProblem(n, problem), err
 		}
-		if !waited {
-			cfg.Log.Info("another copy runs the broker; the agent takes over when it exits", "dir", cfg.Dir)
-		}
+		askForNode(cfg, files, asked)
 		if err := pause(ctx, retry); err != nil {
 			return nil, err
 		}
 	}
+}
+
+// askForNode refreshes the agent's request for the node another copy runs.
+func askForNode(cfg Config, files nodeFiles, asked bool) {
+	if !asked {
+		cfg.Log.Info("another copy runs the broker; the agent asks for it and takes over when it's handed over", "dir", cfg.Dir)
+	}
+	if err := files.markWaiting(); err != nil {
+		cfg.Log.Warn("couldn't ask for the node", "error", err)
+	}
+}
+
+// withProblem is n, noting a setting it couldn't keep.
+func withProblem(n *Node, problem error) *Node {
+	if n != nil {
+		n.problem = problem
+	}
+	return n
 }
 
 // daemonConfig is cfg ready for the agent: a logger, and a data directory
