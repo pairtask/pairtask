@@ -193,7 +193,7 @@ func (d jsonDoc) layoutOf(top object) layout {
 
 // splice is d with [from, to) replaced by text.
 func (d jsonDoc) splice(from, to offset, text string) jsonDoc {
-	out := make(jsonDoc, 0, len(d)+len(text))
+	var out jsonDoc
 	out = append(out, d[:from]...)
 	out = append(out, text...)
 	return append(out, d[to:]...)
@@ -201,13 +201,13 @@ func (d jsonDoc) splice(from, to offset, text string) jsonDoc {
 
 // json is the entry's value, laid out at indent, one step deeper.
 func (e serverEntry) json(l layout, indent string) string {
-	cmd, _ := json.Marshal(e.Command)
+	e.Args = []string{"mcp"}
 	if !l.pretty {
-		return `{"command":` + string(cmd) + `,"args":["mcp"]}`
+		out, _ := json.Marshal(e)
+		return string(out)
 	}
-	in := indent + l.unit
-	return "{\n" + in + `"command": ` + string(cmd) + ",\n" +
-		in + `"args": [` + "\n" + in + l.unit + `"mcp"` + "\n" + in + "]\n" + indent + "}"
+	out, _ := json.MarshalIndent(e, indent, l.unit)
+	return string(out)
 }
 
 // text is the member as written in layout l.
