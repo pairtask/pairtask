@@ -33,6 +33,28 @@ type SpaceMembersResult struct {
 	Members []protocol.SpaceMember `json:"members"`
 }
 
+// PairbookSpacesResult is pairbook_spaces's answer: every Pairbook space
+// this machine belongs to, as it keeps them, so it holds across restarts.
+type PairbookSpacesResult struct {
+	Spaces []protocol.SpacePin `json:"spaces"`
+}
+
+const pairbookSpacesDescription = "List the Pairbook spaces this machine belongs to, company spaces and invite-link spaces alike: each one's ID, its Pairbook address and when it joined. " +
+	"Pass a space's ID to pairbook_members to see who is in it."
+
+// pairbookSpaces is the spaces this node keeps.
+func (n *Node) pairbookSpaces(ctx context.Context) (PairbookSpacesResult, error) {
+	out, err := n.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpList})
+	if err != nil {
+		return PairbookSpacesResult{Spaces: []protocol.SpacePin{}}, err
+	}
+	pins := out.Pins
+	if pins == nil {
+		pins = []protocol.SpacePin{}
+	}
+	return PairbookSpacesResult{Spaces: pins}, nil
+}
+
 const (
 	spaceJoinDescription = "Join a Pairbook space with the invite link its owner shared (https://HOST/v0/spaces/ID#token=...&owner=...); for a company Pairbook's join link (https://HOST/join#space=...) use pairbook_join instead. The link's owner fingerprint is pinned here and never sent; " +
 		"the request waits until the owner approves it. Joining shares nothing and creates no contact."
