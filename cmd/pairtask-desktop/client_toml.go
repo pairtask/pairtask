@@ -95,20 +95,30 @@ func keyPart(s string) (string, string, error) {
 }
 
 func quotedPart(s string, quote byte) (string, string, error) {
+	end := closingQuote(s, quote)
+	if end < 0 {
+		return "", "", errTomlKey
+	}
+	part := s[1:end]
+	if quote == '"' {
+		part = tomlUnquoter.Replace(part)
+	}
+	return part, s[end+1:], nil
+}
+
+// closingQuote is the index of the quote that ends the string opening s,
+// or -1; basic strings may escape a quote with a backslash.
+func closingQuote(s string, quote byte) int {
+	escapes := quote == '"'
 	for i := 1; i < len(s); i++ {
-		if s[i] == '\\' && quote == '"' {
+		switch {
+		case escapes && s[i] == '\\':
 			i++
-			continue
-		}
-		if s[i] == quote {
-			part := s[1:i]
-			if quote == '"' {
-				part = tomlUnquoter.Replace(part)
-			}
-			return part, s[i+1:], nil
+		case s[i] == quote:
+			return i
 		}
 	}
-	return "", "", errTomlKey
+	return -1
 }
 
 // ours: a table name that belongs to pairtask's server.

@@ -146,12 +146,17 @@ func describe(s clientStatus) string {
 func (c client) lastSeen(seen map[string]time.Time) *time.Time {
 	var latest *time.Time
 	for name, at := range seen {
-		if c.named(name) && (latest == nil || at.After(*latest)) {
+		if c.named(name) && later(at, latest) {
 			at := at
 			latest = &at
 		}
 	}
 	return latest
+}
+
+// later: at is after the latest so far, or the first.
+func later(at time.Time, latest *time.Time) bool {
+	return latest == nil || at.After(*latest)
 }
 
 func (c client) named(name string) bool {
@@ -192,7 +197,7 @@ func configured(c client, data []byte) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	servers, ok, err := doc.servers(top, c.JSONKey)
+	servers, ok, err := doc.servers(top, jsonKey(c.JSONKey))
 	if err != nil || !ok {
 		return "", false, err
 	}
@@ -214,13 +219,11 @@ func orEmpty(data []byte) []byte {
 
 // runConnect adds (or with remove, takes out) pairtask in one client.
 func runConnect(args []string, env clientEnv, out io.Writer, remove bool) error {
-	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
-	dry := fs.Bool("dry-run", false, "print the new config instead of writing it")
-	ids, flags := splitArgs(args)
-	if err := fs.Parse(flags); err != nil || len(ids) != 1 {
-		return errors.New(clientsUsage)
+	id, dry, err := connectArgs(args)
+	if err != nil {
+		return err
 	}
-	c, err := env.client(ids[0])
+	c, err := env.client(id)
 	if err != nil {
 		return err
 	}
@@ -229,19 +232,37 @@ func runConnect(args []string, env clientEnv, out io.Writer, remove bool) error 
 		return err
 	}
 	defer unlock()
-	edit, err := env.prepare(c, remove)
-	if err != nil || *dry {
+	if dry {
+		edit, err := env.prepare(c, remove)
 		return dryRun(edit, err, out)
 	}
-	if err := edit.apply(out); !errors.Is(err, errChanged) {
-		return err
+	return env.change(c, remove, out)
+}
+
+// connectArgs is the client named and whether only to print the result.
+func connectArgs(args []string) (string, bool, error) {
+	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
+	dry := fs.Bool("dry-run", false, "print the new config instead of writing it")
+	ids, flags := splitArgs(args)
+	if err := fs.Parse(flags); err != nil || len(ids) != 1 {
+		return "", false, errors.New(clientsUsage)
 	}
-	// Changed by someone else between reading and writing: once more,
-	// from what is there now.
-	if edit, err = env.prepare(c, remove); err != nil {
-		return err
+	return ids[0], *dry, nil
+}
+
+// change edits the client's config; if something else changed it between
+// reading and writing, once more from what is there now.
+func (e clientEnv) change(c client, remove bool, out io.Writer) error {
+	for attempt := 0; ; attempt++ {
+		edit, err := e.prepare(c, remove)
+		if err != nil {
+			return err
+		}
+		err = edit.apply(out)
+		if !errors.Is(err, errChanged) || attempt > 0 {
+			return err
+		}
 	}
-	return edit.apply(out)
 }
 
 // prepare reads the client's config and works out the edit.
@@ -317,14 +338,14 @@ func (e clientEnv) edited(c client, data []byte, remove bool) ([]byte, error) {
 	var after jsonDoc
 	var err error
 	if remove {
-		after, err = before.disconnected(c.JSONKey)
+		after, err = before.disconnected(jsonKey(c.JSONKey))
 	} else {
-		after, err = before.connected(c.JSONKey, entry)
+		after, err = before.connected(jsonKey(c.JSONKey), entry)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := sameExcept(before, after, c.JSONKey); err != nil {
+	if err := sameExcept(before, after, jsonKey(c.JSONKey)); err != nil {
 		return nil, err
 	}
 	if data == nil {

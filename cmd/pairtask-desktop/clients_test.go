@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -113,15 +114,20 @@ func runsPairtask(command string, args []string) bool {
 	return command == exePath && strings.Join(args, " ") == "mcp"
 }
 
-func TestConnectRefusesAMalformedConfig(t *testing.T) {
-	env := testEnv(t)
-	path := filepath.Join(env.home, ".claude.json")
-	writeFile(t, path, `{"mcpServers": {`)
-	if err := runConnect([]string{"claude-code"}, env, &bytes.Buffer{}, false); err == nil {
-		t.Fatal("a malformed config was accepted")
-	}
-	if got := readFile(t, path); got != `{"mcpServers": {` {
-		t.Fatalf("a malformed config was changed to %q", got)
+func TestConnectRefusesAConfigItCantRead(t *testing.T) {
+	for client, c := range map[string]struct{ file, text string }{
+		"claude-code": {".claude.json", `{"mcpServers": {`},
+		"codex":       {filepath.Join(".codex", "config.toml"), "model = [\n"},
+	} {
+		env := testEnv(t)
+		path := filepath.Join(env.home, c.file)
+		writeFile(t, path, c.text)
+		if err := runConnect([]string{client}, env, &bytes.Buffer{}, false); err == nil {
+			t.Errorf("%s: an unreadable config was edited", client)
+		}
+		if got := readFile(t, path); got != c.text {
+			t.Errorf("%s: an unreadable config was changed to %q", client, got)
+		}
 	}
 }
 
@@ -152,6 +158,12 @@ func TestConnectEditsOnlyPairtaskTablesInCodex(t *testing.T) {
 	if got := readFile(t, path); got != codexSample+"\n" {
 		t.Fatalf("config after disconnect:\n%q\nwant:\n%q", got, codexSample+"\n")
 	}
+}
+
+// replacedOnce: one pairtask table, this one, and the other server kept.
+func replacedOnce(config string) bool {
+	tables := strings.Count(config, "[mcp_servers")
+	return tables == 2 && !strings.Contains(config, `"pairtask"]`) && strings.Contains(config, exePath)
 }
 
 func TestConnectRefusesInlineCodexServers(t *testing.T) {
@@ -257,20 +269,8 @@ func TestConnectRecognisesAQuotedCodexTable(t *testing.T) {
 	writeFile(t, path, "[mcp_servers.\"pairtask\"]\ncommand = \"/old\"\n\n[mcp_servers.docs]\ncommand = \"docs\"\n")
 	connect(t, env, "codex", false)
 	got := readFile(t, path)
-	if strings.Count(got, "[mcp_servers") != 2 || strings.Contains(got, `"pairtask"]`) || !strings.Contains(got, exePath) {
+	if !replacedOnce(got) {
 		t.Fatalf("a quoted table wasn't replaced:\n%s", got)
-	}
-}
-
-func TestConnectRefusesInvalidCodexTOML(t *testing.T) {
-	env := testEnv(t)
-	path := filepath.Join(env.home, ".codex", "config.toml")
-	writeFile(t, path, "model = [\n")
-	if err := runConnect([]string{"codex"}, env, &bytes.Buffer{}, false); err == nil {
-		t.Fatal("invalid TOML was edited")
-	}
-	if got := readFile(t, path); got != "model = [\n" {
-		t.Fatalf("invalid TOML was changed to %q", got)
 	}
 }
 
@@ -291,7 +291,7 @@ func TestClientsSaysWhenEachClientLastStarted(t *testing.T) {
 			got[s.ID] = s.LastSeen.Format("15:04")
 		}
 	}
-	if got["claude-code"] != "10:00" || got["codex"] != "11:00" || len(got) != 2 {
-		t.Fatalf("last seen %v", got)
+	if want := map[string]string{"claude-code": "10:00", "codex": "11:00"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("last seen %v, want %v", got, want)
 	}
 }
