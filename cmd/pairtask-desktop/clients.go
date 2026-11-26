@@ -130,13 +130,10 @@ func describe(s clientStatus) string {
 
 // status reads one client's config.
 func (e clientEnv) status(c client) clientStatus {
-	s := clientStatus{ID: c.ID, Label: c.Label, Config: c.Config, Installed: exists(c.Home) || exists(c.Config)}
-	data, err := os.ReadFile(c.Config)
-	if errors.Is(err, fs.ErrNotExist) {
-		return s
-	}
-	if err != nil {
-		s.Error = err.Error()
+	s := clientStatus{ID: c.ID, Label: c.Label, Config: c.Config, Installed: c.installed()}
+	data, err := c.read()
+	if data == nil || err != nil {
+		s.Error = errText(err)
 		return s
 	}
 	command, found, err := configured(c, data)
@@ -150,8 +147,9 @@ func (e clientEnv) status(c client) clientStatus {
 // configured is the command the client's pairtask entry runs, if any.
 func configured(c client, data []byte) (string, bool, error) {
 	if c.JSONKey == "" {
-		command, found := tomlCommand(string(data), serverName)
-		return command, found, checkInline(string(data))
+		cfg := codexConfig{string(data)}
+		command, found := cfg.command()
+		return command, found, cfg.check()
 	}
 	top, err := parseObject(orEmpty(data))
 	if err != nil {
@@ -193,7 +191,7 @@ func runConnect(args []string, env clientEnv, out io.Writer, remove bool) error 
 	if err != nil {
 		return err
 	}
-	before, err := readConfig(c.Config)
+	before, err := c.read()
 	if err != nil {
 		return err
 	}
@@ -205,7 +203,7 @@ func runConnect(args []string, env clientEnv, out io.Writer, remove bool) error 
 		_, err := out.Write(after)
 		return err
 	}
-	return applyConfig(c, before, after, remove, out)
+	return configEdit{client: c, before: before, after: after, remove: remove}.apply(out)
 }
 
 // splitArgs separates the client from the flags, in any order.
@@ -220,13 +218,30 @@ func splitArgs(args []string) (ids, flags []string) {
 	return ids, flags
 }
 
-// readConfig is the client's config, empty when it has none yet.
-func readConfig(path string) ([]byte, error) {
-	data, err := os.ReadFile(path)
+// read is the client's config, nil when it has none yet.
+func (c client) read() ([]byte, error) {
+	data, err := os.ReadFile(c.Config)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	return data, err
+}
+
+// installed: the client's folder or config is there.
+func (c client) installed() bool {
+	for _, path := range []string{c.Home, c.Config} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // edited is the config with pairtask's entry set, or removed.
@@ -247,45 +262,55 @@ func (e clientEnv) edited(c client, data []byte, remove bool) ([]byte, error) {
 }
 
 func (e clientEnv) editedTOML(data string, remove bool) ([]byte, error) {
+	cfg := codexConfig{data}
+	var err error
 	if remove {
-		out, err := tomlWithout(data, serverName)
-		return []byte(out), err
+		cfg, err = cfg.without()
+	} else {
+		cfg, err = cfg.with(serverEntry{Command: e.exe})
 	}
-	out, err := tomlWith(data, serverName, tomlBlock(serverName, e.exe))
-	return []byte(out), err
+	return []byte(cfg.text), err
 }
 
-// applyConfig writes the new config, keeping the old one as .bak, and
-// says what it did.
-func applyConfig(c client, before, after []byte, remove bool, out io.Writer) error {
-	verb := map[bool]string{false: "Connected", true: "Disconnected"}[remove]
-	if bytes.Equal(before, after) {
+// configEdit is one change to a client's config.
+type configEdit struct {
+	client        client
+	before, after []byte
+	remove        bool
+}
+
+// apply writes the new config, keeping the old one as .bak, and says what
+// it did.
+func (e configEdit) apply(out io.Writer) error {
+	c := e.client
+	verb := map[bool]string{false: "Connected", true: "Disconnected"}[e.remove]
+	if bytes.Equal(e.before, e.after) {
 		fmt.Fprintf(out, "%s: already %s.\n", c.Label, strings.ToLower(verb))
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(c.Config), 0o700); err != nil {
 		return err
 	}
-	if before != nil {
-		if err := os.WriteFile(c.Config+".bak", before, 0o600); err != nil {
+	if e.before != nil {
+		if err := os.WriteFile(c.Config+".bak", e.before, 0o600); err != nil {
 			return fmt.Errorf("keeping the old config: %w", err)
 		}
 	}
-	if err := writeAtomic(c.Config, after); err != nil {
+	if err := c.write(e.after); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "%s %s (%s). Restart %s to use it.\n", verb, c.Label, c.Config, c.Label)
 	return nil
 }
 
-// writeAtomic replaces path with data through a temporary file beside it,
-// keeping the old file's permissions.
-func writeAtomic(path string, data []byte) error {
+// write replaces the config through a temporary file beside it, keeping
+// the old file's permissions.
+func (c client) write(data []byte) error {
 	mode := os.FileMode(0o600)
-	if info, err := os.Stat(path); err == nil {
+	if info, err := os.Stat(c.Config); err == nil {
 		mode = info.Mode().Perm()
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	tmp, err := os.CreateTemp(filepath.Dir(c.Config), filepath.Base(c.Config)+".*")
 	if err != nil {
 		return err
 	}
@@ -301,10 +326,5 @@ func writeAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return os.Rename(tmp.Name(), c.Config)
 }

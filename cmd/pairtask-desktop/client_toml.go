@@ -10,99 +10,127 @@ import (
 // edits only its own table (and any [mcp_servers.pairtask.*] subtable) as
 // lines; every other line stays exactly as it was.
 
+// codexConfig is the text of a Codex config.
+type codexConfig struct{ text string }
+
+// tomlLine is one line of it.
+type tomlLine string
+
 // tableHeader matches a TOML table header line, capturing its name.
 var tableHeader = regexp.MustCompile(`^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$`)
+
+// inlineServers matches servers set outside table headers.
+var inlineServers = regexp.MustCompile(`(?m)^\s*mcp_servers\s*[.=]`)
+
+// commandLine matches a `command = "..."` line.
+var commandLine = regexp.MustCompile(`^\s*command\s*=\s*"((?:[^"\\]|\\.)*)"`)
 
 // errInlineServers: the servers are written in a form this can't edit
 // line by line.
 var errInlineServers = errors.New("the Codex config defines mcp_servers inline; add the pairtask server by hand")
 
-// tomlBlock is the [mcp_servers.<name>] table running exe in MCP mode.
-func tomlBlock(name, exe string) string {
-	return "[mcp_servers." + name + "]\n" +
-		"command = " + tomlString(exe) + "\n" +
-		"args = [\"mcp\"]\n"
+// ourTable is pairtask's table name.
+const ourTable = "mcp_servers." + serverName
+
+// table is the table a header line opens, if it is one.
+func (l tomlLine) table() (string, bool) {
+	m := tableHeader.FindStringSubmatch(string(l))
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
 }
 
-// tomlString quotes s as a TOML basic string.
-func tomlString(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
-	return `"` + r.Replace(s) + `"`
+// ours: a table name that belongs to pairtask's server.
+func ours(table string) bool {
+	return table == ourTable || strings.HasPrefix(table, ourTable+".")
 }
 
-// ownsTable: a table header line belongs to the named server.
-func ownsTable(table, name string) bool {
-	own := "mcp_servers." + name
-	return table == own || strings.HasPrefix(table, own+".")
+func (c codexConfig) lines() []tomlLine {
+	var out []tomlLine
+	for _, l := range strings.SplitAfter(c.text, "\n") {
+		out = append(out, tomlLine(l))
+	}
+	return out
 }
 
-// tomlWithout is data less the named server's tables.
-func tomlWithout(data, name string) (string, error) {
-	if err := checkInline(data); err != nil {
-		return "", err
-	}
-	var kept []string
-	skipping := false
-	for _, line := range strings.SplitAfter(data, "\n") {
-		if m := tableHeader.FindStringSubmatch(line); m != nil {
-			skipping = ownsTable(m[1], name)
-		}
-		if !skipping {
-			kept = append(kept, line)
-		}
-	}
-	return strings.Join(kept, ""), nil
-}
-
-// tomlWith is data with the named server's table set to block, in place
-// of any it had, at the end.
-func tomlWith(data, name, block string) (string, error) {
-	rest, err := tomlWithout(data, name)
-	if err != nil {
-		return "", err
-	}
-	if rest != "" && !strings.HasSuffix(rest, "\n") {
-		rest += "\n"
-	}
-	if rest != "" && !strings.HasSuffix(rest, "\n\n") {
-		rest += "\n"
-	}
-	return rest + block, nil
-}
-
-// checkInline refuses a config that sets mcp_servers outside table
-// headers (an inline table or dotted keys), which a line edit could break.
-func checkInline(data string) error {
-	inline := regexp.MustCompile(`(?m)^\s*mcp_servers\s*[.=]`)
-	if inline.MatchString(data) {
+// check refuses a config that sets mcp_servers outside table headers (an
+// inline table or dotted keys), which a line edit could break.
+func (c codexConfig) check() error {
+	if inlineServers.MatchString(c.text) {
 		return errInlineServers
 	}
 	return nil
 }
 
-// tomlCommand is the command in the named server's table, and whether the
-// table is there.
-func tomlCommand(data, name string) (string, bool) {
-	found, inside := false, false
-	command := ""
-	for _, line := range strings.Split(data, "\n") {
-		if m := tableHeader.FindStringSubmatch(line); m != nil {
-			inside = m[1] == "mcp_servers."+name
+// without is the config less pairtask's tables.
+func (c codexConfig) without() (codexConfig, error) {
+	if err := c.check(); err != nil {
+		return c, err
+	}
+	var kept strings.Builder
+	skipping := false
+	for _, line := range c.lines() {
+		if table, ok := line.table(); ok {
+			skipping = ours(table)
+		}
+		if !skipping {
+			kept.WriteString(string(line))
+		}
+	}
+	return codexConfig{kept.String()}, nil
+}
+
+// with is the config with pairtask's table set to run entry, at the end.
+func (c codexConfig) with(entry serverEntry) (codexConfig, error) {
+	rest, err := c.without()
+	if err != nil {
+		return c, err
+	}
+	return codexConfig{rest.separated() + entry.toml()}, nil
+}
+
+// separated is the text ending in a blank line, if it isn't empty.
+func (c codexConfig) separated() string {
+	text := c.text
+	if text == "" {
+		return ""
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	if !strings.HasSuffix(text, "\n\n") {
+		text += "\n"
+	}
+	return text
+}
+
+// command is the command in pairtask's table, and whether the table is
+// there.
+func (c codexConfig) command() (string, bool) {
+	found, inside, command := false, false, ""
+	for _, line := range c.lines() {
+		if table, ok := line.table(); ok {
+			inside = table == ourTable
 			found = found || inside
 			continue
 		}
-		if m := commandLine.FindStringSubmatch(line); inside && m != nil {
-			command = tomlUnquote(m[1])
+		if m := commandLine.FindStringSubmatch(string(line)); inside && m != nil {
+			command = tomlUnquoter.Replace(m[1])
 		}
 	}
 	return command, found
 }
 
-// commandLine matches a `command = "..."` line.
-var commandLine = regexp.MustCompile(`^\s*command\s*=\s*"((?:[^"\\]|\\.)*)"`)
-
-// tomlUnquote undoes tomlString's escapes.
-func tomlUnquote(s string) string {
-	r := strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\n`, "\n", `\r`, "\r", `\t`, "\t")
-	return r.Replace(s)
+// toml is the entry as pairtask's Codex table.
+func (e serverEntry) toml() string {
+	return "[" + ourTable + "]\n" +
+		"command = \"" + tomlQuoter.Replace(e.Command) + "\"\n" +
+		"args = [\"mcp\"]\n"
 }
+
+// tomlQuoter escapes a TOML basic string; tomlUnquoter undoes it.
+var (
+	tomlQuoter   = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
+	tomlUnquoter = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\n`, "\n", `\r`, "\r", `\t`, "\t")
+)

@@ -103,9 +103,14 @@ func TestConnectCreatesAMissingConfig(t *testing.T) {
 	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(env.home, ".cursor", "mcp.json"))), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if s := cfg.McpServers["pairtask"]; s.Command != exePath || len(s.Args) != 1 || s.Args[0] != "mcp" {
+	if s := cfg.McpServers["pairtask"]; !runsPairtask(s.Command, s.Args) {
 		t.Fatalf("server entry %+v", cfg.McpServers)
 	}
+}
+
+// runsPairtask: an entry runs this pairtask-desktop in MCP mode.
+func runsPairtask(command string, args []string) bool {
+	return command == exePath && strings.Join(args, " ") == "mcp"
 }
 
 func TestConnectRefusesAMalformedConfig(t *testing.T) {
@@ -120,7 +125,7 @@ func TestConnectRefusesAMalformedConfig(t *testing.T) {
 	}
 }
 
-const codexConfig = `model = "gpt-5"
+const codexSample = `model = "gpt-5"
 
 [mcp_servers.docs]
 command = "docs-mcp"
@@ -132,9 +137,9 @@ model = "gpt-5-mini"
 func TestConnectEditsOnlyPairtaskTablesInCodex(t *testing.T) {
 	env := testEnv(t)
 	path := filepath.Join(env.home, ".codex", "config.toml")
-	writeFile(t, path, codexConfig)
+	writeFile(t, path, codexSample)
 	connect(t, env, "codex", false)
-	want := codexConfig + "\n[mcp_servers.pairtask]\ncommand = \"" + exePath + "\"\nargs = [\"mcp\"]\n"
+	want := codexSample + "\n[mcp_servers.pairtask]\ncommand = \"" + exePath + "\"\nargs = [\"mcp\"]\n"
 	if got := readFile(t, path); got != want {
 		t.Fatalf("config after connect:\n%s\nwant:\n%s", got, want)
 	}
@@ -144,8 +149,8 @@ func TestConnectEditsOnlyPairtaskTablesInCodex(t *testing.T) {
 	// A subtable of ours goes with it; everything else stays.
 	writeFile(t, path, readFile(t, path)+"\n[mcp_servers.pairtask.env]\nX = \"1\"\n")
 	connect(t, env, "codex", true)
-	if got := readFile(t, path); got != codexConfig+"\n" {
-		t.Fatalf("config after disconnect:\n%q\nwant:\n%q", got, codexConfig+"\n")
+	if got := readFile(t, path); got != codexSample+"\n" {
+		t.Fatalf("config after disconnect:\n%q\nwant:\n%q", got, codexSample+"\n")
 	}
 }
 
@@ -165,7 +170,7 @@ func TestConnectRefusesInlineCodexServers(t *testing.T) {
 func TestClientsReportsEachClient(t *testing.T) {
 	env := testEnv(t)
 	writeFile(t, filepath.Join(env.home, ".cursor", "mcp.json"), `{"mcpServers":{"pairtask":{"command":"/old/pairtask-desktop","args":["mcp"]}}}`)
-	writeFile(t, filepath.Join(env.home, ".codex", "config.toml"), codexConfig)
+	writeFile(t, filepath.Join(env.home, ".codex", "config.toml"), codexSample)
 	connect(t, env, "codex", false)
 	var out bytes.Buffer
 	if err := runClients([]string{"--json"}, env, &out); err != nil {
@@ -175,18 +180,15 @@ func TestClientsReportsEachClient(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &all); err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]clientStatus{}
+	got := map[string]string{}
 	for _, s := range all {
-		got[s.ID] = s
+		got[s.ID] = describe(s)
 	}
-	if s := got["codex"]; !s.Connected || s.Other {
-		t.Fatalf("codex: %+v", s)
-	}
-	if s := got["cursor"]; !s.Connected || !s.Other {
-		t.Fatalf("cursor connected to another copy: %+v", s)
-	}
-	if s := got["claude-desktop"]; s.Installed || s.Connected {
-		t.Fatalf("claude-desktop: %+v", s)
+	want := map[string]string{"codex": "connected", "cursor": "connected to another copy of pairtask", "claude-desktop": "not installed", "claude-code": "not installed"}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s: %q, want %q", id, got[id], w)
+		}
 	}
 }
 
@@ -205,7 +207,7 @@ func TestConnectDryRunWritesNothing(t *testing.T) {
 	if !strings.Contains(out.String(), exePath) {
 		t.Fatalf("dry run printed %q", out.String())
 	}
-	if exists(filepath.Join(env.home, ".cursor", "mcp.json")) {
+	if _, err := os.Stat(filepath.Join(env.home, ".cursor", "mcp.json")); err == nil {
 		t.Fatal("a dry run wrote the config")
 	}
 }
