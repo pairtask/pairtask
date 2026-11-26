@@ -9,6 +9,13 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
+const broadcastExclusionsSchema = `
+CREATE TABLE IF NOT EXISTS broadcast_exclusions (message_id TEXT PRIMARY KEY, agents TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS forget_broadcast_exclusions AFTER DELETE ON durable_messages BEGIN
+ DELETE FROM broadcast_exclusions WHERE message_id = OLD.message_id;
+END;
+`
+
 // BroadcastAudience is the frozen outcome returned to the author. Excluded
 // agents have no pending copy. Retrying the message repeats this outcome.
 type BroadcastAudience struct {

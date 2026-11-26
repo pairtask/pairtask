@@ -5,7 +5,6 @@ package hub
 import (
 	"context"
 	"crypto/rand"
-
 	"errors"
 	"log/slog"
 	"sort"

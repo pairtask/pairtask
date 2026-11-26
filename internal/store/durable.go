@@ -38,10 +38,6 @@ CREATE TABLE IF NOT EXISTS durable_inbox (
  acknowledged_at TIMESTAMP,
  PRIMARY KEY (message_id, agent_id)
 );
-CREATE TABLE IF NOT EXISTS broadcast_exclusions (message_id TEXT PRIMARY KEY, agents TEXT NOT NULL);
-CREATE TRIGGER IF NOT EXISTS forget_broadcast_exclusions AFTER DELETE ON durable_messages BEGIN
- DELETE FROM broadcast_exclusions WHERE message_id = OLD.message_id;
-END;
 CREATE INDEX IF NOT EXISTS durable_pending ON durable_inbox(agent_id) WHERE acknowledged_at IS NULL;
 `
 

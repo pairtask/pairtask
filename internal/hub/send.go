@@ -3,10 +3,10 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"github.com/pairtask/pairtask/internal/store"
 	"time"
 
 	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/store"
 )
 
 // sendAsAgent routes a message an agent sends: prepared, admitted, persisted

@@ -95,7 +95,7 @@ func Open(path string) (*Store, error) {
 // refused transition leaves no new schema object behind; then the
 // one-time and every-open steps that need them.
 func afterTransition(db *sql.DB) error {
-	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema + spaceMapsSchema + spaceAttemptsSchema + spaceContactsSchema + spaceOutboxSchema + spaceAddressesSchema + spaceSharesSchema); err != nil {
+	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema + spaceMapsSchema + spaceAttemptsSchema + spaceContactsSchema + spaceOutboxSchema + spaceAddressesSchema + spaceSharesSchema + broadcastExclusionsSchema); err != nil {
 		return fmt.Errorf("apply classifier schema: %w", err)
 	}
 	if err := resetAttentionEnforcement(db); err != nil {
