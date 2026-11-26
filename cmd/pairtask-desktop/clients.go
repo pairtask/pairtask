@@ -415,16 +415,18 @@ func (e configEdit) apply(out io.Writer) error {
 			return fmt.Errorf("keeping the old config: %w", err)
 		}
 	}
-	if err := c.write(e.after); err != nil {
+	if err := c.replace(e.after, e.before); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "%s %s (%s). Restart %s to use it.\n", verb, c.Label, c.Config, c.Label)
 	return nil
 }
 
-// write replaces the config through a temporary file beside it, keeping
-// the old file's permissions.
-func (c client) write(data []byte) error {
+// replace writes data in place of the config through a temporary file
+// beside it, keeping the old file's permissions, as long as the config is
+// still was: it is read again just before the rename. That narrows, but
+// can't close, the window for a program that doesn't take our lock.
+func (c client) replace(data, was []byte) error {
 	mode := os.FileMode(0o600)
 	if info, err := os.Stat(c.Config); err == nil {
 		mode = info.Mode().Perm()
@@ -444,6 +446,9 @@ func (c client) write(data []byte) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if now, err := c.read(); err != nil || !bytes.Equal(now, was) {
+		return errors.Join(errChanged, err)
 	}
 	return os.Rename(tmp.Name(), c.Config)
 }
