@@ -53,14 +53,22 @@ func TestPairbookSpacesListsJoinedSpacesAcrossRestarts(t *testing.T) {
 	}
 	inv := space.Invite{Base: "https://directory.example", Space: "0123456789abcdef0123456789abcdef", Owner: "sha256:" + strings.Repeat("a", 64)}
 	desktopSpaceTool(t, desktopSpaceMCP(t, first), "space_join", map[string]any{"link": inv.String(), "name": "Desktop"})
-	if got := listedSpaces(t, first); len(got.Spaces) != 1 || got.Spaces[0].Space != inv.Space {
-		t.Fatalf("after joining, spaces are %+v", got.Spaces)
+	if !onlySpace(listedSpaces(t, first), inv) {
+		t.Fatal("after joining, the space isn't the one listed")
 	}
 	// A node started again over the same store, with no join in progress,
 	// still lists the space.
 	again := spacesNode(t, path, f)
-	got := listedSpaces(t, again)
-	if len(got.Spaces) != 1 || got.Spaces[0].Space != inv.Space || got.Spaces[0].Directory != inv.Base {
-		t.Fatalf("after a restart, spaces are %+v", got.Spaces)
+	if !onlySpace(listedSpaces(t, again), inv) {
+		t.Fatal("after a restart, the space isn't the one listed")
 	}
+}
+
+// onlySpace: the listing is exactly inv's space, at its Pairbook.
+func onlySpace(got PairbookSpacesResult, inv space.Invite) bool {
+	if len(got.Spaces) != 1 {
+		return false
+	}
+	pin := got.Spaces[0]
+	return pin.Space == inv.Space && pin.Directory == inv.Base
 }
