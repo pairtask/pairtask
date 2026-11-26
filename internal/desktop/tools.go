@@ -210,6 +210,11 @@ func NewServer(n *Node, version string) *mcp.Server {
 			out, err := n.pairbookJoin(ctx, args)
 			return nil, out, err
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "set_name", Description: setNameDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
+		func(_ context.Context, _ *mcp.CallToolRequest, args SetNameArgs) (*mcp.CallToolResult, SetNameResult, error) {
+			out, err := n.setName(args)
+			return nil, out, err
+		})
 	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_spaces", Description: pairbookSpacesDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, PairbookSpacesResult, error) {
 			out, err := n.pairbookSpaces(ctx)

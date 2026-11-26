@@ -1,0 +1,211 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const exePath = "/Applications/Pairtask.app/Contents/MacOS/pairtask-desktop"
+
+func testEnv(t *testing.T) clientEnv {
+	t.Helper()
+	return clientEnv{goos: "darwin", home: t.TempDir(), exe: exePath}
+}
+
+func writeFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func connect(t *testing.T, env clientEnv, id string, remove bool) string {
+	t.Helper()
+	var out bytes.Buffer
+	if err := runConnect([]string{id}, env, &out, remove); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+const claudeConfig = `{
+  "globalShortcut": "Cmd+Space",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem"
+      ]
+    }
+  },
+  "zeta": true
+}
+`
+
+func TestConnectAddsOnlyPairtaskToAJSONConfig(t *testing.T) {
+	env := testEnv(t)
+	path := filepath.Join(env.home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	writeFile(t, path, claudeConfig)
+	connect(t, env, "claude-desktop", false)
+	got := readFile(t, path)
+	want := strings.Replace(claudeConfig, `      ]
+    }
+  },`, `      ]
+    },
+    "pairtask": {
+      "command": "`+exePath+`",
+      "args": [
+        "mcp"
+      ]
+    }
+  },`, 1)
+	if got != want {
+		t.Fatalf("config after connect:\n%s\nwant:\n%s", got, want)
+	}
+	if readFile(t, path+".bak") != claudeConfig {
+		t.Fatal("the previous config wasn't kept as .bak")
+	}
+	if out := connect(t, env, "claude-desktop", false); !strings.Contains(out, "already connected") {
+		t.Fatalf("connecting again said %q", out)
+	}
+	connect(t, env, "claude-desktop", true)
+	if got := readFile(t, path); got != claudeConfig {
+		t.Fatalf("config after disconnect:\n%s\nwant the original:\n%s", got, claudeConfig)
+	}
+}
+
+func TestConnectCreatesAMissingConfig(t *testing.T) {
+	env := testEnv(t)
+	connect(t, env, "cursor", false)
+	var cfg struct {
+		McpServers map[string]struct {
+			Command string
+			Args    []string
+		}
+	}
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(env.home, ".cursor", "mcp.json"))), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.McpServers["pairtask"]; s.Command != exePath || len(s.Args) != 1 || s.Args[0] != "mcp" {
+		t.Fatalf("server entry %+v", cfg.McpServers)
+	}
+}
+
+func TestConnectRefusesAMalformedConfig(t *testing.T) {
+	env := testEnv(t)
+	path := filepath.Join(env.home, ".claude.json")
+	writeFile(t, path, `{"mcpServers": {`)
+	if err := runConnect([]string{"claude-code"}, env, &bytes.Buffer{}, false); err == nil {
+		t.Fatal("a malformed config was accepted")
+	}
+	if got := readFile(t, path); got != `{"mcpServers": {` {
+		t.Fatalf("a malformed config was changed to %q", got)
+	}
+}
+
+const codexConfig = `model = "gpt-5"
+
+[mcp_servers.docs]
+command = "docs-mcp"
+
+[profiles.fast]
+model = "gpt-5-mini"
+`
+
+func TestConnectEditsOnlyPairtaskTablesInCodex(t *testing.T) {
+	env := testEnv(t)
+	path := filepath.Join(env.home, ".codex", "config.toml")
+	writeFile(t, path, codexConfig)
+	connect(t, env, "codex", false)
+	want := codexConfig + "\n[mcp_servers.pairtask]\ncommand = \"" + exePath + "\"\nargs = [\"mcp\"]\n"
+	if got := readFile(t, path); got != want {
+		t.Fatalf("config after connect:\n%s\nwant:\n%s", got, want)
+	}
+	if out := connect(t, env, "codex", false); !strings.Contains(out, "already connected") {
+		t.Fatalf("connecting again said %q", out)
+	}
+	// A subtable of ours goes with it; everything else stays.
+	writeFile(t, path, readFile(t, path)+"\n[mcp_servers.pairtask.env]\nX = \"1\"\n")
+	connect(t, env, "codex", true)
+	if got := readFile(t, path); got != codexConfig+"\n" {
+		t.Fatalf("config after disconnect:\n%q\nwant:\n%q", got, codexConfig+"\n")
+	}
+}
+
+func TestConnectRefusesInlineCodexServers(t *testing.T) {
+	env := testEnv(t)
+	path := filepath.Join(env.home, ".codex", "config.toml")
+	inline := "mcp_servers = { docs = { command = \"docs\" } }\n"
+	writeFile(t, path, inline)
+	if err := runConnect([]string{"codex"}, env, &bytes.Buffer{}, false); err == nil {
+		t.Fatal("an inline mcp_servers config was edited")
+	}
+	if got := readFile(t, path); got != inline {
+		t.Fatalf("an inline config was changed to %q", got)
+	}
+}
+
+func TestClientsReportsEachClient(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.home, ".cursor", "mcp.json"), `{"mcpServers":{"pairtask":{"command":"/old/pairtask-desktop","args":["mcp"]}}}`)
+	writeFile(t, filepath.Join(env.home, ".codex", "config.toml"), codexConfig)
+	connect(t, env, "codex", false)
+	var out bytes.Buffer
+	if err := runClients([]string{"--json"}, env, &out); err != nil {
+		t.Fatal(err)
+	}
+	var all []clientStatus
+	if err := json.Unmarshal(out.Bytes(), &all); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]clientStatus{}
+	for _, s := range all {
+		got[s.ID] = s
+	}
+	if s := got["codex"]; !s.Connected || s.Other {
+		t.Fatalf("codex: %+v", s)
+	}
+	if s := got["cursor"]; !s.Connected || !s.Other {
+		t.Fatalf("cursor connected to another copy: %+v", s)
+	}
+	if s := got["claude-desktop"]; s.Installed || s.Connected {
+		t.Fatalf("claude-desktop: %+v", s)
+	}
+}
+
+func TestConnectRejectsAnUnknownClient(t *testing.T) {
+	if err := runConnect([]string{"vim"}, testEnv(t), &bytes.Buffer{}, false); err == nil {
+		t.Fatal("an unknown client was accepted")
+	}
+}
+
+func TestConnectDryRunWritesNothing(t *testing.T) {
+	env := testEnv(t)
+	var out bytes.Buffer
+	if err := runConnect([]string{"--dry-run", "cursor"}, env, &out, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), exePath) {
+		t.Fatalf("dry run printed %q", out.String())
+	}
+	if exists(filepath.Join(env.home, ".cursor", "mcp.json")) {
+		t.Fatal("a dry run wrote the config")
+	}
+}

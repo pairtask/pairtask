@@ -33,7 +33,8 @@ func main() {
 }
 
 // run dispatches the subcommand: daemon (the always-on agent), status
-// (who runs the node, and its settings), agent
+// (who runs the node, and its settings), clients, connect and disconnect
+// (add pairtask to an agent client's MCP servers, or take it out), agent
 // (install it as a login item), or mcp, which is also what no subcommand
 // means, so Claude Desktop's extension keeps working as it is.
 func run(args []string, log *slog.Logger) error {
@@ -44,6 +45,12 @@ func run(args []string, log *slog.Logger) error {
 		return runAgent(args[1:], hostAgentEnv(), os.Stdout)
 	case "status":
 		return runStatus(args[1:], hostAgentEnv(), os.Stdout)
+	case "clients":
+		return runClients(args[1:], hostClientEnv(), os.Stdout)
+	case "connect":
+		return runConnect(args[1:], hostClientEnv(), os.Stdout, false)
+	case "disconnect":
+		return runConnect(args[1:], hostClientEnv(), os.Stdout, true)
 	case "mcp":
 		args = args[1:]
 	}

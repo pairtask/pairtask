@@ -7,7 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The node's settings live in its data directory, so they hold whichever
@@ -165,4 +168,36 @@ func (n *Node) nameSetting() string {
 		return s.Name
 	}
 	return n.cfg.Name
+}
+
+// SetNameArgs is set_name's argument.
+type SetNameArgs struct {
+	Name string `json:"name" jsonschema:"The name this machine pairs under and shows to others, 1 to 64 characters"`
+}
+
+// SetNameResult is set_name's answer: the name now stored.
+type SetNameResult struct {
+	Name string `json:"name"`
+}
+
+const setNameDescription = "Name this machine: the name it pairs under and shows to the workspaces it talks to. It is kept for every copy of this node, and the running node uses it within a few seconds."
+
+// errBadName: a name that is empty, too long or has control characters.
+var errBadName = errors.New("the name must be 1 to 64 characters, without control characters")
+
+// setName stores name as this node's name.
+func (n *Node) setName(args SetNameArgs) (SetNameResult, error) {
+	name := strings.TrimSpace(args.Name)
+	if !validName(name) {
+		return SetNameResult{}, errBadName
+	}
+	now, _, err := storeSettings(n.cfg.Dir, Settings{Name: name})
+	return SetNameResult{Name: now.Name}, err
+}
+
+func validName(name string) bool {
+	if name == "" || utf8.RuneCountInString(name) > 64 {
+		return false
+	}
+	return !strings.ContainsFunc(name, unicode.IsControl)
 }

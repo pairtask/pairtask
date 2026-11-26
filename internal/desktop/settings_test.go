@@ -60,3 +60,25 @@ func TestARunningCopyUsesTheLatestPairbook(t *testing.T) {
 		t.Fatalf("the copy started first still points at its own Pairbook: %s", r.Guidance)
 	}
 }
+
+func TestSetNameIsKeptAndChecked(t *testing.T) {
+	n := &Node{cfg: Config{Dir: t.TempDir()}}
+	if _, err := n.setName(SetNameArgs{Name: "  Siamion's Mac  "}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := ReadSettings(n.cfg.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Name != "Siamion's Mac" {
+		t.Fatalf("stored name %q", s.Name)
+	}
+	for _, bad := range []string{"", "   ", strings.Repeat("x", 65), "two\nlines"} {
+		if _, err := n.setName(SetNameArgs{Name: bad}); err == nil {
+			t.Fatalf("name %q was accepted", bad)
+		}
+	}
+	if s, _ := ReadSettings(n.cfg.Dir); s.Name != "Siamion's Mac" {
+		t.Fatalf("a refused name changed the stored one to %q", s.Name)
+	}
+}
