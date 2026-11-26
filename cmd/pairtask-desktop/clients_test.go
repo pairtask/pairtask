@@ -36,10 +36,14 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-func connect(t *testing.T, env clientEnv, id string, remove bool) string {
+func connect(t *testing.T, env clientEnv, id string, undo bool) string {
 	t.Helper()
 	var out bytes.Buffer
-	if err := runConnect([]string{id}, env, &out, remove); err != nil {
+	act := add
+	if undo {
+		act = remove
+	}
+	if err := runConnect([]string{id}, env, &out, act); err != nil {
 		t.Fatal(err)
 	}
 	return out.String()
@@ -122,7 +126,7 @@ func TestConnectRefusesAConfigItCantRead(t *testing.T) {
 		env := testEnv(t)
 		path := filepath.Join(env.home, c.file)
 		writeFile(t, path, c.text)
-		if err := runConnect([]string{client}, env, &bytes.Buffer{}, false); err == nil {
+		if err := runConnect([]string{client}, env, &bytes.Buffer{}, add); err == nil {
 			t.Errorf("%s: an unreadable config was edited", client)
 		}
 		if got := readFile(t, path); got != c.text {
@@ -171,7 +175,7 @@ func TestConnectRefusesInlineCodexServers(t *testing.T) {
 	path := filepath.Join(env.home, ".codex", "config.toml")
 	inline := "mcp_servers = { docs = { command = \"docs\" } }\n"
 	writeFile(t, path, inline)
-	if err := runConnect([]string{"codex"}, env, &bytes.Buffer{}, false); err == nil {
+	if err := runConnect([]string{"codex"}, env, &bytes.Buffer{}, add); err == nil {
 		t.Fatal("an inline mcp_servers config was edited")
 	}
 	if got := readFile(t, path); got != inline {
@@ -205,7 +209,7 @@ func TestClientsReportsEachClient(t *testing.T) {
 }
 
 func TestConnectRejectsAnUnknownClient(t *testing.T) {
-	if err := runConnect([]string{"vim"}, testEnv(t), &bytes.Buffer{}, false); err == nil {
+	if err := runConnect([]string{"vim"}, testEnv(t), &bytes.Buffer{}, add); err == nil {
 		t.Fatal("an unknown client was accepted")
 	}
 }
@@ -213,7 +217,7 @@ func TestConnectRejectsAnUnknownClient(t *testing.T) {
 func TestConnectDryRunWritesNothing(t *testing.T) {
 	env := testEnv(t)
 	var out bytes.Buffer
-	if err := runConnect([]string{"--dry-run", "cursor"}, env, &out, false); err != nil {
+	if err := runConnect([]string{"--dry-run", "cursor"}, env, &out, add); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), exePath) {

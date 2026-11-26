@@ -28,6 +28,20 @@ const clientsUsage = `usage: pairtask-desktop clients [--json]
        pairtask-desktop disconnect CLIENT [--dry-run]
 CLIENT is one of: ` + "claude-desktop, claude-code, codex, cursor"
 
+// action is what a client command does to pairtask's entry.
+type action int
+
+const (
+	add    action = iota // connect
+	remove               // disconnect
+)
+
+// clientID names a client on the command line.
+type clientID string
+
+// clientName is the name a client gives when it connects.
+type clientName string
+
 // serverName is the entry pairtask owns in each client's config.
 const serverName = "pairtask"
 
@@ -81,9 +95,9 @@ func (e clientEnv) clients() []client {
 	}
 }
 
-func (e clientEnv) client(id string) (client, error) {
+func (e clientEnv) client(id clientID) (client, error) {
 	for _, c := range e.clients() {
-		if c.ID == id {
+		if c.ID == string(id) {
 			return c, nil
 		}
 	}
@@ -146,7 +160,7 @@ func describe(s clientStatus) string {
 func (c client) lastSeen(seen map[string]time.Time) *time.Time {
 	var latest *time.Time
 	for name, at := range seen {
-		if c.named(name) && later(at, latest) {
+		if c.named(clientName(name)) && later(at, latest) {
 			at := at
 			latest = &at
 		}
@@ -159,8 +173,8 @@ func later(at time.Time, latest *time.Time) bool {
 	return latest == nil || at.After(*latest)
 }
 
-func (c client) named(name string) bool {
-	lower := strings.ToLower(name)
+func (c client) named(name clientName) bool {
+	lower := strings.ToLower(string(name))
 	for _, n := range c.Names {
 		if strings.Contains(lower, n) {
 			return true
@@ -218,7 +232,7 @@ func orEmpty(data []byte) []byte {
 }
 
 // runConnect adds (or with remove, takes out) pairtask in one client.
-func runConnect(args []string, env clientEnv, out io.Writer, remove bool) error {
+func runConnect(args []string, env clientEnv, out io.Writer, act action) error {
 	id, dry, err := connectArgs(args)
 	if err != nil {
 		return err
@@ -233,28 +247,28 @@ func runConnect(args []string, env clientEnv, out io.Writer, remove bool) error 
 	}
 	defer unlock()
 	if dry {
-		edit, err := env.prepare(c, remove)
+		edit, err := env.prepare(c, act)
 		return dryRun(edit, err, out)
 	}
-	return env.change(c, remove, out)
+	return env.change(c, act, out)
 }
 
 // connectArgs is the client named and whether only to print the result.
-func connectArgs(args []string) (string, bool, error) {
+func connectArgs(args []string) (clientID, bool, error) {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
 	dry := fs.Bool("dry-run", false, "print the new config instead of writing it")
 	ids, flags := splitArgs(args)
 	if err := fs.Parse(flags); err != nil || len(ids) != 1 {
 		return "", false, errors.New(clientsUsage)
 	}
-	return ids[0], *dry, nil
+	return clientID(ids[0]), *dry, nil
 }
 
 // change edits the client's config; if something else changed it between
 // reading and writing, once more from what is there now.
-func (e clientEnv) change(c client, remove bool, out io.Writer) error {
+func (e clientEnv) change(c client, act action, out io.Writer) error {
 	for attempt := 0; ; attempt++ {
-		edit, err := e.prepare(c, remove)
+		edit, err := e.prepare(c, act)
 		if err != nil {
 			return err
 		}
@@ -266,16 +280,16 @@ func (e clientEnv) change(c client, remove bool, out io.Writer) error {
 }
 
 // prepare reads the client's config and works out the edit.
-func (e clientEnv) prepare(c client, remove bool) (configEdit, error) {
+func (e clientEnv) prepare(c client, act action) (configEdit, error) {
 	before, err := c.read()
 	if err != nil {
 		return configEdit{}, err
 	}
-	edit := configEdit{client: c, before: before, after: before, remove: remove}
-	if remove && before == nil {
+	edit := configEdit{client: c, before: before, after: before, act: act}
+	if act == remove && before == nil {
 		return edit, nil // nothing to take out of a config that isn't there
 	}
-	edit.after, err = e.edited(c, before, remove)
+	edit.after, err = e.edited(c, before, act)
 	if err != nil {
 		return edit, fmt.Errorf("%s: %s: %w", c.Label, c.Config, err)
 	}
@@ -329,15 +343,15 @@ func errText(err error) string {
 }
 
 // edited is the config with pairtask's entry set, or removed.
-func (e clientEnv) edited(c client, data []byte, remove bool) ([]byte, error) {
+func (e clientEnv) edited(c client, data []byte, act action) ([]byte, error) {
 	if c.JSONKey == "" {
-		return e.editedTOML(string(data), remove)
+		return e.editedTOML(string(data), act)
 	}
 	before := jsonDoc(orEmpty(data))
 	entry := serverEntry{Command: e.exe, Args: []string{"mcp"}}
 	var after jsonDoc
 	var err error
-	if remove {
+	if act == remove {
 		after, err = before.disconnected(jsonKey(c.JSONKey))
 	} else {
 		after, err = before.connected(jsonKey(c.JSONKey), entry)
@@ -354,11 +368,11 @@ func (e clientEnv) edited(c client, data []byte, remove bool) ([]byte, error) {
 	return after, nil
 }
 
-func (e clientEnv) editedTOML(data string, remove bool) ([]byte, error) {
+func (e clientEnv) editedTOML(data string, act action) ([]byte, error) {
 	before := codexConfig{data}
 	entry := serverEntry{Command: e.exe}
 	after, want, err := before.without()
-	if !remove && err == nil {
+	if act == add && err == nil {
 		after, err = before.with(entry)
 		want = entry.tomlValue()
 	}
@@ -378,14 +392,14 @@ var errChanged = errors.New("the config changed while it was being edited; nothi
 type configEdit struct {
 	client        client
 	before, after []byte
-	remove        bool
+	act           action
 }
 
 // apply writes the new config, keeping the old one as .bak, and says what
 // it did.
 func (e configEdit) apply(out io.Writer) error {
 	c := e.client
-	verb := map[bool]string{false: "Connected", true: "Disconnected"}[e.remove]
+	verb := map[action]string{add: "Connected", remove: "Disconnected"}[e.act]
 	if bytes.Equal(e.before, e.after) {
 		fmt.Fprintf(out, "%s: already %s.\n", c.Label, strings.ToLower(verb))
 		return nil

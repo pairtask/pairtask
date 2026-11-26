@@ -48,9 +48,9 @@ func run(args []string, log *slog.Logger) error {
 	case "clients":
 		return runClients(args[1:], hostClientEnv(), os.Stdout)
 	case "connect":
-		return runConnect(args[1:], hostClientEnv(), os.Stdout, false)
+		return runConnect(args[1:], hostClientEnv(), os.Stdout, add)
 	case "disconnect":
-		return runConnect(args[1:], hostClientEnv(), os.Stdout, true)
+		return runConnect(args[1:], hostClientEnv(), os.Stdout, remove)
 	case "mcp":
 		args = args[1:]
 	}
