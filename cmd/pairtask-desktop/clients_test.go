@@ -13,7 +13,7 @@ const exePath = "/Applications/Pairtask.app/Contents/MacOS/pairtask-desktop"
 
 func testEnv(t *testing.T) clientEnv {
 	t.Helper()
-	return clientEnv{goos: "darwin", home: t.TempDir(), exe: exePath}
+	return clientEnv{goos: "darwin", home: t.TempDir(), exe: exePath, dir: t.TempDir()}
 }
 
 func writeFile(t *testing.T, path, data string) {
@@ -209,5 +209,89 @@ func TestConnectDryRunWritesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(env.home, ".cursor", "mcp.json")); err == nil {
 		t.Fatal("a dry run wrote the config")
+	}
+}
+
+func TestConnectKeepsEveryOtherByteOfAJSONConfig(t *testing.T) {
+	for name, original := range map[string]string{
+		"compact":  `{"theme":"dark","mcpServers":{"a":{"command":"x","args":[]},"b":{"command":"y"}},"n":1e3,"s":"é<"}`,
+		"four":     "{\n    \"mcpServers\": {\n        \"a\": {\"command\": \"x\"}\n    },\n    \"list\": [1,2,  3]\n}\n",
+		"tabs":     "{\n\t\"mcpServers\": {},\n\t\"keep\": \"me\"\n}",
+		"noserver": "{\n  \"projects\": {\"/a\": {\"allowedTools\": []}}\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := testEnv(t)
+			path := filepath.Join(env.home, ".claude.json")
+			writeFile(t, path, original)
+			connect(t, env, "claude-code", false)
+			after := readFile(t, path)
+			var v map[string]any
+			if err := json.Unmarshal([]byte(after), &v); err != nil {
+				t.Fatalf("connect wrote invalid JSON: %v\n%s", err, after)
+			}
+			connect(t, env, "claude-code", true)
+			got := readFile(t, path)
+			if name == "noserver" {
+				original = strings.Replace(original, "\n}\n", ",\n  \"mcpServers\": {}\n}\n", 1)
+			}
+			if got != original {
+				t.Fatalf("connect then disconnect:\n%q\nwant:\n%q", got, original)
+			}
+		})
+	}
+}
+
+func TestDisconnectWithoutAConfigWritesNothing(t *testing.T) {
+	env := testEnv(t)
+	if out := connect(t, env, "cursor", true); !strings.Contains(out, "already disconnected") {
+		t.Fatalf("disconnecting a missing config said %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(env.home, ".cursor", "mcp.json")); err == nil {
+		t.Fatal("disconnect created a config")
+	}
+}
+
+func TestConnectRecognisesAQuotedCodexTable(t *testing.T) {
+	env := testEnv(t)
+	path := filepath.Join(env.home, ".codex", "config.toml")
+	writeFile(t, path, "[mcp_servers.\"pairtask\"]\ncommand = \"/old\"\n\n[mcp_servers.docs]\ncommand = \"docs\"\n")
+	connect(t, env, "codex", false)
+	got := readFile(t, path)
+	if strings.Count(got, "[mcp_servers") != 2 || strings.Contains(got, `"pairtask"]`) || !strings.Contains(got, exePath) {
+		t.Fatalf("a quoted table wasn't replaced:\n%s", got)
+	}
+}
+
+func TestConnectRefusesInvalidCodexTOML(t *testing.T) {
+	env := testEnv(t)
+	path := filepath.Join(env.home, ".codex", "config.toml")
+	writeFile(t, path, "model = [\n")
+	if err := runConnect([]string{"codex"}, env, &bytes.Buffer{}, false); err == nil {
+		t.Fatal("invalid TOML was edited")
+	}
+	if got := readFile(t, path); got != "model = [\n" {
+		t.Fatalf("invalid TOML was changed to %q", got)
+	}
+}
+
+func TestClientsSaysWhenEachClientLastStarted(t *testing.T) {
+	env := testEnv(t)
+	writeFile(t, filepath.Join(env.dir, "clients-seen.json"), `{"claude-code":"2026-11-26T10:00:00Z","Codex-MCP-Client":"2026-11-26T11:00:00Z"}`)
+	var out bytes.Buffer
+	if err := runClients([]string{"--json"}, env, &out); err != nil {
+		t.Fatal(err)
+	}
+	var all []clientStatus
+	if err := json.Unmarshal(out.Bytes(), &all); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range all {
+		if s.LastSeen != nil {
+			got[s.ID] = s.LastSeen.Format("15:04")
+		}
+	}
+	if got["claude-code"] != "10:00" || got["codex"] != "11:00" || len(got) != 2 {
+		t.Fatalf("last seen %v", got)
 	}
 }

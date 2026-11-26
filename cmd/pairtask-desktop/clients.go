@@ -12,6 +12,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
+
+	"github.com/pairtask/pairtask/internal/desktop"
 )
 
 // The agent clients pairtask can be added to: each keeps a config file
@@ -36,6 +40,8 @@ type client struct {
 	Config, Home string
 	// JSONKey is the servers object in a JSON config; "" means TOML.
 	JSONKey string
+	// Names are fragments of the name the client gives when it connects.
+	Names []string
 }
 
 // serverEntry is the server pairtask adds to a JSON config, in the order
@@ -48,6 +54,7 @@ type serverEntry struct {
 // clientEnv is what the clients need from the host; tests replace it.
 type clientEnv struct {
 	goos, home, exe string
+	dir             string // this node's data folder, for the edit lock and the clients seen
 }
 
 func hostClientEnv() clientEnv {
@@ -56,7 +63,8 @@ func hostClientEnv() clientEnv {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	return clientEnv{goos: runtime.GOOS, home: home, exe: exe}
+	dir, _ := dataDir("")
+	return clientEnv{goos: runtime.GOOS, home: home, exe: exe, dir: dir}
 }
 
 // clients is every supported client on this system.
@@ -66,10 +74,10 @@ func (e clientEnv) clients() []client {
 		claudeDir = filepath.Join(e.home, "Library", "Application Support", "Claude")
 	}
 	return []client{
-		{ID: "claude-desktop", Label: "Claude Desktop", Config: filepath.Join(claudeDir, "claude_desktop_config.json"), Home: claudeDir, JSONKey: "mcpServers"},
-		{ID: "claude-code", Label: "Claude Code", Config: filepath.Join(e.home, ".claude.json"), Home: filepath.Join(e.home, ".claude"), JSONKey: "mcpServers"},
-		{ID: "codex", Label: "Codex", Config: filepath.Join(e.home, ".codex", "config.toml"), Home: filepath.Join(e.home, ".codex")},
-		{ID: "cursor", Label: "Cursor", Config: filepath.Join(e.home, ".cursor", "mcp.json"), Home: filepath.Join(e.home, ".cursor"), JSONKey: "mcpServers"},
+		{ID: "claude-desktop", Label: "Claude Desktop", Config: filepath.Join(claudeDir, "claude_desktop_config.json"), Home: claudeDir, JSONKey: "mcpServers", Names: []string{"claude-ai", "claude desktop", "claude-desktop"}},
+		{ID: "claude-code", Label: "Claude Code", Config: filepath.Join(e.home, ".claude.json"), Home: filepath.Join(e.home, ".claude"), JSONKey: "mcpServers", Names: []string{"claude-code"}},
+		{ID: "codex", Label: "Codex", Config: filepath.Join(e.home, ".codex", "config.toml"), Home: filepath.Join(e.home, ".codex"), Names: []string{"codex"}},
+		{ID: "cursor", Label: "Cursor", Config: filepath.Join(e.home, ".cursor", "mcp.json"), Home: filepath.Join(e.home, ".cursor"), JSONKey: "mcpServers", Names: []string{"cursor"}},
 	}
 }
 
@@ -92,6 +100,9 @@ type clientStatus struct {
 	Other  bool   `json:"other,omitempty"`
 	Config string `json:"config"`
 	Error  string `json:"error,omitempty"`
+	// LastSeen is when the client last started this node's MCP server:
+	// configured but never seen means it hasn't been restarted yet.
+	LastSeen *time.Time `json:"last_seen,omitempty"`
 }
 
 // runClients lists the clients and whether pairtask is in each.
@@ -102,8 +113,11 @@ func runClients(args []string, env clientEnv, out io.Writer) error {
 		return errors.New(clientsUsage)
 	}
 	var all []clientStatus
+	seen, _ := desktop.ReadSeenClients(env.dir)
 	for _, c := range env.clients() {
-		all = append(all, env.status(c))
+		s := env.status(c)
+		s.LastSeen = c.lastSeen(seen)
+		all = append(all, s)
 	}
 	if *asJSON {
 		return json.NewEncoder(out).Encode(all)
@@ -126,6 +140,28 @@ func describe(s clientStatus) string {
 		return "not connected"
 	}
 	return "not installed"
+}
+
+// lastSeen is when a name of this client last connected, if one did.
+func (c client) lastSeen(seen map[string]time.Time) *time.Time {
+	var latest *time.Time
+	for name, at := range seen {
+		if c.named(name) && (latest == nil || at.After(*latest)) {
+			at := at
+			latest = &at
+		}
+	}
+	return latest
+}
+
+func (c client) named(name string) bool {
+	lower := strings.ToLower(name)
+	for _, n := range c.Names {
+		if strings.Contains(lower, n) {
+			return true
+		}
+	}
+	return false
 }
 
 // status reads one client's config.
@@ -151,24 +187,21 @@ func configured(c client, data []byte) (string, bool, error) {
 		command, found := cfg.command()
 		return command, found, cfg.check()
 	}
-	top, err := parseObject(orEmpty(data))
+	doc := jsonDoc(orEmpty(data))
+	top, err := doc.top()
 	if err != nil {
 		return "", false, err
 	}
-	raw, ok := top.get(c.JSONKey)
-	if !ok {
-		return "", false, nil
-	}
-	servers, err := parseObject(raw)
-	if err != nil {
+	servers, ok, err := doc.servers(top, c.JSONKey)
+	if err != nil || !ok {
 		return "", false, err
 	}
-	entry, ok := servers.get(serverName)
+	entry, ok := servers.find(serverName)
 	if !ok {
 		return "", false, nil
 	}
 	var e struct{ Command string }
-	_ = json.Unmarshal(entry, &e)
+	_ = json.Unmarshal(doc[entry.valAt:entry.valEnd], &e)
 	return e.Command, true, nil
 }
 
@@ -191,19 +224,49 @@ func runConnect(args []string, env clientEnv, out io.Writer, remove bool) error 
 	if err != nil {
 		return err
 	}
+	unlock, err := env.lockClients()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	edit, err := env.prepare(c, remove)
+	if err != nil || *dry {
+		return dryRun(edit, err, out)
+	}
+	if err := edit.apply(out); !errors.Is(err, errChanged) {
+		return err
+	}
+	// Changed by someone else between reading and writing: once more,
+	// from what is there now.
+	if edit, err = env.prepare(c, remove); err != nil {
+		return err
+	}
+	return edit.apply(out)
+}
+
+// prepare reads the client's config and works out the edit.
+func (e clientEnv) prepare(c client, remove bool) (configEdit, error) {
 	before, err := c.read()
 	if err != nil {
-		return err
+		return configEdit{}, err
 	}
-	after, err := env.edited(c, before, remove)
+	edit := configEdit{client: c, before: before, after: before, remove: remove}
+	if remove && before == nil {
+		return edit, nil // nothing to take out of a config that isn't there
+	}
+	edit.after, err = e.edited(c, before, remove)
 	if err != nil {
-		return fmt.Errorf("%s: %s: %w", c.Label, c.Config, err)
+		return edit, fmt.Errorf("%s: %s: %w", c.Label, c.Config, err)
 	}
-	if *dry {
-		_, err := out.Write(after)
+	return edit, nil
+}
+
+func dryRun(edit configEdit, err error, out io.Writer) error {
+	if err != nil {
 		return err
 	}
-	return configEdit{client: c, before: before, after: after, remove: remove}.apply(out)
+	_, err = out.Write(edit.after)
+	return err
 }
 
 // splitArgs separates the client from the flags, in any order.
@@ -249,28 +312,46 @@ func (e clientEnv) edited(c client, data []byte, remove bool) ([]byte, error) {
 	if c.JSONKey == "" {
 		return e.editedTOML(string(data), remove)
 	}
-	entry, err := json.Marshal(serverEntry{Command: e.exe, Args: []string{"mcp"}})
+	before := jsonDoc(orEmpty(data))
+	entry := serverEntry{Command: e.exe, Args: []string{"mcp"}}
+	var after jsonDoc
+	var err error
+	if remove {
+		after, err = before.disconnected(c.JSONKey)
+	} else {
+		after, err = before.connected(c.JSONKey, entry)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return jsonServers(data, c.JSONKey, func(servers object) object {
-		if remove {
-			return servers.without(serverName)
-		}
-		return servers.set(serverName, entry)
-	})
+	if err := sameExcept(before, after, c.JSONKey); err != nil {
+		return nil, err
+	}
+	if data == nil {
+		after = append(after, '\n') // a new file ends its line
+	}
+	return after, nil
 }
 
 func (e clientEnv) editedTOML(data string, remove bool) ([]byte, error) {
-	cfg := codexConfig{data}
-	var err error
-	if remove {
-		cfg, err = cfg.without()
-	} else {
-		cfg, err = cfg.with(serverEntry{Command: e.exe})
+	before := codexConfig{data}
+	entry := serverEntry{Command: e.exe}
+	after, want, err := before.without()
+	if !remove && err == nil {
+		after, err = before.with(entry)
+		want = entry.tomlValue()
 	}
-	return []byte(cfg.text), err
+	if err != nil {
+		return nil, err
+	}
+	if err := checkEdit(before, after, want); err != nil {
+		return nil, err
+	}
+	return []byte(after.text), nil
 }
+
+// errChanged: the config changed between reading it and writing it.
+var errChanged = errors.New("the config changed while it was being edited; nothing was written")
 
 // configEdit is one change to a client's config.
 type configEdit struct {
@@ -290,6 +371,9 @@ func (e configEdit) apply(out io.Writer) error {
 	}
 	if err := os.MkdirAll(filepath.Dir(c.Config), 0o700); err != nil {
 		return err
+	}
+	if now, err := c.read(); err != nil || !bytes.Equal(now, e.before) {
+		return errors.Join(errChanged, err)
 	}
 	if e.before != nil {
 		if err := os.WriteFile(c.Config+".bak", e.before, 0o600); err != nil {
@@ -327,4 +411,27 @@ func (c client) write(data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), c.Config)
+}
+
+// lockClients holds a lock in this node's data folder while one copy of
+// pairtask edits a client's config, so two never overwrite each other.
+func (e clientEnv) lockClients() (func(), error) {
+	if e.dir == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(e.dir, 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(e.dir, "clients.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
 }

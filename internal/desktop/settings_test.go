@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSettingsGivenTogetherAreAllKept(t *testing.T) {
@@ -80,5 +81,17 @@ func TestSetNameIsKeptAndChecked(t *testing.T) {
 	}
 	if s, _ := ReadSettings(n.cfg.Dir); s.Name != "Siamion's Mac" {
 		t.Fatalf("a refused name changed the stored one to %q", s.Name)
+	}
+}
+
+func TestAConnectingClientIsNoted(t *testing.T) {
+	n := &Node{cfg: Config{Dir: t.TempDir()}}
+	n.noteClient("claude-code")
+	seen, err := ReadSeenClients(n.cfg.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at, ok := seen["claude-code"]; !ok || time.Since(at) > time.Minute {
+		t.Fatalf("seen %v", seen)
 	}
 }
