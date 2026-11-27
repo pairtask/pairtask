@@ -11,7 +11,7 @@ import (
 	"github.com/pairtask/pairtask/internal/protocol"
 )
 
-const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* | reviews | review | decide | discovery | candidates HOST:PORT... | address CONTACT HOST:PORT [--socket PATH] [--json] [--timeout 5s]; reviews: pairtask operator contact reviews --help"
+const operatorContactUsage = "usage: pairtask operator contact send KEY TEXT [--to AGENT]... [--message-id ID] | list KEY [--history] | sync KEY | share KEY AGENT...|* | unshare KEY AGENT...|* | reviews | review | decide | discovery | candidates HOST:PORT... | address CONTACT HOST:PORT [--socket PATH] [--json] [--timeout 5s]; reviews: pairtask operator contact reviews --help"
 
 // contactArgs is how many positional arguments each contact operation
 // takes: the contact's full key, and the text for send; share and unshare
@@ -73,6 +73,10 @@ func parseOperatorContact(args []string, stderr io.Writer) (operatorCall, protoc
 	flags := flag.NewFlagSet("operator contact", flag.ContinueOnError)
 	call.register(flags)
 	messageID := flags.String("message-id", "", "a stable ID, so a retry sends once")
+	var history bool
+	if op == protocol.ContactOpList {
+		flags.BoolVar(&history, "history", false, "include messages from every pairing with this workspace")
+	}
 	var to agentList
 	flags.Var(&to, "to", "an agent of the contact to send to; repeat for more (none: its operator)")
 	leading, rest := splitLeading(args[1:])
@@ -82,18 +86,26 @@ func parseOperatorContact(args []string, stderr io.Writer) (operatorCall, protoc
 			return fmt.Errorf("contact %s: wrong number of arguments", op)
 		}
 		req.ContactKey = positional[0]
-		if contactAgentOps[op] {
-			req.ContactAgents = positional[1:]
-		}
-		if op == protocol.ContactOpSend {
-			req.ContactText, req.ContactTo = positional[1], to
-			if *messageID != "" {
-				req.MessageID = *messageID
-			}
-		}
+		setContactPayload(&req, positional, to, *messageID)
 		return call.validate()
 	})
+	if history {
+		req.ProtocolVersion = protocol.Version
+	}
 	return call, req, code
+}
+
+// setContactPayload fills the operation-specific fields after its arguments are validated.
+func setContactPayload(req *protocol.Message, positional []string, to []string, messageID string) {
+	if contactAgentOps[req.ContactOp] {
+		req.ContactAgents = positional[1:]
+	}
+	if req.ContactOp == protocol.ContactOpSend {
+		req.ContactText, req.ContactTo = positional[1], to
+		if messageID != "" {
+			req.MessageID = messageID
+		}
+	}
 }
 
 // contactArity: exactly the operation's arguments, or at least them for
@@ -134,6 +146,9 @@ func writeContact(w io.Writer, resp protocol.Message) {
 // sent it or it is to agents.
 func routeNote(m protocol.ContactMessageView) string {
 	note := ""
+	if m.PairingEpoch > 0 {
+		note = fmt.Sprintf(" pairing=%d", m.PairingEpoch)
+	}
 	if m.From != "" {
 		note += fmt.Sprintf(" from=%q", m.From)
 	}

@@ -58,3 +58,23 @@ func TestOperatorContactAcceptanceRemoteTextCannotControlTerminal(t *testing.T) 
 		t.Fatalf("text lost: %q", out.String())
 	}
 }
+
+func TestOperatorContactListHistoryScope(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		version int
+	}{{[]string{"list", "workspace"}, 0}, {[]string{"list", "workspace", "--history"}, protocol.Version}} {
+		var stderr bytes.Buffer
+		_, req, code := parseOperatorContact(tc.args, &stderr)
+		if code != -1 || req.ProtocolVersion != tc.version {
+			t.Fatalf("%v: version=%d code=%d stderr=%s", tc.args, req.ProtocolVersion, code, stderr.String())
+		}
+	}
+	var out bytes.Buffer
+	writeContact(&out, protocol.Message{ContactPage: &protocol.ContactMessagePage{Messages: []protocol.ContactMessageView{{ID: "same", PairingEpoch: 1}, {ID: "same", PairingEpoch: 2}}}})
+	for _, epoch := range []string{"pairing=1", "pairing=2"} {
+		if !strings.Contains(out.String(), epoch) {
+			t.Fatalf("missing %s in %q", epoch, out.String())
+		}
+	}
+}
