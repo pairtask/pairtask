@@ -77,7 +77,7 @@ func (c *LazyClient) connection(ctx context.Context) (*Client, error) {
 // dropAfterGap forgets a broken connection whose error a call has
 // already returned, when this client redials; the gate is held.
 func (c *LazyClient) dropAfterGap() {
-	if !c.redial || c.client == nil || c.client.connectionError() == nil {
+	if !c.broken() {
 		return
 	}
 	if !c.gapShown {
@@ -86,6 +86,14 @@ func (c *LazyClient) dropAfterGap() {
 	}
 	c.client.Close()
 	c.client, c.gapShown = nil, false
+}
+
+// broken: this client redials and its connection has failed.
+func (c *LazyClient) broken() bool {
+	if !c.redial || c.client == nil {
+		return false
+	}
+	return c.client.connectionError() != nil
 }
 
 func (c *LazyClient) Send(ctx context.Context, to, text string) error {
