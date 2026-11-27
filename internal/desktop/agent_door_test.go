@@ -2,6 +2,7 @@ package desktop_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,7 +126,7 @@ func TestAMacAgentReconnectsAfterTheNodeMovesAndGetsItsUnreadMessages(t *testing
 	}
 	eventually(t, "Claude is told its connection broke", func() bool {
 		in, err := claude.Receive(context.Background(), 1, 0)
-		return err != nil || (!in.Connected && in.Error != "")
+		return err != nil || (!in.Connected && strings.Contains(in.Error, "the next call reconnects"))
 	})
 
 	second := ownerOf(t, dir)

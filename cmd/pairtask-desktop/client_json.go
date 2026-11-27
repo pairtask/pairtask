@@ -201,7 +201,6 @@ func (d jsonDoc) splice(from, to offset, text string) jsonDoc {
 
 // json is the entry's value, laid out at indent, one step deeper.
 func (e serverEntry) json(l layout, indent string) string {
-	e.Args = []string{"mcp"}
 	if !l.pretty {
 		out, _ := json.Marshal(e)
 		return string(out)

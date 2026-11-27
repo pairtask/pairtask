@@ -26,9 +26,6 @@ var tableHeader = regexp.MustCompile(`^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$`)
 // inlineServers matches servers set outside table headers.
 var inlineServers = regexp.MustCompile(`(?m)^\s*mcp_servers\s*[.=]`)
 
-// commandLine matches a `command = "..."` line.
-var commandLine = regexp.MustCompile(`^\s*command\s*=\s*"((?:[^"\\]|\\.)*)"`)
-
 // errInlineServers: the servers are written in a form this can't edit
 // line by line.
 var errInlineServers = errors.New("the Codex config defines mcp_servers inline; add the pairtask server by hand")
@@ -217,29 +214,22 @@ func (c codexConfig) separated() string {
 	return text
 }
 
-// command is the command in pairtask's table, and whether the table is
-// there.
-func (c codexConfig) command() (string, bool) {
-	found, inside, command := false, false, ""
-	for _, line := range c.lines() {
-		if table, isHeader, _ := line.table(); isHeader {
-			inside = table == ourTable
-			found = found || inside
-			continue
-		}
-		if m := commandLine.FindStringSubmatch(string(line)); inside && m != nil {
-			command = tomlUnquoter.Replace(m[1])
-		}
-	}
-	return command, found
-}
-
 // toml is the entry as pairtask's Codex table.
 func (e serverEntry) toml() string {
+	args := make([]string, len(e.Args))
+	for i, a := range e.Args {
+		args[i] = tomlText(a).quoted()
+	}
 	return "[" + ourTable + "]\n" +
-		"command = \"" + tomlQuoter.Replace(e.Command) + "\"\n" +
-		"args = [\"mcp\"]\n"
+		"command = " + tomlText(e.Command).quoted() + "\n" +
+		"args = [" + strings.Join(args, ", ") + "]\n"
 }
+
+// tomlText is text to write into a Codex config.
+type tomlText string
+
+// quoted is t as a TOML basic string.
+func (t tomlText) quoted() string { return "\"" + tomlQuoter.Replace(string(t)) + "\"" }
 
 // tomlQuoter escapes a TOML basic string; tomlUnquoter undoes it.
 var (
@@ -298,5 +288,31 @@ func checkEdit(before, after codexConfig, want map[string]any) error {
 
 // tomlValue is the entry as decoded TOML.
 func (e serverEntry) tomlValue() map[string]any {
-	return map[string]any{"command": e.Command, "args": []any{"mcp"}}
+	args := make([]any, len(e.Args))
+	for i, a := range e.Args {
+		args[i] = a
+	}
+	return map[string]any{"command": e.Command, "args": args}
+}
+
+// entry is pairtask's server as the Codex config has it, if it has one.
+func (c codexConfig) entry() (serverEntry, bool) {
+	v, err := c.decoded()
+	if err != nil {
+		return serverEntry{}, false
+	}
+	_, ours := withoutOurs(v)
+	table, ok := ours.(map[string]any)
+	if !ok {
+		return serverEntry{}, false
+	}
+	e := serverEntry{}
+	e.Command, _ = table["command"].(string)
+	raw, _ := table["args"].([]any)
+	for _, a := range raw {
+		if s, ok := a.(string); ok {
+			e.Args = append(e.Args, s)
+		}
+	}
+	return e, true
 }

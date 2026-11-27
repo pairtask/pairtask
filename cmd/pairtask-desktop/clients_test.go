@@ -77,7 +77,9 @@ func TestConnectAddsOnlyPairtaskToAJSONConfig(t *testing.T) {
     "pairtask": {
       "command": "`+exePath+`",
       "args": [
-        "mcp"
+        "mcp",
+        "--agent-id",
+        "claude-desktop"
       ]
     }
   },`, 1)
@@ -108,14 +110,14 @@ func TestConnectCreatesAMissingConfig(t *testing.T) {
 	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(env.home, ".cursor", "mcp.json"))), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if s := cfg.McpServers["pairtask"]; !runsPairtask(s.Command, s.Args) {
+	if s := cfg.McpServers["pairtask"]; !runsPairtask(s.Command, s.Args, "cursor") {
 		t.Fatalf("server entry %+v", cfg.McpServers)
 	}
 }
 
-// runsPairtask: an entry runs this pairtask-desktop in MCP mode.
-func runsPairtask(command string, args []string) bool {
-	return command == exePath && strings.Join(args, " ") == "mcp"
+// runsPairtask: an entry runs this pairtask-desktop's MCP server as agent.
+func runsPairtask(command string, args []string, agent string) bool {
+	return command == exePath && strings.Join(args, " ") == "mcp --agent-id "+agent
 }
 
 func TestConnectRefusesAConfigItCantRead(t *testing.T) {
@@ -149,7 +151,7 @@ func TestConnectEditsOnlyPairtaskTablesInCodex(t *testing.T) {
 	path := filepath.Join(env.home, ".codex", "config.toml")
 	writeFile(t, path, codexSample)
 	connect(t, env, "codex", false)
-	want := codexSample + "\n[mcp_servers.pairtask]\ncommand = \"" + exePath + "\"\nargs = [\"mcp\"]\n"
+	want := codexSample + "\n[mcp_servers.pairtask]\ncommand = \"" + exePath + "\"\nargs = [\"mcp\", \"--agent-id\", \"codex\"]\n"
 	if got := readFile(t, path); got != want {
 		t.Fatalf("config after connect:\n%s\nwant:\n%s", got, want)
 	}
@@ -200,7 +202,7 @@ func TestClientsReportsEachClient(t *testing.T) {
 	for _, s := range all {
 		got[s.ID] = describe(s)
 	}
-	want := map[string]string{"codex": "connected", "cursor": "connected to another copy of pairtask", "claude-desktop": "not installed", "claude-code": "not installed"}
+	want := map[string]string{"codex": "connected as agent codex", "cursor": "connected to another copy of pairtask", "claude-desktop": "not installed", "claude-code": "not installed"}
 	for id, w := range want {
 		if got[id] != w {
 			t.Errorf("%s: %q, want %q", id, got[id], w)
@@ -297,5 +299,37 @@ func TestClientsSaysWhenEachClientLastStarted(t *testing.T) {
 	}
 	if want := map[string]string{"claude-code": "10:00", "codex": "11:00"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("last seen %v, want %v", got, want)
+	}
+}
+
+func TestAnOwnerModeEntryIsShownAndConnectGivesTheAppItsOwnAgent(t *testing.T) {
+	env := testEnv(t)
+	path := filepath.Join(env.home, ".cursor", "mcp.json")
+	writeFile(t, path, `{"mcpServers":{"pairtask":{"command":"`+exePath+`","args":["mcp"]}}}`)
+	if got := describe(env.status(cursorClient(t, env))); !strings.Contains(got, "owner mode") {
+		t.Fatalf("a v0.3 entry reads %q, want owner mode", got)
+	}
+	if out := connect(t, env, "cursor", false); strings.Contains(out, "already connected") {
+		t.Fatalf("connecting an owner-mode entry again changed nothing: %q", out)
+	}
+	if got := describe(env.status(cursorClient(t, env))); got != "connected as agent cursor" {
+		t.Fatalf("after connecting again it reads %q", got)
+	}
+}
+
+func cursorClient(t *testing.T, env clientEnv) client {
+	t.Helper()
+	c, err := env.client("cursor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestAnEntrysAgentIsReadEitherWay(t *testing.T) {
+	for args, want := range map[string]string{"mcp": "", "mcp --agent-id codex": "codex", "mcp --agent-id=codex": "codex", "mcp --agent-id": ""} {
+		if got := (serverEntry{Args: strings.Fields(args)}).agent(); got != want {
+			t.Errorf("%q: agent %q, want %q", args, got, want)
+		}
 	}
 }

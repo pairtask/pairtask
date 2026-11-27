@@ -48,6 +48,7 @@ type Client struct {
 	lastActivity    time.Time                        // last agent_activity written
 	forges          forge.Registry                   // review adapters on this side (#201); none means reviews are refused before any forge work
 	agentID         string
+	redials         bool // the next call after a broken connection reconnects
 	roots           []protocol.SigningRoot // the keys seals verify against, from the welcome (#115)
 	ownWorkspace    string                 // this workspace's key, from the welcome; "" when it didn't say
 }
@@ -70,6 +71,9 @@ type ClientConfig struct {
 	Model      string
 	Rooms      []string       // v9: rooms to join on registration
 	Forges     forge.Registry // #201: the forge adapters reviews may use on this side
+	// Redials: the next call after a broken connection registers again
+	// (NewRedialingClient), which the connection's error says.
+	Redials bool
 }
 
 // Dial registers the agent before returning. The caller must call Close.
@@ -105,9 +109,18 @@ func Dial(ctx context.Context, cfg ClientConfig) (*Client, error) {
 	c.sessionID = welcome.SessionID
 	c.protocolVersion = welcome.ProtocolVersion
 	c.agentID = cfg.AgentID
+	c.redials = cfg.Redials
 	c.takeRoots(welcome)
 	go c.readLoop(r)
 	return c, nil
+}
+
+// reconnectHint is how this client gets connected again.
+func (c *Client) reconnectHint() string {
+	if c.redials {
+		return "the next call reconnects"
+	}
+	return "restart the adapter to reconnect"
 }
 
 func (c *Client) readLoop(r *bufio.Reader) {
@@ -115,7 +128,7 @@ func (c *Client) readLoop(r *bufio.Reader) {
 	for {
 		var msg protocol.Message
 		if err := protocol.ReadFrame(r, &msg); err != nil {
-			c.fail(fmt.Errorf("broker connection closed: %w; restart the adapter to reconnect; accepted unacknowledged durable messages replay on v3; other frames may be lost", err))
+			c.fail(fmt.Errorf("broker connection closed: %w; %s; accepted unacknowledged durable messages replay on v3; other frames may be lost", err, c.reconnectHint()))
 			return
 		}
 		if c.routeResponse(msg) {
