@@ -62,6 +62,7 @@ type owner struct {
 	cancel context.CancelFunc
 	ln     net.Listener
 	sock   string
+	agents *server.Server // this Mac's agents' door; nil when it couldn't open
 	log    *slog.Logger
 	mu     sync.Mutex
 	conns  map[net.Conn]struct{} // nil once closing
@@ -89,6 +90,9 @@ func startOwner(ctx, base context.Context, cfg Config) (*owner, error) {
 	}
 	if err := o.share(cfg.Dir); err != nil {
 		return nil, errors.Join(err, o.stop())
+	}
+	if err := o.openAgentDoor(cfg.Dir); err != nil {
+		return nil, errors.Join(err, o.close())
 	}
 	if err := (nodeFiles{cfg.Dir}).recordOwner(cfg); err != nil {
 		o.log.Warn("couldn't record this copy as the node's owner", "error", err)
@@ -288,6 +292,7 @@ func (o *owner) call(ctx context.Context, msg protocol.Message) protocol.Message
 // close stops sharing (the socket goes while the lock is still held, so
 // no copy reaches a stopping broker), then stops the broker.
 func (o *owner) close() error {
+	o.closeAgentDoor()
 	if o.ln != nil {
 		o.ln.Close()
 		os.Remove(o.sock)

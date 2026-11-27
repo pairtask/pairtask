@@ -86,7 +86,8 @@ func runDaemon(args []string, log *slog.Logger) error {
 // until the client closes it or a signal arrives: as the owner, or
 // forwarding to the agent or another copy that owns the directory.
 func runMCP(args []string, log *slog.Logger) error {
-	cfg, err := parseFlags(args)
+	var agent agentFlags
+	cfg, err := parseFlagsWith(args, agent.register)
 	if err != nil {
 		return err
 	}
@@ -100,7 +101,11 @@ func runMCP(args []string, log *slog.Logger) error {
 	defer n.Close()
 	go applyAddresses(ctx, n, cfg.Address, log)
 	in := &clientInput{ReadCloser: os.Stdin}
-	err = desktop.NewServer(n, version()).Run(ctx, &mcp.IOTransport{Reader: in, Writer: stdout{os.Stdout}})
+	transport := &mcp.IOTransport{Reader: in, Writer: stdout{os.Stdout}}
+	if agent.id != "" {
+		return sessionEnd(ctx, in, runAsAgent(ctx, cfg.Dir, agent, transport), log)
+	}
+	err = desktop.NewServer(n, version()).Run(ctx, transport)
 	return sessionEnd(ctx, in, err, log)
 }
 
@@ -153,7 +158,15 @@ func (stdout) Close() error { return nil }
 // under, --notify, whether to show system notifications (on), and
 // --address, the Workspace address setting.
 func parseFlags(args []string) (desktop.Config, error) {
+	return parseFlagsWith(args, nil)
+}
+
+// parseFlagsWith is parseFlags with more flags, which more registers.
+func parseFlagsWith(args []string, more func(*flag.FlagSet)) (desktop.Config, error) {
 	fs := flag.NewFlagSet("pairtask-desktop", flag.ContinueOnError)
+	if more != nil {
+		more(fs)
+	}
 	var cfg desktop.Config
 	fs.StringVar(&cfg.Dir, "dir", "", "private data directory (default: the user config directory's pairtask-desktop)")
 	fs.StringVar(&cfg.Name, "name", "", "the name this node pairs under")
