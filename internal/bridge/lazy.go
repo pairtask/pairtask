@@ -29,6 +29,7 @@ type LazyClient struct {
 // gap is never silent, and the call after it registers again, which
 // replays accepted unacknowledged durable messages.
 func NewRedialingClient(cfg ClientConfig) (*LazyClient, error) {
+	cfg.Redials = true
 	c, err := NewLazyClient(cfg)
 	if err == nil {
 		c.redial = true
