@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pairtask/pairtask/internal/peer"
+	"github.com/pairtask/pairtask/internal/peer/egress"
 	"github.com/pairtask/pairtask/internal/protocol"
 	"github.com/pairtask/pairtask/internal/space"
 )
@@ -148,6 +149,12 @@ func spaceJobError(err error) *routingError {
 	var dns *net.DNSError
 	if errors.As(err, &request) && errors.As(request.Err, &dns) {
 		return &routingError{protocol.ErrSpaceUnreachable, "The Pairtask broker could not resolve " + dns.Name + ". Check DNS in the environment running the broker, then retry."}
+	}
+	if errors.Is(err, egress.ErrRefused) {
+		return &routingError{protocol.ErrSpaceUnreachable, "The connector could not resolve or permit the Pairbook destination. Check the join hostname and the connector's DNS and destination policy."}
+	}
+	if errors.Is(err, egress.ErrDialFailed) {
+		return &routingError{protocol.ErrSpaceUnreachable, "The connector could not connect to Pairbook. Check the directory address and network route from the connector."}
 	}
 	return spaceRefusal(err.Error())
 }
