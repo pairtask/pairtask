@@ -228,13 +228,7 @@ func TestIncrementalInboxAcceptanceOldestUnreadBeyondNewestStoragePage(t *testin
 	for i := 1; i <= 71; i++ {
 		f.incoming(t, i)
 	}
-	for _, consumer := range []string{"agent-one", "agent-two"} {
-		conv := incrementalRead(t, f.node, map[string]any{"new_only": true, "consumer": consumer, "limit": 1})
-		incrementalIDs(t, conv, "in-1")
-		if conv[0].Unread != 71 {
-			t.Fatalf("%s unread = %d, want 71", consumer, conv[0].Unread)
-		}
-	}
+	checkAgentUnread(t, f.node, "in-1", 71)
 	conv := incrementalRead(t, f.node, map[string]any{"consumer": "app", "limit": 1})
 	if conv[0].Unread != 71 {
 		t.Fatalf("app unread = %d after agents fetched, want 71", conv[0].Unread)
@@ -244,11 +238,16 @@ func TestIncrementalInboxAcceptanceOldestUnreadBeyondNewestStoragePage(t *testin
 	}
 	_, err := f.node.markRead(context.Background(), ReadArgs{From: f.contact, IDs: []string{"in-2"}})
 	incrementalOK(t, err)
+	checkAgentUnread(t, f.node, "in-2", 70)
+}
+
+func checkAgentUnread(t *testing.T, n *Node, id string, want int) {
+	t.Helper()
 	for _, consumer := range []string{"agent-one", "agent-two"} {
-		next := incrementalRead(t, f.node, map[string]any{"new_only": true, "consumer": consumer, "limit": 1})
-		incrementalIDs(t, next, "in-2")
-		if next[0].Unread != 70 || next[0].UnreadIncomplete {
-			t.Fatalf("%s unread after operator mark = %d, incomplete=%t", consumer, next[0].Unread, next[0].UnreadIncomplete)
+		rows := incrementalRead(t, n, map[string]any{"new_only": true, "consumer": consumer, "limit": 1})
+		incrementalIDs(t, rows, id)
+		if rows[0].Unread != want || rows[0].UnreadIncomplete {
+			t.Fatalf("%s unread = %d, incomplete=%t, want %d", consumer, rows[0].Unread, rows[0].UnreadIncomplete, want)
 		}
 	}
 }

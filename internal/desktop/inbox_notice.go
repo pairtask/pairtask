@@ -85,7 +85,7 @@ func unreadFromPage(page *protocol.ContactMessagePage, load func(int64) *protoco
 			return total, true
 		}
 		next, ok := olderThan(page, before)
-		if !ok || next <= 0 || pages == unreadPages {
+		if !ok || pages == unreadPages {
 			break
 		}
 		before = next
@@ -103,6 +103,9 @@ func olderThan(page *protocol.ContactMessagePage, before int64) (int64, bool) {
 	next := page.Messages[0].Cursor
 	for _, m := range page.Messages {
 		next = min(next, m.Cursor)
+	}
+	if next <= 0 {
+		return 0, false
 	}
 	return next, before == 0 || next < before
 }
