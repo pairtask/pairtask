@@ -86,21 +86,26 @@ func parseOperatorContact(args []string, stderr io.Writer) (operatorCall, protoc
 			return fmt.Errorf("contact %s: wrong number of arguments", op)
 		}
 		req.ContactKey = positional[0]
-		if contactAgentOps[op] {
-			req.ContactAgents = positional[1:]
-		}
-		if op == protocol.ContactOpSend {
-			req.ContactText, req.ContactTo = positional[1], to
-			if *messageID != "" {
-				req.MessageID = *messageID
-			}
-		}
+		setContactPayload(&req, positional, to, *messageID)
 		return call.validate()
 	})
 	if history {
 		req.ProtocolVersion = protocol.Version
 	}
 	return call, req, code
+}
+
+// setContactPayload fills the operation-specific fields after its arguments are validated.
+func setContactPayload(req *protocol.Message, positional []string, to []string, messageID string) {
+	if contactAgentOps[req.ContactOp] {
+		req.ContactAgents = positional[1:]
+	}
+	if req.ContactOp == protocol.ContactOpSend {
+		req.ContactText, req.ContactTo = positional[1], to
+		if messageID != "" {
+			req.MessageID = messageID
+		}
+	}
 }
 
 // contactArity: exactly the operation's arguments, or at least them for
