@@ -95,7 +95,7 @@ func Open(path string) (*Store, error) {
 // refused transition leaves no new schema object behind; then the
 // one-time and every-open steps that need them.
 func afterTransition(db *sql.DB) error {
-	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema + spaceMapsSchema + spaceAttemptsSchema + spaceContactsSchema + spaceOutboxSchema + spaceAddressesSchema + spaceSharesSchema); err != nil {
+	if _, err := db.Exec(predictionsSchema + decisionsSchema + agentRolesSchema + signingRootsSchema + peerSealsSchema + spacePinsSchema + pairedClaimsSchema + peerFilesSchema + attentionSchema + identitySchema + spaceMapsSchema + spaceAttemptsSchema + spaceContactsSchema + spaceOutboxSchema + spaceAddressesSchema + spaceSharesSchema + broadcastExclusionsSchema); err != nil {
 		return fmt.Errorf("apply classifier schema: %w", err)
 	}
 	if err := resetAttentionEnforcement(db); err != nil {
@@ -390,7 +390,7 @@ func (s *Store) PersistMessage(ctx context.Context, msg protocol.Message, sender
 		return err
 	}
 	defer tx.Rollback()
-	if err := persistMessage(ctx, tx, routedMessage{msg, senderSession, recipients}); err != nil {
+	if err := persistMessage(ctx, tx, routedMessage{msg: msg, senderSession: senderSession, recipients: recipients}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -400,6 +400,7 @@ type routedMessage struct {
 	msg           protocol.Message
 	senderSession string
 	recipients    []protocol.Recipient
+	excluded      []string
 }
 
 func persistMessage(ctx context.Context, tx *sql.Tx, routed routedMessage) error {
@@ -423,7 +424,7 @@ func persistMessage(ctx context.Context, tx *sql.Tx, routed routedMessage) error
 	if err := insertRecipients(ctx, tx, msg.MessageID, recipients); err != nil {
 		return err
 	}
-	return persistDurable(ctx, tx, msg, recipients)
+	return persistDurable(ctx, tx, routed)
 }
 
 func insertRecipients(ctx context.Context, tx *sql.Tx, id string, recipients []protocol.Recipient) error {

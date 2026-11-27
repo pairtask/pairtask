@@ -152,7 +152,7 @@ func (h *Hub) reportRetry(ctx context.Context, clients map[string]*Client, in In
 	}
 	h.enqueue(clients, in.From, protocol.Message{Type: protocol.TypeAck, MessageID: request.MessageID,
 		Stage: protocol.StageAccepted, Seq: snapshot.Message.Seq, Durable: true, Repeated: true,
-		Recipients: publicRecipients(snapshot.Recipients), Receipts: publicReceipts(snapshot.Receipts)})
+		Recipients: publicRecipients(snapshot.Recipients), Excluded: snapshot.Excluded, Receipts: publicReceipts(snapshot.Receipts)})
 	return true
 }
 

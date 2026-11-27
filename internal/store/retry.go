@@ -11,6 +11,7 @@ import (
 )
 
 type RetrySnapshot struct {
+	Excluded   []string
 	Message    protocol.Message
 	Recipients []protocol.Recipient
 	Receipts   []protocol.ReceiptState
@@ -32,6 +33,9 @@ func (s *Store) LookupRetry(ctx context.Context, request protocol.Message) (*Ret
 	}
 	out := &RetrySnapshot{Message: msg}
 	if err := s.retryReceipts(ctx, out); err != nil {
+		return nil, err
+	}
+	if err := s.loadBroadcastExclusions(ctx, out); err != nil {
 		return nil, err
 	}
 	return out, nil

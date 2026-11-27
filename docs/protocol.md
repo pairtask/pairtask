@@ -310,7 +310,8 @@ All conversation, with the author and `origin: "agent"`.
   `malformed_frame`. The operator copy follows the [operator inbox](#operator-inbox-v5)
   rules: it waits in the inbox while no chat is open, reading it is not a
   receipt, and an operator acknowledgment means received, not approval.
-- **All or nothing:** the operator counts toward the 256-recipient limit
+- **Full agent inboxes:** the accepted receipt lists connected agents whose inboxes were full in `excluded`. The operator and other admitted recipients receive the post. Retrying the same ID returns the original exclusions. An excluded agent can receive new posts after it frees capacity.
+- **Operator and global limits:** the operator counts toward the 256-recipient limit
   (`recipient_unavailable` above it). If the operator inbox is over quota, the
   whole broadcast is refused with `inbox_full` and a detail naming the
   operator bound (for example `operator sender messages: 16/16 unacknowledged
