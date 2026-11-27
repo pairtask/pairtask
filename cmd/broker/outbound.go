@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/pairtask/pairtask/internal/peer/egress"
 )
@@ -23,4 +24,13 @@ func outboundTransport(cfg config) (http.RoundTripper, string) {
 		return egress.Dial(ctx, socket, address)
 	}
 	return transport, "egress " + socket
+}
+
+// pairbookHTTP keeps the directory client's direct-mode defaults and timeout.
+func pairbookHTTP(cfg config) *http.Client {
+	transport, _ := outboundTransport(cfg)
+	if transport == nil {
+		return nil
+	}
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second}
 }

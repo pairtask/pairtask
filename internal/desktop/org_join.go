@@ -289,10 +289,31 @@ func ensureAnchor(dir string, keys *personkey.Keys) error {
 	return err
 }
 
+func enrollmentGuidance(state enrollState) string {
+	switch state {
+	case space.EnrollPendingSignIn:
+		return "Open the enrollment URL, sign in with your company account, and check this machine's fingerprint."
+	case space.EnrollStale:
+		return "The space changed. This app is refreshing the enrollment."
+	case space.EnrollAwaitingApproval:
+		return "Waiting for admin approval. This app is following the enrollment."
+	case enrollState(enroll.Waiting):
+		return "Waiting for admin approval. Use the same join link to resume this enrollment."
+	case space.EnrollAdmitted:
+		return "This workspace has joined the space."
+	case space.EnrollDenied:
+		return "An admin declined this workspace's enrollment."
+	case space.EnrollExpired:
+		return "This enrollment expired. Use the join link to start again."
+	default:
+		return string(state)
+	}
+}
+
 // track records where f stands and returns it.
 func (n *Node) track(f *enroll.Flow, state enrollState) PairbookJoinResult {
 	r := PairbookJoinResult{Space: f.Enroll.Space, URL: f.Enroll.URL, Code: f.Enroll.Code, Fingerprint: f.Fingerprint(), ExpiresAt: f.Enroll.ExpiresAt, State: string(state),
-		Guidance: "Show the person the URL and this machine's fingerprint. They open it, sign in with the company account and confirm the fingerprint matches."}
+		Guidance: enrollmentGuidance(state)}
 	n.joins.mu.Lock()
 	defer n.joins.mu.Unlock()
 	if n.joins.follow == nil {
@@ -377,7 +398,7 @@ func (n *Node) resumeLocked(s enroll.Saved, lock *followLock) {
 
 // trackSaved records a kept enrollment's state before it is followed.
 func (n *Node) trackSaved(s enroll.Saved, state enrollState) {
-	r := PairbookJoinResult{Space: s.Enroll.Space, URL: s.Enroll.URL, Code: s.Enroll.Code, ExpiresAt: s.Enroll.ExpiresAt, State: string(state)}
+	r := PairbookJoinResult{Space: s.Enroll.Space, URL: s.Enroll.URL, Code: s.Enroll.Code, ExpiresAt: s.Enroll.ExpiresAt, State: string(state), Guidance: enrollmentGuidance(state)}
 	n.joins.mu.Lock()
 	defer n.joins.mu.Unlock()
 	if n.joins.follow == nil {
