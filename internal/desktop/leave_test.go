@@ -23,31 +23,28 @@ func TestLeaveRetainsEnrollmentOnRefusalAndForgetsItOnSuccess(t *testing.T) {
 	desktopSpaceTool(t, client, "space_join", map[string]any{"link": inv.String()})
 	saves := enroll.Saves(filepath.Join(dir, "enrollments"))
 	kept := enroll.Saved{Link: inv.String(), Enroll: protocol.SpaceEnroll{Space: id}}
-	if err := saves.Save(kept); err != nil {
-		t.Fatal(err)
-	}
+	incrementalOK(t, saves.Save(kept))
 	n.trackSaved(kept, "awaiting_approval")
 	args := LeaveArgs{Space: id, Confirm: id}
 	if err := n.leaveSpace(context.Background(), args); err == nil {
 		t.Fatal("expected refusal")
 	}
-	if _, ok := saves.Load(id); !ok || len(n.pairbookStatus().Enrollments) != 1 || len(listedSpaces(t, n).Spaces) != 1 {
-		t.Fatal("failure discarded local enrollment")
-	}
+	_, saved := saves.Load(id)
+	desktopSpaceCheck(t, saved, "failure lost the save")
+	desktopSpaceCheck(t, len(n.pairbookStatus().Enrollments) == 1, "failure lost enrollment state")
+	desktopSpaceCheck(t, len(listedSpaces(t, n).Spaces) == 1, "failure lost the pin")
 	fixture.revokeErr = nil
 	n.joins.life, n.joins.stop = context.WithCancel(context.Background())
 	defer n.stopJoins()
 	n.following(id)
 	lock, err := takeFollow(n.lockPath(id))
-	if err != nil {
-		t.Fatal(err)
-	}
+	incrementalOK(t, err)
 	ctx := n.workerContext(id)
 	n.spawn(func() { <-ctx.Done(); n.stopFollowing(id, lock) })
 	desktopSpaceTool(t, client, "pairbook_leave", args)
-	if _, ok := saves.Load(id); ok || len(n.pairbookStatus().Enrollments) != 0 {
-		t.Fatal("left enrollment survived")
-	}
+	_, saved = saves.Load(id)
+	desktopSpaceCheck(t, !saved, "left enrollment save survived")
+	desktopSpaceCheck(t, len(n.pairbookStatus().Enrollments) == 0, "left enrollment status survived")
 	n.resumeJoins()
 	if _, already := n.following(id); already {
 		t.Fatal("fresh join was claimed by a stale follower")
