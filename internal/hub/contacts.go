@@ -261,6 +261,11 @@ type contactRows struct {
 func (h *Hub) contactListPage(ctx context.Context, msg protocol.Message, c contactRows) protocol.Message {
 	page := protocol.ContactMessagePage{Contact: msg.ContactKey, Messages: []protocol.ContactMessageView{}, More: c.more,
 		Sync: h.contactSyncView(msg.ContactKey)}
+	count, err := h.store.PeerMessages().UnreadCount(ctx, msg.ContactKey, c.history)
+	if err != nil {
+		return (&routingError{protocol.ErrInternal, "contact unread count unavailable"}).frame(msg.MessageID)
+	}
+	page.Unread = &count
 	if err := h.routingViews(ctx, &page, c); err != nil {
 		return (&routingError{protocol.ErrInternal, "contact messages unavailable"}).frame(msg.MessageID)
 	}

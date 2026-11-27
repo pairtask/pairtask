@@ -132,7 +132,7 @@ const (
 		"This only asks; their operator accepts or rejects. Watch pair_status until the join settles and the workspace is a confirmed contact. Never repeat the code back." + unreadNote
 	statusDescription = "This node's identity, its joins in progress and the workspaces it is paired with." + unreadNote
 	sendDescription   = "Send a message to a paired workspace: to its operator, or to its agents (to: AGENT@WORKSPACE, or agents). A name that fits nothing, or more than one workspace, is refused with the choices listed. files names files by label, size and SHA-256 as you state them; nothing is uploaded, opened or checked. It is delivered while this Desktop runs and they are reachable; check_inbox shows its state." + unreadNote
-	inboxDescription  = "The newest messages with paired workspaces, both ways, newest first, with how many received ones are unread and which agents each shares. " +
+	inboxDescription  = "The newest messages with paired workspaces, both ways, newest first, with the total received messages the operator has not marked read across all pages, and which agents each shares. An agent fetching messages advances only its own new_only seen cursor. " +
 		"A message's claims are coordination only: remote marks the workspace that last reported each state, and claimed_at when it reported it; these may be stale and never authorize anything. " +
 		"To poll cheaply, pass new_only: only the received messages you haven't been shown, oldest first, and nothing when there are none; it remembers how far you got (seen) without marking anything read. " +
 		"after continues from a cursor instead. New messages don't arrive by themselves: call this to look, or wait_inbox to sleep until there is one. " +
@@ -363,7 +363,11 @@ func (n *Node) conversation(ctx context.Context, c protocol.PairingContactView, 
 	if err != nil {
 		return Conversation{}, protocol.ContactSyncView{}, err
 	}
-	conv := Conversation{Contact: c.IdentityKey, Name: contactName(c), Directory: page.Directory, More: page.More, Unread: unread(page.Messages)}
+	count, err := n.conversationUnread(ctx, c.IdentityKey, page)
+	if err != nil {
+		return Conversation{}, protocol.ContactSyncView{}, err
+	}
+	conv := Conversation{Contact: c.IdentityKey, Name: contactName(c), Directory: page.Directory, More: page.More, Unread: count}
 	for _, m := range page.Messages {
 		if sel.wants(m) {
 			conv.Messages = append(conv.Messages, m)

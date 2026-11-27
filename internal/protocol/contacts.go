@@ -226,6 +226,7 @@ const (
 
 // ContactMessagePage is a page of one contact's messages and its sync status.
 type ContactMessagePage struct {
+	Unread   *int                 `json:"unread,omitempty"` // Contact-wide operator unread total; absent from older brokers.
 	Contact  string               `json:"contact"`
 	Messages []ContactMessageView `json:"messages"`
 	More     bool                 `json:"more"`

@@ -114,6 +114,9 @@ func writeContact(w io.Writer, resp protocol.Message) {
 		fmt.Fprintf(w, "id=%q %s: %s\n", m.ID, m.Direction, m.State)
 	}
 	if p := resp.ContactPage; p != nil {
+		if p.Unread != nil {
+			fmt.Fprintf(w, "unread by operator: %d\n", *p.Unread)
+		}
 		for _, m := range p.Messages {
 			fmt.Fprintf(w, "%s %s %s id=%q%s %q\n", m.CreatedAt.Local().Format("15:04"), m.Direction, stateNote(m), m.ID, routeNote(m), m.Text)
 		}

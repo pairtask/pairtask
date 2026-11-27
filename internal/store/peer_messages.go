@@ -619,6 +619,21 @@ func (p *PeerMessages) CurrentPage(ctx context.Context, contact string, before i
 	return p.page(ctx, pageQuery{contact, before, limit, ` AND pairing_epoch = ` + historyEpochOf1})
 }
 
+// UnreadCount counts all received messages the operator has not read in
+// the same pairing scope as Page or CurrentPage, independent of its cursor.
+func (p *PeerMessages) UnreadCount(ctx context.Context, contact string, history bool) (int, error) {
+	if err := p.localOnly(); err != nil {
+		return 0, err
+	}
+	query := "SELECT COUNT(*) FROM peer_messages WHERE contact = ?1 AND direction = 'in' AND read_at IS NULL"
+	if !history {
+		query += " AND pairing_epoch = " + historyEpochOf1
+	}
+	var count int
+	err := p.db.QueryRowContext(ctx, query, contact).Scan(&count)
+	return count, err
+}
+
 // pageQuery is one page of a contact's messages: before a cursor, at most
 // limit, in the pairings scope admits.
 type pageQuery struct {

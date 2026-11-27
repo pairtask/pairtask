@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
@@ -65,6 +66,9 @@ func countUnread(ctx context.Context, call func(context.Context, protocol.Messag
 		if page == nil {
 			return 0, false
 		}
+		if page.Unread != nil {
+			return *page.Unread, true
+		}
 		total += unread(page.Messages)
 		next, ok := olderThan(page, before)
 		if !ok {
@@ -96,4 +100,20 @@ func (n *Node) freshNotice(ctx context.Context) InboxNotice {
 		return InboxNotice{}
 	}
 	return n.notice(ctx, snap.Contacts)
+}
+
+// conversationUnread uses the broker total when available. With older
+// brokers, walk past the first page only when it actually has more rows.
+func (n *Node) conversationUnread(ctx context.Context, contact string, page *protocol.ContactMessagePage) (int, error) {
+	if page.Unread != nil {
+		return *page.Unread, nil
+	}
+	if !page.More {
+		return unread(page.Messages), nil
+	}
+	count, ok := countUnread(ctx, n.Call, contact)
+	if !ok {
+		return 0, errors.New("could not read the complete unread count")
+	}
+	return count, nil
 }
