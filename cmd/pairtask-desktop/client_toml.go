@@ -218,15 +218,18 @@ func (c codexConfig) separated() string {
 func (e serverEntry) toml() string {
 	args := make([]string, len(e.Args))
 	for i, a := range e.Args {
-		args[i] = tomlString(a)
+		args[i] = tomlText(a).quoted()
 	}
 	return "[" + ourTable + "]\n" +
-		"command = " + tomlString(e.Command) + "\n" +
+		"command = " + tomlText(e.Command).quoted() + "\n" +
 		"args = [" + strings.Join(args, ", ") + "]\n"
 }
 
-// tomlString is s as a TOML basic string.
-func tomlString(s string) string { return "\"" + tomlQuoter.Replace(s) + "\"" }
+// tomlText is text to write into a Codex config.
+type tomlText string
+
+// quoted is t as a TOML basic string.
+func (t tomlText) quoted() string { return "\"" + tomlQuoter.Replace(string(t)) + "\"" }
 
 // tomlQuoter escapes a TOML basic string; tomlUnquoter undoes it.
 var (
