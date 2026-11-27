@@ -150,7 +150,7 @@ func (n *Node) connectClientOnly(ctx context.Context) error {
 // given are stored first, so every copy runs with the same. problem is a
 // given setting that couldn't be kept.
 func settled(cfg Config) (Config, error) {
-	given := Settings{Name: cfg.Name, Pairbook: cfg.Pairbook, Address: cfg.Address, Notify: cfg.NotifyGiven}
+	given := Settings{StartedName: cfg.Name, Pairbook: cfg.Pairbook, Address: cfg.Address, Notify: cfg.NotifyGiven}
 	now, problem, err := storeSettings(cfg.Dir, given)
 	if err != nil {
 		cfg.Log.Warn("the node's settings file isn't usable; using this copy's own", "error", err)
