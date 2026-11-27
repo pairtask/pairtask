@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      FIRST_RELEASE: workspace-v0.0.0-build.1160.1
-      SECOND_RELEASE: workspace-v0.0.0-build.1166.1
+      FIRST_RELEASE: workspace-v0.0.0-build.1166.1
+      SECOND_RELEASE: v1175
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
