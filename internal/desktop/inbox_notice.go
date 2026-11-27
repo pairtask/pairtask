@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 
@@ -59,24 +58,40 @@ const unreadPages = 100
 // last page, or at one that adds nothing older; a history longer than
 // unreadPages pages isn't counted, so no notice claims a partial total.
 func countUnread(ctx context.Context, call func(context.Context, protocol.Message) protocol.Message, contact string) (int, bool) {
+	load := func(before int64) *protocol.ContactMessagePage {
+		return loadUnreadPage(ctx, call, contact, before)
+	}
+	count, complete := unreadFromPage(load(0), load)
+	if !complete {
+		return 0, false
+	}
+	return count, true
+}
+
+func loadUnreadPage(ctx context.Context, call func(context.Context, protocol.Message) protocol.Message, contact string, before int64) *protocol.ContactMessagePage {
+	out := call(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: contact, ContactBefore: before})
+	return out.ContactPage
+}
+
+// unreadFromPage returns a lower bound if legacy history cannot be read in full.
+func unreadFromPage(page *protocol.ContactMessagePage, load func(int64) *protocol.ContactMessagePage) (int, bool) {
 	total, before := 0, int64(0)
-	for range unreadPages {
-		out := call(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: contact, ContactBefore: before})
-		page := out.ContactPage
-		if page == nil {
-			return 0, false
-		}
+	for pages := 1; page != nil; pages++ {
 		if page.Unread != nil {
 			return *page.Unread, true
 		}
 		total += unread(page.Messages)
-		next, ok := olderThan(page, before)
-		if !ok {
+		if !page.More {
 			return total, true
 		}
+		next, ok := olderThan(page, before)
+		if !ok || next <= 0 || pages == unreadPages {
+			break
+		}
 		before = next
+		page = load(before)
 	}
-	return 0, false
+	return total, false
 }
 
 // olderThan is the cursor that pages past page, when there is more and it
@@ -102,18 +117,11 @@ func (n *Node) freshNotice(ctx context.Context) InboxNotice {
 	return n.notice(ctx, snap.Contacts)
 }
 
-// conversationUnread uses the broker total when available. With older
-// brokers, walk past the first page only when it actually has more rows.
-func (n *Node) conversationUnread(ctx context.Context, contact string, page *protocol.ContactMessagePage) (int, error) {
-	if page.Unread != nil {
-		return *page.Unread, nil
-	}
-	if !page.More {
-		return unread(page.Messages), nil
-	}
-	count, ok := countUnread(ctx, n.Call, contact)
-	if !ok {
-		return 0, errors.New("could not read the complete unread count")
-	}
-	return count, nil
+// setConversationUnread preserves available messages if a legacy broker
+// cannot provide the complete count.
+func (n *Node) setConversationUnread(ctx context.Context, conv *Conversation, page *protocol.ContactMessagePage) {
+	count, complete := unreadFromPage(page, func(before int64) *protocol.ContactMessagePage {
+		return loadUnreadPage(ctx, n.Call, conv.Contact, before)
+	})
+	conv.Unread, conv.UnreadIncomplete = count, !complete
 }

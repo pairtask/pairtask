@@ -242,6 +242,15 @@ func TestIncrementalInboxAcceptanceOldestUnreadBeyondNewestStoragePage(t *testin
 	if n := f.node.freshNotice(context.Background()).Unread; n != conv[0].Unread {
 		t.Fatalf("notice unread = %d, inbox unread = %d", n, conv[0].Unread)
 	}
+	_, err := f.node.markRead(context.Background(), ReadArgs{From: f.contact, IDs: []string{"in-2"}})
+	incrementalOK(t, err)
+	for _, consumer := range []string{"agent-one", "agent-two"} {
+		next := incrementalRead(t, f.node, map[string]any{"new_only": true, "consumer": consumer, "limit": 1})
+		incrementalIDs(t, next, "in-2")
+		if next[0].Unread != 70 || next[0].UnreadIncomplete {
+			t.Fatalf("%s unread after operator mark = %d, incomplete=%t", consumer, next[0].Unread, next[0].UnreadIncomplete)
+		}
+	}
 }
 
 func TestIncrementalInboxAcceptanceSealProjectionPreservesStoredBytes(t *testing.T) {

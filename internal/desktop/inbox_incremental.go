@@ -161,12 +161,9 @@ func (n *Node) continued(ctx context.Context, c protocol.PairingContactView, aft
 		return Conversation{}, protocol.ContactSyncView{}, err
 	}
 	rows, page := walk.rows, walk.newest
-	count, err := n.conversationUnread(ctx, c.IdentityKey, page)
-	if err != nil {
-		return Conversation{}, protocol.ContactSyncView{}, err
-	}
-	conv := Conversation{Contact: c.IdentityKey, Name: contactName(c), Directory: page.Directory, Unread: count,
+	conv := Conversation{Contact: c.IdentityKey, Name: contactName(c), Directory: page.Directory,
 		Messages: rows, Next: after}
+	n.setConversationUnread(ctx, &conv, page)
 	if len(conv.Messages) > sel.limit {
 		conv.Messages, conv.More = conv.Messages[:sel.limit], true
 	}

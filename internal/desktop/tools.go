@@ -87,12 +87,13 @@ type InboxResult struct {
 // Conversation is the newest messages with one paired workspace, newest
 // first, and the agents it says it shares.
 type Conversation struct {
-	Contact   string                        `json:"contact"`
-	Name      string                        `json:"name"`
-	Directory []string                      `json:"directory,omitempty"`
-	Unread    int                           `json:"unread"`
-	Messages  []protocol.ContactMessageView `json:"messages"`
-	More      bool                          `json:"more"`
+	Contact          string                        `json:"contact"`
+	Name             string                        `json:"name"`
+	Directory        []string                      `json:"directory,omitempty"`
+	Unread           int                           `json:"unread"`
+	UnreadIncomplete bool                          `json:"unread_incomplete,omitempty"`
+	Messages         []protocol.ContactMessageView `json:"messages"`
+	More             bool                          `json:"more"`
 	// Fresh: a session with them completed during this check, so this is
 	// what they hold now; otherwise SyncFailure says why it may be stale.
 	Fresh       bool   `json:"fresh"`
@@ -363,11 +364,8 @@ func (n *Node) conversation(ctx context.Context, c protocol.PairingContactView, 
 	if err != nil {
 		return Conversation{}, protocol.ContactSyncView{}, err
 	}
-	count, err := n.conversationUnread(ctx, c.IdentityKey, page)
-	if err != nil {
-		return Conversation{}, protocol.ContactSyncView{}, err
-	}
-	conv := Conversation{Contact: c.IdentityKey, Name: contactName(c), Directory: page.Directory, More: page.More, Unread: count}
+	conv := Conversation{Contact: c.IdentityKey, Name: contactName(c), Directory: page.Directory, More: page.More}
+	n.setConversationUnread(ctx, &conv, page)
 	for _, m := range page.Messages {
 		if sel.wants(m) {
 			conv.Messages = append(conv.Messages, m)

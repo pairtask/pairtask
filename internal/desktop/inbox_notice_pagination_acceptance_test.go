@@ -62,3 +62,18 @@ func TestInboxNoticeAcceptanceDiscardsPartialCountWhenOlderPageFails(t *testing.
 		t.Fatalf("partial unread count after page failure = (%d, %v), want (0, false)", count, ok)
 	}
 }
+
+func TestUnreadFromLegacyPagePreservesLowerBound(t *testing.T) {
+	page := func(cursor int64) *protocol.ContactMessagePage {
+		return &protocol.ContactMessagePage{More: true, Messages: []protocol.ContactMessageView{{Direction: "in", Cursor: cursor}}}
+	}
+	first := page(unreadPages + 1)
+	count, complete := unreadFromPage(first, func(int64) *protocol.ContactMessagePage { return nil })
+	if count != 1 || complete {
+		t.Fatalf("failed second page: got (%d, %t)", count, complete)
+	}
+	count, complete = unreadFromPage(first, func(before int64) *protocol.ContactMessagePage { return page(before - 1) })
+	if count != unreadPages || complete {
+		t.Fatalf("history past bound: got (%d, %t)", count, complete)
+	}
+}
