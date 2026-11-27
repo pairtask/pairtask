@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
-    tags: ['workspace-v*']
+    tags: ['workspace-v*', 'v[1-9]*']
     # A documentation-only main push must not replace a pending code release.
     # Tags still run regardless of path filters.
     paths-ignore: ['README.md', 'CLA.md', 'CONTRIBUTING.md', '.github/PULL_REQUEST_TEMPLATE.md', 'docs/*.md']
@@ -175,10 +175,14 @@ jobs:
           go-version: '1.26.10'
       - name: Build and bundle each platform
         run: |
+          # The bundle's version: 1.N.0 for release N (1.N.P for the hotfix
+          # vN.P), the same number the release tag and the app carry.
           if [[ "$GITHUB_REF" == refs/tags/workspace-v* ]]; then
             VERSION="${GITHUB_REF_NAME#workspace-v}"
+          elif [[ "$GITHUB_REF_NAME" =~ ^v([1-9][0-9]{0,8})(\.([1-9][0-9]{0,3}))?$ && "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="1.${BASH_REMATCH[1]}.${BASH_REMATCH[3]:-0}"
           else
-            VERSION="0.0.0-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+            VERSION="1.${GITHUB_RUN_NUMBER}.0"
           fi
           for platform in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
             goos="${platform%/*}" goarch="${platform#*/}"
@@ -419,7 +423,7 @@ jobs:
 
   base-mirror:
     # Every published workspace must have its base images retained, whatever upstream prunes.
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v'))
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v') || startsWith(github.ref, 'refs/tags/v'))
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -441,7 +445,7 @@ jobs:
     # Each workspace release references bundles-<digest> releases instead of carrying the bundles.
     # Publishing also requires the explicit image decision, so skipped proofs can never publish.
     if: >-
-      github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v') || startsWith(github.ref, 'refs/tags/v')) &&
       needs.classify.outputs.images == 'true'
     needs: [classify, images]
     runs-on: ubuntu-24.04
@@ -468,7 +472,7 @@ jobs:
 
   release:
     if: >-
-      github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v')) &&
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/workspace-v') || startsWith(github.ref, 'refs/tags/v')) &&
       needs.classify.outputs.images == 'true'
     needs: [checks, go-arm64, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish, desktop-extensions]
     runs-on: ubuntu-24.04
@@ -490,10 +494,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          # Release N is vN, N the workflow run; a hotfix is pushed as vN.P.
+          # A rerun of the same run may finish N while it is unpublished; a
+          # published release is never replaced (start a new run instead).
           if [[ "$GITHUB_REF" == refs/heads/main ]]; then
-            RELEASE_TAG="workspace-v0.0.0-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+            RELEASE_TAG="v${GITHUB_RUN_NUMBER}"
           fi
-          [[ "$RELEASE_TAG" =~ ^workspace-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]
+          [[ "$RELEASE_TAG" =~ ^(v[1-9][0-9]{0,8}(\.[1-9][0-9]{0,3})?|workspace-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?)$ ]]
+          if draft=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null); then
+            if [[ "$draft" != true ]]; then
+              echo "::error::$RELEASE_TAG is already published and is never replaced; start a new workflow run for a new number"
+              exit 1
+            fi
+            # An unpublished draft from an earlier attempt of this run: start it over.
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
           # The bundles live in their bundles-<digest> releases, named by each bundle manifest.
           rm -f release/collab-ai-bundle-*.tar.gz release/collab-ai-bundle-inputs-linux-*.json
           gh release create "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" \
