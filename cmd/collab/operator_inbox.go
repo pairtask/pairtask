@@ -186,8 +186,11 @@ func checkPageMessages(req protocol.PageRequest, page *protocol.OperatorPage) er
 	seen := make(map[string]bool, len(page.Messages))
 	last := req.AfterSeq
 	for _, m := range page.Messages {
-		if !isOperatorMessage(m) || seen[m.MessageID] {
-			return errors.New("page holds a duplicate or non-operator message")
+		if !isOperatorMessage(m) {
+			return fmt.Errorf("sequence %d is not a message addressed to the operator or a broadcast with a message ID", m.Seq)
+		}
+		if seen[m.MessageID] {
+			return fmt.Errorf("duplicate message ID %q at sequence %d", m.MessageID, m.Seq)
 		}
 		if !inScan(m.Seq, last, page.UpperSeq) {
 			return errors.New("page messages are out of order or outside the scan")
@@ -202,7 +205,7 @@ func checkPageMessages(req protocol.PageRequest, page *protocol.OperatorPage) er
 }
 
 func isOperatorMessage(m protocol.Message) bool {
-	return m.Type == protocol.TypeMsg && m.To == protocol.OperatorID && m.MessageID != ""
+	return m.Type == protocol.TypeMsg && (m.To == protocol.OperatorID || m.To == "*") && m.MessageID != ""
 }
 
 func inScan(seq, after, upper uint64) bool {

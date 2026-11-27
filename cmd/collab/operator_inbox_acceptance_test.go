@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/pairtask/pairtask/internal/protocol"
 	"io"
 	"net"
 	"os"
@@ -272,5 +273,19 @@ func TestOperatorInboxCLIValidatesHumanAckResponse(t *testing.T) {
 		var out, stderr bytes.Buffer
 		code := run(context.Background(), []string{"operator", "ack", "--socket", path, "inbox-1"}, &out, &stderr)
 		assertStatusEqual(t, "invalid human ack response exit", code, 1)
+	}
+}
+
+func TestOperatorPageAcceptsBrokerBroadcasts(t *testing.T) {
+	for _, room := range []string{"", "example"} {
+		m := protocol.Message{Type: protocol.TypeMsg, To: "*", Room: room, MessageID: "broadcast", Seq: 1}
+		page := protocol.OperatorPage{UpperSeq: 1, NextAfterSeq: 1, Messages: []protocol.Message{m}}
+		if err := validatePage(protocol.PageRequest{Limit: 1}, &page); err != nil {
+			t.Fatal(err)
+		}
+		page.Messages[0].To = "another-agent"
+		if err := validatePage(protocol.PageRequest{Limit: 1}, &page); err == nil {
+			t.Fatal("accepted another agent's direct message")
+		}
 	}
 }
