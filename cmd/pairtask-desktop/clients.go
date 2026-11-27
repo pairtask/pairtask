@@ -65,6 +65,29 @@ type serverEntry struct {
 	Args    []string `json:"args"`
 }
 
+// agentFlag names the agent an entry runs as (pairtask-desktop mcp).
+const agentFlag = "--agent-id"
+
+// entryFor is pairtask's server for client c: this binary's MCP server as
+// the agent named after the client, so each app has its own inbox.
+func (e clientEnv) entryFor(c client) serverEntry {
+	return serverEntry{Command: e.exe, Args: []string{"mcp", agentFlag, c.ID}}
+}
+
+// agent is the agent ID the entry runs as; "" runs as the Mac's owner, as
+// every entry did before apps had their own agents.
+func (s serverEntry) agent() string {
+	for i, a := range s.Args {
+		if a == agentFlag && i+1 < len(s.Args) {
+			return s.Args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, agentFlag+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 // clientEnv is what the clients need from the host; tests replace it.
 type clientEnv struct {
 	goos, home, exe string
@@ -111,7 +134,10 @@ type clientStatus struct {
 	Installed bool   `json:"installed"`
 	Connected bool   `json:"connected"`
 	// Other: connected, but to another copy of pairtask-desktop.
-	Other  bool   `json:"other,omitempty"`
+	Other bool `json:"other,omitempty"`
+	// Agent is the agent ID the client runs as; empty when connected as the
+	// Mac's owner (owner mode, how v0.3 connected every app).
+	Agent  string `json:"agent,omitempty"`
 	Config string `json:"config"`
 	Error  string `json:"error,omitempty"`
 	// LastSeen is when the client last started this node's MCP server:
@@ -148,8 +174,10 @@ func describe(s clientStatus) string {
 		return "can't read its config: " + s.Error
 	case s.Connected && s.Other:
 		return "connected to another copy of pairtask"
+	case s.Connected && s.Agent == "":
+		return "connected as you (owner mode); connect it again to give it its own agent"
 	case s.Connected:
-		return "connected"
+		return "connected as agent " + s.Agent
 	case s.Installed:
 		return "not connected"
 	}
@@ -191,37 +219,37 @@ func (e clientEnv) status(c client) clientStatus {
 		s.Error = errText(err)
 		return s
 	}
-	command, found, err := configured(c, data)
+	entry, found, err := configured(c, data)
 	if err != nil {
 		s.Error = err.Error()
 	}
-	s.Connected, s.Other = found, found && command != e.exe
+	s.Connected, s.Other, s.Agent = found, found && entry.Command != e.exe, entry.agent()
 	return s
 }
 
-// configured is the command the client's pairtask entry runs, if any.
-func configured(c client, data []byte) (string, bool, error) {
+// configured is the client's pairtask entry, if it has one.
+func configured(c client, data []byte) (serverEntry, bool, error) {
 	if c.JSONKey == "" {
 		cfg := codexConfig{string(data)}
-		command, found := cfg.command()
-		return command, found, cfg.check()
+		entry, found := cfg.entry()
+		return entry, found, cfg.check()
 	}
 	doc := jsonDoc(orEmpty(data))
 	top, err := doc.top()
 	if err != nil {
-		return "", false, err
+		return serverEntry{}, false, err
 	}
 	servers, ok, err := doc.servers(top, jsonKey(c.JSONKey))
 	if err != nil || !ok {
-		return "", false, err
+		return serverEntry{}, false, err
 	}
-	entry, ok := servers.find(serverName)
+	found, ok := servers.find(serverName)
 	if !ok {
-		return "", false, nil
+		return serverEntry{}, false, nil
 	}
-	var e struct{ Command string }
-	_ = json.Unmarshal(doc[entry.valAt:entry.valEnd], &e)
-	return e.Command, true, nil
+	var entry serverEntry
+	_ = json.Unmarshal(doc[found.valAt:found.valEnd], &entry)
+	return entry, true, nil
 }
 
 func orEmpty(data []byte) []byte {
@@ -344,11 +372,11 @@ func errText(err error) string {
 
 // edited is the config with pairtask's entry set, or removed.
 func (e clientEnv) edited(c client, data []byte, act action) ([]byte, error) {
+	entry := e.entryFor(c)
 	if c.JSONKey == "" {
-		return e.editedTOML(string(data), act)
+		return editedTOML(string(data), act, entry)
 	}
 	before := jsonDoc(orEmpty(data))
-	entry := serverEntry{Command: e.exe, Args: []string{"mcp"}}
 	var after jsonDoc
 	var err error
 	if act == remove {
@@ -368,9 +396,8 @@ func (e clientEnv) edited(c client, data []byte, act action) ([]byte, error) {
 	return after, nil
 }
 
-func (e clientEnv) editedTOML(data string, act action) ([]byte, error) {
+func editedTOML(data string, act action, entry serverEntry) ([]byte, error) {
 	before := codexConfig{data}
-	entry := serverEntry{Command: e.exe}
 	after, want, err := before.without()
 	if act == add && err == nil {
 		after, err = before.with(entry)
