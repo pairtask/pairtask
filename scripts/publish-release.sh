@@ -13,13 +13,47 @@
 #     at the commit being released;
 #   - "latest" only moves forward: a release older than the current latest
 #     (a hotfix of an earlier line, or a main run finishing out of order)
-#     is published without becoming latest.
+#     is published without becoming latest, and a legacy tag that can't be
+#     ordered never becomes latest;
+#   - nothing is written until every check passed, and a lookup that fails
+#     for any reason but "not found" stops the release.
 set -euo pipefail
 
 : "${GITHUB_REPOSITORY:?}" "${GITHUB_REF:?}" "${GITHUB_REF_NAME:?}" "${GITHUB_SHA:?}" "${GITHUB_RUN_NUMBER:?}"
 repo="$GITHUB_REPOSITORY"
 
 fail() { echo "::error::$*" >&2; exit 1; }
+
+# lookup runs gh and prints its answer: status 0 with an answer, 1 when
+# GitHub says the thing doesn't exist, 2 for any other failure.
+lookup() {
+  local out err
+  err=$(mktemp)
+  if out=$(gh "$@" 2>"$err"); then
+    rm -f "$err"
+    printf '%s\n' "$out"
+    return 0
+  fi
+  if grep -qiE 'not found|HTTP 404' "$err"; then
+    rm -f "$err"
+    return 1
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  return 2
+}
+
+# found runs a lookup: prints the answer and is true when it exists, false
+# when GitHub confirms it doesn't, and stops the release otherwise.
+found() {
+  local out rc
+  out=$(lookup "$@") && rc=0 || rc=$?
+  case $rc in
+    0) printf '%s\n' "$out" ;;
+    1) return 1 ;;
+    *) echo "::error::GitHub lookup failed: gh $*" >&2; exit 2 ;;
+  esac
+}
 
 # build_of TAG prints "N P" for vN / vN.P, "N A-1" for the legacy form.
 build_of() {
@@ -44,38 +78,46 @@ release_tag() {
   fi
 }
 
-# clear_draft: a published release stops here; a draft from an earlier
-# attempt is removed, keeping its tag.
-clear_draft() {
+# existing_draft says whether the release is an unpublished draft to redo
+# (yes), absent (no), and stops at a published one.
+existing_draft() {
   local draft
-  draft=$(gh release view "$1" --repo "$repo" --json isDraft -q .isDraft 2>/dev/null) || return 0
+  draft=$(found release view "$1" --repo "$repo" --json isDraft -q .isDraft) || { status=$?; [[ $status == 1 ]] && { echo no; return; }; exit "$status"; }
   [[ "$draft" == true ]] || fail "$1 is already published and is never replaced; start a new workflow run for a new number"
-  gh release delete "$1" --repo "$repo" --yes
+  echo yes
 }
 
 # check_tag: an existing tag must peel to the commit being released.
 check_tag() {
   local at
-  at=$(gh api "repos/$repo/commits/refs/tags/$1" -q .sha 2>/dev/null) || return 0
+  at=$(found api "repos/$repo/commits/refs/tags/$1" -q .sha) || { status=$?; [[ $status == 1 ]] && return 0; exit "$status"; }
   [[ "$at" == "$GITHUB_SHA" ]] || fail "tag $1 points at $at, not the commit being released ($GITHUB_SHA)"
 }
 
-# latest_flag is --latest when tag is at least the current latest release.
+# latest_flag is --latest when tag is at least the current latest release;
+# a tag that can't be ordered is never made latest.
 latest_flag() {
   local current mine theirs
-  current=$(gh api "repos/$repo/releases/latest" -q .tag_name 2>/dev/null) || { echo "--latest"; return; }
-  mine=$(build_of "$1"); theirs=$(build_of "$current")
-  if [[ -z "$mine" || -z "$theirs" ]]; then echo "--latest"; return; fi
+  mine=$(build_of "$1")
+  [[ -n "$mine" ]] || { echo "--latest=false"; return; }
+  current=$(found api "repos/$repo/releases/latest" -q .tag_name) || { status=$?; [[ $status == 1 ]] && { echo "--latest"; return; }; exit "$status"; }
+  theirs=$(build_of "$current")
+  [[ -n "$theirs" ]] || { echo "--latest"; return; }
   read -r mn mp <<<"$mine"; read -r tn tp <<<"$theirs"
   if (( mn > tn || (mn == tn && mp >= tp) )); then echo "--latest"; else echo "--latest=false"; fi
 }
 
+# Every check first; only then any write.
 tag=$(release_tag)
-clear_draft "$tag"
 check_tag "$tag"
+redo=$(existing_draft "$tag")
+latest=$(latest_flag "$tag")
+if [[ "$redo" == yes ]]; then
+  gh release delete "$tag" --repo "$repo" --yes
+fi
 # The bundles live in their bundles-<digest> releases, named by each bundle manifest.
 rm -f release/collab-ai-bundle-*.tar.gz release/collab-ai-bundle-inputs-linux-*.json
 gh release create "$tag" release/* --repo "$repo" --target "$GITHUB_SHA" --draft --title "$tag" --generate-notes
 # Keep incomplete uploads out of latest. Published assets are never overwritten.
-gh release edit "$tag" --repo "$repo" --draft=false "$(latest_flag "$tag")"
+gh release edit "$tag" --repo "$repo" --draft=false "$latest"
 echo "published $tag"

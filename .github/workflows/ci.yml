@@ -477,6 +477,11 @@ jobs:
     needs: [checks, go-arm64, pake-vectors, classify, images, mac-sharing, base-mirror, bundle-publish, desktop-extensions]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # One release at a time across main and hotfix tags: each reads and
+    # moves the shared "latest" pointer.
+    concurrency:
+      group: workspace-release-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:

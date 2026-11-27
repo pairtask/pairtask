@@ -21,20 +21,21 @@ FAKE_GH = textwrap.dedent('''\
     with open(os.environ["GH_CALLS"], "a") as log:
         log.write(json.dumps(sys.argv[1:]) + "\\n")
     args = sys.argv[1:]
+    def answer(kind, value, missing):
+        if kind in state["broken"]:
+            sys.stderr.write("HTTP 502: Bad Gateway\\n")
+            sys.exit(1)
+        if value is None:
+            sys.stderr.write(missing + "\\n")
+            sys.exit(1)
+        print(value)
     if args[:2] == ["release", "view"]:
         release = state["releases"].get(args[2])
-        if release is None:
-            sys.exit(1)
-        print("true" if release["draft"] else "false")
+        answer("release", None if release is None else ("true" if release["draft"] else "false"), "release not found")
     elif args[0] == "api" and "/commits/refs/tags/" in args[1]:
-        sha = state["tags"].get(args[1].rsplit("/", 1)[1])
-        if sha is None:
-            sys.exit(1)
-        print(sha)
+        answer("tag", state["tags"].get(args[1].rsplit("/", 1)[1]), "gh: Not Found (HTTP 404)")
     elif args[0] == "api" and args[1].endswith("/releases/latest"):
-        if not state.get("latest"):
-            sys.exit(1)
-        print(state["latest"])
+        answer("latest", state.get("latest") or None, "gh: Not Found (HTTP 404)")
 ''')
 
 
@@ -45,6 +46,7 @@ class GitHub:
     releases: dict = field(default_factory=dict)
     tags: dict = field(default_factory=dict)
     latest: str = "v1164"
+    broken: tuple = ()  # lookups that fail with a server error: "release", "tag", "latest"
 
 
 class PublishReleaseTests(unittest.TestCase):
@@ -56,7 +58,8 @@ class PublishReleaseTests(unittest.TestCase):
         gh = root / "bin" / "gh"
         gh.write_text(FAKE_GH.replace("PYTHON", sys.executable))
         gh.chmod(0o755)
-        (root / "state.json").write_text(json.dumps({"releases": world.releases, "tags": world.tags, "latest": world.latest}))
+        (root / "state.json").write_text(json.dumps({"releases": world.releases, "tags": world.tags, "latest": world.latest,
+                                                         "broken": list(world.broken)}))
         (root / "release").mkdir()
         (root / "release" / "asset.tar.gz").write_text("x")
         env = dict(os.environ, PATH=f"{root / 'bin'}:{os.environ['PATH']}", GH_STATE=str(root / "state.json"),
@@ -110,6 +113,28 @@ class PublishReleaseTests(unittest.TestCase):
         done, calls = self.publish("refs/tags/v1165.1", GitHub(tags={"v1165.1": "b" * 40}))
         self.assertNotEqual(done.returncode, 0)
         self.assertEqual(self.writes(calls), [])
+
+    def test_a_tag_mismatch_is_found_before_a_draft_is_touched(self):
+        world = GitHub(releases={"v1160.1": {"draft": True}}, tags={"v1160.1": "b" * 40})
+        done, calls = self.publish("refs/tags/v1160.1", world)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(self.writes(calls), [])
+
+    def test_a_failing_lookup_stops_before_any_write(self):
+        for broken in ("release", "tag", "latest"):
+            done, calls = self.publish("refs/tags/v1160.1", GitHub(tags={"v1160.1": SHA}, latest="v1165", broken=(broken,)))
+            self.assertNotEqual(done.returncode, 0, broken)
+            self.assertEqual(self.writes(calls), [], broken)
+
+    def test_no_latest_yet_makes_the_first_release_latest(self):
+        done, calls = self.publish("refs/heads/main", GitHub(latest=""))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(calls[-1][-1], "--latest")
+
+    def test_a_legacy_tag_that_cant_be_ordered_never_becomes_latest(self):
+        done, calls = self.publish("refs/tags/workspace-v1.2.3", GitHub(latest="v1165"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(calls[-1][-1], "--latest=false")
 
 
 if __name__ == "__main__":
