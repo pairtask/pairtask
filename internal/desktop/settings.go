@@ -63,22 +63,16 @@ func (s Settings) over(given Settings) Settings {
 // name, since which of the two came last isn't known.
 func (s Settings) nameOver(given Settings) string {
 	switch {
+	case given.StartedName == "" && given.Name != "":
+		return given.Name
 	case given.StartedName == "":
-		return firstOf(given.Name, s.Name)
+		return s.Name
 	case s.Name == "":
 		return given.StartedName
 	case s.StartedName != "" && given.StartedName != s.StartedName:
 		return given.StartedName
 	}
 	return s.Name
-}
-
-// firstOf is a unless it is empty, else b.
-func firstOf(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // ReadSettings is the node's stored settings in dir: none when there are
