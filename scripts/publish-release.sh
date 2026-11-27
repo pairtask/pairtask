@@ -87,10 +87,19 @@ existing_draft() {
   echo yes
 }
 
-# check_tag: an existing tag must peel to the commit being released.
+# check_tag: an existing tag must peel to the commit being released. Its
+# presence is read from the ref (404 when absent); the commits endpoint,
+# which answers 422 for a missing tag, is asked only to peel a present one.
+# A pushed tag must exist: it is what triggered the release.
 check_tag() {
+  found api "repos/$repo/git/ref/tags/$1" -q .object.sha >/dev/null || {
+    status=$?
+    [[ $status == 1 ]] || exit "$status"
+    [[ "$GITHUB_REF" != refs/tags/* ]] || fail "the pushed tag $1 isn't on GitHub"
+    return 0
+  }
   local at
-  at=$(found api "repos/$repo/commits/refs/tags/$1" -q .sha) || { status=$?; [[ $status == 1 ]] && return 0; exit "$status"; }
+  at=$(found api "repos/$repo/commits/refs/tags/$1" -q .sha) || fail "tag $1 exists but can't be read back as a commit"
   [[ "$at" == "$GITHUB_SHA" ]] || fail "tag $1 points at $at, not the commit being released ($GITHUB_SHA)"
 }
 

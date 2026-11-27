@@ -32,8 +32,11 @@ FAKE_GH = textwrap.dedent('''\
     if args[:2] == ["release", "view"]:
         release = state["releases"].get(args[2])
         answer("release", None if release is None else ("true" if release["draft"] else "false"), "release not found")
-    elif args[0] == "api" and "/commits/refs/tags/" in args[1]:
+    elif args[0] == "api" and "/git/ref/tags/" in args[1]:
         answer("tag", state["tags"].get(args[1].rsplit("/", 1)[1]), "gh: Not Found (HTTP 404)")
+    elif args[0] == "api" and "/commits/refs/tags/" in args[1]:
+        name = args[1].rsplit("/", 1)[1]
+        answer("tag", state["tags"].get(name), "gh: No commit found for SHA: refs/tags/" + name + " (HTTP 422)")
     elif args[0] == "api" and args[1].endswith("/releases/latest"):
         answer("latest", state.get("latest") or None, "gh: Not Found (HTTP 404)")
 ''')
@@ -132,9 +135,20 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(calls[-1][-1], "--latest")
 
     def test_a_legacy_tag_that_cant_be_ordered_never_becomes_latest(self):
-        done, calls = self.publish("refs/tags/workspace-v1.2.3", GitHub(latest="v1165"))
+        done, calls = self.publish("refs/tags/workspace-v1.2.3", GitHub(tags={"workspace-v1.2.3": SHA}, latest="v1165"))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(calls[-1][-1], "--latest=false")
+
+    def test_a_first_main_release_publishes_when_its_tag_is_new(self):
+        # GitHub answers 404 for the missing ref and 422 from the commits endpoint.
+        done, calls = self.publish("refs/heads/main", GitHub(tags={}))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn(["release", "create", "v1165"], [c[:3] for c in calls])
+
+    def test_a_pushed_hotfix_whose_tag_is_missing_is_refused(self):
+        done, calls = self.publish("refs/tags/v1165.1", GitHub(tags={}))
+        self.assertNotEqual(done.returncode, 0)
+        self.assertEqual(self.writes(calls), [])
 
 
 if __name__ == "__main__":
