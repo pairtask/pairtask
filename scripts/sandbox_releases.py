@@ -13,8 +13,10 @@ from sandbox_image_cache import prepare_image, record_bundles
 
 
 def release_tag(value):
-    if value != "latest" and not re.fullmatch(r"workspace-v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?", value):
-        raise ValueError("Use latest or a published workspace-vX.Y.Z tag")
+    legacy = r"workspace-v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?"
+    numbered = r"v[1-9][0-9]{0,8}(?:\.[1-9][0-9]{0,3})?"
+    if value != "latest" and not re.fullmatch(legacy + "|" + numbered, value):
+        raise ValueError("Use latest or a published release tag (vN, or a legacy workspace-vX.Y.Z)")
     return value
 
 
