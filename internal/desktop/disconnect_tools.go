@@ -36,10 +36,6 @@ func addDisconnectTools(s *mcp.Server, n *Node) {
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "pairbook_leave", Description: "Leave the exact Pairbook space confirmed by the operator. Revokes this workspace's membership before removing its saved space.", Annotations: destructive},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args LeaveArgs) (*mcp.CallToolResult, struct{}, error) {
-			if args.Space == "" || args.Space != args.Confirm {
-				return nil, struct{}{}, errors.New("confirm the full space ID")
-			}
-			_, err := n.space(ctx, protocol.SpaceRequest{Op: protocol.SpaceOpLeave, Space: args.Space})
-			return nil, struct{}{}, err
+			return nil, struct{}{}, n.leaveSpace(ctx, args)
 		})
 }
