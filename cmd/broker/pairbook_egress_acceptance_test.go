@@ -37,22 +37,7 @@ func TestPairbookEnrollmentThroughConnector(t *testing.T) {
 		fmt.Fprintf(w, `{"enrollment":%q}`, id)
 	}))
 	defer directory.Close()
-	path := filepath.Join(t.TempDir(), "egress.sock")
-	listener, err := net.Listen("unix", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	forwarder := egress.NewForwarder(egress.Config{Resolver: directoryResolver{}, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address != "100.95.1.2:443" {
-			return nil, fmt.Errorf("unexpected destination %s", address)
-		}
-		return (&net.Dialer{}).DialContext(ctx, network, directory.Listener.Addr().String())
-	}})
-	done := make(chan error, 1)
-	go func() { done <- forwarder.Serve(ctx, listener) }()
-	defer func() { cancel(); listener.Close(); <-done }()
+	path := startDirectoryConnector(t, directory.Listener.Addr().String())
 	if pairbookHTTP(config{}) != nil {
 		t.Fatal("direct mode should use the directory client defaults")
 	}
@@ -71,8 +56,28 @@ func TestPairbookEnrollmentThroughConnector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := client.StartEnroll(ctx, space.Pin{Space: id, Base: base}, "Box")
+	enrollment, err := client.StartEnroll(context.Background(), space.Pin{Space: id, Base: base}, "Box")
 	if err != nil || enrollment.ID != id {
 		t.Fatalf("enrollment %q: %v", enrollment.ID, err)
 	}
+}
+
+func startDirectoryConnector(t *testing.T, target string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "egress.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	forwarder := egress.NewForwarder(egress.Config{Resolver: directoryResolver{}, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address != "100.95.1.2:443" {
+			return nil, fmt.Errorf("unexpected destination %s", address)
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, target)
+	}})
+	done := make(chan error, 1)
+	go func() { done <- forwarder.Serve(ctx, listener) }()
+	t.Cleanup(func() { cancel(); listener.Close(); <-done })
+	return path
 }
