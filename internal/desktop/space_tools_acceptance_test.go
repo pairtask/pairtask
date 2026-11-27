@@ -34,6 +34,10 @@ func (f *desktopSpaceDirectory) Join(_ context.Context, inv space.Invite, name s
 func (f *desktopSpaceDirectory) Members(context.Context, space.Pin) ([]pairbook.Member, error) {
 	return f.members, nil
 }
+func (f *desktopSpaceDirectory) Revoke(_ context.Context, _ space.Pin, _ ed25519.PublicKey) error {
+	return nil
+}
+
 func desktopSpaceMCP(t *testing.T, n *Node) *mcp.ClientSession {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -103,6 +107,8 @@ func TestDesktopSpaceAcceptanceToolsJoinAndListWithoutContact(t *testing.T) {
 	contacts, err := st.Contacts(ctx)
 	desktopSpaceCheck(t, err == nil, "%v", err)
 	desktopSpaceCheck(t, len(contacts) == 0, "joining a space automatically created contacts")
+	desktopSpaceTool(t, client, "pairbook_leave", map[string]any{"space": inv.Space, "confirm": inv.Space})
+	desktopSpaceCheck(t, len(listedSpaces(t, n).Spaces) == 0, "leave kept its pin")
 }
 
 func desktopSpaceCheck(t *testing.T, ok bool, format string, args ...any) {
