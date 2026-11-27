@@ -444,6 +444,7 @@ func quoted(s string) string { return `"` + s + `"` }
 // Pairbook spaces it belongs to.
 func addNodeTools(s *mcp.Server, n *Node) {
 	readOnly, additive := true, false
+	addDisconnectTools(s, n)
 	mcp.AddTool(s, &mcp.Tool{Name: "set_name", Description: setNameDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
 		func(_ context.Context, _ *mcp.CallToolRequest, args SetNameArgs) (*mcp.CallToolResult, SetNameResult, error) {
 			out, err := n.setName(args)

@@ -65,7 +65,7 @@ type enrollments struct {
 	mu     sync.Mutex
 	person *spaceowner.Me
 	follow map[string]*PairbookJoinResult // by space: the last state seen
-	active map[string]bool                // by space: a follower runs here
+	active map[string]*joinWorker         // by space: a follower runs here
 	// life is what followers and retries run under; Close ends it and
 	// waits for them, so none outlives the node or holds its lock file.
 	life    context.Context
@@ -167,7 +167,11 @@ func (n *Node) startJoin(ctx context.Context, link joinLink, spaceID string) (Pa
 		}
 		return PairbookJoinResult{}, err
 	}
-	out, err := n.beginJoin(ctx, link, lock)
+	begin, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(n.workerContext(spaceID), cancel)
+	defer stop()
+	defer cancel()
+	out, err := n.beginJoin(begin, link, lock)
 	if err != nil {
 		n.stopFollowing(spaceID, lock)
 	}
@@ -200,16 +204,17 @@ func (n *Node) beginJoin(ctx context.Context, link joinLink, lock *followLock) (
 func (n *Node) following(space string) (PairbookJoinResult, bool) {
 	n.joins.mu.Lock()
 	defer n.joins.mu.Unlock()
-	if n.joins.active[space] {
+	if n.joins.active[space] != nil {
 		if r := n.joins.follow[space]; r != nil {
 			return *r, true
 		}
 		return PairbookJoinResult{Space: space, State: "starting", Guidance: "Call pairbook_join_status in a moment."}, true
 	}
 	if n.joins.active == nil {
-		n.joins.active = map[string]bool{}
+		n.joins.active = map[string]*joinWorker{}
 	}
-	n.joins.active[space] = true
+	ctx, cancel := context.WithCancel(n.joins.life)
+	n.joins.active[space] = &joinWorker{ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	return PairbookJoinResult{}, false
 }
 
@@ -217,6 +222,9 @@ func (n *Node) stopFollowing(space string, lock *followLock) {
 	lock.release()
 	n.joins.mu.Lock()
 	defer n.joins.mu.Unlock()
+	worker := n.joins.active[space]
+	worker.cancel()
+	close(worker.done)
 	delete(n.joins.active, space)
 }
 
@@ -327,7 +335,7 @@ func (n *Node) track(f *enroll.Flow, state enrollState) PairbookJoinResult {
 // lets go of the space.
 func (n *Node) finish(f *enroll.Flow, st protocol.SpaceEnrollState, lock *followLock) {
 	defer n.stopFollowing(f.Enroll.Space, lock)
-	out, err := f.Follow(n.joins.life, st)
+	out, err := f.Follow(n.workerContext(f.Enroll.Space), st)
 	n.track(f, finalState(out, err))
 }
 
@@ -381,14 +389,20 @@ func (n *Node) resumeJoin(s enroll.Saved) {
 
 // resumeLocked retains the enrollment lock across retries until Close or a successful handoff.
 func (n *Node) resumeLocked(s enroll.Saved, lock *followLock) {
+	ctx := n.workerContext(s.Enroll.Space)
+	if _, ok := enroll.Saves(filepath.Dir(n.lockPath(s.Enroll.Space))).Load(s.Enroll.Space); !ok {
+		n.stopFollowing(s.Enroll.Space, lock)
+		return
+	}
+
 	for {
-		_, err := n.beginJoin(n.joins.life, joinLink(s.Link), lock)
+		_, err := n.beginJoin(ctx, joinLink(s.Link), lock)
 		if err == nil {
 			return // a follower holds the lock now
 		}
 		n.trackSaved(s, enrollState("retrying: "+err.Error()))
 		select {
-		case <-n.joins.life.Done():
+		case <-ctx.Done():
 			n.stopFollowing(s.Enroll.Space, lock)
 			return
 		case <-time.After(resumeRetry):
