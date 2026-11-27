@@ -47,7 +47,8 @@ const (
 	SpaceOpMapPeople      = "map_people"       // space → people: who this workspace may see, online and listed agents; status_known false if the Pairbook keeps none
 
 	// ErrSpace is a refused space operation; the detail names why.
-	ErrSpace = "space_refused"
+	ErrSpace            = "space_refused"
+	ErrSpaceUnreachable = "space_unreachable"
 
 	// CapabilitySpaces: the broker serves operator_space.
 	CapabilitySpaces = "spaces"

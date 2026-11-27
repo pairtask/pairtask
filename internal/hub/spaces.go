@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -134,11 +136,20 @@ func (h *Hub) startSpaceJob(req operatorRequest, job spaceJob, held string) {
 		h.finishOperator(runCtx, req, func(context.Context) protocol.Message {
 			delete(h.spaceBusy, held)
 			if err != nil {
-				return spaceRefusal(err.Error()).frame(req.msg.MessageID)
+				return spaceJobError(err).frame(req.msg.MessageID)
 			}
 			return spaceAnswer(req.msg.MessageID, result)
 		})
 	}()
+}
+
+func spaceJobError(err error) *routingError {
+	var request *url.Error
+	var dns *net.DNSError
+	if errors.As(err, &request) && errors.As(request.Err, &dns) {
+		return &routingError{protocol.ErrSpaceUnreachable, "The Pairtask broker could not resolve " + dns.Name + ". Check DNS in the environment running the broker, then retry."}
+	}
+	return spaceRefusal(err.Error())
 }
 
 func spaceAnswer(id string, result *protocol.SpaceResult) protocol.Message {

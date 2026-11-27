@@ -13,6 +13,8 @@ import (
 
 	"github.com/pairtask/pairtask/internal/enroll"
 	"github.com/pairtask/pairtask/internal/personkey"
+	"github.com/pairtask/pairtask/internal/protocol"
+	"github.com/pairtask/pairtask/internal/space"
 )
 
 // Joining an organization space from the host: enroll this workspace, show
@@ -38,7 +40,16 @@ func pairbookEnroll(ctx context.Context, s *pairbookSession, a pairbookArgs, lin
 	if err != nil {
 		return nil, err
 	}
-	announce(s.progressOut(), f)
+	if st.State == space.EnrollPendingSignIn {
+		announce(s.progressOut(), f)
+	}
+	last := ""
+	f.OnState = func(state protocol.SpaceEnrollState) {
+		if state.State != last && state.State == space.EnrollAwaitingApproval {
+			fmt.Fprintln(s.progressOut(), "Company sign-in confirmed. Waiting for admin approval for this workspace.")
+		}
+		last = state.State
+	}
 	out, err := f.Follow(ctx, st)
 	return enrollAnswer(f, out, err)
 }
@@ -47,12 +58,13 @@ func pairbookEnroll(ctx context.Context, s *pairbookSession, a pairbookArgs, lin
 func announce(w io.Writer, f *enroll.Flow) {
 	if f.Resume {
 		fmt.Fprintf(w, "Picking up the enrollment started earlier (code %s).\n", f.Enroll.Code)
-		return
 	}
 	fmt.Fprintf(w, "To join, open %s\n", f.Enroll.URL)
 	fmt.Fprintf(w, "sign in with your company account, and check this machine's fingerprint: %s\n", f.Fingerprint())
 	fmt.Fprintf(w, "Code: %s (valid until %s)\n", f.Enroll.Code, f.Enroll.ExpiresAt.Local().Format("15:04"))
-	openBrowser(f)
+	if !f.Resume {
+		openBrowser(f)
+	}
 }
 
 func enrollAnswer(f *enroll.Flow, out enroll.Outcome, err error) (any, error) {
