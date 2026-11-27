@@ -24,6 +24,10 @@ const settingsName = "settings.json"
 // Settings is what the person configured for this node.
 type Settings struct {
 	Name     string `json:"name,omitempty"`     // the name this node pairs under
+	// StartedName is the name a copy was last started with (the Claude
+	// Desktop extension's "Your name"): it replaces Name only when it
+	// changes, so a name set in the app holds across the extension's starts.
+	StartedName string `json:"started_name,omitempty"`
 	Pairbook string `json:"pairbook,omitempty"` // the company's Pairbook, https://HOST
 	Address  string `json:"address,omitempty"`  // the Workspace address setting
 	Notify   *bool  `json:"notify,omitempty"`   // system notifications; on when unset
@@ -36,8 +40,9 @@ func (s Settings) notifies() bool {
 
 // over is s with every setting given sets.
 func (s Settings) over(given Settings) Settings {
-	if given.Name != "" {
-		s.Name = given.Name
+	s.Name = s.nameOver(given)
+	if given.StartedName != "" {
+		s.StartedName = given.StartedName
 	}
 	if given.Pairbook != "" {
 		s.Pairbook = given.Pairbook
@@ -49,6 +54,25 @@ func (s Settings) over(given Settings) Settings {
 		s.Notify = given.Notify
 	}
 	return s
+}
+
+// nameOver is the name after given. A name set by hand (set_name) always
+// holds. A name a copy was started with applies only when nothing is
+// stored, or when it differs from the one the last start gave: the person
+// changed that setting. Stored settings from before StartedName keep their
+// name, since which of the two came last isn't known.
+func (s Settings) nameOver(given Settings) string {
+	switch {
+	case given.StartedName == "" && given.Name != "":
+		return given.Name
+	case given.StartedName == "":
+		return s.Name
+	case s.Name == "":
+		return given.StartedName
+	case s.StartedName != "" && given.StartedName != s.StartedName:
+		return given.StartedName
+	}
+	return s.Name
 }
 
 // ReadSettings is the node's stored settings in dir: none when there are
@@ -97,7 +121,7 @@ func storeSettings(dir string, given Settings) (now Settings, problem, err error
 
 // sameSettings compares two settings, notify by value.
 func sameSettings(a, b Settings) bool {
-	return a.Name == b.Name && a.Pairbook == b.Pairbook && a.Address == b.Address && a.notifies() == b.notifies() && (a.Notify == nil) == (b.Notify == nil)
+	return a.Name == b.Name && a.StartedName == b.StartedName && a.Pairbook == b.Pairbook && a.Address == b.Address && a.notifies() == b.notifies() && (a.Notify == nil) == (b.Notify == nil)
 }
 
 // writeSettings replaces the stored settings: a synced temporary file,
