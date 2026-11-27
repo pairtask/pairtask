@@ -36,7 +36,7 @@ func TestDesktopPairAddressAcceptanceMovesExistingContactWithoutRePairing(t *tes
 	if len(conversations) != 1 || !containsDesktopHistory(conversations[0].Messages, "via Desktop MCP") {
 		t.Fatalf("address move lost message history: %+v", conversations)
 	}
-	assertOnlyDesktopNodeSocket(t, f.dir)
+	assertDesktopSockets(t, f.dir)
 }
 
 func moveDesktopAddress(t *testing.T, f *desktopMCPFixture, destination string) desktop.AddressResult {
