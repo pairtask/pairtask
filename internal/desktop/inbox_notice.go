@@ -58,21 +58,40 @@ const unreadPages = 100
 // last page, or at one that adds nothing older; a history longer than
 // unreadPages pages isn't counted, so no notice claims a partial total.
 func countUnread(ctx context.Context, call func(context.Context, protocol.Message) protocol.Message, contact string) (int, bool) {
+	load := func(before int64) *protocol.ContactMessagePage {
+		return loadUnreadPage(ctx, call, contact, before)
+	}
+	count, complete := unreadFromPage(load(0), load)
+	if !complete {
+		return 0, false
+	}
+	return count, true
+}
+
+func loadUnreadPage(ctx context.Context, call func(context.Context, protocol.Message) protocol.Message, contact string, before int64) *protocol.ContactMessagePage {
+	out := call(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: contact, ContactBefore: before})
+	return out.ContactPage
+}
+
+// unreadFromPage returns a lower bound if legacy history cannot be read in full.
+func unreadFromPage(page *protocol.ContactMessagePage, load func(int64) *protocol.ContactMessagePage) (int, bool) {
 	total, before := 0, int64(0)
-	for range unreadPages {
-		out := call(ctx, protocol.Message{Type: protocol.TypeOperatorContact, ContactOp: protocol.ContactOpList, ContactKey: contact, ContactBefore: before})
-		page := out.ContactPage
-		if page == nil {
-			return 0, false
+	for pages := 1; page != nil; pages++ {
+		if page.Unread != nil {
+			return *page.Unread, true
 		}
 		total += unread(page.Messages)
-		next, ok := olderThan(page, before)
-		if !ok {
+		if !page.More {
 			return total, true
 		}
+		next, ok := olderThan(page, before)
+		if !ok || pages == unreadPages {
+			break
+		}
 		before = next
+		page = load(before)
 	}
-	return 0, false
+	return total, false
 }
 
 // olderThan is the cursor that pages past page, when there is more and it
@@ -85,6 +104,9 @@ func olderThan(page *protocol.ContactMessagePage, before int64) (int64, bool) {
 	for _, m := range page.Messages {
 		next = min(next, m.Cursor)
 	}
+	if next <= 0 {
+		return 0, false
+	}
 	return next, before == 0 || next < before
 }
 
@@ -96,4 +118,13 @@ func (n *Node) freshNotice(ctx context.Context) InboxNotice {
 		return InboxNotice{}
 	}
 	return n.notice(ctx, snap.Contacts)
+}
+
+// setConversationUnread preserves available messages if a legacy broker
+// cannot provide the complete count.
+func (n *Node) setConversationUnread(ctx context.Context, conv *Conversation, page *protocol.ContactMessagePage) {
+	count, complete := unreadFromPage(page, func(before int64) *protocol.ContactMessagePage {
+		return loadUnreadPage(ctx, n.Call, conv.Contact, before)
+	})
+	conv.Unread, conv.UnreadIncomplete = count, !complete
 }
