@@ -58,7 +58,7 @@ var (
 	updateActions = map[string]bool{UpdateActionNone: true, UpdateActionUpgradeApp: true, UpdateActionUpdateHost: true}
 	freshness     = map[string]bool{"": true, AvailableFresh: true, AvailableCached: true, AvailableStale: true, AvailableCheckFailed: true}
 	scopes        = map[string]bool{"": true, ScopeDefault: true, ScopeCustom: true}
-	releaseTagRE  = regexp.MustCompile(`^workspace-v0\.0\.0-build\.[1-9][0-9]{0,8}\.[1-9][0-9]{0,3}$`)
+	releaseTagRE  = regexp.MustCompile(`^(workspace-v0\.0\.0-build\.[1-9][0-9]{0,8}\.[1-9][0-9]{0,3}|v[1-9][0-9]{0,8}(\.[1-9][0-9]{0,3})?)$`)
 	commitRE      = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 

@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 from sandbox_remote import LEGACY_REMOTE, REMOTE, default_remote
-from sandbox_version_lookup import Lookup, latest_release, installed_release, load_cache, now, parse_build, \
+from sandbox_version_lookup import Lookup, latest_release, installed_release, load_cache, now, parse_build, release_name, \
     save_cache, stamp
 from sandbox_version_observe import INCUS_TIMEOUT, INSTANCES, OBSERVE_BUDGET, Observer, proof_of
 
@@ -220,8 +220,7 @@ def observed_deployment(data):
 # --- presentation ----------------------------------------------------------------
 
 def build_name(tag):
-    build = parse_build(tag)
-    return "build %d.%d" % build if build else (tag or "unknown")
+    return release_name(tag)
 
 
 def age_text(seconds):

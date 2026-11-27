@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -43,7 +44,7 @@ func (m *Model) updateReminder() string {
 	case n.State == protocol.UpdateMixed:
 		head += " (containers differ)"
 	case n.AppRelease != "":
-		head += " (running " + strings.TrimPrefix(buildName(n.AppRelease), "build ") + ")"
+		head += " (running " + shortName(buildName(n.AppRelease)) + ")"
 	}
 	return bandWarn.Render(head) + bandStyle.Render(" · "+hostStep(n))
 }
@@ -130,16 +131,29 @@ func ago(d time.Duration) string {
 }
 
 // buildName shortens a release tag to "build N.M"; other text is never shown.
+// buildName is how a release reads: "build N.A" for a legacy tag, and
+// "Pairtask N" (or N.P for a hotfix) for a browser-style vN tag.
 func buildName(tag string) string {
-	if !strings.HasPrefix(tag, buildTagPrefix) {
-		return ""
+	if strings.HasPrefix(tag, buildTagPrefix) {
+		return "build " + strings.TrimPrefix(tag, buildTagPrefix)
 	}
-	return "build " + strings.TrimPrefix(tag, buildTagPrefix)
+	if numberedTag.MatchString(tag) {
+		return "Pairtask " + strings.TrimPrefix(tag, "v")
+	}
+	return ""
 }
+
+// numberedTag is a browser-style release tag: vN, or vN.P for a hotfix.
+var numberedTag = regexp.MustCompile(`^v[1-9][0-9]{0,8}(\.[1-9][0-9]{0,3})?$`)
 
 func orUnknown(s string) string {
 	if s == "" {
 		return "unknown"
 	}
 	return s
+}
+
+// shortName is a release name without its leading word, for "running …".
+func shortName(name string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(name, "build "), "Pairtask ")
 }

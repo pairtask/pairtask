@@ -23,7 +23,12 @@ from urllib.request import Request
 from sandbox_https import urlopen
 from sandbox_releases import api_headers, repository
 
+# Release tags: the legacy workspace-v0.0.0-build.N.A (N the build, A the
+# attempt), and since the switch to browser-style numbers, vN and the
+# hotfix vN.P. Both order by build first: legacy N.A is (N, A-1), vN is
+# (N, 0) and vN.P is (N, P), so every new tag sorts after every old one.
 TAG_RE = re.compile(r"^workspace-v0\.0\.0-build\.([1-9][0-9]{0,8})\.([1-9][0-9]{0,3})$")
+NUMBERED_RE = re.compile(r"^v([1-9][0-9]{0,8})(?:\.([1-9][0-9]{0,3}))?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 PROVENANCE_KEYS = ("collab", "recipe_commit", "files_sha256")  # sandbox_tools_install's rollout check
@@ -60,13 +65,29 @@ def stamp(seconds):
 
 
 def parse_build(tag):
-    """(N, M) of a numbered build tag, or None for any other tag."""
-    match = TAG_RE.match(tag or "")
-    return (int(match.group(1)), int(match.group(2))) if match else None
+    """(build, patch) of a release tag in either form, or None for any other tag."""
+    legacy = TAG_RE.match(tag or "")
+    if legacy:
+        return (int(legacy.group(1)), int(legacy.group(2)) - 1)
+    numbered = NUMBERED_RE.match(tag or "")
+    if numbered:
+        return (int(numbered.group(1)), int(numbered.group(2) or 0))
+    return None
 
 
 def is_tag(value):
-    return TAG_RE.match(str(value)) is not None
+    return parse_build(str(value)) is not None
+
+
+def release_name(tag):
+    """How a release reads: build N.A for a legacy tag, Pairtask N or N.P for a new one."""
+    legacy = TAG_RE.match(tag or "")
+    if legacy:
+        return "build %s.%s" % legacy.groups()
+    build = parse_build(tag)
+    if build is None:
+        return tag or "unknown"
+    return "Pairtask %d" % build[0] + (".%d" % build[1] if build[1] else "")
 
 
 def provenance_of(manifest):

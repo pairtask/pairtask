@@ -42,7 +42,7 @@ case "$REPO" in
 esac
 # A rollout release is a published workspace-vX.Y.Z tag (same rule as
 # scripts/sandbox_releases.py); branches and other refs are not installable.
-release_tag() { printf '%s' "$1" | grep -Eq '^workspace-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$'; }
+release_tag() { printf '%s' "$1" | grep -Eq '^(workspace-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?|v[1-9][0-9]{0,8}(\.[1-9][0-9]{0,3})?)$'; }
 if [ -n "$VERSION" ]; then
   release_tag "$VERSION" || die 2 "bad --version: $VERSION (a published workspace-vX.Y.Z release tag)"
 fi
