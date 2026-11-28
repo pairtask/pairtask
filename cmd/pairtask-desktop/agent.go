@@ -26,7 +26,7 @@ import (
 
 const agentLabel = "ai.pairtask.desktop"
 
-const agentUsage = `usage: pairtask-desktop agent install [--dir DIR] | uninstall | status`
+const agentUsage = `usage: pairtask-desktop agent install [--dir DIR] | uninstall | status | refresh`
 
 // agentEnv is what agent needs from the host; tests replace it.
 type agentEnv struct {
@@ -34,6 +34,7 @@ type agentEnv struct {
 	uid       int
 	home      string
 	exe       string
+	version   string // this build's, which a running agent should be
 	launchctl func(args ...string) ([]byte, error)
 }
 
@@ -43,7 +44,7 @@ func hostAgentEnv() agentEnv {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	return agentEnv{goos: runtime.GOOS, uid: os.Getuid(), home: home, exe: exe,
+	return agentEnv{goos: runtime.GOOS, uid: os.Getuid(), home: home, exe: exe, version: version(),
 		launchctl: func(args ...string) ([]byte, error) { return exec.Command("launchctl", args...).CombinedOutput() }}
 }
 
@@ -65,6 +66,8 @@ func runAgent(args []string, env agentEnv, out io.Writer) error {
 		return env.uninstall(out)
 	case "status":
 		return env.status(out)
+	case "refresh":
+		return env.refresh(out)
 	}
 	return errors.New(agentUsage)
 }
