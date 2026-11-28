@@ -57,23 +57,33 @@ func TestEachAgentsReadStateIsItsOwn(t *testing.T) {
 	}
 
 	before := agentsStatus(t, n)
-	c, x := before["claude-desktop"], before["codex"]
-	if c.Unread != 2 || c.OldestUnreadAt == nil || c.LastReadAt != nil || !c.Online {
-		t.Fatalf("Claude before reading: %+v", c)
-	}
-	if x.Unread != 0 || x.OldestUnreadAt != nil || !x.Online {
-		t.Fatalf("Codex, who was sent nothing: %+v", x)
-	}
+	expectRead(t, "Claude before reading", before["claude-desktop"], readShape{online: true, unread: 2, oldest: true})
+	expectRead(t, "Codex, who was sent nothing", before["codex"], readShape{online: true})
 
 	if err := claude.Acknowledge(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	after := agentsStatus(t, n)["claude-desktop"]
-	if after.Unread != 1 || after.LastReadAt == nil {
-		t.Fatalf("Claude after acknowledging one: %+v", after)
-	}
-	if again := agentsStatus(t, n)["claude-desktop"]; again.Unread != 1 {
-		t.Fatalf("asking twice changed the count: %+v", again)
+	read := readShape{online: true, unread: 1, oldest: true, last: true}
+	expectRead(t, "Claude after acknowledging one", agentsStatus(t, n)["claude-desktop"], read)
+	expectRead(t, "Claude, asked again", agentsStatus(t, n)["claude-desktop"], read)
+}
+
+// readShape is what the test checks of an agent's reading: whether it is
+// online, its unread count, and which of its times are set.
+type readShape struct {
+	online       bool
+	unread       int
+	oldest, last bool
+}
+
+func shapeOf(a protocol.AgentRead) readShape {
+	return readShape{online: a.Online, unread: a.Unread, oldest: a.OldestUnreadAt != nil, last: a.LastReadAt != nil}
+}
+
+func expectRead(t *testing.T, what string, got protocol.AgentRead, want readShape) {
+	t.Helper()
+	if shapeOf(got) != want {
+		t.Fatalf("%s: %+v, want %+v", what, got, want)
 	}
 }
 
