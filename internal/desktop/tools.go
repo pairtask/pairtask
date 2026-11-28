@@ -457,6 +457,11 @@ func addNodeTools(s *mcp.Server, n *Node) {
 			out, err := n.pairbookSpaces(ctx)
 			return nil, out, err
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "set_notifier", Description: setNotifierDescription, Annotations: &mcp.ToolAnnotations{DestructiveHint: &additive}},
+		func(_ context.Context, _ *mcp.CallToolRequest, args SetNotifierArgs) (*mcp.CallToolResult, SetNotifierResult, error) {
+			out, err := n.setNotifier(args)
+			return nil, out, err
+		})
 	mcp.AddTool(s, &mcp.Tool{Name: "agents_status", Description: agentsStatusDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, AgentsStatusResult, error) {
 			out, err := n.agentsStatus(ctx)

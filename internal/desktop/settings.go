@@ -23,19 +23,29 @@ const settingsName = "settings.json"
 
 // Settings is what the person configured for this node.
 type Settings struct {
-	Name     string `json:"name,omitempty"`     // the name this node pairs under
+	Name string `json:"name,omitempty"` // the name this node pairs under
 	// StartedName is the name a copy was last started with (the Claude
 	// Desktop extension's "Your name"): it replaces Name only when it
 	// changes, so a name set in the app holds across the extension's starts.
 	StartedName string `json:"started_name,omitempty"`
-	Pairbook string `json:"pairbook,omitempty"` // the company's Pairbook, https://HOST
-	Address  string `json:"address,omitempty"`  // the Workspace address setting
-	Notify   *bool  `json:"notify,omitempty"`   // system notifications; on when unset
+	Pairbook    string `json:"pairbook,omitempty"` // the company's Pairbook, https://HOST
+	Address     string `json:"address,omitempty"`  // the Workspace address setting
+	Notify      *bool  `json:"notify,omitempty"`   // system notifications; on when unset
+	// NotifyByApp: the Pairtask app posts this Mac's notifications itself
+	// (when an agent falls behind), so the node posts none per message. Only
+	// the app sets it; the extension's --notify never changes it.
+	NotifyByApp *bool `json:"notify_by_app,omitempty"`
 }
 
-// notifies: notifications are on unless turned off.
+// notifies: the node posts a notification per message, unless turned off
+// or the app has taken notifications over.
 func (s Settings) notifies() bool {
-	return s.Notify == nil || *s.Notify
+	return (s.Notify == nil || *s.Notify) && !s.byApp()
+}
+
+// byApp: the app posts this Mac's notifications.
+func (s Settings) byApp() bool {
+	return s.NotifyByApp != nil && *s.NotifyByApp
 }
 
 // over is s with every setting given sets.
@@ -52,6 +62,9 @@ func (s Settings) over(given Settings) Settings {
 	}
 	if given.Notify != nil {
 		s.Notify = given.Notify
+	}
+	if given.NotifyByApp != nil {
+		s.NotifyByApp = given.NotifyByApp
 	}
 	return s
 }
@@ -121,7 +134,7 @@ func storeSettings(dir string, given Settings) (now Settings, problem, err error
 
 // sameSettings compares two settings, notify by value.
 func sameSettings(a, b Settings) bool {
-	return a.Name == b.Name && a.StartedName == b.StartedName && a.Pairbook == b.Pairbook && a.Address == b.Address && a.notifies() == b.notifies() && (a.Notify == nil) == (b.Notify == nil)
+	return a.Name == b.Name && a.StartedName == b.StartedName && a.Pairbook == b.Pairbook && a.Address == b.Address && a.notifies() == b.notifies() && (a.Notify == nil) == (b.Notify == nil) && a.byApp() == b.byApp()
 }
 
 // writeSettings replaces the stored settings: a synced temporary file,
@@ -192,6 +205,25 @@ func (n *Node) nameSetting() string {
 		return s.Name
 	}
 	return n.cfg.Name
+}
+
+// SetNotifierArgs is set_notifier's argument.
+type SetNotifierArgs struct {
+	App bool `json:"app" jsonschema:"True when the Pairtask app posts this Mac's notifications (only when an agent falls behind), so this node posts none per message; false gives them back to the node"`
+}
+
+// SetNotifierResult is set_notifier's answer: who posts notifications now.
+type SetNotifierResult struct {
+	App bool `json:"app"`
+}
+
+const setNotifierDescription = "Say who posts this Mac's notifications. The Pairtask app calls it with app true: it then notifies only when an agent falls behind, and this node stops notifying per message. " +
+	"Kept for every copy of the node; the Claude Desktop extension's notifications setting doesn't change it."
+
+func (n *Node) setNotifier(args SetNotifierArgs) (SetNotifierResult, error) {
+	byApp := args.App
+	now, _, err := storeSettings(n.cfg.Dir, Settings{NotifyByApp: &byApp})
+	return SetNotifierResult{App: now.byApp()}, err
 }
 
 // SetNameArgs is set_name's argument.
