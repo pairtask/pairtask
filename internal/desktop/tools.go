@@ -457,6 +457,11 @@ func addNodeTools(s *mcp.Server, n *Node) {
 			out, err := n.pairbookSpaces(ctx)
 			return nil, out, err
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_status", Description: agentsStatusDescription, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly}},
+		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, AgentsStatusResult, error) {
+			out, err := n.agentsStatus(ctx)
+			return nil, out, err
+		})
 }
 
 // clientConnected notes the name a client gives when it connects.

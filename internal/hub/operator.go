@@ -135,6 +135,7 @@ var operatorHandlers = map[string]operatorHandler{
 	protocol.TypeOperatorInboxStatus: func(h *Hub, ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
 		return h.operatorInboxStatus(ctx, req)
 	},
+	protocol.TypeOperatorAgentReads: (*Hub).operatorAgentReads,
 	protocol.TypeOperatorMessageStages: func(h *Hub, ctx context.Context, _ map[string]*Client, req operatorRequest) protocol.Message {
 		return h.messageStages(ctx, req)
 	},
