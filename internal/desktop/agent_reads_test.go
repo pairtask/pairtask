@@ -64,7 +64,11 @@ func TestEachAgentsReadStateIsItsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	read := readShape{online: true, unread: 1, oldest: true, last: true}
-	expectRead(t, "Claude after acknowledging one", agentsStatus(t, n)["claude-desktop"], read)
+	// Acknowledge writes to the agent socket. The operator status call can
+	// arrive on its own connection before the broker commits the acknowledgment.
+	eventually(t, "Claude’s acknowledgment appears in read state", func() bool {
+		return shapeOf(agentsStatus(t, n)["claude-desktop"]) == read
+	})
 	expectRead(t, "Claude, asked again", agentsStatus(t, n)["claude-desktop"], read)
 }
 
