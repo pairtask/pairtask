@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 
@@ -25,7 +26,13 @@ func (e agentEnv) refresh(out io.Writer) error {
 		return err
 	}
 	dir := installedDir(plist)
-	why := e.stale(dir)
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("agent refresh: can't tell the data folder from %s; nothing was changed. Run `pairtask-desktop agent install` to set it up again", e.plistPath())
+	}
+	why, err := e.stale(dir)
+	if err != nil {
+		return fmt.Errorf("agent refresh: %w; nothing was changed", err)
+	}
 	if why == "" {
 		fmt.Fprintln(out, "running")
 		return nil
@@ -39,18 +46,21 @@ func (e agentEnv) refresh(out io.Writer) error {
 
 // stale is why the running agent isn't this build, or "" when it is. The
 // node's owner record says which process runs it and its version; an agent
-// from before that record has none.
-func (e agentEnv) stale(dir string) string {
+// from before that record has none. A record that can't be read is an
+// error, never a reason to restart.
+func (e agentEnv) stale(dir string) (string, error) {
 	owner, ok, err := desktop.ReadOwnerInfo(dir)
 	switch {
-	case err != nil || !ok:
-		return "the running agent predates this version (it records no owner)"
+	case err != nil:
+		return "", fmt.Errorf("the node's owner record can't be read: %w", err)
+	case !ok:
+		return "the running agent predates this version (it records no owner)", nil
 	case e.notOwner(owner.PID):
-		return "the running agent isn't the copy serving this node"
+		return "the running agent isn't the copy serving this node", nil
 	case e.version != "dev" && owner.Version != e.version:
-		return fmt.Sprintf("the running agent was version %s", orUnknown(owner.Version))
+		return fmt.Sprintf("the running agent was version %s", orUnknown(owner.Version)), nil
 	}
-	return ""
+	return "", nil
 }
 
 // notOwner: launchctl names the agent's process, and it isn't pid.

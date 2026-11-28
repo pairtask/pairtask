@@ -111,3 +111,36 @@ func TestRefreshReportsAnAgentThatIsntInstalled(t *testing.T) {
 		t.Fatalf("no agent: %q", out)
 	}
 }
+
+func TestRefreshChangesNothingWhenThePlistsFolderCantBeRead(t *testing.T) {
+	r := &runningAgent{pid: "42"}
+	e, _ := refreshEnv(t, r, "v0.0.0-new")
+	plist, err := os.ReadFile(e.plistPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	odd := strings.Replace(string(plist), "<string>--dir</string>", "<string >--dir</string>", 1)
+	if err := os.WriteFile(e.plistPath(), []byte(odd), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runAgent([]string{"refresh"}, e, &bytes.Buffer{}); err == nil {
+		t.Fatal("a plist whose folder can't be read was refreshed")
+	}
+	if got, _ := os.ReadFile(e.plistPath()); string(got) != odd {
+		t.Fatal("the plist was rewritten")
+	}
+	if strings.Contains(strings.Join(r.calls, "\n"), "bootout") {
+		t.Fatalf("the running agent was stopped: %v", r.calls)
+	}
+}
+
+func TestRefreshDoesntRestartOverAnUnreadableOwnerRecord(t *testing.T) {
+	r := &runningAgent{pid: "42"}
+	e, dir := refreshEnv(t, r, "v0.0.0-new")
+	if err := os.WriteFile(filepath.Join(dir, "owner.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runAgent([]string{"refresh"}, e, &bytes.Buffer{}); err == nil || r.restarted() {
+		t.Fatalf("an unreadable owner record: err %v, restarted %v", err, r.restarted())
+	}
+}
