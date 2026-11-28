@@ -249,6 +249,7 @@ type Message struct {
 	AckSelection        *AckSelection       `json:"ack_selection,omitempty"`        // operator_ack_many
 	AckMany             *AckManyResult      `json:"ack_many,omitempty"`             // operator_ack_many response
 	Inbox               *InboxStatus        `json:"inbox,omitempty"`                // operator_inbox_status response
+	AgentReads          []AgentRead         `json:"agent_reads,omitempty"`          // operator_agent_reads response
 	RequestID           string              `json:"request_id,omitempty"`           // operator session requests and their responses
 	OperatorMessageID   string              `json:"operator_message_id,omitempty"`  // claim frames: the operator message claimed
 	Task                string              `json:"task,omitempty"`                 // claim frames: stable task key
